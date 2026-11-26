@@ -61,9 +61,6 @@ describe("MobileVirtualList scalability", () => {
       y: top,
       toJSON: () => ({}),
     }));
-    // Derive the maximum reachable scroll from the component's own rendered
-    // spacer/card geometry. An over-scroll constant would clamp to the final
-    // index even if the total-height calculation were wrong.
     const children = [...list.children] as HTMLElement[];
     const contentHeight = children.reduce((sum, child) => {
       const height = child.hasAttribute("data-vcard")
@@ -85,8 +82,6 @@ describe("MobileVirtualList scalability", () => {
     expect(tailCards.at(-1)?.getAttribute("aria-posinset")).toBe("10000");
     expect(tailCards.at(-1)?.getAttribute("aria-setsize")).toBe("10000");
 
-    // Leave a scheduled measurement pending so unmount must cancel it as
-    // well as detaching the capturing scroll and resize listeners.
     act(() => window.dispatchEvent(new Event("scroll")));
     expect(frames.length).toBeGreaterThan(0);
     unmount();

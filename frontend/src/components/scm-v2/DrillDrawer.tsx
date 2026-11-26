@@ -10,9 +10,7 @@ export interface DrillColumn<R> {
   label: string;
   left: boolean;
   render: (row: R) => ReactNode;
-  /** Text the search box matches; null = not searchable. */
   text: ((row: R) => string) | null;
-  /** Summed into the total row when given. */
   sum: ((row: R) => number) | null;
   format: ((n: number) => string) | null;
 }
@@ -24,7 +22,6 @@ export interface Drill<R> {
   columns: Array<DrillColumn<R>>;
   rowKey: (row: R) => string;
   onRow: ((row: R) => void) | null;
-  /** Rows under a heading per value (a date, say), in its order; null = one list. */
   groupBy: ((row: R) => string) | null;
 }
 

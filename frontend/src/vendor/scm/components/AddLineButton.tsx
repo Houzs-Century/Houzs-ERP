@@ -25,13 +25,9 @@ import styles from './AddLineButton.module.css';
 
 export type AddLineButtonProps = {
   onClick: () => void;
-  /** "block" = full-width dashed card affordance; "ghost" = compact table button. */
   variant?: 'block' | 'ghost';
-  /** House Button size for the ghost variant (ignored by block). */
   size?: 'sm' | 'md';
   disabled?: boolean;
-  /** Override the label only for a genuinely different action; defaults to the
-   *  canonical add-line name so every editor reads identically. */
   label?: string;
 };
 

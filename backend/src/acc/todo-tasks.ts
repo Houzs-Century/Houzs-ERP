@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// acc/todo-tasks — the tasks and routines on Finance's To do (the owner's
-// Claude Design redesign, batch 2, 2026-11-02; tables in migration
-// 20261102T2100_acc_todo_tasks.sql). Pure: when a repeating task falls, which
-// of its occurrences is waiting now, and how the page words it. The reads and
-// writes live in scm/routes/accounting-todo-tasks.ts.
-//
-// The design's rules, kept:
-//   · a one-off task waits until it is marked done, however far off its day;
-//   · a repeating one shows its first occurrence not yet done — on the day for
-//     a daily task, from 3 days before for the rest — and stays, overdue,
-//     until it is done; each occurrence is done or moved on its own;
-//   · a routine is a repeating task of Finance's, with what its button does.
-// ----------------------------------------------------------------------------
 
 export type TaskRepeat = 'none' | 'day' | 'week' | 'month' | 'year';
 export type TaskAction = 'done' | 'voucher' | 'open' | 'checklist';
@@ -29,11 +15,8 @@ export type TodoTask = {
   createdByName: string | null;
   dueDate: string;
   repeat: TaskRepeat;
-  /** Daily: every day, Mon–Fri ('wk') or Mon–Sat ('ms'). */
   dayMode: 'all' | 'wk' | 'ms';
-  /** Weekly: 0 = Sunday … 6 = Saturday. */
   weekdays: number[];
-  /** Monthly: '1'…'31' or 'last'. */
   monthDay: string | null;
   everyMonths: number;
   byDay: boolean;
@@ -52,7 +35,6 @@ const DAY_MS = 86_400_000;
 const dayNo = (ymd: string): number => Math.round(Date.parse(`${ymd}T00:00:00Z`) / DAY_MS);
 const ymdOf = (n: number): string => new Date(n * DAY_MS).toISOString().slice(0, 10);
 export const addDays = (ymd: string, n: number): string => ymdOf(dayNo(ymd) + n);
-/** 0 = Sunday … 6 = Saturday. */
 const weekdayOf = (ymd: string): number => new Date(`${ymd}T00:00:00Z`).getUTCDay();
 const lastDayOf = (y: number, m1: number): number => new Date(Date.UTC(y, m1, 0)).getUTCDate();
 const ymd = (y: number, m1: number, d: number): string =>
@@ -87,14 +69,12 @@ export function occurrenceDays(t: Pick<TodoTask, 'dueDate' | 'repeat' | 'dayMode
       const m = ((sm - 1 + i) % 12) + 1;
       if (y > ty || (y === ty && m > tm)) break;
       const last = lastDayOf(y, m);
-      /* No day named: the first day's own; a day past the month's end: its last. */
       const want = t.monthDay === 'last' ? last : Math.min(Number(t.monthDay ?? start.slice(8, 10)), last);
       const d = ymd(y, m, want);
       if (d >= lo && d <= to) out.push(d);
     }
     return out;
   }
-  /* Yearly, on the first day's month and day (29 Feb falls on the 28th in other years). */
   const sd = Number(start.slice(8, 10));
   for (let y = sy; y <= ty; y += 1) {
     const d = ymd(y, sm, Math.min(sd, lastDayOf(y, sm)));
@@ -106,7 +86,6 @@ export function occurrenceDays(t: Pick<TodoTask, 'dueDate' | 'repeat' | 'dayMode
 /** How far ahead a repeating task shows: on the day for a daily one, 3 days before for the rest. */
 export const leadDays = (t: Pick<TodoTask, 'repeat'>): number => (t.repeat === 'day' ? 0 : 3);
 
-/** A repeating task's next occurrences are looked for this far ahead. */
 const HORIZON_DAYS = 400;
 
 export type PendingOccurrence = { occursOn: string; due: string };
@@ -124,7 +103,6 @@ export function pendingOccurrence(t: TodoTask, occurrences: TaskOccurrence[], to
     return o?.doneAt ? null : { occursOn: t.dueDate, due: o?.movedTo ?? t.dueDate };
   }
   const days = occurrenceDays(t, t.dueDate, addDays(today, HORIZON_DAYS));
-  /* An occurrence moved this time only is also looked for where it landed. */
   const open = days
     .map((d) => ({ occursOn: d, due: byDay.get(d)?.movedTo ?? d, done: !!byDay.get(d)?.doneAt }))
     .filter((x) => !x.done)
@@ -134,7 +112,6 @@ export function pendingOccurrence(t: TodoTask, occurrences: TaskOccurrence[], to
   return first.due <= addDays(today, leadDays(t)) ? { occursOn: first.occursOn, due: first.due } : null;
 }
 
-/** A weekday's short name, 0 = Sun (4 Jan 2026 was a Sunday). */
 const weekdayName = (d: number): string =>
   new Date(Date.UTC(2026, 0, 4 + d)).toLocaleString('en-MY', { weekday: 'short', timeZone: 'UTC' });
 const ordinal = (n: number): string => {

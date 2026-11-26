@@ -1,21 +1,3 @@
-// A blank Voucher Date on a DRAFT PV must be REFUSED by name, never sent to
-// Postgres as "" and never stored as NULL.
-//
-// scm.payment_vouchers.voucher_date is `date NOT NULL DEFAULT current_date`
-// (mig 0081). PaymentVoucherDetail sends `voucherDate` on every save and
-// DateField emits "" when the field is cleared, so `updates.voucher_date =
-// body.voucherDate` handed Postgres a blank and answered
-// 500 `invalid input syntax for type date: ""` — the same failure the PO header
-// was raised for, in a file that already imported the coercion and used it
-// correctly one screen away on the CREATE path.
-//
-// NULL is not the fix here: the column is NOT NULL, so it would trade an
-// invalid-syntax 500 for a not-null 500. The handler refuses with 400
-// `voucher_date_required`, matching payeeName and creditAccountCode directly
-// above it.
-//
-// The fake PostgREST does not type-check columns, so this suite cannot
-// reproduce the 500 itself — it pins the request that caused it.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -23,11 +5,6 @@ import type { User } from '@supabase/supabase-js';
 import { fakeSb, type Row } from '../lib/fake-postgrest';
 import type { Env, Variables } from '../env';
 
-/* The audit PRE-FLIGHT (`assertAuditWritable`) probes an RPC and refuses the
-   whole save with 409 when it cannot answer — deliberately, so a change is
-   never stored without its record of who made it. The fake has no rpc(), so it
-   gets one that answers "writable"; without it every case here would 409 before
-   reaching the date branch under test. */
 const sb = Object.assign(
   fakeSb({
     payment_vouchers: [],
@@ -40,13 +17,8 @@ const sb = Object.assign(
   { rpc: async () => ({ data: true, error: null }) },
 );
 
-/* supabaseAuth swaps whatever the caller set for the service client, so the
-   fake has to be injected at that seam rather than through the context. */
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => sb }));
 
-/* Imported at module scope on purpose — awaited inside a test body, a router
-   of this size charges its transform to testTimeout and the suite goes red
-   only under the parallel load of a full run. */
 const { paymentVouchers } = await import('./payment-vouchers');
 
 const DRAFT = (): Row => ({
@@ -58,11 +30,6 @@ const DRAFT = (): Row => ({
   updated_at: '2026-08-01T00:00:00Z', company_id: 1,
 });
 
-/* supabaseAuth derives `houzsUser` — and the permission set every SCM gate
-   reads — from whatever the global /api/* auth left on `user`, so the harness
-   sets THAT rather than houzsUser directly. The Houzs session user is not a
-   Supabase User; the context slot is typed as one, which is the seam
-   supabaseAuth exists to bridge. */
 const CALLER = {
   id: 7, email: 'finance@houzs.test', name: 'Finance', permissions: ['*'],
 } as unknown as User;

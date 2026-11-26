@@ -1,7 +1,3 @@
-// lib/pgrest-sql — the list closures' PostgREST filters, as the SQL PostgREST
-// itself would run for them. The SQL path of the SO / PI list counts and money
-// strip depends on every shape below translating exactly; anything it cannot
-// translate must refuse (so the route takes its PostgREST path), never guess.
 import { describe, expect, it } from 'vitest';
 import { PgrestSqlUnsupported, SqlParams, orBodyToSql, selectCol, splitOrTerms, whereOf, type SqlFilterRecorder } from './pgrest-sql';
 import { applySoScope } from './salesScope';

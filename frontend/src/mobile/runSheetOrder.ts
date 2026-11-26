@@ -12,23 +12,15 @@
  */
 
 export interface RunStopOrder {
-  /** 1-based place in the lorry run, set by Time Arrangement. Null = not on a run. */
   trip_stop_no?: number | null;
-  /**
-   * Delivery window as the free text the office types on the DO, e.g.
-   * "TIME AROUND 1:30PM TO 3:30PM", "TIME AROUND 11AM TO 1PM". Null = no slot.
-   */
   time_range?: string | null;
   so_doc_no?: string | null;
 }
 
 const BIG = Number.MAX_SAFE_INTEGER;
 
-// Every clock time in a string: hour, optional ":mm", optional am/pm (any case).
 const CLOCK_RE = /(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?/gi;
 
-// One clock token → minutes since midnight. 12-hour am/pm when present
-// (12AM = 00:00, 12PM = noon), else a bare 24-hour clock. Null if out of range.
 function clockToMin(h: string, min: string | undefined, ap: string | undefined): number | null {
   let hh = Number(h);
   const mm = min ? Number(min) : 0;

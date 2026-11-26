@@ -1,28 +1,6 @@
-// ----------------------------------------------------------------------------
-// Apply scheduled supplier prices on their effective date (BUG-32).
-//
-// Supplier → binding → "Schedule price" writes a row into
-// scm.supplier_binding_price_history. Every reader of a supplier's cost — the
-// PO form, Create-PO-from-SO, MRP, and the auto-derive that sets the Product
-// Maintenance cost an SO is costed on — reads the FLAT
-// scm.supplier_material_bindings row. Nothing copied a due history row onto
-// that flat row, so a price scheduled for 1 October never reached a PO, the
-// product cost or the Sales Report.
-//
-// This copies it. For each binding with a pending (applied_at IS NULL) row whose
-// date has come, the row that is live as of today — newest effective_from, then
-// newest created_at, across applied and pending rows alike — is written onto the
-// flat binding, and every due pending row is marked applied. With auto-derive on,
-// the product cost is then recomputed (max supplier) and its own history row is
-// appended, which is the record the SO recompute reads as of the order's date.
-//
-// Run nightly at 00:05 MYT and right after a price is scheduled, so an
-// effective-today (or back-dated) schedule applies immediately.
-// ----------------------------------------------------------------------------
 
 import { autoDeriveEnabled, recomputeDerivedProductCostSafe } from './auto-derive-cost';
 
-// The SCM routes carry an untyped supabase-js client.
 type Sb = { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 export type SupplierPriceHistoryRow = {
@@ -61,7 +39,6 @@ export function pickDueSupplierPrice(
 
 export type ApplyScope = {
   today: string;
-  /** Narrow to one binding (the schedule endpoint). Omit all three for the nightly sweep. */
   companyId?: number;
   supplierId?: string;
   itemCode?: string;
@@ -121,7 +98,6 @@ export async function applyDueSupplierPrices(sb: Sb, scope: ApplyScope): Promise
           .eq('item_code', k.item_code);
         if (uErr) throw new Error(uErr.message);
       }
-      // Marked only after the flat write landed, so a failed write is retried.
       if (markApplied.length > 0) {
         const { error: mErr } = await sb
           .from('supplier_binding_price_history')

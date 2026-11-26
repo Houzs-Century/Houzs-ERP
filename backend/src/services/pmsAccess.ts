@@ -1,35 +1,12 @@
-// Project-detail (PMS) section-level access — port of the reference repo's
-// src/lib/pms-access.ts, adapted to the production AuthUser + projects model.
-//
-// This layers ON TOP of the remaining gates:
-//   1. the page matrix (projects.list) — can you open the project area at all
-//   2. company scope — a project is only visible within its own company
-// (The old PIC + brand row-level ACL was removed 2026-08-19: within a company,
-//  any projects-permitted user sees every project.)
-// pmsAccess then decides WHICH SECTIONS of a project's detail page render, and
-// crucially hides the financial snapshot + rental amount from everyone except
-// directors/finance. See docs/PERMISSION-MATRIX.md (PMS section table).
-//
-// PIC is a PER-PROJECT assignment (projects.pic_id === user.id), NOT a job
-// title — a sales person is "PIC" only on the projects they're assigned to.
 
 import type { AuthUser } from "./auth";
 import type { PositionPolicyRow } from "./positionPolicyRows";
 
-/* 2026-09-16 (Roles & Permissions review, part B follow-up): every predicate
- * below reads the Title's stored policy row FIRST — `user.position_policy`,
- * hydrated from position_policy (cohort / profile / duty) — and falls back to
- * the name lists and regexes only for a Title with no row. The row is what
- * Roles & Permissions › Titles edits; the names stay as the transition rule. */
 
-/** The Title's row, when the caller carries one. Tolerant of the partial user
- *  shapes the SCM bridge and the capability adapter build. */
 function policyOf(user: { position_policy?: PositionPolicyRow | null } | null | undefined): PositionPolicyRow | null {
   return user?.position_policy ?? null;
 }
 
-/** Director tier by ROW: owner tier, a management / finance duty, or the Sales
- *  Director profile. Mirrors DIRECTOR_POSITION_NAMES by intent. */
 function rowIsDirector(row: PositionPolicyRow): boolean {
   if (row.cohort === "god") return true;
   if (row.duty === "management" || row.duty === "finance") return true;
@@ -37,29 +14,29 @@ function rowIsDirector(row: PositionPolicyRow): boolean {
 }
 
 export type PmsRole =
-  | "DIRECTOR" // owner/IT (*), Super Admin, Sales Director, Finance — full incl. financials
-  | "PIC" // sales person who is this project's PIC — most of it, no financials
-  | "SALES" // sales person who can see it but isn't the PIC
+  | "DIRECTOR"
+  | "PIC"
+  | "SALES"
   | "PURCHASING"
   | "LOGISTIC"
-  | "DRIVER" // Driver / Helper — use the driver portal, not this page
-  | "OTHER" // Ops / HQ non-admin — view-only, no financials
+  | "DRIVER"
+  | "OTHER"
   | "NONE";
 
 export type PmsSection =
   | "EDIT"
-  | "FINANCIAL" // sales / cost / profit snapshot
-  | "RENTAL" // rental amount
-  | "PAYMENT" // payment status / proof
+  | "FINANCIAL"
+  | "RENTAL"
+  | "PAYMENT"
   | "PROJECT_STAGE"
   | "PM_WORKFLOW"
-  | "WF_SENSITIVE" // agreement/quotation + security deposit
+  | "WF_SENSITIVE"
   | "BOOTH_LAYOUT"
   | "SETUP_DISMANTLE"
   | "EXPO_MAP"
   | "EVENT_CHAT"
   | "INTEGRATIONS"
-  | "ACTIONS"; // delete project
+  | "ACTIONS";
 
 const SECTIONS_BY_ROLE: Record<PmsRole, PmsSection[]> = {
   DIRECTOR: [
@@ -94,24 +71,10 @@ const SECTIONS_BY_ROLE: Record<PmsRole, PmsSection[]> = {
   NONE: [],
 };
 
-// Lower-case + collapse internal whitespace + trim. Tolerant to casing/spacing
-// drift ONLY — never to substring matching. Mirrors positionPolicy.normalisePosition
-// and the FE salesAccess mirror so all three classify a name identically.
 function normalisePosition(name: string | null | undefined): string {
   return (name ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-// Directors / finance — the only roles that see money on the project. Matched by
-// EXACT normalised name. This WAS /\b(Super Admin|Sales Director|Finance Manager)\b/i:
-// a word-boundary test whose convenience (catch "Test Sales Director") was an
-// injection hole — any future free-text rename whose name merely CONTAINED a
-// director title ("Assistant to Sales Director", "Deputy Finance Manager",
-// "Senior Super Admin") silently inherited FULL director access. Position names
-// are owner-editable free text, so a substring match turns a rename into a
-// privilege grant. The three names below are the live prod positions
-// (positionAccessSnapshot.ts) — a rename TO one of them still grants; a new
-// position that only contains the words does not. Keep FE auth/salesAccess.ts
-// DIRECTOR_POSITION_NAMES in lockstep (pinned by pmsAccess/salesAccess tests).
 const DIRECTOR_POSITION_NAMES: ReadonlySet<string> = new Set(
   ["Super Admin", "Sales Director", "Finance Manager"].map(normalisePosition),
 );
@@ -120,16 +83,6 @@ function isDirectorPositionName(name: string | null | undefined): boolean {
   return DIRECTOR_POSITION_NAMES.has(normalisePosition(name));
 }
 
-// The EXACT "Sales Director" position — the signal for the department-scoped
-// Team admin grant (owner 2026-07: a Sales Director manages ONLY his own
-// department's members/org-chart/departments + Sales mailboxes, WITHOUT full
-// users.manage). Matched by EXACT normalised name so ONLY "Sales Director"
-// qualifies — this WAS /\bSales Director\b/i, whose comment already CLAIMED it
-// was anchored while the regex actually matched any name CONTAINING "Sales
-// Director" ("Assistant to Sales Director" would have been handed the scoped
-// admin). Deliberately narrower than isDirectorUser (which also admits Super
-// Admin / Finance Manager, both already full admins). Single source of truth the
-// users / departments / mail-center routes share; keep FE in lockstep.
 const SALES_DIRECTOR_POSITION_NAMES: ReadonlySet<string> = new Set(
   ["Sales Director"].map(normalisePosition),
 );
@@ -149,13 +102,6 @@ export function isSalesDirectorUser(user: AuthUser | null | undefined): boolean 
   return SALES_DIRECTOR_POSITION_NAMES.has(normalisePosition(user.position_name));
 }
 
-// Sales staff — a position whose title starts with "sales" (Sales Executive,
-// Sales Coordinator, Salesperson, Sales-Executive, …) OR membership of the Sales
-// department. Prod names the department "Sales Department" while the seed is
-// "Sales", so match any dept name containing "sales" (same rule
-// salesTeam.syncSalesRepFromUser uses). Aligned with the FE salesAccess.ts
-// (/^sales/i) — the old /^Sales /i required a trailing space and so missed
-// "Salesperson" / "Sales-Executive", disagreeing with the frontend.
 const SALES_POSITION = /^sales/i;
 
 /**
@@ -216,14 +162,6 @@ export function isDirectorUser(user: AuthUser | null | undefined): boolean {
   return isDirectorPositionName(user.position_name);
 }
 
-// The purchasing function — product COST visibility. Matched by EXACT normalised
-// name. This WAS /\bPurchasing\b/i, a word-boundary test that also matched any
-// future "…Purchasing…" rename (e.g. "Purchasing Assistant") and silently handed
-// it SKU cost. The live prod position is "Procurement/Purchasing"
-// (positionAccessSnapshot.ts id 13); "Purchasing" is retained as a DOCUMENTED
-// alias for the pre-rename name so a partial revert never silently drops cost
-// access. BE-only: the FE reads the product_cost_viewer flag off /auth/me, so
-// there is no FE mirror to keep for this one.
 const PURCHASING_POSITION_NAMES: ReadonlySet<string> = new Set(
   ["Procurement/Purchasing", "Purchasing"].map(normalisePosition),
 );
@@ -282,20 +220,17 @@ export function getPmsRole(user: AuthUser | null | undefined, project: ProjectLi
   }
   const pos = (user.position_name ?? "").trim();
 
-  // A director/finance position (no row — name rule) → full.
   if (isDirectorPositionName(pos)) return "DIRECTOR";
 
   if (/^(Driver|Helper)$/i.test(pos)) return "DRIVER";
   if (/^Purchasing$/i.test(pos)) return "PURCHASING";
   if (/^Logistics?$/i.test(pos)) return "LOGISTIC";
 
-  // Sales staff are assignment-gated: PIC of this project vs merely able to see it.
   if (/^Sales /i.test(pos)) {
     if (project.pic_id != null && project.pic_id === user.id) return "PIC";
     return "SALES";
   }
 
-  // Ops / HQ non-admin who can open the project → view-only, no financials.
   return "OTHER";
 }
 
@@ -305,9 +240,7 @@ export interface PmsAccess {
   canEdit: boolean;
   canFinancial: boolean;
   canRental: boolean;
-  /** Payment status / proof (mig 090 rental-payment pill). */
   canPayment: boolean;
-  /** Agreement / quotation / security deposit (WF_SENSITIVE). */
   canSensitive: boolean;
   /** Setup & Dismantle (logistics crew-per-lorry editor + the "SETUP &
    *  DISMANTLE DOCUMENTS" checklist rows). Owner 2026-07-15: hidden from

@@ -24,7 +24,7 @@
 // ----------------------------------------------------------------------------
 
 export const DEFAULT_VARIANCE_QTY_LIMIT = 5;
-export const DEFAULT_VARIANCE_VALUE_LIMIT_SEN = 50_000; // RM500
+export const DEFAULT_VARIANCE_VALUE_LIMIT_SEN = 50_000;
 
 export type VarianceThresholds = {
   qtyLimit: number;
@@ -55,9 +55,7 @@ export function parseVarianceThresholds(
 
 export type VarianceLine = {
   itemCode: string;
-  /** SIGNED qty delta this line will post (counted − live). */
   adjustment: number;
-  /** Best-known unit cost in SEN, or null when no basis exists (value rule skipped). */
   unitCostSen: number | null;
 };
 

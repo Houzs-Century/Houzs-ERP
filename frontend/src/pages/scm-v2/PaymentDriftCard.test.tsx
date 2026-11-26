@@ -1,11 +1,3 @@
-/* Self-check's row for a payment that reached the ledger and then stopped
-   agreeing with it, in the owner's redesign (batch 6 §3). Pinned: a clean
-   answer over ZERO entries must not borrow the words of a clean answer over
-   four thousand — "nothing to compare" is a different statement from "all of
-   them agree", and the row that says the second one over an empty ledger is
-   telling the owner he is safe when nobody has checked anything. Also pinned:
-   both sides of every disagreement are on screen, so the difference can be
-   read without opening the entry; and the row offers no fix. */
 
 import { render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';

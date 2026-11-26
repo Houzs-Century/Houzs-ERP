@@ -1,36 +1,14 @@
-// Vendored from apps/backend/src/lib/delivery-planning-regions-queries.ts —
-// Delivery Planning Regions CONFIG hooks for the owner-maintained region master
-// + the per-state → region(s) multi-mapping that drives the Delivery Planning
-// board's tabs (migration 0053 / route delivery-planning-regions.ts).
-//
-// Two surfaces:
-//   • the region MASTER (delivery_planning_regions) — code / name / sortOrder /
-//     active, with create / patch / delete. Delete surfaces a 409 region_in_use
-//     when a state still maps to it.
-//   • the per-STATE mapping (state_delivery_regions) — a state (keyed by NAME +
-//     country) maps to MANY region codes. Read the full map for the editor;
-//     PUT replaces ONE state's set.
-//
-// The API emits camelCase already (the route shapes rows out), but we dual-read
-// camelCase ?? snake_case where the pg driver might surface either.
-//
-// HOUZS VENDOR NOTE: the source `import { supabase } from './supabase'` was
-// imported but NEVER referenced (all calls go through authedFetch → /api/scm);
-// it is DROPPED exactly as in the other vendored query slices. Everything else
-// is copied verbatim.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LOOKUP_CACHE } from './lookup-cache';
 import { authedFetch } from './authed-fetch';
 import { writeFailed } from './mutation-error';
 
-/* ── Region master ──────────────────────────────────────────────────────── */
 
 export type RegionMasterRow = {
   id: string;
   code: string;
   name: string;
-  // The route shapes these out camelCase; dual-read in case the pg path leaks snake_case.
   sortOrder?: number;
   sort_order?: number;
   active: boolean;
@@ -80,7 +58,6 @@ export function useUpdateDeliveryPlanningRegion() {
       authedFetch<{ region: RegionMasterRow }>(`/delivery-planning-regions/${id}`, {
         method: 'PATCH', body: JSON.stringify(body),
       }),
-    /* A renamed code changes which regions the state mapping points at, so refresh both. */
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: REGIONS_KEY });
       void qc.invalidateQueries({ queryKey: STATES_KEY });
@@ -101,7 +78,6 @@ export function useDeleteDeliveryPlanningRegion() {
   });
 }
 
-/* ── Per-state → region(s) mapping ──────────────────────────────────────── */
 
 export type StateRegions = {
   stateKey: string;

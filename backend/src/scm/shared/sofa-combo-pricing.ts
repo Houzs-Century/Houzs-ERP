@@ -1,42 +1,3 @@
-// ----------------------------------------------------------------------------
-// sofa-combo-pricing — pure lookup function for Sofa Combo Pricing.
-//
-// Given a SO/POS line about to be priced — (baseModel, modules array,
-// customerId, fabricTier, height) — pick the best-matching combo row from
-// a pre-fetched list and return the height-tier price, or null when no
-// combo applies (caller should fall through to per-Model compartment
-// pricing).
-//
-// OR-set per slot + SUBSET coverage (Commander 2026-05-28, Hookka-style 1:1):
-// A combo is an ORDERED list of SLOTS; each SLOT is a SET of alternative
-// module codes joined by OR. e.g. combo "2+L" =
-//   [ ['2A(LHF)','2A(RHF)'], ['L(LHF)','L(RHF)'] ]
-// A built sofa MATCHES the combo iff every SLOT can be COVERED by a DISTINCT
-// built module whose code is in that slot's OR-set (one built module consumed
-// per slot). The built module count may EXCEED the slot count — extra modules
-// beyond the matched subset are allowed and stay at full master price; they
-// do NOT get folded into the combo. This mirrors HOOKKA's `findComboSubset`
-// (src/pages/sales/create.tsx ~L1296): greedy first-match per slot, extras
-// ride at à-la-carte. Order-independent: matching ignores layout order.
-//
-// Pricing application (HOOKKA parity): the matched SUBSET's à-la-carte sum
-// (subsetSum) is compared to the combo's pricesByHeight[height] (comboTotal);
-// the combo price replaces the subset's à-la-carte ONLY when it is strictly
-// cheaper (subsetSum − comboTotal > 0). Extras always price at full. The
-// caller owns the à-la-carte numbers, so the cheaper-guard lives caller-side
-// (groupPrice); this module returns the matched subset + comboTotal.
-//
-// Scope precedence (high → low):
-//   1. customer-specific row matching (baseModel, slot-set, tier)
-//   2. customer = null row matching the same
-// Within a scope, the row with the LATEST effective_from on/before today
-// wins; equal effective_from falls to newest created_at, then id (both
-// descending) so duplicates resolve identically everywhere.
-// Soft-deleted rows (deleted_at != null) never match.
-//
-// Tier match: row.tier === null matches any input tier (commander rarely
-// uses this — most combos are tier-specific).
-// ----------------------------------------------------------------------------
 
 export type SofaPriceTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4';
 
@@ -66,9 +27,7 @@ export interface ComboBuildArgs {
 export interface SofaComboRow {
   id: string;
   baseModel: string;
-  /** Ordered slots; each slot = OR-set of alternative module codes. */
   modules: ComboSlots;
-  /** Required pieces, included in pricesByHeight. Absent = modules only. */
   accessories?: SofaComboAccessory[];
   tier: SofaPriceTier | null;
   customerId: string | null;
@@ -78,34 +37,21 @@ export interface SofaComboRow {
    *  instead of `pricesByHeight`. Optional: only the selling path carries it. */
   pwpPricesByHeight?: Record<string, number | null>;
   label?: string | null;
-  effectiveFrom: string;        // ISO date 'YYYY-MM-DD'
-  /** Row creation timestamp (ISO). Tie-break when two rows share the same
-   *  scope AND effectiveFrom: the newest row wins — the same rule the admin
-   *  list (GET /sofa-combos) uses to decide which duplicate it displays, so
-   *  the engine always charges the price the admin sees. Optional: legacy
-   *  snapshots without it lose ties to rows that carry one. */
+  effectiveFrom: string;
   createdAt?: string;
   deletedAt?: string | null;
-  /** Default Free Gift (migration 0170, D9) — raw jsonb [{giftProductId, qty,
-   *  campaignName?}]. When a cart's sofa build matches this combo, the combo is a
-   *  trigger granting these accessory gifts. SELECTING/passthrough only — the
-   *  pricing engine never reads it; the SO-create handler parses it via
-   *  parseDefaultFreeGifts to build the free-gift trigger map. Optional: most
-   *  combos / legacy snapshots carry none. */
   defaultFreeGifts?: unknown;
 }
 
 export interface PickComboArgs {
   baseModel: string;
-  /** The BUILT sofa's flat list of module codes (one per laid-out cell). */
   modules: string[];
-  /** Parallel to modules; required to bind a piece to a matched module. */
   cellIds?: string[];
   accessories?: SofaPricedAccessory[];
   customerId: string | null;
   tier: SofaPriceTier;
-  height: string;               // '24' | '28' | '30' | '32' | '35'
-  asOf?: string;                // ISO date; defaults to today
+  height: string;
+  asOf?: string;
 }
 
 /** Merge a combo's SELLING prices over its COST prices, per height. The result
@@ -202,7 +148,6 @@ export function canonicalizeComboModulesForStorage(
   input: unknown,
 ): ComboSlots | null {
   if (!Array.isArray(input)) return null;
-  // Detect the legacy flat shape (string[]) and wrap each code to a 1-slot.
   const groups: unknown[] =
     input.length > 0 && typeof input[0] === 'string'
       ? input.map((v) => [v])
@@ -258,7 +203,7 @@ export function canonicalizeLayoutModulesForStorage(
     cleaned.push(inner);
   }
   if (cleaned.length === 0) return null;
-  return cleaned; // ← no slot sort: slot order = built layout position
+  return cleaned;
 }
 
 /**
@@ -299,7 +244,6 @@ export function comboAccessoriesKey(input?: readonly SofaComboAccessory[] | null
   return JSON.stringify(normalizeComboAccessories(input));
 }
 
-/** True iff two slot-sets are equal ignoring slot order + intra-slot order. */
 function slotsEqual(
   a: readonly (string | readonly string[])[],
   b: readonly (string | readonly string[])[],
@@ -376,20 +320,16 @@ export function matchComboSubset(
 ): number[] | null {
   const slots = normalizeComboModules(rawSlots);
   const mods = built.map((m) => m.trim());
-  if (slots.length === 0) return null;            // empty combo never applies
-  if (mods.length < slots.length) return null;    // not enough modules to cover
+  if (slots.length === 0) return null;
+  if (mods.length < slots.length) return null;
 
-  // adjacency: for each SLOT, which built-module indices can fill it.
   const slotSets = slots.map((s) => new Set(s));
   const slotCanTake: number[][] = slots.map((_, j) =>
     mods.map((_m, i) => i).filter((i) => mods[i] !== '' && slotSets[j]!.has(mods[i]!)),
   );
 
-  // Quick reject: every slot must have at least one candidate built module.
   if (slotCanTake.some((opts) => opts.length === 0)) return null;
 
-  // Kuhn's algorithm, oriented slot → built module. modToSlot[i] = slot the
-  // built module at index i is assigned to (-1 = free).
   const modToSlot = new Array<number>(mods.length).fill(-1);
   const assignSlot = (j: number, seen: boolean[]): boolean => {
     for (const i of slotCanTake[j]!) {
@@ -405,11 +345,10 @@ export function matchComboSubset(
 
   for (let j = 0; j < slots.length; j++) {
     if (!assignSlot(j, new Array<boolean>(mods.length).fill(false))) {
-      return null; // a slot couldn't be covered → combo doesn't apply
+      return null;
     }
   }
 
-  // Collect the built-module indices that ended up assigned to a slot.
   const subset: number[] = [];
   for (let i = 0; i < mods.length; i++) if (modToSlot[i] !== -1) subset.push(i);
   subset.sort((a, b) => a - b);
@@ -422,21 +361,12 @@ const todayIso = (): string => todayMyt();
 
 /** Result of a successful subset combo match. */
 export interface ComboMatch {
-  /** The winning combo row. */
   row: SofaComboRow;
-  /** Combo total (centi) for the requested height. Always a finite number. */
   comboPriceSen: number;
-  /** Sorted BUILT-module indices the combo consumed (one per slot). Built
-   *  modules NOT in this list are extras priced at full master price. */
   matchedIndices: number[];
-  /** Pieces already covered by comboPriceSen; callers must not charge again. */
   matchedAccessoryIds: string[];
 }
 
-/** Match the module subset and the pieces attached to that same subset.
- * A repeated module may let several subsets cover the slots; if the usual
- * assignment lacks the required pieces, consider the other valid subsets.
- * Physical builds are small (normally fewer than eight compartments). */
 function matchComboComposition(
   built: string[],
   slots: ComboSlots,
@@ -468,8 +398,6 @@ function matchComboComposition(
 
   const allowed = new Set(slots.flat());
   const eligible = built.flatMap((code, i) => allowed.has(code) ? [i] : []);
-  // A requirement not present anywhere in the candidate modules cannot be
-  // rescued by a different assignment; avoid searching those subsets.
   if (!piecesFor(eligible)) return null;
   const selected: number[] = [];
   const visit = (start: number): { subset: number[]; accessoryIds: string[] } | null => {
@@ -529,11 +457,6 @@ export function pickComboMatch(
   const asOf = args.asOf ?? todayIso();
   const built = args.modules.map((m) => m.trim());
 
-  // 1. Filter to candidate rows + compute each one's matched subset. Same
-  //    base model (empty args.baseModel = wildcard, used by POS until the
-  //    retail↔mfg base_model bridge surfaces), tier matches (or row tier
-  //    null), effective on/before asOf, not soft-deleted, AND the row's slots
-  //    can be covered by a subset of the built modules (extras allowed).
   const wildcardBaseModel = !args.baseModel;
   const candidates: Array<{ row: SofaComboRow; subset: number[]; accessoryIds: string[] }> = [];
   for (const r of rows) {
@@ -551,7 +474,6 @@ export function pickComboMatch(
   }
   if (candidates.length === 0) return null;
 
-  // 2. Rank by scope priority then newest effectiveFrom (HOOKKA priorityOf).
   const priorityOf = (r: SofaComboRow): number => {
     const isCustomer = !!args.customerId && r.customerId === args.customerId;
     const tierMatch = r.tier === args.tier;
@@ -559,24 +481,16 @@ export function pickComboMatch(
     if (isCustomer && r.tier === null) return 3;
     if (r.customerId === null && tierMatch) return 2;
     if (r.customerId === null && r.tier === null) return 1;
-    return 0; // customer-mismatched rows can't win (shouldn't appear post-filter)
+    return 0;
   };
-  // Newest-first string compare; '' (unknown createdAt) loses to any value.
   const desc = (a: string, b: string): number => (a < b ? 1 : a > b ? -1 : 0);
   const ranked = candidates
     .map((c) => ({ ...c, p: priorityOf(c.row) }))
     .filter((c) => c.p > 0)
     .sort((a, b) =>
       b.p - a.p ||
-      // Prefer the fullest matching package. A newer bare-sofa or two-piece
-      // rule must not hide the saved four-piece package on a complete build.
       b.accessoryIds.length - a.accessoryIds.length ||
       desc(a.row.effectiveFrom, b.row.effectiveFrom) ||
-      // Same scope + same effectiveFrom (duplicate rows): newest createdAt
-      // wins — identical to the GET /sofa-combos "currently active" reducer,
-      // so the engine and the admin UI agree on which duplicate is live.
-      // Final id compare makes the pick deterministic even for exact twins,
-      // instead of depending on DB/cache row order (the 2026-07-12 drift).
       desc(a.row.createdAt ?? '', b.row.createdAt ?? '') ||
       desc(a.row.id, b.row.id),
     );
@@ -687,7 +601,6 @@ export function spreadComboTotal(
 
   let out: number[];
   if (sum <= 0) {
-    // No base-cost signal → split as evenly as possible.
     const each = Math.floor(total / n);
     out = baseCostsSen.map(() => each);
   } else {
@@ -695,8 +608,6 @@ export function spreadComboTotal(
     out = baseCostsSen.map((c) => Math.max(0, Math.floor(Math.max(0, c) * ratio)));
   }
 
-  // Rebalance the rounding residual into the highest base-cost line so the sum
-  // is exactly comboTotalSen (HOOKKA pushes the residual into the dearest line).
   const newSum = out.reduce((s, c) => s + c, 0);
   const residual = total - newSum;
   if (residual !== 0) {

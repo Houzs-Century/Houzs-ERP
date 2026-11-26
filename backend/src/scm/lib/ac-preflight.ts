@@ -244,10 +244,6 @@ export function acNotSentProblems(e: unknown, docKind: AcDocKind = 'document'): 
   const saved = `Saved. This ${docKind} is in the ERP, but it has NOT reached the accounts`;
 
   if (e instanceof ItemCodeError) {
-    /* EVERY failing line, not the first. The composer's own class was built
-       this way for the same reason (autocount-item-code.ts:294-304): an
-       operator who fixes one and re-saves into the next is how a divergence
-       outlives everyone who remembers it. */
     return e.failures.map((f) => ({
       code: AC_NOT_SENT,
       line: f.erpItemCode,
@@ -271,10 +267,6 @@ export function acNotSentProblems(e: unknown, docKind: AcDocKind = 'document'): 
   }
 
   if (e instanceof MissingAgentError) {
-    /* Reachable here only on a path the confirm gate does not cover — the gate
-       refuses this shape before the save wherever it runs. Kept because a
-       refusal that has no sentence is the defect this module exists to close,
-       not because this line is expected to fire. */
     return problem(
       `${saved}: it names no salesperson the accounts recognise. Assign a salesperson on the `
       + 'order, then re-raise it.',
@@ -310,11 +302,6 @@ export function acNotSentProblems(e: unknown, docKind: AcDocKind = 'document'): 
   }
 
   if (e instanceof AcSoToPoAlignmentError) {
-    /* The operator's version of "DtlKeys and Details are matched by position".
-       They cannot act on index alignment, and they should not have to: what
-       they can act on is that this order was raised FROM a sales order whose
-       sofa build the accounts already hold folded, while the ERP's record of
-       that is only half there. */
     return problem(
       `${saved}: it was raised from a sales order, and one of its sofa builds does not line up `
       + 'with how the accounts already hold that build — sending it would put the supplier cost '
@@ -338,7 +325,5 @@ export function acNotSentProblems(e: unknown, docKind: AcDocKind = 'document'): 
     );
   }
 
-  /* Anything else is not a refusal the composer named, and this module does not
-     guess at one. autocount-outbox.ts's own handler takes the same view. */
   return [];
 }

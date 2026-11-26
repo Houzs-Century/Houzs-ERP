@@ -29,7 +29,6 @@ import {
 import { ReportTool } from './reportParts';
 import s from './ReportShell.module.css';
 
-/** What each view reads, said on hover. */
 const VIEW_TITLE: Record<PnlView, string> = {
   actual: 'Actual: by sales invoice, the books',
   performance: 'Performance: by sales order (SO date), the expenses as booked',
@@ -37,18 +36,13 @@ const VIEW_TITLE: Record<PnlView, string> = {
 };
 const LATER = 'Comes later: this P&L’s Forecast is not built yet';
 
-/** The address bits the Department P&L keeps for itself, carried between its two views. */
 const NOT_CARRIED = new Set(['tab', 'dbasis', 'from', 'to']);
 
 export function PnlPicker({ family, current, selected, choices, range }: {
   family: PnlFamily;
-  /** The view this page is; null on the side-by-side table. */
   current: PnlChoice | null;
-  /** The views shown now: this page's, or the side-by-side table's. */
   selected: readonly PnlView[];
-  /** This P&L's views the reader may open, in the picker's order. */
   choices: readonly PnlChoice[];
-  /** The range the views carry; null opens each on its own dates. */
   range: ReportRange | null;
 }) {
   const [params] = useSearchParams();
@@ -67,7 +61,6 @@ export function PnlPicker({ family, current, selected, choices, range }: {
     for (const [k, v] of new URLSearchParams(search)) if (k !== 'tab') q.set(k, v);
     return `${path}?${q.toString()}`;
   };
-  /** Where a set of views opens: one, its own page; two or three, the side-by-side table. */
   const openOf = (next: readonly PnlView[]): string | null => {
     if (next.length === 0) return null;
     if (next.length === 1) {
@@ -78,12 +71,10 @@ export function PnlPicker({ family, current, selected, choices, range }: {
     const [path, search = ''] = reportHref(item, range).split('?');
     const q = new URLSearchParams({ tab: item.tab ?? PNL_SIDE_BY_SIDE.report, views: next.join(',') });
     for (const [k, v] of new URLSearchParams(search)) if (k !== 'tab') q.set(k, v);
-    /* On the table, By month stays as the views change. */
     const by = current == null ? params.get(PNL_BY_MONTH.param) : null;
     if (by === PNL_BY_MONTH.value) q.set(PNL_BY_MONTH.param, by);
     return `${path}?${q.toString()}`;
   };
-  /* Each view: the reader's where they may open it, greyed where this P&L has none yet. */
   const views = PNL_VIEWS.flatMap((v): Array<{ id: PnlView; label: string; choice: PnlChoice | null }> => {
     const choice = choices.find((c) => c.view === v.id);
     if (choice) return [{ ...v, choice }];
@@ -91,7 +82,6 @@ export function PnlPicker({ family, current, selected, choices, range }: {
     return built ? [] : [{ ...v, choice: null }];
   });
 
-  /* What is open, as text: the view kept in view moves only when it changes. */
   const openKey = `${current?.report ?? ''}|${current?.view ?? ''}|${selected.join(',')}`;
   useLayoutEffect(() => {
     for (const box of nav.current?.querySelectorAll<HTMLElement>('[data-track]') ?? []) {

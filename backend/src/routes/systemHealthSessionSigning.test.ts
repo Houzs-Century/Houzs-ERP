@@ -1,23 +1,3 @@
-/* THE PLACEHOLDER MUST READ AS OFF.
- *
- * `/live` now reports whether signed sessions are switched on, because that one
- * secret decides whether every API request first pays for two joined
- * authorization reads (`getUserBySession` — a six-table join plus a four-branch
- * UNION) before the route body runs. Unset, cheap endpoints like /api/presence
- * and /api/branding carry that cost even though their own answers are cached.
- *
- * The failure this file exists to stop is the tempting simplification:
- * `configured: !!c.env.SESSION_SIGNING_KEY`. That reads TRUE for a short
- * placeholder — while `sessionSigningSecret` rejects anything under 16
- * characters, so at RUNTIME the feature is still off. The panel would then say
- * "On" for a system that is paying the full cost, which is worse than no panel:
- * it closes the question with the wrong answer.
- *
- * So the suite drives the endpoint across the three states that matter — unset,
- * too short, real — and asserts the reported flag matches what the auth
- * middleware would actually do. It also pins that the SECRET ITSELF never
- * appears in the response.
- */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 
@@ -32,9 +12,6 @@ vi.mock('../db/supabase', () => ({
 
 const health = (await import('./systemHealth')).default;
 
-/* Only what /live touches. The DB stub answers every probe with a row shaped
-   loosely enough for the counts block; nothing here is under test except the
-   one flag. */
 function fakeEnv(signingKey: string | undefined) {
   const stmt = {
     bind: () => stmt,
@@ -71,8 +48,6 @@ describe('/live — signed sessions are reported the way the middleware reads th
   });
 
   it('reports OFF for a placeholder too short to sign with', async () => {
-    /* 15 characters — one under the floor `sessionSigningSecret` enforces. A
-       truthiness test would call this On; the running system would not. */
     const { body } = await live('x'.repeat(15));
     expect(body.sessionSigning).toEqual({ configured: false });
   });

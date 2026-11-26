@@ -3,10 +3,6 @@ import { describe, expect, it } from "vitest";
 import { dayByEmployee, punchOf } from "./attendanceToday";
 import type { AttendanceDay, AttendanceResponse } from "./hrApi";
 
-/* punchOf turns one attendance day into the four states the Overview and
- * Employee Master pages colour by. There is no LATE status, so a present punch
- * with lateMin > 0 is "late"; the four approved-leave statuses are "leave";
- * absent or no record is "not in". */
 function day(status: AttendanceDay["status"], lateMin: number, clock: string | null): AttendanceDay {
   return {
     id: 1,

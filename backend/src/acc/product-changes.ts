@@ -51,9 +51,7 @@ export type ProductChangeRow = {
   docNo: string;
   soDate: string | null;
   customer: string | null;
-  /** Who sold the order: the staff name, else the agent text, else Unassigned. */
   salesperson: string;
-  /** The order came over from AutoCount at the cutover (`soIsMigratedShape`), not opened in the ERP. */
   imported: boolean;
   changeDay: string;
   changedAt: string | null;
@@ -70,18 +68,14 @@ export type ProductChangeRow = {
   sellingDeltaSen: number;
   costDeltaSen: number;
   marginDeltaSen: number;
-  /** The selling change covered the cost change (the margin did not fall). */
   covered: boolean;
   shortfallSen: number;
   lines: ChangedLine[];
-  /** Rebuilt from the order's history (the months before the record went live). */
   rebuilt: boolean;
-  /** A changed line's cost was not in that history and was taken from the product's own cost. */
   costEstimated: boolean;
 };
 
 export type ProductChangesData = {
-  /** The first month read (`YYYY-MM`). */
   month: string;
   from: string;
   to: string;

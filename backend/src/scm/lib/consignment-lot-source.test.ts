@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isConsignmentLotSource } from './inventory-movements';
 
-/* Consignment stock must be identified by the lot's SOURCE (it was fed by a
-   Purchase Consignment Receive), NOT by the warehouse's is_consignment flag — a
-   PCR can be mis-posted into a normal warehouse, so the flag leaks consignment
-   into owned VALUE (BUG-HISTORY 2026-07-25, HIGH). */
 describe('isConsignmentLotSource', () => {
   it('flags the first PC receive lot by source_doc_type PC_RECEIVE', () => {
     expect(isConsignmentLotSource('PC_RECEIVE', '2990-PCR-2606-001')).toBe(true);
@@ -16,8 +12,6 @@ describe('isConsignmentLotSource', () => {
   });
 
   it('flags a PC-receive DELTA top-up written as STOCK_TRANSFER — it keeps the PCR number', () => {
-    // resyncReceiveInventory books later increases as STOCK_TRANSFER IN but with
-    // source_doc_no = the receive number; the type check alone would miss these.
     expect(isConsignmentLotSource('STOCK_TRANSFER', '2990-PCR-2606-002')).toBe(true);
   });
 
@@ -34,8 +28,6 @@ describe('isConsignmentLotSource', () => {
   });
 
   it('does NOT match the PCR token inside a sibling consignment doc type', () => {
-    // PCO = Purchase Consignment Order, PCT = Purchase Consignment Return — a
-    // boundary-anchored PCR- must not fire on either (cf. BUG-HISTORY R7).
     expect(isConsignmentLotSource('STOCK_TRANSFER', '2990-PCO-2606-001')).toBe(false);
     expect(isConsignmentLotSource('STOCK_TRANSFER', '2990-PCT-2606-001')).toBe(false);
   });
@@ -46,10 +38,6 @@ describe('isConsignmentLotSource', () => {
   });
 });
 
-/* The drawer's fix, in miniature: owned VALUE excludes consignment lots even when
-   they sit in a NORMAL warehouse. Reproduces the owner's BOOQIT-CNR case — 3
-   units, 2 from PC receives + 1 from a GRN — proving the 2 consignment units drop
-   out of owned value while their quantity is still surfaced separately. */
 describe('owned-value aggregation excludes consignment lots (drawer rule)', () => {
   type Lot = { qty_remaining: number; unit_cost_sen: number; source_doc_type: string; source_doc_no: string };
   const lots: Lot[] = [
@@ -64,7 +52,7 @@ describe('owned-value aggregation excludes consignment lots (drawer rule)', () =
   it('counts only the GRN lot in owned value', () => {
     const ownedValue = ownedLots.reduce((s, l) => s + l.qty_remaining * l.unit_cost_sen, 0);
     expect(ownedLots).toHaveLength(1);
-    expect(ownedValue).toBe(100_000); // NOT 256_419 — the two PCR lots are excluded
+    expect(ownedValue).toBe(100_000);
   });
 
   it('still surfaces the consignment quantity separately', () => {

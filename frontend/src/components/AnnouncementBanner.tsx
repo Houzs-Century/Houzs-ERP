@@ -7,14 +7,9 @@ import {
 } from "./useAnnouncementBanner";
 import { CATEGORY_META, categoryOf } from "./announcementCategory";
 
-// Lazy so the media gallery (+ MediaLightbox + its icons) stays OUT of the
-// initial bundle — the banner mounts at the app root, but most notices are
-// text-only, so the media code only loads when a notice actually carries media.
 const AnnouncementMedia = lazy(() =>
   import("./AnnouncementMedia").then((m) => ({ default: m.AnnouncementMedia })),
 );
-// Same reasoning for the rich-body renderer: its canonicaliser is ~4 KB that
-// only a formatted notice needs, and the banner is in the initial bundle.
 const AnnouncementRichBody = lazy(() =>
   import("./AnnouncementRichBody").then((m) => ({ default: m.AnnouncementRichBody })),
 );
@@ -64,10 +59,6 @@ export function AnnouncementBanner() {
       role="status"
       aria-live="polite"
     >
-      {/* Backdrop — click postpones for this session (re-surfaces next visit),
-          never acks. A dedicated button keeps it keyboard-reachable. Once the
-          postponement is spent every dismiss affordance goes away, so the
-          backdrop degrades to inert dimming. */}
       {mustAcknowledge ? (
         <div className="absolute inset-0 bg-ink/25 backdrop-blur-[1px]" />
       ) : (
@@ -78,14 +69,12 @@ export function AnnouncementBanner() {
           className="absolute inset-0 cursor-default bg-ink/25 backdrop-blur-[1px]"
         />
       )}
-      {/* Centred notice card */}
       <div
         className={cn(
           "relative w-full max-w-[520px] overflow-hidden rounded-2xl border bg-surface shadow-slab",
           meta.borderCls,
         )}
       >
-        {/* colour rail across the top edge */}
         <span className={cn("absolute left-0 top-0 h-[3px] w-full", meta.railCls)} />
         <div className="max-h-[85vh] overflow-y-auto p-[22px]">
           <div className="mb-2.5 flex items-center gap-2.5">
@@ -124,11 +113,6 @@ export function AnnouncementBanner() {
           <div className="text-[16px] font-[680] leading-[1.35] text-ink">
             {current.title}
           </div>
-          {/* The banner sits in the INITIAL bundle (mounted at the app root),
-              so the rich renderer + its canonicaliser load lazily and only for
-              a notice that actually carries formatting; a plain notice renders
-              inline exactly as it always has. While the chunk loads (and if it
-              ever fails) the plain-text shadow stands in — never a blank. */}
           {current.bodyHtml ? (
             <LazySlot
               resetKey={`ann-rich:${current.id}`}
@@ -152,12 +136,6 @@ export function AnnouncementBanner() {
               </p>
             )
           )}
-          {/* Scoped, not bare: App.tsx renders <AnnouncementBanner /> ABOVE the
-              RouteCrashBoundary that wraps the route table, so a failed media
-              chunk here had no boundary between it and main.tsx's unkeyed
-              top-level one — it took the whole app down over whatever form the
-              operator had open. Keyed on the notice id: acknowledging or
-              skipping to the next notice clears it. */}
           {current.attachments && current.attachments.length > 0 && (
             <LazySlot resetKey={`ann-media:${current.id}`} fallback={null}>
               <AnnouncementMedia

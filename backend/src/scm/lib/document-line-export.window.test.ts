@@ -1,6 +1,3 @@
-// readExportWindow — the `?offset=&limit=` of a windowed list export. A window
-// larger than EXPORT_WINDOW would put one request back over the Worker
-// subrequest cap, so no query string can ask for one.
 import { describe, expect, it } from 'vitest';
 import { EXPORT_WINDOW, readExportWindow } from './document-line-export';
 

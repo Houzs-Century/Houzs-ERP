@@ -12,15 +12,10 @@ export type StopLite = { id: string; stop_no: number };
  *  actually changes trip (the moved stop on a cross-trip move). */
 export type StopUpdate = { id: string; stop_no: number; trip_id?: string };
 
-/** Order a stop list by stop_no (stable on ties by id) so a messy or compacted
- *  input renumbers deterministically. */
 function ordered(stops: readonly StopLite[]): StopLite[] {
   return stops.slice().sort((a, b) => a.stop_no - b.stop_no || a.id.localeCompare(b.id));
 }
 
-/** Renumber an ordered id list to 1..n. Emit a row only when something must
- *  change: the moved stop always (it carries its new trip_id on a cross-trip
- *  move), every other stop only when its number actually shifts. */
 function renumber(
   ids: readonly string[],
   priorNoById: Map<string, number>,
@@ -53,7 +48,7 @@ export function planStopMove(args: {
 }): StopUpdate[] {
   const { stopId, sourceTripId, targetTripId, position } = args;
   const src = ordered(args.sourceStops);
-  if (!src.some((s) => s.id === stopId)) return []; // moved stop not on its trip — nothing to do
+  if (!src.some((s) => s.id === stopId)) return [];
 
   if (sourceTripId === targetTripId) {
     const without = src.filter((s) => s.id !== stopId);
@@ -62,7 +57,6 @@ export function planStopMove(args: {
     return renumber(ids, new Map(src.map((s) => [s.id, s.stop_no])), null);
   }
 
-  // Cross-trip: source loses the stop and closes up; target gains it at position.
   const srcWithout = src.filter((s) => s.id !== stopId);
   const srcUpdates = renumber(srcWithout.map((s) => s.id), new Map(src.map((s) => [s.id, s.stop_no])), null);
 

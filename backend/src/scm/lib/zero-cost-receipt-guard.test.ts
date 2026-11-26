@@ -1,11 +1,3 @@
-/* The zero-price receipt gate. Route-level coverage is not possible in this
-   repo's harness (scm rides Supabase Postgres, the harness rebuilds only the D1
-   side), so these pin the pure rule the post chokepoint delegates to, plus the
-   chokepoint helper driven through a minimal fake PostgREST client.
-
-   Every test here fails if the guard is deleted: findUncostedReceiptLines is
-   the only thing standing between a zero-priced PO line and a zero-cost FIFO
-   lot, and the "refuses" cases assert a non-empty result. */
 import { describe, expect, test } from 'vitest';
 import {
   findUncostedReceiptLines,
@@ -39,8 +31,6 @@ describe('findUncostedReceiptLines — the rule', () => {
   });
 
   test('allows a zero-priced line whose SKU has never been bought at a price — GWP / demo / display', () => {
-    // The discriminator the owner confirmed and backfill-zero-cost-lots.mjs
-    // uses: no purchase price anywhere means zero really is the cost.
     expect(findUncostedReceiptLines([line({ itemCode: 'GN-VM PILLOW-DEMO' })], new Map())).toEqual([]);
     expect(
       findUncostedReceiptLines(
@@ -57,8 +47,6 @@ describe('findUncostedReceiptLines — the rule', () => {
   });
 
   test('a line rescued by allocated freight is priced, so it is not an offender', () => {
-    // postGrnAndRollup passes the LANDED cost (base + freight share), so a line
-    // whose supplier price is 0 but which carries freight is genuinely costed.
     expect(
       findUncostedReceiptLines([line({ unitCostSen: 1250 })], new Map([['TRION (A) (HB STR)-(K)', 87000]])),
     ).toEqual([]);
@@ -112,8 +100,6 @@ describe('zeroCostReceiptResponse', () => {
   });
 
   test('tells the operator both ways out and names the field that carries one', () => {
-    // A refusal with no route out is what trains people to type a fake price,
-    // which is the one outcome strictly worse than the recorded zero.
     const body = zeroCostReceiptResponse([
       { id: 'a', itemCode: 'REGAL (A)-(Q)', qtyAccepted: 2, knownUnitCostSen: 70000 },
     ]);
@@ -137,8 +123,6 @@ describe('zeroCostAckColumns — what the write paths persist', () => {
   });
 
   test('removing the tick clears the name, the time and the reason with it', () => {
-    // A stale acknowledger left on an un-ticked line is an audit trail that
-    // lies — worse than an empty one, because it reads as a real decision.
     expect(zeroCostAckColumns({ zeroCostAck: false }, 'user-7', NOW)).toEqual({
       zero_cost_ack: false,
       zero_cost_ack_by: null,
@@ -148,8 +132,6 @@ describe('zeroCostAckColumns — what the write paths persist', () => {
   });
 
   test('a request that never mentions the ack changes none of its columns', () => {
-    // The PATCH path spreads this into `updates`; emitting a false here would
-    // silently un-waive a line whose operator only edited the quantity.
     expect(zeroCostAckColumns({}, 'user-7', NOW)).toEqual({});
   });
 
@@ -166,14 +148,11 @@ describe('zeroCostAckColumns — what the write paths persist', () => {
   });
 
   test('the columns it emits are exactly the ones the gate and the read use', () => {
-    // Guards the whitelist: a column added here but not to migration 0280 (or
-    // to ITEM) fails the insert at runtime, where nothing else would catch it.
     const cols = Object.keys(zeroCostAckColumns({ zeroCostAck: true, zeroCostReason: 'x' }, 'u', NOW)).sort();
     expect(cols).toEqual(['zero_cost_ack', 'zero_cost_ack_at', 'zero_cost_ack_by', 'zero_cost_reason']);
   });
 });
 
-/** Minimal chainable, awaitable PostgREST stand-in for the single lot read. */
 function fakeSb(lots: Array<Record<string, unknown>>, opts: { throwOnRead?: boolean } = {}) {
   class Q {
     rows: Array<Record<string, unknown>>;
@@ -185,7 +164,7 @@ function fakeSb(lots: Array<Record<string, unknown>>, opts: { throwOnRead?: bool
     limit() { return this; }
     range(from: number, to: number) { this.rows = this.rows.slice(from, to + 1); return this; }
     order(col: string, o?: { ascending: boolean }) {
-      if (!o) return this; // the id tie-break; these fixtures never tie on received_at
+      if (!o) return this;
       this.rows.sort((a, b) => (String(a[col]) < String(b[col]) ? 1 : -1) * (o.ascending ? -1 : 1));
       return this;
     }
@@ -206,9 +185,6 @@ const LOTS = [
 
 describe('loadKnownPurchaseCostSen', () => {
   test('takes the MOST RECENT priced lot, never the maximum', async () => {
-    // MAX would answer 99000 here. An audit measured MAX overstating 28 of 319
-    // AutoCount lines by RM14,244 because one invoice carries several builds of
-    // the same item code, so this resolver must not reach for it.
     const known = await loadKnownPurchaseCostSen(fakeSb(LOTS), ['TRION (A) (HB STR)-(K)'], 1);
     expect(known.get('TRION (A) (HB STR)-(K)')).toBe(87000);
   });
@@ -286,7 +262,6 @@ describe('the owner\'s ruling: a receipt SAVES without a price (2026-09-10)', ()
     expect(sb.store[0]).toMatchObject({
       id: 'a', zero_cost_ack: true, zero_cost_ack_by: null, zero_cost_reason: RECEIVED_WITH_NO_PRICE,
     });
-    /* The predicate the repair tooling needs: acknowledged, unclaimed. */
     expect(sb.store.every((x) => x.zero_cost_ack === true && x.zero_cost_ack_by === null)).toBe(true);
   });
 

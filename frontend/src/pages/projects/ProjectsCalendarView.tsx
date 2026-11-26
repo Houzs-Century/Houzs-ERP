@@ -41,15 +41,9 @@ const PROJECTS_CALENDAR_FILTER_KEYS = [
   "stage",
   "organizer",
   "month",
-  // 2026-05-08 — week view toggle. `mode=week` swaps the 6×7 month
-  // grid for a single 1×7 row anchored on `week` (Sunday ISO date).
   "mode",
   "week",
-  // 2026-05-15 — `section` replaces the legacy `stage` filter (the
-  // tasklist sections are the new stages). `stage` stays in the keys
-  // list so old bookmarks parse without throwing.
   "section",
-  // 2026-07-20 — free-text search (venue/organizer/brand/code/title).
   "q",
 ] as const;
 
@@ -66,12 +60,7 @@ export function ProjectsCalendarView() {
   const brand = params.get("brand") || "";
   const status = params.get("status") || "";
   const organizer = params.get("organizer") || "";
-  // 2026-07-20 — free-text search. Named `search` (not `q`) to avoid a
-  // collision with the useQuery result later in this component that already
-  // owns the identifier `q`. URL key stays "q" for a short, shareable URL.
   const search = params.get("q") || "";
-  // anchor lives in URL as `month=YYYY-MM` so a refresh / shared link
-  // lands on the same month.
   function patchParams(patch: Record<string, string>) {
     const next = new URLSearchParams(params);
     for (const [k, v] of Object.entries(patch)) {
@@ -85,9 +74,6 @@ export function ProjectsCalendarView() {
   const setOrganizer = (v: string) => patchParams({ organizer: v });
   const setSearch = (v: string) => patchParams({ q: v });
 
-  // showTasks / showHolidays are personal display prefs (checkbox toggles
-  // on the legend, not data filters), so they stay in localStorage per
-  // CLAUDE.md's URL-state convention.
   const [showTasks, setShowTasks] = useIdentityPreference(
     "projects:cal:showTasks",
     false,
@@ -107,20 +93,14 @@ export function ProjectsCalendarView() {
   const organizersQ = useQuery<{ data: { id: number; name: string }[] }>("/api/projects/organizers", () =>
     api.get("/api/projects/organizers")
   );
-  // Active template's sections, mirroring the list-view pill row.
   const sectionsListQ = useQuery<{ data: string[] }>("/api/projects/sections-distinct", () =>
     api.get("/api/projects/sections-distinct")
   );
-  // ?mode=week swaps the 6×7 month grid for a single 1×7 row anchored
-  // on `?week=YYYY-MM-DD` (Sunday). `?month=YYYY-MM` is the existing
-  // monthly anchor; both URL params persist via stickyFilters.
   const mode: CalendarMode =
     params.get("mode") === "week" ? "week" : "month";
   const monthStr = params.get("month") || "";
   const weekStartStr = params.get("week") || "";
 
-  // Stable across hover/popover renders: new Date objects here used to
-  // invalidate every downstream calendar projection on each mousemove.
   const calendarWindow = useMemo(
     () => buildCalendarWindow(mode, monthStr, weekStartStr),
     [mode, monthStr, weekStartStr],
@@ -129,7 +109,6 @@ export function ProjectsCalendarView() {
 
   const setAnchor = (next: Date) => {
     if (mode === "week") {
-      // Save the Monday ISO date.
       const yyyy = next.getUTCFullYear();
       const mm = String(next.getUTCMonth() + 1).padStart(2, "0");
       const dd = String(next.getUTCDate()).padStart(2, "0");
@@ -140,16 +119,7 @@ export function ProjectsCalendarView() {
       patchParams({ month: `${yyyy}-${mm}` });
     }
   };
-  // Day modal — opened by month-view "+N more" expanders to surface every
-  // project / task that lands on a single day without forcing a switch to
-  // week mode. Previously these expanders called expandToWeekForCell()
-  // which navigated the whole view; ops asked for a lighter overlay.
   const [dayModalIso, setDayModalIso] = useState<string | null>(null);
-  // Hover popover — replaces the native bar `title` tooltip with a
-  // styled card carrying the project's basic info (code, brand, venue,
-  // span, organizer, stage). Anchored to the cursor; cleared on leave.
-  // Mousemove can fire hundreds of times per second. Keep entry/exit immediate,
-  // but coalesce cursor-position updates to one React state update per frame.
   const barHoverState = useRafCoalescedHover<{
     project: CalendarProject;
     x: number;
@@ -181,10 +151,6 @@ export function ProjectsCalendarView() {
   );
   const leaveTaskHover = taskHoverState.leave;
 
-  // Wheel-over-grid navigates months (month mode). Refs keep the handler
-  // reading the latest anchor/setAnchor without re-binding the listener;
-  // a timestamp throttles to one month per gesture. Non-passive so we can
-  // preventDefault and stop the page scrolling under the cursor.
   const gridRef = useRef<HTMLDivElement>(null);
   const wheelTsRef = useRef(0);
   const anchorRef = useRef(anchor);
@@ -196,10 +162,6 @@ export function ProjectsCalendarView() {
     if (!el || mode !== "month") return;
     const onWheel = (e: WheelEvent) => {
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-      // Only flip months when scrolling over BLANK calendar space (e.g. the
-      // empty leading cells, or a day with no items). Over a project bar, task
-      // chip, or a "+N more" link the page scrolls normally — so Expand all can
-      // still be scrolled by dragging over its content. Works in both modes.
       const target = e.target as HTMLElement | null;
       if (target && target.closest(".cal-bar,[data-cal-content]")) return;
       /* Owner 2026-07-16 — never hijack the wheel while the page can still
@@ -231,10 +193,6 @@ export function ProjectsCalendarView() {
     return () => el.removeEventListener("wheel", onWheel);
   }, [mode]);
 
-  // Month grid fills from its top to the viewport bottom, so the 5–6 week
-  // rows share that height EQUALLY (uniform rows, no tiny empty week, no
-  // dead gap at the bottom). Re-measured on resize / month change since the
-  // grid's top is fixed by the header+toolbar+legend above it.
   const [availH, setAvailH] = useState<number | null>(null);
   useEffect(() => {
     if (mode !== "month") {
@@ -253,9 +211,6 @@ export function ProjectsCalendarView() {
   }, [mode, anchor]);
 
   const setMode = (next: "month" | "week") => {
-    // When flipping to week mode for the first time, snap the week
-    // anchor to the Monday of "today" so the user lands on the
-    // current week instead of an unrelated one.
     if (next === "week" && !weekStartStr) {
       const d = new Date(todayMyt() + "T00:00:00Z");
       d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
@@ -268,8 +223,6 @@ export function ProjectsCalendarView() {
     }
   };
 
-  // Window: month = 6 weeks (42 cells) from the first Monday on/before
-  // the 1st; week = 1 week (7 cells) from the week anchor.
   const q = useQuery<{ projects: CalendarProject[]; tasks: CalendarTask[] }>("/api/projects/calendar/events?from=:&to=:",
     () => api.get(`/api/projects/calendar/events?from=${fromStr}&to=${toStr}`),
     [fromStr, toStr]
@@ -320,11 +273,7 @@ export function ProjectsCalendarView() {
     renderedWeeks,
   } = calendarModel;
 
-  // Calendar header shows the full month name (owner request 2026-07):
-  // "November 2025", not "11/2025". Row/cell dates stay numeric elsewhere.
   const monthLabel = anchor.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
-  // Period label for the calendar header. Month → "April 2026"; week
-  // → "06 Apr – 12 Apr 2026" so the user knows the exact window.
   const periodLabel =
     mode === "week"
       ? (() => {
@@ -358,8 +307,6 @@ export function ProjectsCalendarView() {
     setFocusedId(m.id);
     setFlash((f) => ({ id: m.id, n: (f?.n ?? 0) + 1 }));
   };
-  // Enter in the search box = Next match; if the search is still settling,
-  // jump as soon as its result lands.
   const [enterPending, setEnterPending] = useState(false);
   useEffect(() => {
     if (!enterPending || searchState.loading) return;
@@ -379,32 +326,16 @@ export function ProjectsCalendarView() {
   }, [flash, allProjects]);
   const noMatches = searchState.result?.total === 0;
 
-  // Per-week lane-packing. Each project that overlaps a week becomes a
-  // single segment for that week (clipped to the visible Sun..Sat range)
-  // with a lane index. Segments are rendered as absolutely-positioned
-  // bars overlaid on the week row, so a multi-day project shows as ONE
-  // continuous bar from start to end with the project name on it — not
-  // a chain of per-cell pills. Bars wrap at week boundaries; the
-  // clipLeft/clipRight flags drive the rounded-corner + chevron hint.
-  // Layout constants for the per-week bar overlay. BAR_TOP_OFFSET puts the
-  // bars below the day-number row; week mode's pill header needs a bigger one.
   const BAR_H = CALENDAR_BAR_H;
   const LANE_TOTAL = CALENDAR_LANE_TOTAL;
   const BAR_TOP_OFFSET = mode === "week" ? 52 : 24;
-  // Compact month shows up to 3 project-event lanes per cell; extra bars fold
-  // into "+N more". Tasks render separately (2 rows, pinned to the bottom).
-  // Week mode + expand-all never cap — they show everything inline.
   const MAX_LANES = mode === "week" || expandAll ? Infinity : 3;
-  // Compact month: every row is the SAME height — tall enough for 3 bars + 2
-  // task rows (COMPACT_ROW_MIN), but stretched to fill the viewport when
-  // there's room. If the month needs more than the viewport, the page scrolls
-  // (and the wheel-to-change-month is disabled so scrolling works normally).
   const BAR_TOP_OFFSET_M = 24;
   const COMPACT_ROW_MIN =
     BAR_TOP_OFFSET_M +
-    3 * 21 /* 3 bar lanes */ +
-    16 /* project "+N more" line */ +
-    (showTasks ? 70 : 8) /* 2 task rows when tasks shown, else just padding */;
+    3 * 21 +
+    16 +
+    (showTasks ? 70 : 8);
   const compactRowH =
     mode === "month" && !expandAll
       ? Math.max(
@@ -462,7 +393,6 @@ export function ProjectsCalendarView() {
         </button>
         <span className="ml-2 font-display text-[15px] font-bold leading-tight tracking-tight text-ink">{periodLabel}</span>
 
-        {/* Month / Week toggle */}
         <div className="ml-3 inline-flex overflow-hidden rounded-md border border-border">
           {(["month", "week"] as const).map((m) => (
             <button
@@ -482,7 +412,6 @@ export function ProjectsCalendarView() {
           ))}
         </div>
 
-        {/* Filters */}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {/* Free-text search (owner 2026-07-20) — live-filters bars + task
               chips; URL-persisted (?q=). */}
@@ -558,12 +487,6 @@ export function ProjectsCalendarView() {
           <ResetFiltersButton
             active={!!(brand || status || organizer || params.get("stage"))}
             onReset={() => {
-              // Functional form so the latest URL state is read at call
-              // time rather than the closure-captured `params` snapshot
-              // — avoids losing later deletes when React re-renders
-              // between paint and click. Also clears legacy `stage` key
-              // that mig-050 retired but still sits in some sticky
-              // storage entries.
               setParams(
                 (prev) => {
                   const next = new URLSearchParams(prev);
@@ -607,7 +530,6 @@ export function ProjectsCalendarView() {
         </div>
       </div>
 
-      {/* Status legend — bars are tinted by project status (mig 088). */}
       <div className="mb-1.5 flex flex-wrap items-center gap-3 text-[12px]">
         {STATUS_OPTIONS.map((s) => (
           <span key={s.value} className="inline-flex items-center gap-1">
@@ -645,14 +567,8 @@ export function ProjectsCalendarView() {
         </div>
       )}
 
-      {/* The grid always fits its container: the 7 day columns shrink to
-          the viewport width on mobile rather than scrolling horizontally. */}
-      {/* No match anywhere: the strip says so instead of drawing an empty month. */}
       <div hidden={noMatches}>
         <div ref={gridRef} className="rounded-md border border-border bg-surface">
-        {/* Weekday header — month view only. In week view each cell
-            renders its own "Day. DD/MM" header with a today pill, so
-            this row would be redundant. */}
         {mode === "month" && (
           <div className="grid shrink-0 grid-cols-7 border-b border-border bg-bg/60">
             {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
@@ -665,12 +581,7 @@ export function ProjectsCalendarView() {
             ))}
           </div>
         )}
-        {/* 6 week rows. Each row is a relative grid so an absolute bar
-            overlay can paint a single continuous pill from start col to
-            end col on top of the day cells. */}
         {Array.from({ length: weekCount }).map((_, w) => {
-          // Month mode shows only the current month's weeks — a week whose
-          // every cell falls in an adjacent month is dropped entirely.
           if (
             mode === "month" &&
             !Array.from({ length: 7 }).some(
@@ -681,10 +592,6 @@ export function ProjectsCalendarView() {
           }
           const segs = weekSegs[w];
           const barsAreaH = barsAreaHByWeek[w];
-          // Compact month: every row is the SAME fixed height (compactRowH) —
-          // an empty week (29/30) matches a busy one, and the height always
-          // fits 3 bars + 2 task rows so they never overlap. Week / expand-all:
-          // content-driven min-height so every bar + task shows inline.
           const rowMinHeight =
             mode === "week"
               ? BAR_TOP_OFFSET + barsAreaH + (showTasks ? 320 : 90)
@@ -704,8 +611,6 @@ export function ProjectsCalendarView() {
               {Array.from({ length: 7 }).map((_, d) => {
                 const idx = w * 7 + d;
                 const cell = cells[idx];
-                // In week mode every cell is part of the active
-                // window, so don't grey-out anything.
                 const inMonth =
                   mode === "week"
                     ? true
@@ -715,13 +620,10 @@ export function ProjectsCalendarView() {
                 const holidays = showHolidays ? getHolidaysOn(cell.iso) : [];
                 const isHolidayCell = holidays.length > 0;
                 const overflow = overflowByCell[idx];
-                // Week-view per-day header label: "Su. 03/05".
                 const weekHeaderLabel =
                   mode === "week"
                     ? `${["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"][cell.date.getUTCDay()]}. ${String(cell.date.getUTCDate()).padStart(2, "0")}/${String(cell.date.getUTCMonth() + 1).padStart(2, "0")}`
                     : null;
-                // Adjacent-month cells render blank — only the current
-                // month's dates carry content.
                 if (mode === "month" && !inMonth) {
                   return (
                     <div
@@ -742,10 +644,6 @@ export function ProjectsCalendarView() {
                           : "flex flex-col overflow-hidden px-1.5 py-1",
                       !inMonth && "bg-bg/40 text-ink-muted",
                       isHolidayCell && inMonth && "bg-[color:var(--hz-dk-surface-2,#e7e8f5)]",
-                      // Today highlight only on month view; week view
-                      // moves the highlight onto the header pill so
-                      // the cell body stays neutral. A brass inset ring +
-                      // stronger tint makes today unmistakable.
                       mode === "month" && isToday && "bg-accent-soft/50 ring-1 ring-inset ring-accent/50",
                     )}
                     data-cal-content={
@@ -756,8 +654,6 @@ export function ProjectsCalendarView() {
                     }
                   >
                     {mode === "week" ? (
-                      // Week-mode header: centred "Day. DD/MM" with a
-                      // filled accent pill on today's column.
                       <div className="mb-1.5 flex items-center justify-center">
                         <span
                           className={cn(
@@ -788,8 +684,6 @@ export function ProjectsCalendarView() {
                             {cell.date.getUTCDate()}
                           </span>
                         )}
-                        {/* Holiday marker sits right beside the date (deeper
-                            tint than before so it reads at a glance). */}
                         {isHolidayCell && (
                           <span
                             className="min-w-0 truncate rounded bg-[#bcc0e6] px-1.5 py-0.5 text-[9.5px] font-semibold text-[#2b3063]"
@@ -802,10 +696,6 @@ export function ProjectsCalendarView() {
                       </div>
                     )}
 
-                    {/* Reserved vertical space for the absolute bar overlay so
-                        cell content (holiday + tasks) sits below this cell's
-                        own bars. Month caps at the visible-lane count so the
-                        overflowing bars don't reserve space ("+N more" instead). */}
                     <div
                       className="shrink-0"
                       style={{
@@ -817,11 +707,6 @@ export function ProjectsCalendarView() {
                       aria-hidden
                     />
 
-                    {/* Bar overflow — month mode only (week mode has
-                        unlimited lanes). Clicking expands the cell's
-                        week into week view, showing every bar inline
-                        without a popover. Old popover behaviour removed
-                        per the team's request. */}
                     {mode === "month" && overflow > 0 && (
                       <button
                         type="button"
@@ -842,17 +727,11 @@ export function ProjectsCalendarView() {
                         data-cal-content
                         className={cn(
                           "space-y-0.5 border-t border-border-subtle pt-1",
-                          // Compact month: pin tasks to the cell bottom so every
-                          // cell's tasks line up on the last rows regardless of
-                          // how many bars (or a "+N more") sit above.
                           mode === "month" && !expandAll
                             ? "absolute inset-x-1.5 bottom-1 z-20 bg-inherit"
                             : "mt-1",
                         )}
                       >
-                        {/* Week mode shows every task — there's room.
-                            Month mode keeps a 2-task cap + "+N more"
-                            expander since cells are tighter. */}
                         {(mode === "week" || expandAll ? cellTasks : cellTasks.slice(0, 2)).map((t) => (
                           <CalendarTaskChip
                             key={t.id}
@@ -881,10 +760,6 @@ export function ProjectsCalendarView() {
                 );
               })}
 
-              {/* Bar overlay — one absolutely-positioned pill per
-                  segment, spanning startCol..endCol. Pointer events
-                  pass through the wrapper so the underlying cells stay
-                  clickable; the bars themselves opt back in. */}
               <div
                 className="pointer-events-none absolute left-0 right-0 z-10"
                 style={{ top: BAR_TOP_OFFSET }}

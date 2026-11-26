@@ -1,23 +1,3 @@
-// A PMS remark that did not save must not look exactly like one that did.
-//
-// WHY THIS FILE EXISTS. Both remark boxes on the phone save on BLUR and
-// swallowed the failure whole:
-//
-//   } catch {
-//     /* keep the text so the user can retry on next blur */
-//   }
-//
-// The comment names a retry that will not happen. Blur has already occurred by
-// then — the person has tapped away and moved on — and the textarea still shows
-// exactly what they typed, so the screen is indistinguishable from a successful
-// save. Leaving the page loses it.
-//
-// AttachRemark is the per-photo caption (PATCH /checklist/attachments/:id) and
-// ItemRemark is the item-level note (PATCH /checklist/:id) — the sales PIC's
-// Setup Image / Defect List / Event Complete notes.
-//
-// These tests assert the CONTRACT: after a refused blur-save the box says it did
-// not save. They fail on the pre-fix tree.
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,7 +22,7 @@ describe("a PMS remark that the server refused says so", () => {
 
     const box = screen.getByPlaceholderText(/add remark/i);
     await userEvent.type(box, "Backdrop went up late");
-    await userEvent.tab(); // blur — this is the save
+    await userEvent.tab();
 
     expect(apiPatch).toHaveBeenCalledTimes(1);
     expect(await screen.findByText(/not saved/i)).toBeTruthy();

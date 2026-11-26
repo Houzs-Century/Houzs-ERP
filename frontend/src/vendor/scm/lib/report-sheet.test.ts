@@ -82,9 +82,7 @@ describe('the Cash Flow as a table', () => {
     expect(t.rows[7]!.cells).toEqual([20000, null]);
     expect(t.rows[9]!.cells).toEqual([-10000, null]);
     expect(t.rows[10]!.cells).toEqual([10000, null]);
-    /* The surplus, 200.00 of 500.00 received: 40.0% of the receipts. */
     expect(t.rows[8]!.cells).toEqual([20000, 40]);
-    /* "% beside" off on the screen: the export drops the % column with it. */
     const plain = cashFlowTable(rp, { pct: false });
     expect(plain.columns.map((c) => c.label)).toEqual(['Total']);
     expect(plain.rows[8]!.cells).toEqual([20000]);
@@ -96,7 +94,6 @@ describe('the Cash Flow as a table', () => {
     expect(t.rows.map((r) => r.label)).toEqual(['CASH IN', 'Sales & trade receipts', 'Total Cash In', 'OPERATIONS OUTFLOWS', '900-S100 · SALARIES', 'Total operations outflows', 'Net operation surplus / (deficit)', 'Cash surplus / (deficit)', 'Balance b/f', 'Balance c/f']);
     expect(t.rows[1]!.cells).toEqual([50000, null, 50000, 100]);
     expect(t.rows[8]!.cells).toEqual([-10000, null, -10000, null]);
-    /* A hand-opened category shows its rows past the level, as on the screen. */
     expect(cashFlowTable(rp, { level: 1, open: { 'cf:in:sales': true } }).rows.map((r) => r.label)).toContain('300-0000 · AR');
   });
 });

@@ -17,7 +17,6 @@ import type { OtherDebtor } from '../../vendor/scm/lib/accounting-queries';
 
 const TODAY = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
-/* ── What the server answers (ONE stable object per read, as react-query hands back) ── */
 const AR_ROWS = [
   { kind: 'ODB', docKind: 'INV', id: 'b1', invoiceNumber: 'HC-ODB-2609-001', partyKey: 'D:d1', partyCode: null, partyName: 'AHMAD BIN ALI', debtorId: 'd1', ref: null, description: '转租九月', invoiceDate: '2026-09-05', dueDate: null, currency: 'MYR', totalSen: 50_000, paidSen: 20_000, depositAppliedSen: 0, outstandingSen: 30_000, status: 'POSTED' },
   { kind: 'SI', docKind: 'INV', id: 'si-1', invoiceNumber: 'HC-SI-2609-001', partyKey: 'C:300-C001', partyCode: '300-C001', partyName: 'TAN AH KOW', debtorId: null, ref: 'HC-SO-2609-004', description: 'Bedroom set', invoiceDate: '2026-09-03', dueDate: '2026-09-30', currency: 'MYR', totalSen: 440_000, paidSen: 60_000, depositAppliedSen: 20_000, creditNotesSen: 30_000, outstandingSen: 350_000, status: 'SENT' },
@@ -147,7 +146,6 @@ describe('one list: sales invoices, deposit invoices and debtor bills', () => {
     expect(segment(/^Sales invoices/).textContent).toBe('Sales invoices1');
     expect(segment(/^Deposit invoices/).textContent).toBe('Deposit invoices3');
     expect(segment(/^Debtor bills/).textContent).toBe('Debtor bills2');
-    /* The SI: overdue, its order linked, the order's deposit applied said under its outstanding. */
     const si = row('HC-SI-2609-001');
     expect(si.textContent).toContain('Sales invoice');
     expect(si.textContent).toMatch(/Overdue \d+d/);
@@ -157,11 +155,9 @@ describe('one list: sales invoices, deposit invoices and debtor bills', () => {
     expect(within(si).getByText('RM 300.00')).toBeTruthy();
     expect(within(si).getByText('RM 3,500.00')).toBeTruthy();
     expect(si.getAttribute('style') ?? '').toMatch(/#fcf7ec|252, 247, 236/);
-    /* A bill part paid; a debit note paid, its own tag. */
     expect(row('HC-ODB-2609-001').textContent).toContain('Partly paid');
     expect(row('HC-ODN-2610-001').textContent).toContain('Debit note');
     expect(row('HC-ODN-2610-001').textContent).toContain('Paid');
-    /* Deposit invoices: not posted, issued, closed — no outstanding of their own. */
     expect(row('HC-DI-2610-001').textContent).toContain('Not posted');
     expect(row('HC-DI-2610-002').textContent).toContain('Issued');
     expect(row('HC-DI-2610-003').textContent).toContain('Closed');
@@ -190,7 +186,6 @@ describe('one list: sales invoices, deposit invoices and debtor bills', () => {
   });
 
   test('the party filter names a debtor with its account code, as it does a customer', () => {
-    /* A debtor with no bill on the list yet: only the registry names them. */
     DEBTORS.data.debtors.push({ id: 'd4', name: 'FRESH DEBTOR', code: '305-F001', phone: null, notes: null, is_active: true, outstanding_sen: 0 });
     try {
       draw('?debtor=d4');

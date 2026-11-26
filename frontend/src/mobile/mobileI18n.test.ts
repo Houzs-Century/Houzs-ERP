@@ -91,7 +91,6 @@ describe("localizeAnnouncement", () => {
     expect(r.isTranslated).toBe(true);
   });
 
-  // The core promise: a reader NEVER sees a blank, and never sees a key.
   it("falls back to the original when the chosen language is missing", () => {
     for (const t of [undefined, null, {}, { zh: { title: "x", body: "y" } }]) {
       const r = localizeAnnouncement({ ...base, translations: t as never }, "bn");
@@ -101,8 +100,6 @@ describe("localizeAnnouncement", () => {
     }
   });
 
-  // Rows written while the 4th language was still Burmese carry a "my" key and
-  // no "bn". They must degrade to the original, not to Burmese and not to "".
   it("ignores a legacy Burmese blob rather than showing it", () => {
     const legacy = { translations: { my: { title: "မြန်မာ", body: "စာ" } } as never };
     const r = localizeAnnouncement({ ...base, ...legacy }, "bn");
@@ -114,7 +111,7 @@ describe("localizeAnnouncement", () => {
     const blanks = [
       { bn: { title: "", body: "" } },
       { bn: { title: "   ", body: "   " } },
-      { bn: { title: bnPair.title, body: "" } }, // half-translated
+      { bn: { title: bnPair.title, body: "" } },
     ];
     for (const t of blanks) {
       const r = localizeAnnouncement({ ...base, translations: t }, "bn");
@@ -124,8 +121,6 @@ describe("localizeAnnouncement", () => {
     }
   });
 
-  // A headline-only notice is legitimate; demanding a translated body would
-  // wrongly mark those as untranslated forever.
   it("accepts a translated title when the original body is empty", () => {
     const r = localizeAnnouncement(
       { title: base.title, body: "", translations: { bn: { title: bnPair.title, body: "" } } },

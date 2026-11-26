@@ -70,7 +70,6 @@ export function AccessChangeLog() {
   );
 }
 
-/** Newest mail older than this reads as "quiet": the mailbox may have stopped syncing. */
 const QUIET_DAYS = 3;
 
 export function syncState(r: MailboxSync, now: number): "live" | "waiting" | "quiet" | "never" {

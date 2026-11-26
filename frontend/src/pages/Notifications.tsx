@@ -22,9 +22,6 @@ import { Avatar } from "../components/Avatar";
 export function Notifications() {
   const { feed, totalUnread, loadFailed, reload, markAllRead } = useNotifications();
   const [marking, setMarking] = useState(false);
-  /* The shared action reports how many projects refused instead of swallowing
-     them; this is the surface that renders it. Silence here would be the exact
-     bug the mobile version had. */
   const [markError, setMarkError] = useState<string | null>(null);
 
   const onMarkAll = async () => {
@@ -68,8 +65,6 @@ export function Notifications() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {/* Desktop parity with the mobile Inbox pill. Disabled — never hidden
-              — at zero unread, so the capability stays discoverable. */}
           <button
             type="button"
             onClick={() => void onMarkAll()}
@@ -97,12 +92,6 @@ export function Notifications() {
       )}
 
       {feed.length === 0 && loadFailed ? (
-        /* An empty feed we FAILED to load is NOT an empty feed. Telling someone
-           they're caught up when we never got an answer is the most misleading
-           thing this screen can say — it's the one people read to decide whether
-           anything needs them. Mirror the mobile inbox, which already keeps
-           these two states apart (see MobileInbox.tsx + useNotifications
-           loadFailed). */
         <div className="rounded-lg border border-err/30 bg-err/5 px-4 py-12 text-center shadow-stone">
           <p className="text-[12.5px] font-semibold text-ink">
             We couldn't load your notifications.
@@ -168,7 +157,6 @@ export function Notifications() {
   );
 }
 
-/** One-line summary of an activity row. Mirrors the bell popover copy. */
 function renderActivityLine(a: NotificationItem): string {
   const who = a.user_name ? `${a.user_name}: ` : "";
   switch (a.action) {

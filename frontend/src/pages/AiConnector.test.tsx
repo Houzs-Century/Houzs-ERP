@@ -1,5 +1,3 @@
-/* The AI Connector admin page, mounted with the API faked: the "Allow AI actions"
- * switch shows the server's state (default OFF) and sends the admin's click. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

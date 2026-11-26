@@ -1,24 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseConsignmentReceiveNew — full-page Create at
-// /purchase-consignment-receive/new.
-//
-// Faithful clone of GrnNew.tsx. It reuses the SAME shared components UNCHANGED —
-// MoneyInput, ActionResultDialog, ItemGroupPill, the supplier / product /
-// maintenance / warehouse data hooks — and the SAME card-per-line editor with
-// the per-category variant block. Only the create + post mutations are
-// repointed at `/purchase-consignment-receives` (the pc-receive hooks) and the
-// page title / back link point at /purchase-consignment-receive.
-//
-// Dropped from the GRN clone (per scope):
-//   • the per-line Rack dropdown (racks place owned inventory; an off-ledger
-//     consignment receive doesn't place into racks).
-//   • the From-PO multi-picker that points at real POs. Instead the form accepts
-//     a `?fromPcOrder=<id>` prefill from a Purchase Consignment Order (its
-//     outstanding lines load), OR free manual entry (pick a supplier + add lines).
-//
-// The backend route `/purchase-consignment-receives` mirrors `/grns` 1:1;
-// numbering is PCR-…
-// ----------------------------------------------------------------------------
 
 import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
@@ -106,15 +85,12 @@ export const PurchaseConsignmentReceiveNew = () => {
   const navigate = useNavigate();
   const [params] = useSearchParams();
 
-  // ── Source Purchase Consignment Order (inline single-order picker, or the
-  //    ?fromPcOrder= deep link from a PC Order detail "Receive Goods"). ──────
   const [selPoId, setSelPoId] = useState<string>(params.get('fromPcOrder') ?? '');
   const fromPicks = params.get('fromPicks') === '1';
   const backToOrder = selPoId && selPoId === params.get('fromPcOrder') ? sourceDocPath.purchaseConsignmentOrder(selPoId) : null;
   const poListQ = usePurchaseConsignmentOrders();
   const poQ     = usePurchaseConsignmentOrderDetail(selPoId || null);
 
-  // Manual-mode supplier (free entry, no source order).
   const [manualSupplierId, setManualSupplierId] = useState<string>('');
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
 
@@ -127,11 +103,6 @@ export const PurchaseConsignmentReceiveNew = () => {
     [poListQ.data],
   );
 
-  /* One key for the one receive this page is open to raise (lib/idempotency.ts).
-     Same create-then-post-then-dialog shape as GrnNew (which carries the full
-     reasoning): the post below is unconditional here, so a failure in it reports
-     "Save failed" while the receive already exists — the re-press must REPLAY
-     rather than receive the consigned goods a second time. */
   const idemKey = useIdempotencyKey();
   const create = useCreatePurchaseConsignmentReceive();
   const post   = usePostPurchaseConsignmentReceive();
@@ -144,15 +115,10 @@ export const PurchaseConsignmentReceiveNew = () => {
   const [warehouseId, setWarehouseId]         = useState<string>('');
   const warehousesQ = useWarehouses();
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string; goLabel?: string } | null>(null);
-  // Multi-select item picker (purchaser 2026-06: "multiple select to choose item").
   const [pickerOpen, setPickerOpen]     = useState(false);
   const [pickerSel, setPickerSel]       = useState<Set<string>>(new Set());
   const [pickerSearch, setPickerSearch] = useState('');
 
-  // From-Order multi-picker merge (fromPicks) — the operator chose specific PC
-  // Order lines + quantities on /purchase-consignment-receive/from-pc-order. The
-  // header still binds to the first picked order (via ?fromPcOrder=), but the
-  // LINES come from the stash (picked subset + picked qty).
   const [picksLoaded, setPicksLoaded] = useState(false);
   useEffect(() => {
     if (!fromPicks || picksLoaded) return;
@@ -183,11 +149,9 @@ export const PurchaseConsignmentReceiveNew = () => {
     setPicksLoaded(true);
   }, [fromPicks, picksLoaded]);
 
-  // Load lines from the selected single PC Order (only outstanding qty > 0).
   useEffect(() => {
-    if (fromPicks) return; // the picker stash drives the lines, not the full order
+    if (fromPicks) return;
     if (!selPoId) {
-      // Manual mode — seed ONE blank starter line so a LINE 1 card shows.
       setLines((prev) => prev.length > 0 ? prev : [{
         rid:                 `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         purchaseOrderItemId: null,
@@ -244,7 +208,6 @@ export const PurchaseConsignmentReceiveNew = () => {
     [lines],
   );
 
-  // ── Mode + resolved supplier / header order. ───────────────────────────
   const po       = poQ.data?.purchaseOrder;
   const isManual = !selPoId;
 
@@ -263,8 +226,6 @@ export const PurchaseConsignmentReceiveNew = () => {
   const bindings        = useMemo(() => supplierDetailQ.data?.bindings ?? [], [supplierDetailQ.data?.bindings]);
   const supplier        = supplierDetailQ.data?.supplier ?? null;
 
-  // Default the Warehouse picker sensibly: prefer the source order's purchase
-  // location, else the first warehouse. Only seeds when still blank.
   useEffect(() => {
     if (warehouseId) return;
     const poLoc = (po as { purchase_location_id?: string | null } | undefined)?.purchase_location_id ?? null;
@@ -273,9 +234,6 @@ export const PurchaseConsignmentReceiveNew = () => {
   }, [warehouseId, po, warehousesQ.data]);
 
   const [productQuery, setProductQuery] = useState<string>('');
-  /* Perf — debounce the datalist search so a fast typist fires one
-     /mfg-products request per pause, not per keystroke. Native <datalist>
-     renders <option>s directly, so no render cap is needed — only the refetch. */
   const debouncedProductQuery = useDebouncedValue(productQuery, 250);
   const productsQ = useMfgProducts({
     search: debouncedProductQuery,
@@ -324,8 +282,6 @@ export const PurchaseConsignmentReceiveNew = () => {
     });
   };
 
-  // Append one manual line per checked SKU — prefilled from the supplier binding
-  // (price) or the SKU master, deduped against lines already on the receipt.
   const addPickedItems = (codes: string[]) => {
     if (codes.length === 0) return;
     const mk = (code: string): DraftLine => {
@@ -384,11 +340,6 @@ export const PurchaseConsignmentReceiveNew = () => {
     try {
       const createRes = await create.mutateAsync({
         idempotencyKey: idemKey,
-        // Backend (purchase-consignment-receives POST) reads
-        // purchaseConsignmentOrderId / pcOrderItemId — NOT the PO's
-        // purchaseOrderId / purchaseOrderItemId. Sending the wrong keys
-        // dropped the PC-Order link (no pc_order_no snapshot) and silently
-        // disabled the over-receipt guard.
         purchaseConsignmentOrderId: headerPoId,
         supplierId,
         warehouseId:     warehouseId || undefined,
@@ -442,7 +393,6 @@ export const PurchaseConsignmentReceiveNew = () => {
         }
       />
 
-      {/* Header card */}
       <section className={styles.card}>
         <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Header</h2></div>
         <div className={styles.cardBody}>
@@ -571,7 +521,6 @@ export const PurchaseConsignmentReceiveNew = () => {
         </div>
       </section>
 
-      {/* Items card */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>
@@ -579,9 +528,6 @@ export const PurchaseConsignmentReceiveNew = () => {
             {selPoId
               ? (poQ.isLoading
                   ? 'Loading order items…'
-                  /* Same shape as GrnNew: no error arm, and an empty arm that
-                     reported the absence as a finished receipt. Both are now
-                     told apart, and neither claims the order is complete. */
                   : poQ.isError
                     ? "We couldn't load this order's lines — please refresh and try again."
                     : lines.length === 0
@@ -671,7 +617,6 @@ export const PurchaseConsignmentReceiveNew = () => {
                     </div>
                   </div>
 
-                  {/* Identity row — Item Code (Internal) + Description */}
                   <div className={styles.formGrid2}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Item Code (Internal)</span>
@@ -761,7 +706,6 @@ export const PurchaseConsignmentReceiveNew = () => {
                     </div>
                   )}
 
-                  {/* Fields row — Outstanding · Received · Unit Price · Line Value. */}
                   <div className={styles.formGrid4}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Outstanding</span>
@@ -826,7 +770,6 @@ export const PurchaseConsignmentReceiveNew = () => {
         </div>
       </section>
 
-      {/* Totals card aligned right — lg:pr-32 clears the fixed FAB cluster. */}
       <div className="lg:pr-32" style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <section className={styles.card} style={{ maxWidth: 360, width: '100%' }}>
           <div className={styles.cardBody}>

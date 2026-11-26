@@ -1,8 +1,3 @@
-// The delivery order's closing (signature + footer) must share its page with
-// the last item photos. The photos used to run down to the footer rule, past
-// the closing's top, so the closing took a fresh page holding only the
-// signature (Conts-ERP #649). This drives the real photo layout with the DO's
-// own bottom edge and checks the page-break decision the renderer makes.
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 
@@ -11,7 +6,6 @@ import { drawItemPhotosBlock, type PdfDocLike, type PdfPhotoImage } from './pdf-
 
 const M = 14;
 const CONTENT_W = 215.9 - M * 2;
-/* The old bottom edge: the items table's rail, FOOTER_RULE_Y - 6 on Letter. */
 const OLD_PAGE_BOTTOM = 279.4 - 12 - 6 - 6;
 
 const img: PdfPhotoImage = { dataUrl: 'data:image/jpeg;base64,x', format: 'JPEG', w: 800, h: 800 };

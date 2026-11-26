@@ -1,6 +1,3 @@
-/* DP Orders list: Edit on a row opened the job panel too (the row click), and the
-   panel stacked over the Edit drawer, half covering it. A row button must reach
-   only its own handler. */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import { DpRowActions } from "./DpRowActions";

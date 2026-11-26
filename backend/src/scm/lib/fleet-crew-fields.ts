@@ -48,8 +48,6 @@ export function normalizeIc(raw: unknown): string | null | typeof INVALID_IC {
   if (s.length > IC_MAX) return INVALID_IC;
 
   const digits = onlyDigits(s);
-  /* Only reformat when the WHOLE value is those 12 digits. A passport that
-     happens to contain 12 digits among letters is not an NRIC. */
   if (digits.length === 12 && onlyDigits(s) === s.replace(/[-\s]/g, '')) {
     return `${digits.slice(0, 6)}-${digits.slice(6, 8)}-${digits.slice(8)}`;
   }

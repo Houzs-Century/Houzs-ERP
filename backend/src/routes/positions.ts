@@ -11,10 +11,6 @@ import { getDb } from "../db/client";
 import { positions, users, departments } from "../db/schema";
 import { and, asc, eq, sql } from "drizzle-orm";
 
-// Positions = the staff org unit (department × position). Mirrors roles.ts but
-// keyed on POSITION and using the 4-level page-access matrix (none/view/edit/
-// full). Gated under users.read / users.manage — positions are a
-// user-management concern, so no new permission verb is introduced.
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -25,7 +21,6 @@ const slugify = (s: string): string =>
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 
-/** GET /api/positions  (?department_id= to scope the invite-form dropdown) */
 app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
   const db = getDb(c.env);
   const deptParam = c.req.query("department_id");
@@ -80,7 +75,6 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
   });
 });
 
-/** POST /api/positions  Body: { department_id, name, slug?, level?, sort_order? } */
 app.post("/", requirePermission("users.manage"), async (c) => {
   const body = await c.req.json<{
     department_id?: number;
@@ -127,7 +121,6 @@ app.post("/", requirePermission("users.manage"), async (c) => {
   return c.json({ id: inserted[0]?.id, slug, name });
 });
 
-/** PATCH /api/positions/:id  Body: { name?, department_id?, level?, sort_order?, active? } */
 app.patch("/:id", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -169,7 +162,6 @@ app.patch("/:id", requirePermission("users.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-/** DELETE /api/positions/:id  Refuses if any user still holds it. */
 app.delete("/:id", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -204,14 +196,6 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-/**
- * GET /api/positions/:id/page-access
- * The pages a Title's members see, as login resolves them: the Title's
- * position_policy row (or, with no row, the name rule), owner tier = full on
- * every page. Read-only — the cohort is edited on Roles & Permissions › Titles.
- * (Until 2026-09-17 this answered from the dropped position_page_access
- * matrix, which login had not read since 2026-07-18.)
- */
 app.get("/:id/page-access", requirePermission("users.read"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);

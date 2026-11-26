@@ -11,8 +11,6 @@ import {
 import { useIsMobile } from "../mobile/useIsMobile";
 import { useLocation } from "react-router-dom";
 
-// Code-split the mobile app: desktop users never download it, and it stays out
-// of the initial JS bundle (keeps the bundle-budget CI gate green).
 const MobileApp = lazyPage(() =>
   import("../mobile/MobileApp").then((m) => ({ default: m.MobileApp })),
 );
@@ -30,9 +28,6 @@ export function mobileShellEnabled(isMobile: boolean): boolean {
 export function preloadMobileApp(): void {
   void MobileApp.preload().catch(headStartFailed);
 }
-// The AI Connector's "Allow?" screen (an AI app sends people here) and, on the
-// phone shell, the AI Connector page itself — so the owner can approve and
-// disconnect from a phone. Both render standalone, outside either app shell.
 const AiConnect = lazyPage(() => import("../pages/AiConnect").then((m) => ({ default: m.AiConnect })));
 const AiConnector = lazyPage(() => import("../pages/AiConnector").then((m) => ({ default: m.AiConnector })));
 
@@ -40,12 +35,6 @@ const MobileLogin = lazy(() =>
   import("../mobile/MobileLogin").then((m) => ({ default: m.MobileLogin })),
 );
 
-// The unauthenticated screens are code-split too (2026-07-23, bundle diet):
-// a signed-in session boots straight past the gate, so it should never
-// download the login/bootstrap/invite UI — AuthShell, the password-strength
-// meter, AmbientSnow, loginErrors — ~19 KB raw that used to ride in the
-// initial chunk. The splash below doubles as the Suspense fallback, so the
-// pre-login sequence stays one steady frame instead of flashing.
 const LoginScreen = lazy(() =>
   import("./AuthScreens").then((m) => ({ default: m.LoginScreen })),
 );
@@ -62,8 +51,6 @@ const ForcedPasswordChangeScreen = lazy(() =>
   import("./AuthScreens").then((m) => ({ default: m.ForcedPasswordChangeScreen })),
 );
 
-/** Neutral splash — the session-resolving frame, reused as the Suspense
- *  fallback while an unauthenticated screen's chunk downloads. */
 function AuthSplash() {
   return (
     <div className="paper-grain flex min-h-screen items-center justify-center">
@@ -79,9 +66,6 @@ function AuthSplash() {
   );
 }
 
-// ──────────────────────────────────────────────────────────
-// Gate — picks the right screen based on auth state
-// ──────────────────────────────────────────────────────────
 export function AuthGate({ children }: { children: ReactNode }) {
   const { user, loading, hasUsers } = useAuth();
   const isMobile = useIsMobile();
@@ -91,9 +75,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // desktop app even on phones — "2990 手机关闭".
   const mobileEnabled = mobileShellEnabled(isMobile);
 
-  // Track the hash so in-page links (#forgot, back-to-login) re-render
-  // the gate without a full navigation. #invite= arrives as a fresh
-  // page load, but gets the same reactivity for free.
   const [hash, setHash] = useState(() => window.location.hash);
   useEffect(() => {
     const onHash = () => setHash(window.location.hash);
@@ -101,31 +82,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  // Every slot below is a LazySlot, never a bare <Suspense>. This file is where
-  // the whole mobile product is chosen (`<MobileApp />`), and until 2026-08-18
-  // it mounted from a bare <Suspense> with no boundary between it and
-  // main.tsx's UNKEYED top-level ChunkReloadBoundary. A phone holding a cached
-  // index.html that signs in after a deploy fetches a hashed MobileApp-*.js
-  // that no longer exists; once the automatic ladder is spent, that top-level
-  // panel replaced the ENTIRE tree — including the <NewVersionBanner /> mounted
-  // beside AuthGate in main.tsx, i.e. the one thing on screen that explains
-  // what happened. The five auth screens have the same shape and are reached
-  // exactly when a session expires onto a chunk this tab never fetched.
-  //
-  // Scoped here, the crash panel replaces only the gate's own subtree: the
-  // banner survives next to it, and any move between gate screens (#forgot →
-  // login, invite → login, signing in) changes `resetKey` and clears it without
-  // a reload. The mobile SHELL key is deliberately near-constant — there is no
-  // navigation above it to clear a crash with — so for that slot the win is the
-  // banner surviving and the panel's own Reload being the honest exit.
   const slotKey = (screen: string) => `authgate:${screen}:${hash}`;
 
-  // Initial loading state — neutral splash
   if (loading) {
     return <AuthSplash />;
   }
 
-  // No users in the database → first-owner bootstrap
   if (hasUsers === false) {
     return (
       <LazySlot resetKey={slotKey("bootstrap")} fallback={<AuthSplash />}>
@@ -134,8 +96,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  // Not signed in → login (or invite acceptance / forgot password via
-  // URL hash)
   if (!user) {
     if (hash.startsWith("#invite=")) {
       return (
@@ -162,8 +122,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  // A member who must choose a new password holds a session the server refuses
-  // everywhere else, so neither app shell is mounted until they have.
   if (user.password_change_required) {
     return (
       <LazySlot resetKey={slotKey("password-change")} fallback={<AuthSplash />}>

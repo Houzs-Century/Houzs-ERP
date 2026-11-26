@@ -19,7 +19,6 @@ describe('breakdownWindows', () => {
 describe('downDays', () => {
   test('Sundays are off, overlaps count once, and the period clips the window', () => {
     const w = [{ lorryId: 'L1', from: '2026-10-30', to: '2026-11-03' }, { lorryId: 'L1', from: '2026-11-02', to: '2026-11-09' }];
-    // 01/11/2026 is a Sunday; the period is 31/10 to 04/11.
     expect(downDays(w, '2026-10-31', '2026-11-04').get('L1')).toBe(4);
   });
 });

@@ -45,9 +45,6 @@ const WINDOW_SEC = 900;
 
 type Ctx = Context<{ Bindings: Env }>;
 
-// One sentence for "no such token" AND "this token was killed": telling the
-// holder of a leaked link that it USED to work is the single fact the kill
-// switch exists to withhold, so both collapse to the same 404.
 function unknownLink(c: Ctx) {
   return c.json(
     { error: "unknown_link", message: "This link is not valid. Please ask Houzs for a current link." },
@@ -59,7 +56,6 @@ function unknownEvent(c: Ctx) {
   return c.json({ error: "unknown_event", message: "This event is not on your schedule." }, 404);
 }
 
-/** Token shape gate, then the limiter, then the token row. */
 async function gate(c: Ctx): Promise<{ token: string; scope: ShareScope } | Response> {
   const token = (c.req.param("token") ?? "").trim();
   if (!TOKEN_RE.test(token)) return unknownLink(c);
@@ -85,7 +81,6 @@ publicBrandCalendar.get("/:token", async (c) => {
   return c.json({ brand: g.scope.value, events });
 });
 
-// Size and total sales for one event — the brand's own figures.
 publicBrandCalendar.get("/:token/events/:eventId", async (c) => {
   const g = await gateEvent(c);
   if (g instanceof Response) return g;
@@ -94,7 +89,6 @@ publicBrandCalendar.get("/:token/events/:eventId", async (c) => {
   return c.json(figures);
 });
 
-// The DISPLAY floorplan files for one event (never the blank or filled ones).
 publicBrandCalendar.get("/:token/events/:eventId/floorplan", async (c) => {
   const g = await gateEvent(c);
   if (g instanceof Response) return g;

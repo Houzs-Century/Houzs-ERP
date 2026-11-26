@@ -1,29 +1,9 @@
-/**
- * Usage counters for /api/delivery-sheet — how often the HC Delivery sheet
- * calls each endpoint, and how many records it carried away.
- *
- * See the migration (20260924T2200_scm_sheet_sync_usage.sql) for WHY the ERP
- * has to count this itself. In short: the sheet's own log counts SCRIPT RUNS,
- * one run is several requests, and a script that stops logging vanishes from
- * it while still running.
- *
- * Two rules this module exists to keep:
- *
- *   1. A counter may never break the sync. Every write is best-effort — it
- *      runs after the response is decided, its failure is logged and
- *      swallowed, and it rides `waitUntil` where the runtime offers one.
- *   2. The label is the route PATTERN, never the URL. `?since=` is a
- *      timestamp and /feed-by-docnos carries order numbers; neither belongs
- *      in a key that is kept forever.
- */
 
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
 
-/** Where the router is mounted, so a label reads as the full path. */
 const MOUNT = "/api/delivery-sheet";
 
-/** A label longer than this is a scanner, not the sheet — clamp it. */
 const MAX_LABEL = 80;
 
 export const SHEET_USAGE_UPSERT_SQL = `
@@ -68,7 +48,6 @@ export async function recordSheetUsage(
       .bind(endpoint, Number.isFinite(rows) && rows > 0 ? Math.floor(rows) : 0, errored ? 1 : 0)
       .run();
   } catch (e) {
-    // A counter is not worth a 500. The sync's own outcome is already decided.
     console.error(`[sheet-usage] ${endpoint}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
@@ -91,8 +70,6 @@ export const sheetUsageCounter: MiddlewareHandler<{ Bindings: Env; Variables: Sh
   try {
     c.executionCtx.waitUntil(write);
   } catch {
-    // No execution context (some test harnesses): await it rather than leaving
-    // a floating promise the runtime may cancel.
     await write;
   }
 };

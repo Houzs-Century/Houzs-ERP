@@ -1,17 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { collapseSofaLines } from './autocount-sofa-collapse';
 
-/* ONE BOOK LINE, TWO DIFFERENT TEXTS — HC-SO-013320 and HC-PO-010008, 2026-09-14.
- *
- * Both compartments of sofa 8069 carry the SAME AutoCount DtlKey (910573 on the
- * sales order, 910869 on the purchase order): the account book holds the sofa as
- * ONE folded line. HC-SO-013320/A1 re-derived each piece's Desc2 from its own
- * variants, and the two pieces have different special orders, so their texts now
- * differ. The adjacency run breaks on a Desc2 change, and scatteredByBookLine
- * skipped the pair because they are adjacent — so each piece was collapsed ALONE
- * and refused: "cannot spell [1A(LHF)]", "cannot spell [1B(RHF)]" (requeue plan
- * run 34823021667; rows read by probe run 34827560743).
- */
 const v = (note: string) => ({
   colourId: 'HR805-20', fabricId: 'HR805', legHeight: 'Default', fabricCode: 'HR805-20',
   seatHeight: '32', colourLabel: 'HR805-20', fabricLabel: 'HR805', extraAddonNote: note,
@@ -37,10 +26,6 @@ describe('adjacent pieces of ONE book line whose Desc2 differs', () => {
     expect(lines[0].item_code).toBe('8069-1S');
   });
 
-  /* Only the GATHERING is pinned here. What a lone keyed piece then does is the
-     pre-existing single-compartment rule in flush() ("a single keyed compartment
-     is a build the book holds as one line, which must still fold"), unchanged by
-     this fix and not what this file is about. */
   it('CONTROL — adjacent pieces with DIFFERENT keys are separate book lines and are never gathered into one', () => {
     const rows = hcSo013320();
     rows[1].linked_ac_dtlkey = 910574;

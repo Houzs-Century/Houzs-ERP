@@ -1,16 +1,3 @@
-// Unit tests for raisePoFollowUps — the PO leg of an approved LINES-lane SO
-// amendment — driven through a minimal fake PostgREST client (same shape as the
-// applyPoAmendment suite; scm routes cannot be exercised end to end here).
-//
-// Two contracts are pinned:
-//   · a SERVICE-line change (storage / disposal / delivery) never escalates,
-//     because a SERVICE line is not goods and never becomes a PO line — the
-//     supplier has nothing to follow;
-//   · a follow-up is raised only against the PO that actually HOSTS a changed
-//     line, or — for a brand-new ADD — the bound PO whose SUPPLIER can make it,
-//     the same main-supplier match reviseBoundPo applies at confirm. An ADD whose
-//     supplier serves no bound PO is warned, never forced onto the wrong PO; a
-//     changed existing line with no PO home is warned too, not fanned out.
 import { describe, it, expect } from 'vitest';
 import { raisePoFollowUps } from './amendment-po-followup';
 import { parsePgrestInList } from './pgrest-in-list';
@@ -31,9 +18,6 @@ class Query {
   select() { if (this.op !== 'select') this.selectedAfterWrite = true; return this; }
   eq(col: string, val: any) { this.filters.push({ kind: 'eq', col, val }); return this; }
   in(col: string, val: any[]) { this.filters.push({ kind: 'in', col, val }); return this; }
-  /* The ESCAPED in-list the shared binding reader builds (pgrest-in-list) —
-     supabase-js cannot serialise a value carrying a `"`; parsed by the SAME
-     function the app writes with, never a second split(','). */
   filter(col: string, op: string, val: string) {
     if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
     return this.in(col, parsePgrestInList(val));
@@ -95,10 +79,6 @@ const PO_B_NO = 'HC-PO-006691';
 const SUP_A = 'sup-a';
 const SUP_B = 'sup-b';
 
-/* One SO with two goods lines on two DIFFERENT purchase orders, plus a storage
-   SERVICE line bound to neither — SERVICE lines never become PO lines, which is
-   the whole point: without the guard the storage edit still finds a PO through
-   a goods line's link and raises an empty amendment against it. */
 const baseStore = (): Record<string, Row[]> => ({
   mfg_sales_order_items: [
     { id: 'soi-a', doc_no: SO_DOC, cancelled: false, item_code: 'TRION-(K)', item_group: 'bedframe' },
@@ -131,8 +111,6 @@ const baseStore = (): Record<string, Row[]> => ({
   so_amendment_lines: [],
 });
 
-/* A main-supplier binding row, the shape readMfgProductBindings reads
-   (is_main_supplier + material_kind + company scope). */
 const binding = (item_code: string, supplier_id: string): Row => ({
   item_code, supplier_id, is_main_supplier: true, material_kind: 'mfg_product', company_id: 1,
 });
@@ -190,7 +168,6 @@ describe('raisePoFollowUps — SERVICE lines do not escalate', () => {
   it('the catalogue is read in the order\'s company — another company\'s SERVICE row does not count', async () => {
     const store = baseStore();
     store.mfg_products = [{ code: 'TRANSPORTATION CHARGES', category: 'SERVICE', company_id: 2 }];
-    // Treated as goods here, so it escalates the one bound PO whose supplier can make it.
     store.supplier_material_bindings = [binding('TRANSPORTATION CHARGES', SUP_A)];
     store.so_amendment_lines = [amendLine({ change_type: 'ADD', new_item_code: 'TRANSPORTATION CHARGES', new_qty: 1 })];
 
@@ -201,7 +178,6 @@ describe('raisePoFollowUps — SERVICE lines do not escalate', () => {
 
   it('removing a SERVICE line raises no PO amendment (identity from the snapshot)', async () => {
     const store = baseStore();
-    // A REMOVE hard-deletes the SO row, so only the snapshot still knows it.
     store.mfg_sales_order_items = store.mfg_sales_order_items!.filter((r) => r.id !== 'soi-svc');
     store.so_amendment_lines = [amendLine({ sales_order_item_id: 'soi-svc', change_type: 'REMOVE' })];
 
@@ -212,10 +188,6 @@ describe('raisePoFollowUps — SERVICE lines do not escalate', () => {
   });
 
   it('a SPEC edit swapping a SERVICE SKU for real goods warns instead of revising every bound PO', async () => {
-    // soi-svc has no PO line, and reviseBoundPo re-applies a line only when its id
-    // is NEW — a pre-existing line is never placed at confirm — so fanning it out
-    // to every bound PO only ever raised empty follow-ups. It is warned so a fresh
-    // PO can be raised for the new goods.
     const store = baseStore();
     store.supplier_material_bindings = [binding('TRION-(Q)', SUP_A)];
     store.so_amendment_lines = [amendLine({
@@ -263,16 +235,12 @@ describe('raisePoFollowUps — only the PO that hosts a changed line', () => {
     const res = await run(store);
 
     expect(res.followUps.map((f) => f.poNumber)).toEqual([PO_A_NO]);
-    // the ADD preview is attached on that matching PO, not on the sibling
     expect(store.po_amendment_lines).toHaveLength(1);
     expect(store.po_amendment_lines![0]!.change_type).toBe('ADD');
     expect(store.po_amendment_lines![0]!.new_item_code).toBe('TRION-(Q)');
   });
 
   it('an ADD whose supplier makes none of the bound POs warns, never revising the wrong PO', async () => {
-    // The reported bug: a mattress (supplier DIGLANT) added to an order whose only
-    // PO is a bedframe PO (supplier OHANA) must not raise a revision on that PO —
-    // reviseBoundPo can place it on no line there, so the _R would bump for nothing.
     const store = baseStore();
     store.supplier_material_bindings = [binding('AKEMI EQUINOX MATT (Q)', 'sup-diglant')];
     store.so_amendment_lines = [amendLine({ change_type: 'ADD', new_item_code: 'AKEMI EQUINOX MATT (Q)', new_qty: 1 })];
@@ -285,8 +253,6 @@ describe('raisePoFollowUps — only the PO that hosts a changed line', () => {
   });
 
   it('an ADD whose MAIN supplier has no PO here joins the PO of an alternate bound supplier', async () => {
-    // HC-SO-013385/A1 (BUG-57): 9028-1NA's main supplier (HOOKKA INDUSTRIES) had
-    // no PO on the order; DORSETTLOFT, bound as an alternate, owns its only PO.
     const store = baseStore();
     store.supplier_material_bindings = [
       binding('TRION-(Q)', 'sup-main-elsewhere'),
@@ -330,10 +296,6 @@ describe('raisePoFollowUps — only the PO that hosts a changed line', () => {
   });
 
   it('a changed EXISTING line with no PO home is not fanned out to unrelated POs', async () => {
-    // poi-a is gone, so soi-a hosts no changed line and reviseBoundPo cannot
-    // re-apply it (its id is not new). With no supplier binding (a stock line) it
-    // is left silent rather than raising a revision on the sibling PO that only
-    // carries soi-b.
     const store = baseStore();
     store.purchase_order_items = store.purchase_order_items!.filter((r) => r.id !== 'poi-a');
     store.so_amendment_lines = [amendLine({ sales_order_item_id: 'soi-a', new_qty: 2 })];

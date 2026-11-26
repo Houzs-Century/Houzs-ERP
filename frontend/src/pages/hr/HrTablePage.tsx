@@ -1,12 +1,3 @@
-/* Shared new-design scaffold for the HR sub-pages: a page header, four stat
- * cards, and — for the table itself — the SYSTEM DataTable, so every HR list
- * reads and behaves like the rest of the ERP (search, per-column sort + funnel,
- * the Columns chooser, column freeze, export). Each page is config over this on
- * REAL data; loading / error / empty states and the money eye live here, and
- * each page renders its own add/edit modal as a sibling.
- *
- * A column sorts, filters and exports only when it carries `getValue` (the raw
- * value); a render-only column still shows and is searched by its cell text. */
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -57,7 +48,6 @@ export type HrCol<T> = {
   width?: string;
   render: (r: T, show: boolean) => ReactNode;
   getValue?: (r: T, show: boolean) => string | number | boolean | null | undefined;
-  /** Footer total over the rows on screen. */
   total?: (rows: T[], show: boolean) => ReactNode;
   filterType?: "date" | "number";
   disableSort?: boolean;
@@ -72,18 +62,13 @@ export function HrTablePage<T extends { id: number | string }>({
   title: string;
   subtitle: ReactNode;
   actions?: ReactNode;
-  /** A block rendered between the header and the stat cards (e.g. the punch
-   *  rules card), for a page that carries its own controls above the table. */
   topSection?: ReactNode;
   stats: HrStat[];
-  /** Period chips: uncontrolled label-only, or controlled via period + onPeriod. */
   periods?: string[];
   period?: string;
   onPeriod?: (p: string) => void;
   rows: T[];
   columns: HrCol<T>[];
-  /** Kept for callers; the DataTable's own search covers it (it matches each
-   *  column's getValue, else the cell text). */
   searchOf?: (r: T) => string;
   searchPlaceholder?: string;
   footer?: (show: boolean) => ReactNode;
@@ -92,11 +77,8 @@ export function HrTablePage<T extends { id: number | string }>({
   loading?: boolean;
   error?: string | null;
   emptyLabel?: string;
-  /** Show the Show/Hide amounts eye (pages with money). */
   moneyToggle?: boolean;
-  /** Extra controls in the toolbar (filters), before the money toggle. */
   toolbarExtra?: ReactNode;
-  /** Stable id for persisting columns / sort / density. Defaults from the title. */
   tableId?: string;
 }) {
   const [show, setShow] = useState(false);

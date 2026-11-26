@@ -1,25 +1,3 @@
-// ---------------------------------------------------------------------------
-// Cross-tab data sync (adapted from 2990's cross-tab invalidation bus, itself
-// ported from HOOKKA, to TanStack Query). One tab's successful WRITE tells the
-// other open tabs to refetch, so a price / stock / status change made in tab A
-// shows up in tab B without a manual refresh.
-//
-// SCOPED. The writing tab broadcasts the query keys its mutation invalidated
-// (collected from the mutation's own invalidateQueries calls), and the other
-// tabs invalidate only those keys. A visible Delivery Planning board used to
-// re-read every band on every save made anywhere (a PO, a journal, a GRN). A
-// write that invalidated no key, or invalidated without a queryKey (predicate /
-// everything), sends no keys, and the receiver falls back to invalidating every
-// query - nothing can go stale that did not go stale before.
-//
-// A screen that keeps some queries current its own way (the DP board's change
-// feed) claims them: a received key covering a claimed query calls the claim's
-// refresh instead of re-reading that query.
-//
-// BroadcastChannel is same-origin only and never delivers a message back to the
-// tab that sent it, so the writing tab (which already invalidated via its own
-// onSuccess) is untouched.
-// ---------------------------------------------------------------------------
 
 import { hashKey, partialMatchKey, type Query, type QueryClient, type QueryKey } from "@tanstack/react-query";
 
@@ -31,7 +9,7 @@ export type WriteMessage = { t: "changed"; keys?: QueryKey[] };
 let channel: BroadcastChannel | null = null;
 function getChannel(): BroadcastChannel | null {
   if (channel) return channel;
-  if (typeof BroadcastChannel === "undefined") return null; // very old browsers
+  if (typeof BroadcastChannel === "undefined") return null;
   try {
     channel = new BroadcastChannel(CHANNEL);
   } catch {
@@ -46,8 +24,7 @@ function post(msg: WriteMessage): void {
   try {
     ch.postMessage(msg);
   } catch {
-    /* A key that cannot be cloned: tell the other tabs to re-read everything. */
-    try { ch.postMessage({ t: "changed" }); } catch { /* best-effort */ }
+    try { ch.postMessage({ t: "changed" }); } catch { }
   }
 }
 
@@ -56,11 +33,7 @@ export function broadcastDataChanged(): void {
   post({ t: "changed" });
 }
 
-/* ---------------------------------------------------------------- sender --- */
 
-/* How long after a mutation's global onSettled its remaining callbacks
-   (options.onSettled, mutate(..., { onSuccess })) may still invalidate. Those run
-   in the same task or one setTimeout(0) later (TanStack's notifyManager). */
 const SETTLE_GRACE_MS = 50;
 
 type Collector = { keys: Map<string, QueryKey>; all: boolean };
@@ -89,12 +62,10 @@ export function createWriteBroadcaster(qc: QueryClient, send: (msg: WriteMessage
   };
 
   return {
-    /** MutationCache onSuccess: start collecting. */
     succeeded(m: object) {
       opened.add(m);
       open += 1;
     },
-    /** MutationCache onSettled: broadcast once the last open write has settled. */
     settled(m: object) {
       if (!opened.has(m)) return;
       opened.delete(m);
@@ -103,7 +74,6 @@ export function createWriteBroadcaster(qc: QueryClient, send: (msg: WriteMessage
         if (open === 0) flush();
       }, SETTLE_GRACE_MS);
     },
-    /** Run a received invalidation without re-broadcasting it. */
     remote<T>(fn: () => T): T {
       applyingRemote = true;
       try { return fn(); } finally { applyingRemote = false; }
@@ -122,12 +92,9 @@ export function mutationSettled(m: object): void {
   broadcaster?.settled(m);
 }
 
-/* -------------------------------------------------------------- receiver --- */
 
 export type CrossTabClaim = {
-  /** True for a query this screen refreshes its own way. */
   owns: (q: Query) => boolean;
-  /** Called (while visible) when another tab's write covers an owned query. */
   refresh: () => void;
 };
 
@@ -139,12 +106,6 @@ export function claimCrossTabRefresh(claim: CrossTabClaim): () => void {
   return () => { claims.delete(claim); };
 }
 
-/* A HIDDEN TAB DOES NOT REFETCH. Invalidation ignores staleTime, so every write
-   in any tab used to re-read every on-screen query of every other tab, hidden
-   or not: a background Merchant Recon tab re-read each of its reports (one
-   heavy request per report) on every save made elsewhere. Hidden, a message
-   only marks the queries stale; the first time the tab is shown again it
-   re-reads once, however many writes it missed. */
 function isHidden(): boolean {
   return typeof document !== "undefined" && document.visibilityState === "hidden";
 }
@@ -175,7 +136,6 @@ export function listenForWrites(
   const missedClaims = new Set<CrossTabClaim>();
   const notOwned = (q: Query) => ![...claims].some((c) => c.owns(q));
 
-  /* One invalidation for all the keys, so a query two keys cover reads once. */
   const apply = (keys: QueryKey[], refetchType: "active" | "none") => {
     const due = new Set<CrossTabClaim>();
     const covered = (q: Query) => keys.some((k) => partialMatchKey(q.queryKey, k));
@@ -194,7 +154,6 @@ export function listenForWrites(
     const hidden = isHidden();
     if (keys === "all") {
       if (hidden) missedAll = true;
-      // Everything is marked stale; only what is on screen re-reads now.
       void remote(() => qc.invalidateQueries({ refetchType: hidden ? "none" : "active" }));
       return;
     }

@@ -45,7 +45,6 @@ export function ProjectSalesBillsBlock({
   onSetTotalSales,
 }: {
   query: QueryState<ProjectSalesBillsResponse>;
-  /** project_finance.total_sales (RM) — the figure in Total Sales. */
   finalTotalRm: number | null;
   canSetTotalSales: boolean;
   onSetTotalSales: (rm: number) => Promise<void>;
@@ -58,7 +57,6 @@ export function ProjectSalesBillsBlock({
   const bills = billsNeedingAction(data?.bills ?? []);
   const totals = data?.totals;
   const summary = data?.summary ?? null;
-  /* Orders the report puts here but that sit under another event or none. */
   const here = data?.project_id ?? null;
   const movable = data?.can_transfer && here != null ? billsToTransfer(bills) : [];
   const transfer = useFairTransfer();
@@ -238,10 +236,6 @@ export function ProjectSalesBillsBlock({
                       {b.match.so_doc_no && (
                         <Link
                           to={`/scm/sales-orders/${encodeURIComponent(b.match.so_doc_no)}`}
-                          // Peter 2026-10-15: open the SO in its OWN workspace tab
-                          // so the project it was clicked from stays open (owner's
-                          // openDocInTab convention). Plain left-click only —
-                          // ctrl/cmd/shift/middle still open a real browser tab.
                           onClick={(e) => { if (!e.metaKey && !e.ctrlKey && !e.shiftKey) markWorkspaceOpenIntent(true); }}
                           className="ml-1.5 font-mono text-[10.5px] font-semibold text-accent underline underline-offset-2 hover:text-accent/80"
                           title="Open this sales order"

@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// driver-info-send.ts — the per-customer plan for the Driver Info WhatsApp send.
-//
-// The Driver Info message prints the driver (name / IC / contact / plate) and a
-// delivery-time window. The driver crew is already on each order — the board's
-// Driver / Lorry columns snapshot it onto the DO — so the send READS it per
-// order instead of asking the operator to pick again, exactly as Postpone reads
-// the row's Amend Reason + Delivery Date. The time window differs from customer
-// to customer, so each customer group carries its OWN time, pre-filled from the
-// row's Time Slot column so the operator does not key it twice.
-//
-// This is the pure part (grouping key + per-group readiness), imported by both
-// the modal and its test; the modal owns the state and the per-group sends.
-// ----------------------------------------------------------------------------
 
 import type { PlanningOrder } from './delivery-planning-queries';
 
@@ -33,13 +19,9 @@ export type DriverInfoPayload = {
 export type DriverGroupBlock = 'no_driver' | 'not_linked' | 'no_contact' | 'no_time' | null;
 
 export type DriverGroupPlan = {
-  /** The driver read off the group's orders, or null when none is assigned. */
   driver: Omit<DriverInfoPayload, 'deliveryTime'> | null;
-  /** True when the group's orders name more than one distinct driver. */
   mixedDrivers: boolean;
-  /** What is missing, or null when the group is ready to send. */
   block: DriverGroupBlock;
-  /** The send payload — set iff block === null. */
   payload: DriverInfoPayload | null;
 };
 
@@ -70,11 +52,8 @@ export function planDriverInfoGroup(rows: PlanningOrder[], deliveryTime: string)
   };
   const mixedDrivers = distinct.size > 1;
 
-  // Typed on the DO form, not picked from the fleet: there is no record to read
-  // an IC or phone from, so say that instead of "no contact on file".
   if (src.driver_1_typed) return { driver, mixedDrivers, block: 'not_linked', payload: null };
 
-  // The template prints the contact, so a driver with no phone on file cannot send.
   if (!driver.driverContact) return { driver, mixedDrivers, block: 'no_contact', payload: null };
 
   const time = trimmed(deliveryTime);

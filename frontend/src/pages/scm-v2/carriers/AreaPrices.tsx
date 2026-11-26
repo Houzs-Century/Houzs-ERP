@@ -32,7 +32,6 @@ const townsWord = (n: number) => `${n} ${n === 1 ? 'town' : 'towns'}`;
 const T_CELL = 'border border-border-strong px-2.5 py-1.5 align-top';
 const T_HEAD = 'border border-border-strong bg-surface-dim px-2.5 py-2 align-bottom text-[11.5px] font-semibold text-ink';
 
-/** Name and towns, typed: used to add an area and to change one. */
 const AreaFields = ({ idPrefix, name, towns, onName, onTowns }: {
   idPrefix: string; name: string; towns: string; onName: (v: string) => void; onTowns: (v: string) => void;
 }) => (
@@ -50,7 +49,6 @@ const AreaFields = ({ idPrefix, name, towns, onName, onTowns }: {
   </div>
 );
 
-/** The area's name and towns being changed, and its removal. */
 const AreaEditor = ({ cardId, area, onDone }: { cardId: string; area: RateArea; onDone: () => void }) => {
   const update = useUpdateRateArea(cardId);
   const del = useDeleteRateArea(cardId);
@@ -81,9 +79,6 @@ const AreaEditor = ({ cardId, area, onDone }: { cardId: string; area: RateArea; 
   );
 };
 
-/** One area's price for one column, merged down across its towns: the amount
- *  (a click changes or removes it), or a dash where the card's own price
- *  applies (a click adds one for the area). */
 const AreaPriceCell = ({ cardId, area, col, rule, rowSpan }: {
   cardId: string; area: RateArea; col: PriceBox; rule: RateRule | null; rowSpan: number;
 }) => (
@@ -94,9 +89,6 @@ const AreaPriceCell = ({ cardId, area, col, rule, rowSpan }: {
   </td>
 );
 
-/** One area: a row per town, its name, prices and pencil merged down across
- *  them and top-aligned on its first town; the name and towns editor opens in
- *  a row under it. */
 const AreaRows = ({ cardId, area, rules, columns, editing, onEditing }: {
   cardId: string; area: RateArea; rules: readonly RateRule[]; columns: readonly PriceBox[]; editing: boolean; onEditing: (on: boolean) => void;
 }) => {
@@ -140,7 +132,6 @@ const AreaRows = ({ cardId, area, rules, columns, editing, onEditing }: {
   );
 };
 
-/** A new area: name, towns, and a box for each price of the card's own ladder. */
 const AddArea = ({ cardId, template, onDone }: { cardId: string; template: readonly PriceBox[]; onDone: () => void }) => {
   const add = useAddAreaWithPrices(cardId);
   const [name, setName] = useState('');
@@ -198,7 +189,6 @@ export const AreaPrices = ({ cardId, areas, rules, ownRules, template, unit, add
       {areas.length > 0 && (
         <>
           <span className={LABEL}>Areas, each with its own prices (RM)</span>
-          {/* On a phone the table keeps its columns and scrolls sideways inside this box. */}
           <div className="relative overflow-x-auto">
             <table className="w-full min-w-[560px] border-collapse text-[13px] tabular-nums">
               <thead>

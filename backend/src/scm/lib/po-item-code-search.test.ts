@@ -2,12 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { poIdsByItemCode, withPoSearchIds, PO_SEARCH_ID_CAP } from './po-item-code-search';
 import { filterPoList, readPoListFilters, type PoListFilters } from './po-list-read';
 
-// Hookka #460: the PO list search finds an order by an item code on its lines.
 
 const ctx = { get: (k: string) => (k === 'companyId' ? 1 : undefined) } as { get(key: string): unknown };
 
-/** A fake PostgREST client: `purchase_orders.limit` answers the item-code read,
- *  `mfg_sales_orders.limit` the SO-reference read (empty unless given). */
 function fakeSb(rows: { poByCode?: Array<{ id: string }>; soDocNos?: Array<{ doc_no: string }> }) {
   const log: string[] = [];
   const sb = {

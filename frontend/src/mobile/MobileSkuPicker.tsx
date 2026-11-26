@@ -6,10 +6,6 @@ import { pickDefaultVariants } from "../vendor/shared/model-default-variants";
 import { isServiceCategory } from "../vendor/shared/service-sku";
 import "./mobile.css";
 
-/* Perf cap (parity with SalesOrderNewFromProducts, PR #342) — never render more
-   than this many rows at once. The full active catalog is ~1141 SKUs; painting
-   every one as a bottom-sheet button froze the sheet on open + on each keystroke.
-   Beyond the cap a hint tells the operator to narrow by search / category. */
 const RENDER_CAP = 60;
 
 /* ---------------------------------------------------------------------------
@@ -29,8 +25,6 @@ const RENDER_CAP = 60;
  * .chips / .chip classes from mobile.css.
  * ------------------------------------------------------------------------- */
 
-/* The line's category axis maps 1:1 to a catalog category. "" (General item)
-   shows every SKU with no category filter. */
 export type SkuPickerCat = "" | "sofa" | "bedframe";
 
 
@@ -44,8 +38,6 @@ export type PickedSku = {
   name: string;
   unitPriceSen: number;
   category: MfgCategory;
-  /** Model default variants (vendor/shared/model-default-variants); only a
-   *  document that specifies the build applies them. */
   defaultVariants: Record<string, string>;
 };
 
@@ -56,17 +48,9 @@ export function MobileSkuPicker({
   onPickMany,
   onClose,
 }: {
-  /* The line's current category seeds the sheet's default chip so a bedframe
-     line opens pre-filtered to bedframes — but the operator can switch to
-     "All" or any other chip, so it never BLOCKS selecting another category. */
   initialCat?: SkuPickerCat;
-  /* Only SERVICE SKUs (DEV-32: after a Delivery Order a Sales Order takes charge
-     lines only, desktop SoLineCard chargeOnly). The catalog lists them at once. */
   serviceOnly: boolean;
   onPick: (sku: PickedSku) => void;
-  /* Optional multi-select. When provided, rows become toggleable and a footer
-     "Add N products" button hands back every selected SKU at once. When absent,
-     the sheet keeps the single-tap-to-add behaviour (back-compat). */
   onPickMany?: (skus: PickedSku[]) => void;
   onClose: () => void;
 }) {
@@ -78,10 +62,6 @@ export function MobileSkuPicker({
   const seedCat: MfgCategory | "" =
     initialCat === "sofa" ? "SOFA" : initialCat === "bedframe" ? "BEDFRAME" : "";
   const [cat, setCat] = useState<MfgCategory | "">(seedCat);
-  /* Search is DEBOUNCED (PR #342 parity) — `searchInput` is the live text box;
-     only after a 250ms idle does it commit to `search`, the value that drives the
-     server query. Without this every keystroke refetched the whole catalog and
-     repainted the sheet, freezing the input while typing. */
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   useEffect(() => {
@@ -90,8 +70,6 @@ export function MobileSkuPicker({
     }, 250);
     return () => window.clearTimeout(t);
   }, [searchInput, search]);
-  /* Multi-select order-preserving pick list (keyed by catalog id → the picked
-     SKU) so "Add N products" hands back selections in the order tapped. */
   const [picked, setPicked] = useState<Array<{ id: string; sku: PickedSku }>>([]);
 
   // Load the full catalog ONCE and filter it LOCALLY. This uses the SAME cache
@@ -116,8 +94,6 @@ export function MobileSkuPicker({
         (trimmedSearch.length < 2 || matchesProductQuery(p, trimmedSearch)),
     );
   }, [productsQ.data, gateOpen, cat, trimmedSearch, serviceOnly]);
-  // Cap the DOM to RENDER_CAP rows so an "All / no search" set can't freeze the
-  // sheet; the hint below tells the operator to narrow when rows are hidden.
   const shown = useMemo(() => rows.slice(0, RENDER_CAP), [rows]);
   const hiddenCount = rows.length - shown.length;
 
@@ -178,8 +154,6 @@ export function MobileSkuPicker({
                 category: p.category,
                 defaultVariants: pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options),
               });
-              /* A sofa piece can be tapped again (two CNRs of a U are two
-                 lines, never one line x2) — sofa-piece-lines.ts. */
               const repeatable = isSofaGroup(p.category);
               const count = multi ? multiPickCount(picked, p.id, (x) => x.id) : 0;
               const isOn = count > 0;
@@ -189,7 +163,6 @@ export function MobileSkuPicker({
                   type="button"
                   onClick={() => {
                     if (multi) {
-                      // Toggle this row in/out of the running selection; a sofa piece adds another copy.
                       setPicked((prev) => tapMultiPick(prev, { id: p.id, sku: skuOf() }, (x) => x.id, repeatable));
                       return;
                     }

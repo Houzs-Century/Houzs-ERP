@@ -100,7 +100,6 @@ describe("MobileProjectChat", () => {
     await waitFor(() => expect(screen.getByText("No messages yet.")).toBeTruthy());
 
     post.mockResolvedValueOnce({ ok: true });
-    // Every subsequent refetch (we poll up to 5 times) returns the empty list.
     get.mockResolvedValue({ data: [] });
     fireEvent.change(screen.getByPlaceholderText(/paste the evening report/), { target: { value: "13/11 - RM35,315" } });
     fireEvent.click(screen.getByLabelText("Send"));
@@ -109,8 +108,6 @@ describe("MobileProjectChat", () => {
       () => expect(screen.getByText(/Saved — the chat will refresh in a moment/)).toBeTruthy(),
       { timeout: 5000 },
     );
-    // The pending bubble clears once the loop gives up, so the sender isn't
-    // stuck looking at a permanent "Sending…" either.
     expect(screen.queryByText("Sending…")).toBeNull();
   });
 });

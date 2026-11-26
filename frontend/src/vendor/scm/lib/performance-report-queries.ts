@@ -25,12 +25,9 @@ export type PerformanceReport = {
   totals: { salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null; salesExServiceSen: number };
   operatingExpense: {
     rateBp: number; baseSen: number; amountSen: number; account: string; accountName: string | null; accountFound: boolean; bookedSen: number;
-    /** The other accounts the rate covers, as the chart names them (name null = not in the chart). */
     also?: Array<{ code: string; name: string | null }>;
-    /** What the ledger booked on those in the period — left out of the expenses too. */
     alsoBookedSen?: number;
   };
-  /** The covered accounts that booked something in the period — on the tree at nil. */
   inRate?: PerformanceExpense[];
   otherIncome: PerformanceExpense[];
   otherIncomeSen: number;
@@ -90,7 +87,6 @@ export const usePerformanceMonths = (from: string | null, to: string | null) => 
   retry: retryUnlessClientError,
 });
 
-/* ── The report's own dress — ONE home for the screen, the CSV and the PDF ── */
 
 /** 1,234.56 with a bracketed negative — the Finance reports' one money dress (fmtSenPlain). */
 export const fmtPerf = (sen: number): string => fmtSenPlain(sen);

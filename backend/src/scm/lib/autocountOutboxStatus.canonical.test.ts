@@ -30,9 +30,6 @@ describe('autocount-outbox-status mirror', () => {
     expect(mjs.AC_STATE_MEANING).toEqual(ts.AC_STATE_MEANING);
   });
 
-  /* Every reason the ERP can write, run through BOTH classifiers. Comparing the
-     tables alone would not catch a mirror whose `includes` had become a
-     `startsWith`. */
   it('classifies every known reason the same way', () => {
     for (const k of ts.AC_SKIP_KINDS) {
       const reason = `${k.needle}: some trailing detail from the ERP`;
@@ -61,9 +58,6 @@ describe('autocount-outbox-status', () => {
     const note = '[re-queued 2026-08-15T09:00:00.000Z -> outbox 7f3] refused, nothing sent (ItemCodeError): 9028-1S';
     expect(ts.acOutboxState('skipped', note)).toBe('requeued');
     expect(ts.acNeedsAttention('skipped', note)).toBe(false);
-    /* The ORIGINAL reason survives behind the annotation and must still
-       classify, or the page would show a re-queued row with no explanation of
-       what it was re-queued FOR. */
     expect(ts.classifyAcSkip(note).kind).toBe('item-code');
   });
 
@@ -80,9 +74,6 @@ describe('autocount-outbox-status', () => {
     expect(ts.acNeedsAttention('sent', null)).toBe(false);
   });
 
-  /* The marker is a PREFIX. A refusal whose own message quoted it mid-string is
-     still an open question, and coercing it to `requeued` would hide a real
-     divergence behind a word that means "already handled". */
   it('the re-queue marker only counts at the start', () => {
     const quoted = 'refused, nothing sent (ItemCodeError): the note said [re-queued ...] once';
     expect(ts.isRequeuedNote(quoted)).toBe(false);
@@ -142,8 +133,6 @@ describe('a re-queued FAILED row is history too', () => {
   });
 
   it('a failed row WITHOUT the marker still needs attention', () => {
-    /* The case the fix must not swallow: a real failure, never re-queued, is
-       still a document in the ERP and not in the book. */
     expect(ts.acOutboxState('failed', 'Foreign Key Error (Constraint Name=FK_SO_SalesAgent)')).toBe('failed');
     expect(ts.acNeedsAttention('failed', 'Foreign Key Error (Constraint Name=FK_SO_SalesAgent)')).toBe(true);
   });
@@ -154,8 +143,6 @@ describe('a re-queued FAILED row is history too', () => {
   });
 
   it('a PENDING row carrying the marker is NOT history — it is the live attempt', () => {
-    /* Only a terminal row can be history. A pending row IS the re-queued work,
-       so calling it history would hide the thing actually in flight. */
     expect(ts.acOutboxState('pending', note)).toBe('pending');
   });
 });
@@ -177,10 +164,6 @@ describe('a refusal older than the arrival is history', () => {
     expect(ts.acRefusalPredatesArrival(REFUSED, ARRIVED)).toBe(true);
   });
 
-  /* THE CASE THAT MUST KEEP COUNTING. A document that arrived and was later
-     edited into a refusal IS in the account book AND does need attention —
-     both chips are right about it. A rule written as "has it ever been sent"
-     would have hidden this one, which is the expensive direction. */
   test('accepted, then refused -> the refusal still stands', () => {
     expect(ts.acRefusalPredatesArrival(ARRIVED, REFUSED)).toBe(false);
   });
@@ -191,8 +174,6 @@ describe('a refusal older than the arrival is history', () => {
     expect(ts.acRefusalPredatesArrival(REFUSED, '')).toBe(false);
   });
 
-  /* AN UNKNOWN ORDER LEAVES THE REFUSAL STANDING. Hiding a real one costs a
-     document; showing a stale one costs a glance. */
   test('an unreadable timestamp leaves the refusal standing', () => {
     expect(ts.acRefusalPredatesArrival('not a date', ARRIVED)).toBe(false);
     expect(ts.acRefusalPredatesArrival(REFUSED, 'not a date')).toBe(false);

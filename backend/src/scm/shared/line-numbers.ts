@@ -1,22 +1,3 @@
-/* Client-supplied qty / money coercion for document line writes.
- *
- * WHY THIS EXISTS — the `Math.max(0, ...)` clamp these call sites already carry
- * does NOT stop a non-finite value. `Number("abc")` is NaN, and `Math.max(0, NaN)`
- * is NaN, not 0: the clamp was written to keep a discount from driving a line
- * total negative, and it was mistaken for input validation it never performed.
- * A NaN then persists straight into an INTEGER SEN column and poisons every
- * total computed from it — and NaN compares false against everything, so the
- * damage reads as a blank or an absurd figure rather than an error.
- *
- * The sibling HOOKKA ERP fixed exactly this class (unguarded `Number(...)` on PO
- * and PI line inputs) in its 2026-06-19 cross-audit against this codebase's
- * ancestor; this is the same hole, still open on this side.
- *
- * SCOPE, deliberately narrow: this rejects only values that are NOT FINITE.
- * It does NOT take a position on negative qty or price — several line paths
- * accept negatives today and whether that is legitimate is a business question,
- * not a correctness one. Widening this to a sign check needs the owner's word.
- */
 
 export type LineNumberSpec = Record<string, { value: unknown; fallback?: number }>;
 

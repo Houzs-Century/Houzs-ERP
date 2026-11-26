@@ -1,11 +1,3 @@
-/* The switch and the transaction client the atomic receipt move writes through.
- *
- * The client is pgTransactionSupabase (the runScmPgCommand shim) plus what the
- * journal engine needs and the shim did not have: `.like` and `.schema('public')`
- * (nextJeNo's floor read and jePrefixForCompany's companies read) and the JE
- * number counter RPC. Driven over a recording stand-in for postgres.js: a
- * statement shape the engine relies on that is not emitted fails here.
- */
 import { describe, expect, it } from 'vitest';
 import type { Sql } from 'postgres';
 import { rebankMode, rebankTxClient, rebankTxFor } from './rebank-transaction';

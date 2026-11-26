@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// The cross-the-wire drift guard.
-//
-// auth/capabilities.ts declares a key union; backend/src/services/capabilities.ts
-// declares the registry that produces those keys. Two lists, one meaning — which
-// is the exact shape of every bug this whole change exists to remove. So the
-// frontend list is not maintained by hand and hoped over: this test READS the
-// backend source and pins the two equal.
-//
-// The frontend CI job runs with `working-directory: frontend`, but actions/checkout
-// lays down the whole repo, so ../backend is present. If that ever stops being
-// true this test fails loudly rather than silently passing on an empty read —
-// see the explicit existence check below.
-// ----------------------------------------------------------------------------
 
 import { describe, expect, test } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
@@ -23,10 +9,6 @@ import type { AuthUser } from "../types";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BACKEND_CAPABILITIES = resolve(HERE, "../../../backend/src/services/capabilities.ts");
 
-/** Pull the registry's keys out of the backend source. The registry is an object
- *  literal whose keys are quoted string literals, so a targeted scan of the
- *  PREDICATES block is exact and does not need the file to be executable from
- *  here (it imports Workers-only modules). */
 function backendCapabilityKeys(): string[] {
   const src = readFileSync(BACKEND_CAPABILITIES, "utf8");
   const start = src.indexOf("const PREDICATES = {");
@@ -34,9 +16,6 @@ function backendCapabilityKeys(): string[] {
   const end = src.indexOf("} as const satisfies", start);
   expect(end, "end of PREDICATES registry not found").toBeGreaterThan(start);
   const block = src.slice(start, end);
-  // Registry entries are `"some.key": …` at the start of a line (allowing
-  // indentation). Doc comments in between contain quoted words but never in
-  // that position.
   const keys = [...block.matchAll(/^\s{2}"([a-zA-Z0-9._]+)":/gm)].map((m) => m[1]);
   return keys;
 }
@@ -51,8 +30,6 @@ describe("capability keys — frontend and backend declare the same vocabulary",
 
   test("the key sets are identical", () => {
     const backend = backendCapabilityKeys().sort();
-    // A parse that found nothing would make this test vacuously pass, so assert
-    // the scan actually saw a registry before comparing.
     expect(backend.length).toBeGreaterThan(5);
     expect([...CAPABILITY_KEYS].sort()).toEqual(backend);
   });

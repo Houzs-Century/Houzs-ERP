@@ -51,7 +51,7 @@ export function partyTypeFor(jobType: DpJobType): DpPartyType {
     case 'DISMANTLE': return 'VENUE';
     case 'TRANSFER': return 'WAREHOUSE';
     case 'LORRY_SERVICE': return 'WORKSHOP';
-    default: return 'CUSTOMER'; // DELIVERY / PICKUP / SERVICE / INSPECTION
+    default: return 'CUSTOMER';
   }
 }
 
@@ -171,7 +171,6 @@ export function snapshotFromThreepl(row: Record<string, unknown>): DpPartySnapsh
     contact_name: s(row.contact_name),
     contact_phone: s(row.contact_phone) ?? s(row.office_phone),
     address1: s(row.address), address2: null, address3: null, address4: null,
-    // Picked off my_localities on the 3PL form (mig 20261117T2000).
     city: s(row.city), postcode: s(row.postcode), state: s(row.state),
   };
 }

@@ -1,4 +1,3 @@
-// HR Overview reminders built from the employee master's compliance dates.
 import { describe, expect, test } from "vitest";
 import { buildUpcoming, permitAlert, probationAlert } from "./overviewReminders";
 
@@ -15,11 +14,11 @@ describe("permitAlert", () => {
   test("counts active permits within the window and already lapsed; skips blanks, far-off and non-active", () => {
     const r = permitAlert(
       [
-        emp({ workPermitExpiry: "2026-11-01" }), // already lapsed
-        emp({ workPermitExpiry: "2026-12-20" }), // within 90 days
-        emp({ workPermitExpiry: "2027-06-01" }), // beyond 90 days
-        emp({ workPermitExpiry: "" }), // no permit
-        emp({ status: "RESIGNED", workPermitExpiry: "2026-11-25" }), // not active
+        emp({ workPermitExpiry: "2026-11-01" }),
+        emp({ workPermitExpiry: "2026-12-20" }),
+        emp({ workPermitExpiry: "2027-06-01" }),
+        emp({ workPermitExpiry: "" }),
+        emp({ status: "RESIGNED", workPermitExpiry: "2026-11-25" }),
       ],
       TODAY,
       90,
@@ -59,11 +58,11 @@ describe("probationAlert", () => {
   test("counts active staff with a future confirmation date and days to the nearest; skips past, blank and non-active", () => {
     const r = probationAlert(
       [
-        emp({ confirmDueOn: "2026-12-08" }), // 15 days out — nearest
-        emp({ confirmDueOn: "2027-02-01" }), // further out
-        emp({ confirmDueOn: "2026-10-01" }), // already past
-        emp({ confirmDueOn: "" }), // none
-        emp({ status: "RESIGNED", confirmDueOn: "2026-12-01" }), // not active
+        emp({ confirmDueOn: "2026-12-08" }),
+        emp({ confirmDueOn: "2027-02-01" }),
+        emp({ confirmDueOn: "2026-10-01" }),
+        emp({ confirmDueOn: "" }),
+        emp({ status: "RESIGNED", confirmDueOn: "2026-12-01" }),
       ],
       TODAY,
     );

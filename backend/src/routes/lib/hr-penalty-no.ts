@@ -1,8 +1,3 @@
-// PN-YYMM-NNN, unique per company. The number comes from the shared atomic
-// counter floored at the month's live max: two penalties saved at the same
-// moment used to read the same max, and the second hit the unique constraint
-// and failed with a server error. The series carries the company because the
-// counter table is global while two companies may both hold PN-2611-001.
 export async function mintPenaltyNo(
   existing: string[],
   companyId: number,

@@ -1,9 +1,3 @@
-/* Titles (position policy) — the ONE logic layer the desktop editor
- * (pages/team/TeamTitlesPolicy.tsx) and the phone editor (mobile/MobileTitles.tsx)
- * both build on, so the two surfaces cannot disagree about what a cohort saves.
- * Types, the display vocabularies, and the two pure transforms (draftOf +
- * normalise) live here; the vocabularies of VALID values still come from the API
- * payload — nothing here restates a backend list. */
 
 export type PolicyCohort = "god" | "full" | "restricted" | "sales";
 
@@ -39,7 +33,6 @@ export interface TitlePolicyPayload {
   cohorts: PolicyCohort[];
   restricted_profiles: string[];
   sales_profiles: string[];
-  /** Absent from a backend that predates the Duty column. */
   duties?: string[];
   positions: TitlePolicyEntry[];
 }

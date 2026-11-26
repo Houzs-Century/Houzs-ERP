@@ -21,8 +21,6 @@ type Row = Record<string, unknown>;
 
 const AGG = { count: 2, total_sen: 440_000 + 300_000, total_outstanding_sen: 440_000 + 300_000 };
 
-/* One order holding 2,000, one 4,400 invoice off it, plus an unrelated 3,000
-   invoice with no order. The owner's reported chain plus a control. */
 const baseRows = (): Row[] => ([
   { id: 'si-1', so_doc_no: 'HC-SO-2608-006', total_sen: 440_000, outstanding_sen: 440_000 },
   { id: 'si-9', so_doc_no: null, total_sen: 300_000, outstanding_sen: 300_000 },
@@ -42,7 +40,6 @@ const store = (o: Partial<Store> = {}): Store => ({
   ...o,
 });
 
-/** PostgREST stand-in for the three tables `stampOrderDeposit` reads. */
 function fakeSb(st: Store) {
   class Q {
     table: string; filters: Record<string, unknown> = {}; ins: Record<string, unknown[]> = {};
@@ -79,7 +76,6 @@ const onePage = (rows: Row[]) => async () => ({ data: rows, error: null });
 describe('the card and the rows agree', () => {
   test('the SI total is net of the order deposit, and the rest is untouched', async () => {
     const r = await summariseSiOutstanding(fakeSb(store()), onePage(baseRows()), 1, AGG);
-    // 4,400 - 2,000 for the invoice with an order, 3,000 for the one without.
     expect(r.total_outstanding_sen).toBe(240_000 + 300_000);
     expect(r.count).toBe(2);
     expect(r.total_sen).toBe(740_000);
@@ -87,8 +83,6 @@ describe('the card and the rows agree', () => {
     expect(r.deposit_note).toBeNull();
   });
 
-  /* The bug this whole PR exists for: the aggregate answered the un-adjusted
-     740,000 while the table under it summed 540,000. */
   test('it lands BELOW the SQL aggregate it refines', async () => {
     const r = await summariseSiOutstanding(fakeSb(store()), onePage(baseRows()), 1, AGG);
     expect(r.total_outstanding_sen).toBeLessThan(AGG.total_outstanding_sen);
@@ -111,8 +105,6 @@ describe('it is never smaller than the truth', () => {
     expect(r.count).toBe(2);
   });
 
-  /* THE CAP MUST NOT SILENTLY STOP COUNTING. A summary that quietly drops rows
-     is worse than one that is too big: too big at least looks wrong. */
   test('more invoices than the cap keeps the aggregate rather than truncating', async () => {
     const many = Array.from({ length: 1000 }, (_, i) => ({ id: `si-${i}`, so_doc_no: null, total_sen: 100, outstanding_sen: 100 }));
     const big = { count: 99_999, total_sen: 9_999_999, total_outstanding_sen: 9_999_999 };
@@ -182,10 +174,6 @@ describe('cost', () => {
     expect(st.reads).toEqual(['acc_credit_note_allocations']);
   });
 
-  /* The stamp's sibling read carries the order numbers in the request URI, and
-     an unbounded `.in()` list is a REJECTED request, not a slow one
-     (paginate-all.ts, URL_QUERY_BUDGET — measured in production 2026-08-17/18).
-     600 distinct orders must therefore become several bounded calls. */
   test('600 distinct orders are read in bounded batches, not one giant IN list', async () => {
     const st = store({ orders: [], payments: [], invoices: [] });
     const rows = Array.from({ length: 600 }, (_, i) => ({ id: `si-${i}`, so_doc_no: `HC-SO-2608-${i}`, total_sen: 100, outstanding_sen: 100 }));

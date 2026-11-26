@@ -1,8 +1,3 @@
-// ----------------------------------------------------------------------------
-// ScanInvoiceModal — "Scan invoice" on the Purchase Invoices list: upload, check,
-// then create (ScanCheckModal). Drafts are converted from posted Goods Receipt
-// lines; a draft books nothing until it is posted.
-// ----------------------------------------------------------------------------
 
 import {
   PI_PENDING_KEY, createPiFromScans, discardPiScans, fetchPiPending, markPiGold, piBlock, retryPiScan, savePiReview, uploadPiScans,

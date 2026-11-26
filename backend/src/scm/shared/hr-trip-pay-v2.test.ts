@@ -1,7 +1,3 @@
-// Trip pay under the 2026-11-17 rules: job allowance by DP job type and event
-// type with the automatic 2nd trip, outstation once a day for the farthest
-// group, overnight tiers, commission on Delivery orders only, and old rates
-// versions still paying what they paid.
 import { describe, expect, test } from "vitest";
 import {
   DEFAULT_TRIP_RATES,
@@ -152,16 +148,15 @@ describe("overnight", () => {
         ...o,
       },
     });
-  /* Clock in 10:00 MYT on the 3rd, clock out at an MYT time that night. */
   const punch = (outIso: string): TripPunch => ({ workDate: "2026-11-03", inAt: "2026-11-03T02:00:00.000Z", outAt: outIso });
   const out = (rates: TripRates, punches: TripPunch[], rows = [row({})]) => run(rows, rates, new Map([[1, punches]])).pay.get(1)?.overnightSen ?? 0;
 
   test("the highest tier reached pays, once per night", () => {
     const r = tiers({});
-    expect(out(r, [punch("2026-11-03T12:30:00.000Z")])).toBe(0); // 20:30
-    expect(out(r, [punch("2026-11-03T14:30:00.000Z")])).toBe(3000); // 22:30
-    expect(out(r, [punch("2026-11-03T17:30:00.000Z")])).toBe(5000); // 01:30
-    expect(out(r, [punch("2026-11-03T19:00:00.000Z")])).toBe(8000); // 03:00
+    expect(out(r, [punch("2026-11-03T12:30:00.000Z")])).toBe(0);
+    expect(out(r, [punch("2026-11-03T14:30:00.000Z")])).toBe(3000);
+    expect(out(r, [punch("2026-11-03T17:30:00.000Z")])).toBe(5000);
+    expect(out(r, [punch("2026-11-03T19:00:00.000Z")])).toBe(8000);
     expect(out(r, [punch("2026-11-03T15:00:00.000Z"), punch("2026-11-03T19:00:00.000Z")])).toBe(8000);
   });
 
@@ -174,12 +169,11 @@ describe("overnight", () => {
     const r = tiers({ jobTypes: ["SETUP", "DISMANTLE"] });
     expect(out(r, [punch("2026-11-03T17:30:00.000Z")], [row({ jobType: "DELIVERY_ORDER", eventType: null })])).toBe(0);
     expect(out(r, [punch("2026-11-03T17:30:00.000Z")], [row({})])).toBe(5000);
-    /* Nothing ticked: every night counts, trip or not; with no trip at all the person is paid as a helper. */
     expect(out(tiers({}), [punch("2026-11-03T17:30:00.000Z")], [])).toBe(4000);
   });
 
   test("only if the shift lasted over N hours; 0 = no condition", () => {
-    const shortShift: TripPunch = { workDate: "2026-11-03", inAt: "2026-11-03T09:00:00.000Z", outAt: "2026-11-03T17:30:00.000Z" }; // 17:00 to 01:30
+    const shortShift: TripPunch = { workDate: "2026-11-03", inAt: "2026-11-03T09:00:00.000Z", outAt: "2026-11-03T17:30:00.000Z" };
     expect(out(tiers({ minHours: 10 }), [shortShift])).toBe(0);
     expect(out(tiers({ minHours: 8 }), [shortShift])).toBe(5000);
     expect(out(tiers({ minHours: 0 }), [shortShift])).toBe(5000);

@@ -87,7 +87,6 @@ export function ToArrangeTab({
 
   return (
     <div className="space-y-3">
-      {/* bulk bar */}
       <div className={cn('flex flex-wrap items-end gap-2 rounded-md border border-border p-3', sel.size > 0 ? 'bg-primary-soft' : 'bg-surface')}>
         <span className="text-[12.5px] font-semibold text-ink">{sel.size} selected</span>
         <select className={selectCls} value={bulk.lorryId} onChange={(e) => setB({ lorryId: e.target.value })} aria-label="Lorry">

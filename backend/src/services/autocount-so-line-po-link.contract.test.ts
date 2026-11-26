@@ -1,7 +1,3 @@
-// A purchase order made from a sales order names itself on the sales lines it
-// buys, the way the office's plug-in leaves them (UDF_PONo / UDF_PODocKey /
-// UDF_Creditor). The host is compiled and swapped on the office PC separately,
-// so what the ERP can hold it to here is the text of the methods.
 import { describe, expect, test } from 'vitest';
 import rawAcSync from '../../scripts/autocount-service/AcSyncService.cs?raw';
 

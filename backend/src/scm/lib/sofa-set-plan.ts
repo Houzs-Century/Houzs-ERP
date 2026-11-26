@@ -51,16 +51,12 @@ import { sofaSetKey } from '../shared/sofa-set-identity';
 export type SofaSetLine = {
   soItemId: string;
   docNo: string;
-  /** composite(warehouse, item_code, variant_key) — the engine's bucket key. */
   bucketKey: string;
   whId: string | null;
   code: string;
   vkey: string;
-  /** Units still to fulfil (effQty). */
   need: number;
-  /** mfg_sales_order_items.allocated_batch_no — the allocator's whole-set lock. */
   lockedBatchNo: string | null;
-  /** Effective delivery date (the engine's deliveryOf) — the walk's priority. */
   delivery: string | null;
 };
 
@@ -77,7 +73,6 @@ export type SofaPlan = {
   poNumber: string | null;
   poEta: string | null;
   poSupplierId: string | null;
-  /** The batch (= PO number) the WHOLE set is planned from; null = nothing covers it. */
   batchNo: string | null;
 };
 
@@ -104,7 +99,7 @@ export function planSofaSets(
   poRaisedFor: SofaPoRaisedFor,
 ): Map<string, SofaPlan> {
   const planByLine = new Map<string, SofaPlan>();
-  const setsByKey = new Map<string, SofaSetLine[]>(); // `${wh}|${doc_no}|${model}` — the allocator's set key
+  const setsByKey = new Map<string, SofaSetLine[]>();
   for (const l of lines) {
     const key = `${l.whId ?? WH_NONE}|${sofaSetKey(l.docNo, l.code)}`;
     const arr = setsByKey.get(key) ?? [];
@@ -119,16 +114,12 @@ export function planSofaSets(
       const perBucket = poOpenByBatch.get(p.poNumber) ?? new Map<string, BatchPo>();
       const cur = perBucket.get(k) ?? { qtyLeft: 0, eta: null, supplierId: p.supplierId };
       cur.qtyLeft += p.qtyLeft;
-      // The set is complete when its LAST unit lands: latest line date wins.
       if (cur.eta == null || (p.eta != null && p.eta > cur.eta)) cur.eta = p.eta;
       perBucket.set(k, cur);
       poOpenByBatch.set(p.poNumber, perBucket);
     }
   }
 
-  /* Two lines of the SAME module + variant (a symmetric sofa's two identical
-     arms) are summed before comparing to a batch — findCoveringBatch's own
-     audit fix (2026-06-03), kept here for the same reason. */
   const modulesOf = (set: SofaSetLine[]): Module[] => {
     const m = new Map<string, Module>();
     for (const l of set) {
@@ -188,10 +179,6 @@ export function planSofaSets(
     }
     return null;
   };
-  /* Draw the set's units from `fit.batch` — received lots first, then the
-     open PO — and record the plan on every line. A set the batch only partly
-     covers still names it on EVERY line (allocSourceCoveringPo's question),
-     and each line's own remainder is its shortage. */
   const planSet = (set: SofaSetLine[], fit: Fit | null): void => {
     for (const l of set) {
       if (!fit) {
@@ -222,9 +209,6 @@ export function planSofaSets(
   };
   const setDelivery = (set: SofaSetLine[]): string | null =>
     set.reduce<string | null>((min, l) => (byDateAsc(l.delivery, min) < 0 ? l.delivery : min), null);
-  // Same priority as the allocator and section 7: effective delivery date
-  // ascending (nulls last), then SO doc number — so a scarce batch goes to
-  // the earliest delivery and the walk never flips nondeterministically.
   const orderedSets = [...setsByKey.entries()].sort(([, a], [, b]) => {
     const byDate = byDateAsc(setDelivery(a), setDelivery(b));
     if (byDate !== 0) return byDate;
@@ -235,8 +219,6 @@ export function planSofaSets(
     const lock = set[0]!.lockedBatchNo;
     if (!lock || set.some((l) => l.lockedBatchNo !== lock)) continue;
     const fit = fitOf(lock, modulesOf(set));
-    /* A stale lock (units transferred, stock-taken or oversold since the
-       allocator last ran) reserves nothing: the set competes like any other. */
     if (!fit.stockOnly) continue;
     planSet(set, fit);
     planned.add(key);

@@ -26,7 +26,6 @@ export function MobileSoFilterSheet({
   appliedStatus: string;
   appliedFilters: readonly SoListFilter[];
   statusOptions: ReadonlyArray<{ key: string; label: string }>;
-  /** Server counts for the APPLIED filters; undefined on an old backend. */
   statusCounts: Record<string, number> | undefined;
   q: string;
   onApply: (next: { status: string; filters: SoListFilter[] }) => void;

@@ -2,15 +2,6 @@ import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
 import { scmAreaGuard } from "./area-guard";
 
-/*
- * The driver run-sheet ("Last Mile Delivery (Driver)") READS the delivery board
- * and the job-progress feed, both mounted behind scmAreaGuard("scm.transportation
- * .drivers"). The Driver role is scm_l2_configured (it has explicit scm* rows) and
- * carries scm.transportation.last_mile=view but scm.transportation.drivers=none —
- * so before the readInheritsFrom hatch, an L2 driver 403'd on GET / and the page
- * showed "Couldn't load delivery planning". These pin the fix: a Last Mile viewer
- * READS the board; WRITES still require edit on the native area.
- */
 
 type FakeUser = {
   permissions?: string[];

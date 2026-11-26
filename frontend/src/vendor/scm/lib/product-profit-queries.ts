@@ -19,25 +19,18 @@ export type ProductProfitRow = {
   model: string;
   brand: string | null;
   category: ProductCategory;
-  /** Sets for a sofa (the orders that bought it), pieces for everything else. */
   units: number;
   orders: number;
   salesSen: number;
-  /** Its own cost, a set's unpriced modules included. */
   costSen: number;
-  /** Its share of the gifts on the orders that bought it. */
   giftSen: number;
-  /** Its share of the free bedframes among those gifts: pieces (one decimal) and cost. */
   freeBedframes: number;
   freeBedframeSen: number;
-  /** Priced lines with no cost on them — the margin reads high. */
   noCostLines: number;
   items: ProductProfitItem[];
 };
 export type ProductProfitData = {
-  /** The first month read (`YYYY-MM`). */
   month: string;
-  /** The first and last days of the whole months read. */
   from: string;
   to: string;
   orders: number;

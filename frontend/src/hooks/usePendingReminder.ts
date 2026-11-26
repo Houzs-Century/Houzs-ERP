@@ -19,13 +19,9 @@ const PAGE = 100;
 
 export type PendingReminder = {
   digest: PendingDigest | null;
-  /** Show the modal? False once acknowledged today, or when nothing is due. */
   open: boolean;
-  /** "Got it" — quiet until tomorrow. */
   acknowledge: () => void;
-  /** "Remind later" — quiet for THIS tab only; returns on the next login. */
   postpone: () => void;
-  /** Turn the list's My-Pending filter on, so the destination matches. */
   armMyPendingFilter: () => void;
 };
 
@@ -51,8 +47,6 @@ export function usePendingReminder(): PendingReminder {
   // still enforces its own per-caller scope, and Projects stays reachable.
   const allowed = canSeePendingReminder(user);
 
-  // Only ask once the user is known — an anonymous call would 401 and, worse,
-  // could not be scoped to anyone. `enabled` also keeps it off the login screen.
   const q = useQuery<{ data: PendingRow[]; total: number }>({
     queryKey: ["pending-reminder", user?.id ?? 0, today],
     queryFn: () => api.get(`/api/projects?my_pending=1&per_page=${PAGE}&page=1`),
@@ -71,16 +65,11 @@ export function usePendingReminder(): PendingReminder {
     try {
       if (key) localStorage.setItem(key, "1");
     } catch {
-      // Storage unavailable (private window): the reminder simply returns on
-      // the next load rather than being lost — the safer direction.
     }
   }, [key]);
 
   const postpone = useCallback(() => setPostponed(true), []);
 
-  // Set through the SAME hook the Project List reads, not by poking localStorage:
-  // the key shape and the same-tab wake-up event are that hook's private
-  // business, and a hand-copied constant here is how two surfaces drift.
   const [, setMyPending] = useIdentityPreference("projects:myPending", false, booleanPreference);
   const armMyPendingFilter = useCallback(() => setMyPending(true), [setMyPending]);
 

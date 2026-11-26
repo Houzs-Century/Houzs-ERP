@@ -38,39 +38,16 @@ import { fmtSen } from '../scm/shared/format';
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Mirrors the customer-portal upload route — same allow-list and limits
-// so the supplier can't slip in a bigger file than the customer can.
 const ALLOWED_EXT = new Set(["jpg", "jpeg", "png", "webp"]);
-const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_SIZE = 10 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_CASE = 20;
 
-// The PictureBlock slots map to existing category values so the
-// assr_attachments CHECK constraint accepts them without a migration.
-//   "Service Issue"        → evidence    (proof of the problem)
-//   "Operation QC Checked" → completion  (proof of finished work)
 const SUPPLIER_CATEGORY = new Set(["evidence", "completion"]);
 
-// ── GET /case ───────────────────────────────────────────────────────
-//
-// One-shot bundle for the supplier portal page. Returns the slim case
-// view + items + supplier-visible attachments + stage history (for the
-// Workflow Progress Tracker).
 
 app.get("/case", async (c) => {
   const { assr_id } = c.get("supplierScope");
 
-  // Hand-picked columns for the supplier view — no customer phone,
-  // full address, or internal cost. addr1 + addr4 (line 1 + postcode)
-  // are for delivery routing only. Mig 106 added supplier_service_note
-  // (supplier owns) + goods_returned_note (Houzs writes, supplier
-  // reads).
-  //
-  // NB: keep this SELECT free of SQL `--` comments. The d1-compat
-  // shim over Hyperdrive collapses the prepared statement to a
-  // single line before sending it to Postgres, so a `--` anywhere
-  // in the middle comments out the entire tail (including the FROM
-  // clause), producing "syntax error at end of input". Prose stays
-  // in JS comments here; the SQL is a column list, nothing more.
   const cs = await c.env.DB.prepare(
     `SELECT id, assr_no, stage, complained_date, complaint_issue,
             issue_category, resolution_method, service_category,
@@ -97,20 +74,6 @@ app.get("/case", async (c) => {
     .bind(assr_id)
     .all();
 
-  // visible_to_customer = 1 is the only "safe to show outside Houzs"
-  // flag the schema has: it defaults to 1 and staff flip it to 0 on the
-  // case page precisely to mark a photo internal. Without this
-  // predicate the supplier portal served EVERY attachment on the case,
-  // including the ones staff had explicitly hidden. The customer portal
-  // has had the filter since mig 016 (routes/portal.ts) — this router
-  // was cloned from it and dropped the line.
-  //
-  // Reusing the customer flag for a supplier audience is a deliberate
-  // fail-closed choice, not a shortcut: a photo marked internal stays
-  // internal to BOTH outside parties. The cost is that hiding a
-  // supplier's own upload also hides it from that supplier — the safe
-  // direction to be wrong in, and the one to revisit only if staff ask
-  // for a separate visible_to_supplier flag.
   const attachments = await c.env.DB.prepare(
     `SELECT id, category, file_name, content_type, created_at
        FROM assr_attachments
@@ -132,7 +95,6 @@ app.get("/case", async (c) => {
     .bind(assr_id)
     .all();
 
-  // Supplier name from the creditors mirror
   const supplierName = cs.creditor_code
     ? (
         await c.env.DB.prepare(
@@ -152,13 +114,6 @@ app.get("/case", async (c) => {
   });
 });
 
-// ── POST /stage — REMOVED (design handoff 2026-07-02) ───────────────
-//
-// The supplier job progress is READ-ONLY and set by Houzs; suppliers
-// can no longer advance the workflow from the portal. Their levers are
-// Accept job, Submit quote, photos, service note, and remarks. The
-// endpoint returns 410 so any stale portal tab gets a clear error
-// instead of a silent 404.
 
 app.post("/stage", (c) =>
   c.json(
@@ -167,10 +122,6 @@ app.post("/stage", (c) =>
   )
 );
 
-// ── POST /accept ────────────────────────────────────────────────────
-//
-// Supplier presses "Accept job". Idempotent — a second call returns
-// the original acceptance timestamp instead of overwriting it.
 
 app.post("/accept", async (c) => {
   // company-scope: capability token, not a session — the bearer resolves to exactly ONE assr_id and every write binds THAT id, never a route param. Evidence in this file's header, verified 2026-08-19.
@@ -202,12 +153,6 @@ app.post("/accept", async (c) => {
   return c.json({ ok: true, accepted_at: row?.supplier_accepted_at ?? null });
 });
 
-// ── POST /quote ─────────────────────────────────────────────────────
-//
-// Labour + materials quote (RM). Houzs reviews before any price
-// reaches the customer. Re-submitting overwrites the stored pair and
-// refreshes supplier_quote_at; each submission is also logged to the
-// activity stream so ops keeps the full history.
 
 app.post("/quote", async (c) => {
   // company-scope: capability token, not a session — the bearer resolves to exactly ONE assr_id and every write binds THAT id, never a route param. Evidence in this file's header, verified 2026-08-19.
@@ -244,16 +189,10 @@ app.post("/quote", async (c) => {
   return c.json({ ok: true });
 });
 
-// ── POST /remarks ───────────────────────────────────────────────────
-//
-// Free-text supplier remark — logged to the activity stream with
-// source_channel='supplier_portal' so the timeline distinguishes it
-// from staff notes.
 
 app.post("/remarks", async (c) => {
   // company-scope: capability token, not a session — the bearer resolves to exactly ONE assr_id and every write binds THAT id, never a route param. Evidence in this file's header, verified 2026-08-19.
   const { assr_id } = c.get("supplierScope");
-  // Spam brake — same treatment as the customer portal's comments.
   const limited = await checkRateLimit(c, "supplier_remark", String(assr_id), 20, 3600);
   if (limited) return limited;
   const body = await c.req.json<{ note?: string }>();
@@ -266,11 +205,6 @@ app.post("/remarks", async (c) => {
   )
     .bind(assr_id, clipped)
     .run();
-  // Mig 106 — main case page's "Supplier status update" (action_remark)
-  // mirrors the latest supplier-portal note so ops don't have to hunt
-  // through the activity log to see the current status. Ops can still
-  // hand-edit action_remark on the main page; the next supplier note
-  // overwrites it. Full history stays in assr_activity.
   await c.env.DB.prepare(
     `UPDATE assr_cases SET action_remark = ? WHERE id = ?`
   )
@@ -279,13 +213,6 @@ app.post("/remarks", async (c) => {
   return c.json({ ok: true });
 });
 
-// ── PUT /service-note ───────────────────────────────────────────────
-//
-// Mig 106 — persistent service record the supplier writes when
-// they've serviced the item. Unlike /remarks (which fires one-off
-// notes into the activity log), this field is the current-state
-// blob the supplier owns and can rewrite. Ops sees the same value
-// on the main case page's QC Inspection card.
 
 app.put("/service-note", async (c) => {
   // company-scope: capability token, not a session — the bearer resolves to exactly ONE assr_id and every write binds THAT id, never a route param. Evidence in this file's header, verified 2026-08-19.
@@ -301,17 +228,9 @@ app.put("/service-note", async (c) => {
   return c.json({ ok: true });
 });
 
-// ── PUT /attachments ────────────────────────────────────────────────
-//
-// Photo upload from the supplier — used by the PictureBlock slots on
-// the supplier-portal page. Mirrors POD's customer-portal route (mig 016
-// + routes/portal.ts) but writes the attachment with source_channel
-// stamped in the activity log so audit can tell supplier uploads apart
-// from staff and customer ones.
 
 app.put("/attachments", async (c) => {
   const { assr_id } = c.get("supplierScope");
-  // Upload brake — bounds churn around the 20-per-case attachment cap.
   const limited = await checkRateLimit(c, "supplier_upload", String(assr_id), 15, 3600);
   if (limited) return limited;
 
@@ -350,8 +269,6 @@ app.put("/attachments", async (c) => {
   await c.env.POD_BUCKET.put(key, buf, { httpMetadata: { contentType } });
   const attId = await saveAttachment(c.env, assr_id, key, fileName, contentType, category, null);
 
-  // Audit entry — `source_channel` differentiates this from staff /
-  // customer uploads in the timeline.
   await c.env.DB.prepare(
     `INSERT INTO assr_activity
        (assr_id, action, from_value, to_value, note, category, source_channel)
@@ -363,17 +280,6 @@ app.put("/attachments", async (c) => {
   return c.json({ id: attId, category }, 201);
 });
 
-// ── GET /attachments/:attId ─────────────────────────────────────────
-//
-// Stream an attachment binary back. Re-checks scope on every request
-// so a stolen attachment URL with a stale token is rejected.
-//
-// The visibility predicate is repeated here and NOT left to the listing
-// above: this route takes an attachment id straight from the URL, so
-// filtering only the list would hide internal photos from the page
-// while still serving their bytes to anyone walking the id space —
-// ids are sequential. Mirrors routes/portal.ts's customer equivalent,
-// which guards both places for the same reason.
 
 app.get("/attachments/:attId", async (c) => {
   const { assr_id } = c.get("supplierScope");
@@ -402,11 +308,6 @@ app.get("/attachments/:attId", async (c) => {
   });
 });
 
-// ── POST /attachments/:attId/archive ────────────────────────────────
-//
-// Suppliers can retract a photo they uploaded by mistake, as long as
-// it was theirs (matched by the latest supplier_upload activity row).
-// Anything authored by staff or customer is off-limits.
 
 app.post("/attachments/:attId/archive", async (c) => {
   const { assr_id } = c.get("supplierScope");

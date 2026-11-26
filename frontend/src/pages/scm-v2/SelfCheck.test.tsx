@@ -1,10 +1,3 @@
-/* Books › Self-check in the owner's redesign (batch 6 §3). Pinned: the three
-   groups and their rows; a control account reads its ledger balance (Cr on
-   the creditor side), its findings open by default with the documents and
-   the foreign lines; a check that could not run reads "Not checked", never
-   clean; the cancelled orders still holding money list each order with what
-   is left; the subtitle counts the checks and what needs looking at; Run
-   again re-reads every check. */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -68,19 +61,16 @@ describe('Self-check', () => {
     expect(within(ar).getByText('300-0000 · balance in the ledger')).toBeTruthy();
     expect(within(ar).getByText('RM 438,157.00')).toBeTruthy();
     expect(within(ar).getByText('2 findings')).toBeTruthy();
-    /* Open by default: the document (a link to the invoice), who, when, its entry, the totals; the foreign line. */
     expect(within(ar).getByRole('button', { name: 'HC-SI-2610-0088' })).toBeTruthy();
     expect(within(ar).getByText('Lim Kah Hoe')).toBeTruthy();
     expect(within(ar).getByText('2026/10/24')).toBeTruthy();
     expect(within(ar).getByText('HC-JE-2610-0851')).toBeTruthy();
     expect(within(ar).getByText('(120.00)')).toBeTruthy();
     expect(within(ar).getByText(/Lines on this account from sources that do not belong here: HC-JE-2610-0100 \(MANUAL\)/)).toBeTruthy();
-    /* A clean control is one line; a creditor's balance reads Cr. */
     const ap = rowOf('control-400-0000');
     expect(within(ap).getByText('RM 297,121.00 Cr')).toBeTruthy();
     expect(within(ap).getByText('Clean')).toBeTruthy();
     expect(within(ap).queryByRole('button')).toBeNull();
-    /* A check that could not run is not clean. */
     const apo = rowOf('control-405-0000');
     expect(within(apo).getByText('Not checked')).toBeTruthy();
     expect(within(apo).getByText(/could not run: v_gl_entries: timeout/)).toBeTruthy();
@@ -94,7 +84,6 @@ describe('Self-check', () => {
     expect(within(row).getByText('HC-SO-2610-0366 · Hafizah Ismail')).toBeTruthy();
     expect(within(row).getByText(/Refund and Convert are on the order’s money panel/)).toBeTruthy();
     expect(within(row).getByRole('button', { name: 'HC-SO-2610-0366' })).toBeTruthy();
-    /* AR (findings), Other creditors (not checked), the cancelled order: 3 of 8. */
     expect(screen.getByText(/· 8 checks · 3 to look at/)).toBeTruthy();
     expect(within(rowOf('agree')).getByText('all 1284')).toBeTruthy();
     expect(within(rowOf('receipts')).getByText('Every payment has one')).toBeTruthy();

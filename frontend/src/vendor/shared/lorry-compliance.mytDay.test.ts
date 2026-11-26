@@ -1,13 +1,9 @@
-/* Lorry document expiry (road tax, insurance, Puspakom) counts days from the
-   MALAYSIAN today. At 01:30 on 10 Nov (Malaysia), on a device whose clock
-   zone is UTC, a road tax expiring on the 9th is already expired. Run with
-   TZ=UTC. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { daysUntil, expiryStatus, todayIso } from "./lorry-compliance";
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-11-09T17:30:00Z")); // 01:30 on 10 Nov in Malaysia
+  vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));
 });
 afterEach(() => vi.useRealTimers());
 

@@ -1,14 +1,7 @@
-// Regression cover for poLineFieldKinds — the PO-amendment line classifier that
-// labels each follow-up preview row (docs/bugs). A product-lane SO amendment
-// auto-raises a PO amendment whose preview rows carry the SO change; a
-// colour/fabric/special edit moves no item_code, so it must be detected on the
-// rendered variant SUMMARY (reusing the SO side's group-aware comparison), and a
-// SPEC row must NOT read as a phantom QTY change.
 
 import { describe, it, expect } from 'vitest';
 import { poLineFieldKinds, type PoAmendmentLine } from './po-amendment-queries';
 
-/* A four-axis bedframe spec (same shape so-amendment-line-diff.test.ts pins). */
 const BEDFRAME_SPEC = {
   fabricCode:  'PC151-14',
   divanHeight: '8"',
@@ -32,14 +25,13 @@ describe('poLineFieldKinds — follow-up preview classification', () => {
     const line = poLine({
       change_type: 'SPEC',
       new_variants: { ...BEDFRAME_SPEC, fabricCode: 'PC151-01' },
-      new_qty: null, // the fix: a SPEC row carries no unchanged qty
+      new_qty: null,
       old_snapshot: {
         preview: true, item_code: 'TRION', material_name: 'TRION BEDFRAME',
         qty: 1, item_group: 'bedframe', variants: { ...BEDFRAME_SPEC },
         description2: 'PC151-14 / DIVAN 8" + LEG 1" / GAP 12" / T.Heights 21"',
       },
     });
-    // VARIANT only — no phantom QTY (old.qty is present and new_qty is null).
     expect(poLineFieldKinds(line)).toEqual(['VARIANT']);
   });
 

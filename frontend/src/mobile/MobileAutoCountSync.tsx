@@ -154,7 +154,6 @@ function StateBadge({ state }: { state: string }) {
   );
 }
 
-/** A chip with its count, on both strips. */
 function CountChip(
   { label, count, on, onClick }: { label: string; count: number; on: boolean; onClick: () => void },
 ) {
@@ -175,15 +174,6 @@ function CountChip(
   );
 }
 
-/**
- * The machinery, one level in from the reason — collapsed, and labelled with
- * who it is for. The desktop twin's TechnicalNote, in this file's idiom.
- *
- * It matters more here than there. The account-book dump the AutoCount service
- * started appending on 2026-08-16 is four lines of `Qty=1.00000000
- * TransferedQty=0.00000000` at 375 px, which is most of a phone screen spent on
- * something the person holding it cannot act on.
- */
 function TechnicalNote({ text }: { text: string }) {
   return (
     <details
@@ -200,18 +190,6 @@ function TechnicalNote({ text }: { text: string }) {
   );
 }
 
-/**
- * What a machine said, quoted, and WHO said it.
- *
- * "AutoCount replied" and "AutoCount was not asked" are different facts and
- * they change what the reader does about the document. Behind the opener since
- * the cards had to get short — never flattened into one label, which would lose
- * the distinction rather than tidy it.
- *
- * Renders the shared layer's AcSaid, exactly as the desktop does. What counts
- * as a sentence and what counts as machinery is decided once, for the product,
- * not twice, per surface.
- */
 function WhatWasSaid({ said }: { said: AcSaid }) {
   return (
     <div style={{ marginTop: 8, paddingTop: 7, borderTop: "1px dashed var(--line)" }}>
@@ -234,11 +212,6 @@ function WhatWasSaid({ said }: { said: AcSaid }) {
   );
 }
 
-/**
- * A document's earlier sends, folded under it — the desktop twin's
- * `EarlierSends`, in this file's idiom. The audit trail is kept; it is simply
- * not the list.
- */
 function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempts: number }) {
   return (
     <div style={{ padding: "8px 10px", background: "var(--bg)", borderTop: "1px solid var(--line)" }}>
@@ -266,18 +239,6 @@ function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempt
   );
 }
 
-/**
- * THE ACCOUNT BOOK FILED IT UNDER A DIFFERENT NUMBER — the desktop register's
- * flagged cell, in this file's idiom and with the room a phone actually has.
- *
- * ON THE CARD, never behind the opener. A document already in the account book
- * has nothing to open — that ruling stands — so a flag that needed a click
- * would be a flag on exactly the rows that have no click. It is also why this
- * is the one thing a quiet card is allowed to grow for: in production the two
- * numbers are the same string on anything sent since the ERP started supplying
- * its own (module guide §7g), so this is rare, and on the day it is not rare it
- * is the most useful thing on the screen.
- */
 function BookMismatch({ docNo, acDocNo }: { docNo: string; acDocNo: string }) {
   return (
     <div
@@ -288,9 +249,6 @@ function BookMismatch({ docNo, acDocNo }: { docNo: string; acDocNo: string }) {
         fontSize: 10.5, lineHeight: 1.45, color: "var(--amber)",
       }}
     >
-      {/* ONE FLOWING LINE, not a heading over a paragraph. The phone pays for
-          every line, and the flag reads perfectly well as the opening words of
-          the sentence it introduces. */}
       <b style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase" }}>
         {AC_BOOK_DIFFERENT_FLAG}
       </b>
@@ -299,8 +257,6 @@ function BookMismatch({ docNo, acDocNo }: { docNo: string; acDocNo: string }) {
   );
 }
 
-/** The day a run of cards happened on. A rule and a few words — the desktop
- *  register's separator, from the same buckets. */
 function DaySeparator({ label }: { label: string }) {
   return (
     <div data-ac-day="" style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 2px 0" }}>
@@ -329,14 +285,10 @@ function OutboxCard(
     onRestore: () => void;
   },
 ) {
-  /* The card is the DOCUMENT and its newest send says where it stands — same
-     rule as the desktop, from the same helper. */
   const row = group.current;
   const tone = acStateTone(row.state);
   const c = TONE_COLOR[tone];
-  /* Cleared the moment the re-send is accepted — see the desktop twin. */
   const detail = acRowDetail(row, note?.clearsReason === true);
-  /* The SAME verdict the desktop register's fifth column reads. */
   const book = acBookNumber(row);
 
   return (
@@ -354,7 +306,6 @@ function OutboxCard(
           <b style={{ fontSize: 12.5, color: "var(--ink)", fontFamily: "ui-monospace, monospace", whiteSpace: "nowrap" }}>
             {row.doc_no}
           </b>
-          {/* Offered only where the SERVER says a re-send can mean anything. */}
           {row.can_requeue && (
             <button
               onClick={onSendAgain}
@@ -369,9 +320,6 @@ function OutboxCard(
               {sending ? AC_SEND_AGAIN_BUSY_LABEL : AC_SEND_AGAIN_LABEL}
             </button>
           )}
-          {/* The WAITING row gets its push here too. A control on one surface
-              and not the other is the recurring bug class this repo names, and
-              the owner uses the phone on the floor. */}
           {row.can_send_now && (
             <button
               onClick={onSendNow}
@@ -386,11 +334,6 @@ function OutboxCard(
               {sending ? AC_SEND_NOW_BUSY_LABEL : AC_SEND_NOW_LABEL}
             </button>
           )}
-          {/* And the keyless row's repair, for the same reason the push above is
-              here: the owner uses the phone on the floor, and a control on one
-              surface only is the bug class this repo keeps paying for. This one
-              sends nothing — it matches the document's lines up against the
-              account book so the document can be SAVED again. */}
           {row.reason_kind === 'keyless-line' && (
             <button
               onClick={onRelink}
@@ -405,11 +348,6 @@ function OutboxCard(
               {sending ? AC_RELINK_BUSY_LABEL : AC_RELINK_LABEL}
             </button>
           )}
-          {/* CLEARING A FINISHED DOCUMENT OFF THE LIST, on the phone as well as
-              on the desktop. A control on one surface only is the bug class
-              this repo keeps paying for, and the owner reads this page on the
-              floor. It sends nothing and deletes nothing — every send stays
-              recorded, and Put back returns the document to the list. */}
           {acDocCanArchive(group) && (
             <button
               onClick={onArchive}
@@ -452,7 +390,6 @@ function OutboxCard(
         )}
       </div>
 
-      {/* THE REASON, ONE LINE, ALWAYS VISIBLE — and it is the opener. */}
       {detail.line !== null && (
         <button
           type="button"
@@ -464,10 +401,6 @@ function OutboxCard(
             border: "none", borderTop: "1px solid var(--line)", padding: "6px 10px", cursor: "pointer",
           }}
         >
-          {/* The same angle mark the Back control uses, rotated. A filled
-              triangle would be the obvious glyph and is one of the code points
-              that renders as an EMOJI on some platforms, which this repo does
-              not allow anywhere. */}
           <span
             aria-hidden
             className="chev"
@@ -508,7 +441,6 @@ function OutboxCard(
         </div>
       )}
 
-      {/* The send history, folded, and only where there is one. */}
       {group.earlier.length > 0 && (
         <>
           <button
@@ -538,8 +470,6 @@ function OutboxCard(
         </>
       )}
 
-      {/* Accepted, refused, or never answered — all three land on the row, and
-          never behind the opener: nobody presses a button then goes looking. */}
       {note && (
         <div
           style={{
@@ -588,9 +518,6 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
   const [state, setState] = useState<AcFilterState>(AC_DEFAULT_STATE);
   const [docType, setDocType] = useState<AcDocType | "">("");
   const [docNo, setDocNo] = useState("");
-  /* Component state, not the URL — the mobile shell has no router, and every
-     other mobile filter is held the same way. The DEFAULTS are the shared
-     ones, so the two surfaces open on the same view. */
   const [range, setRange] = useState<AcDateRange>(AC_DEFAULT_DATE_RANGE);
   const [sort, setSort] = useState<AcSort>(AC_DEFAULT_SORT);
 
@@ -603,22 +530,11 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
   const history = useAcReplacedGroup();
   const headline = acHeadline(d);
   const maxAttempts = d?.meta.max_attempts ?? 6;
-  /* ONE CARD PER DOCUMENT, from the same helper the desktop uses. A phone has
-     less room than a screen for the same sales order four times over, not
-     more. */
   const loaded = acGroupByDocument(d?.rows ?? []);
   const typeCounts = acDocTypeCounts(loaded);
-  /* THE TWO LENSES, IN THE DESKTOP'S ORDER, and the order matters for the same
-     reason there: the type chips count what the STATE filter left, and the date
-     range narrows what both left. Reversing them would have the type chips
-     counting a window and the two strips disagreeing. */
   const groups = acGroupsInRange(acGroupsOfType(loaded, docType), range);
-  /* History folds away here too — a phone has less room to spend on documents
-     that already went through, not more. Same helper, same default. */
   const split = acSplitReplaced(groups);
   const live = acSortGroups(split.live, sort);
-  /* ONE FLAT LIST of day separators and cards, from the same helper the desktop
-     register builds its rows from, so a day breaks in the same place on both. */
   const items = acRegisterItems(live);
 
   const renderCard = (g: AcDocGroup) => (
@@ -652,9 +568,6 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
           </div>
         </div>
 
-        {/* Two strips, the same two the desktop page shows, in the same order.
-            `.hdr` is sticky in mobile.css, so they stay put while the list
-            scrolls — which is the whole point at a thousand rows. */}
         <div className="chips" style={{ marginTop: 11 }}>
           {AC_FILTER_STATES.map((s) => (
             <CountChip
@@ -683,10 +596,6 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
             />
           ))}
         </div>
-        {/* THE DATE LENS, the third strip, beside the other two — a filter the
-            desktop has and this screen did not would be the split the shared
-            layer exists to stop. No counts on it: it narrows the loaded page
-            rather than describing a population, and a count would read as one. */}
         <div className="chips" style={{ marginTop: 7 }}>
           {AC_DATE_RANGES.map((r) => (
             <button
@@ -702,7 +611,6 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
       </header>
 
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 40 }}>
-        {/* THE ANSWER FIRST — the same sentence the desktop page shows. */}
         <div
           style={{
             fontSize: 12, fontWeight: 700, lineHeight: 1.45, borderRadius: 11, padding: "10px 12px",
@@ -713,13 +621,8 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
           {headline.text}
         </div>
 
-        {/* A failure that reaches nobody is worse than a crash — a page built
-            because something went unseen must state its own load error. */}
         {q.error && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "var(--red-bg)", border: "1px solid #e6cccc", borderRadius: 12, padding: "11px 13px", marginBottom: 11 }}>
-            {/* The page's own sentence, then the machine's words QUOTED under
-                it — never spliced into it. Same rule as every other reply on
-                this screen. */}
             <span style={{ fontSize: 12, color: "var(--red)", fontWeight: 600 }}>
               {AC_LOAD_FAILED_LINE}
               <span style={{ display: "block", marginTop: 3, fontWeight: 400, fontSize: 10.5, fontFamily: "ui-monospace, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
@@ -756,27 +659,17 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
 
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
               <b style={{ fontSize: 13, color: "var(--ink)" }}>{acListTitle(state, docType)}</b>
-              {/* The SAME sentence the desktop prints. It used to be "6 of 17"
-                  here and "6 of 17 documents" there — two hand-written strings
-                  making two different claims about one number. */}
               <span style={{ fontSize: 10.5, color: "var(--mut)", fontVariantNumeric: "tabular-nums" }}>
                 {acListCountLine(groups.length, acListTotal(d, state))}
               </span>
             </div>
 
-            {/* THE SAME SENTENCE THE DESKTOP PRINTS under this tab. Somebody
-                who finds documents missing from a sync page asks one question —
-                was anything thrown away — and it is answered here, not in a
-                release note. */}
             {state === "archived" && (
               <p style={{ fontSize: 11.5, color: "var(--mut)", margin: "0 0 8px", lineHeight: 1.45 }}>
                 {AC_ARCHIVED_TAB_NOTE}
               </p>
             )}
 
-            {/* THE SORT. A control the desktop register has, in the shape this
-                surface can afford: one button that names the order it is IN,
-                because a phone has no column heading to click. */}
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
               <button
                 onClick={() => setSort(sort === "newest" ? "oldest" : "newest")}
@@ -824,10 +717,6 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                     i.kind === "day" ? <DaySeparator label={i.label} /> : renderCard(i.group)
                   )}
                 />
-                {/* THE LINE THAT CLOSES THE LIST — the desktop register's
-                    footer, same sentence. A windowed list draws its scrollbar
-                    from estimates, so on a phone even more than on a screen the
-                    scrollbar cannot answer "am I looking at all of it". */}
                 <div
                   style={{
                     marginTop: 10, fontSize: 10.5, color: "var(--mut)",
@@ -840,8 +729,6 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
               </>
             )}
 
-            {/* THE RECORD, FOLDED — under the live cards, never among them, and
-                not built at all until it is opened. */}
             {split.replaced.length > 0 && (
               <div style={{ marginTop: 11, border: "1px dashed var(--line)", borderRadius: 11, background: "var(--card)" }}>
                 <button

@@ -1,13 +1,3 @@
-/* The Forecast P&L as cash (step 2 of the Hookka forecast port; Hookka
-   tests/cashflow-forecast.test.mjs and forecast-suppliers.test.mjs, the P&L
-   forecast cases, ported). Pinned: the term words the supplier page offers →
-   months; the mixes and the whole-sen spread; sales by the measured receipts
-   (Deposit / Settlement, delay after the order month); a supplier-split
-   purchase after each supplier's term, Other and a supplier with no term a
-   month later (the latter named); a purchase keyed whole by its recent
-   suppliers' terms; salaries the month after; other income, other costs and
-   taxation in their month; non-cash lines left out and named; the months a
-   column covers. Made-up figures. */
 import { describe, expect, it } from 'vitest';
 import {
   addMonthsYm, buildPnlCashLegs, forecastMonths, measuredWindow, monthsBetween, parseTermMonths, receiptMixOf, spreadSen, termMixOf,
@@ -121,7 +111,6 @@ describe('the Forecast P&L as cash', () => {
       ['2027-02', '601-0003', 200_000, 'Supplier D'],
       ['2027-01', '601-0003', 100_000, 'Other (new suppliers)'],
     ]);
-    /* The line's own 55% is superseded: 4,800,000 paid, not 5,500,000. */
     expect(out.reduce((s, l) => s + l.sen, 0)).toBe(4_800_000);
     expect(r.flagged).toEqual(['sup-b']);
     expect(out[1]!.note).toContain('no payment term set');
@@ -165,9 +154,7 @@ describe('the months a forecast column covers', () => {
       { month: '2026-09', future: false }, { month: '2026-10', future: false }, { month: '2026-11', future: false },
       { month: '2026-12', future: true }, { month: '2027-01', future: true }, { month: '2027-02', future: true },
     ]);
-    /* A range that ends before the current month shows no later month. */
     expect(forecastMonths('2026-08', '2026-09', '2026-11', [leg('2027-02')]).map((m) => m.month)).toEqual(['2026-08', '2026-09']);
-    /* Nothing later to show: the range alone. */
     expect(forecastMonths('2026-11', '2026-11', '2026-11', [])).toEqual([{ month: '2026-11', future: false }]);
   });
 });

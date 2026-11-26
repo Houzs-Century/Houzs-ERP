@@ -1,8 +1,3 @@
-/* deriveListFirstItemBranding was lifted out of the GET /mfg-sales-orders list
-   handler on 2026-09-14. The ORACLE below is that handler's inline code as it
-   stood at 09fb2faaa (src/scm/routes/mfg-sales-orders.ts, the firstCat / repCat
-   / isBedframeOnly block), kept verbatim in shape so the lift is proven
-   behaviour-preserving over a generated population rather than by reading. */
 import { describe, expect, it } from 'vitest';
 import { deriveListFirstItemBranding, type ListBrandingLine } from './so-list-first-item-branding';
 import { normCategory } from './so-readiness';
@@ -64,7 +59,6 @@ function oracle(
   return out;
 }
 
-/* Deterministic PRNG so a failure reproduces. */
 function rng(seed: number) {
   let s = seed >>> 0;
   return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; };
@@ -89,7 +83,7 @@ describe('deriveListFirstItemBranding — the list handler rule, lifted', () => 
     for (let d = 0; d < 3000; d++) {
       const doc = `SO-${String(d).padStart(5, '0')}`;
       docNos.push(doc);
-      const n = Math.floor(r() * 5); // 0..4 lines; 0 = no readable line
+      const n = Math.floor(r() * 5);
       for (let k = 0; k < n; k++) {
         lines.push({
           doc_no: doc,

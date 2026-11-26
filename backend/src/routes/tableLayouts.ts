@@ -27,8 +27,6 @@ import { hasPermission } from "../services/permissions";
 
 const app = new Hono<{ Bindings: Env }>();
 
-/** Who may write a company-wide default. Same verb as the other admin-wide
- *  settings surfaces (Settings → Branding / Email), so no new role plumbing. */
 const MANAGE_DEFAULTS_PERM = "settings.manage";
 
 /**
@@ -45,7 +43,6 @@ const MANAGE_DEFAULTS_PERM = "settings.manage";
 function holdsWildcard(granted: ReadonlyArray<string> | ReadonlySet<string> | undefined): boolean {
   if (!granted) return false;
   if (Array.isArray(granted)) return granted.includes("*");
-  // Narrowed to the Set branch; TS can't see it through the union alias.
   return (granted as ReadonlySet<string>).has("*");
 }
 
@@ -58,13 +55,6 @@ const requireLayoutManager: MiddlewareHandler<{ Bindings: Env }> = async (c, nex
   await next();
 };
 
-/**
- * The layout FAMILY key, e.g. 'sales-orders-v2', or 'dg:dg-suppliers' for a
- * table still on the vendored SCM DataGrid — whose own storage keys carry dots
- * ('cn-g.cn-from-order-lines.layout.v1'), hence the '.' here. The 'dg:' prefix
- * is what tells the frontend which local storage shape a row belongs to; the
- * server never interprets it.
- */
 const TABLE_KEY_RE = /^[a-z0-9][a-z0-9.:_-]{0,79}$/i;
 
 /**
@@ -89,8 +79,6 @@ const SHARED_TABLE_KEYS = new Set([
   "dg:dg-date-arrangement-v2",
   "dg:dg-trips-time-arrangement-v2",
   "dg:dg-last-mile",
-  // The same boards after they moved onto DataTable (2026-09-26): DataTable
-  // keeps the old storageKey as its table id, without the "dg:" family prefix.
   "dg-delivery-planning",
   "dg-delivery-planning-v2",
   "dg-date-arrangement-v2",
@@ -98,7 +86,6 @@ const SHARED_TABLE_KEYS = new Set([
   "dg-last-mile",
 ]);
 
-/** Bounds. A layout is a handful of column keys, never a document. */
 const MAX_KEYS = 200;
 const MAX_KEY_LEN = 64;
 const MIN_WIDTH = 40;
@@ -110,12 +97,7 @@ interface StoredLayout {
   shown: string[];
   widths: Record<string, number>;
   pinned: string[];
-  /** Columns frozen to the RIGHT edge. A second list rather than a reshaped
-   *  `pinned`: every stored layout already holds the flat one. */
   pinnedRight: string[];
-  /** Group-by columns. Only the vendored SCM DataGrid has these, and there they
-   *  ARE part of the layout — grouping a list by supplier changes its shape.
-   *  Sort is deliberately not here: it stays device-local on both grids. */
   groupBy: string[];
 }
 
@@ -133,13 +115,6 @@ function keyList(raw: unknown): string[] {
   return out;
 }
 
-/**
- * Normalise whatever the client sent into the stored shape. Deliberately
- * TOTAL (never throws, never rejects): the input is one browser's accumulated
- * column prefs, and a single corrupt width must not cost the user the rest of
- * their layout. Anything unrecognised is dropped, which is also what makes the
- * echo on GET safe — nothing round-trips that this function didn't build.
- */
 function sanitizeLayout(raw: unknown): StoredLayout {
   const r = (raw ?? {}) as Record<string, unknown>;
   const widths: Record<string, number> = {};
@@ -169,8 +144,6 @@ function parseLayout(raw: unknown): StoredLayout | null {
   try {
     return sanitizeLayout(JSON.parse(raw));
   } catch {
-    // A row we can't parse is a row we ignore: the caller falls back to the
-    // company default / code preset rather than seeing a broken table.
     return null;
   }
 }
@@ -185,20 +158,6 @@ const userIdOf = (c: Ctx): number => {
 
 const nowIso = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
-/**
- * GET /api/table-layouts
- *
- * ONE boot request for every table in the app: layouts are a few hundred bytes
- * each and are needed BEFORE the first list renders (a table that hydrates
- * after mount would visibly re-arrange itself), so they are fetched together
- * rather than per page.
- *
- *   defaults — every company this caller may see, so the Columns panel can
- *              offer "the other company's layout" as a one-click preset. Column
- *              KEYS only; no rows, no data, nothing company-confidential.
- *   mine     — the active company only. Each window is one company, and
- *              switching company refetches.
- */
 app.get("/", async (c) => {
   const companies = (c.get("companies") as { id: number; code: string; name: string }[] | undefined) ?? [];
   const allowedIds = c.get("allowedCompanyIds") as number[] | undefined;
@@ -213,28 +172,15 @@ app.get("/", async (c) => {
 
   const defaults: Record<string, Record<string, StoredLayout>> = {};
   const mine: Record<string, { layout: StoredLayout; updatedAt: string | null }> = {};
-  /** companyId → tableKey → the name an admin gave that company default.
-   *  Absent = the frontend falls back to naming it after the company. */
   const defaultNames: Record<string, Record<string, string>> = {};
-  /** tableKey → this user's SAVED layouts (mig 0239), newest name order. */
   const myLayouts: Record<string, Array<{ id: number; name: string; layout: StoredLayout }>> = {};
-  /** tableKey → the ACTIVE company's SHARED layouts — the team-wide named views
-   *  a layout manager edits for everyone (user_id NULL, is_shared true). */
   const sharedLayouts: Record<string, Array<{ id: number; name: string; layout: StoredLayout }>> = {};
 
-  // Pre-activation (no companies master) there is nothing to key rows by —
-  // return the empty shape and let every table fall back to its code preset,
-  // exactly as before this feature existed.
   if (visible.length > 0) {
     const ids = visible.map((co) => co.id);
     const uid = userIdOf(c);
     try {
       const placeholders = ids.map(() => "?").join(", ");
-      /* User rows come from EVERY visible company, not just the active one:
-         the shared queue boards (SHARED_TABLE_KEYS) must serve the newest row
-         wherever the old per-company scoping left it. Non-shared user rows are
-         filtered back to the active company in the loop below, so per-tenant
-         lists behave exactly as before. */
       const rows = await c.env.DB.prepare(
         `SELECT id, company_id, user_id, name, is_shared, table_key, layout, updated_at
            FROM table_layouts
@@ -252,9 +198,6 @@ app.get("/", async (c) => {
           layout: string;
           updated_at: string | null;
         }>();
-      /* Newest-wins trackers for shared keys (ISO timestamps — lexicographic
-         compare is chronological): one for the live rows, one per shared
-         layout name so a cross-company board serves a single copy. */
       const mineAt = new Map<string, string>();
       const sharedAt = new Map<string, string>();
       for (const row of rows.results ?? []) {
@@ -262,9 +205,6 @@ app.get("/", async (c) => {
         if (!layout) continue;
         const shared = Number(row.is_shared) === 1 || row.is_shared === true || row.is_shared === "t";
         if (row.user_id === null && shared) {
-          // Team-wide named layout. A cross-company board (SHARED_TABLE_KEYS)
-          // shows ONE copy to everyone whichever company it was written under;
-          // a per-tenant list shows the active company's only.
           if (!row.name) continue;
           if (!SHARED_TABLE_KEYS.has(row.table_key) && row.company_id !== activeCompanyId) continue;
           const dedupeKey = `${row.table_key}\u0000${row.name.toLowerCase()}`;
@@ -285,14 +225,12 @@ app.get("/", async (c) => {
           }
         } else if (row.name == null) {
           if (SHARED_TABLE_KEYS.has(row.table_key)) {
-            // Shared board: the NEWEST live row wins, whichever company slot
-            // the old per-company scoping parked it under.
             const at = row.updated_at ?? "";
             const seen = mineAt.get(row.table_key);
             if (seen !== undefined && seen >= at) continue;
             mineAt.set(row.table_key, at);
           } else if (row.company_id !== activeCompanyId) {
-            continue; // per-tenant list — the active company's row only.
+            continue;
           }
           mine[row.table_key] = { layout, updatedAt: row.updated_at ?? null };
         } else {
@@ -308,9 +246,6 @@ app.get("/", async (c) => {
         list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
       }
     } catch {
-      // Table absent (migration not applied yet) or a transient DB error. A
-      // layout store is a convenience: degrade to "nothing saved" and let the
-      // page's own defaults render rather than failing the boot request.
     }
   }
 
@@ -327,7 +262,6 @@ app.get("/", async (c) => {
   });
 });
 
-/** Shared upsert. `userId === null` writes the company default. */
 async function upsert(
   env: Env,
   companyId: number,
@@ -338,19 +272,12 @@ async function upsert(
 ): Promise<void> {
   const payload = JSON.stringify(layout);
   const at = nowIso();
-  // No ON CONFLICT: the two uniques are PARTIAL indexes, which Postgres will
-  // only use as a conflict target when the statement repeats their exact
-  // predicate — a footgun that reads as working until the NULL/NOT-NULL case
-  // diverges. Update-then-insert is unambiguous under both engines, and the
-  // uniques still make a lost race an error rather than a duplicate.
   const updated = await env.DB.prepare(
     userId === null
-      ? /* AND is_shared = 0 — the company DEFAULT only; the shared named
-           layouts (mig 20260925) are user_id NULL too and must not be touched. */
+      ?
         `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
           WHERE company_id = ? AND table_key = ? AND user_id IS NULL AND is_shared = 0`
-      : /* AND name IS NULL — a user's saved layouts live in the same table
-           now (mig 0239); this statement owns only their LIVE arrangement. */
+      :
         `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
           WHERE company_id = ? AND table_key = ? AND user_id = ? AND name IS NULL`,
   )
@@ -378,9 +305,6 @@ function readTarget(c: Ctx) {
   return { tableKey, companyId };
 }
 
-/** The canonical company a SHARED table key's live row is pinned to — the
- *  caller's lowest VISIBLE company id, so it never depends on which company
- *  the window happens to be on. */
 function pinnedCompanyIdFor(c: Ctx): number | null {
   const companies = (c.get("companies") as { id: number }[] | undefined) ?? [];
   const allowedIds = c.get("allowedCompanyIds") as number[] | undefined;
@@ -390,9 +314,6 @@ function pinnedCompanyIdFor(c: Ctx): number | null {
   return ids.length > 0 ? Math.min(...ids) : null;
 }
 
-/** Target for the LIVE-arrangement endpoints (PUT / DELETE /:tableKey) —
- *  readTarget, except a shared key lands on the pinned company. The default and
- *  named-layout endpoints keep readTarget: those stay company things. */
 function mineTarget(
   c: Ctx,
 ): { error: string } | { tableKey: string; companyId: number; shared: boolean } {
@@ -402,9 +323,6 @@ function mineTarget(
   return { tableKey: target.tableKey, companyId: pinnedCompanyIdFor(c) ?? target.companyId, shared: true };
 }
 
-/** PUT /api/table-layouts/:tableKey — save MY layout for the active company
- *  (a SHARED key lands on the pinned company instead, and the save collapses
- *  any fork the old per-company scoping left behind). */
 app.put("/:tableKey", async (c) => {
   const target = mineTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
@@ -414,8 +332,6 @@ app.put("/:tableKey", async (c) => {
   const layout = sanitizeLayout((body as { layout?: unknown }).layout);
   await upsert(c.env, target.companyId, uid, target.tableKey, layout, uid);
   if (target.shared) {
-    // The pinned row is now the truth; live rows this user saved for the same
-    // key under any OTHER company are the stale halves of the fork.
     await c.env.DB.prepare(
       "DELETE FROM table_layouts WHERE table_key = ? AND user_id = ? AND name IS NULL AND company_id <> ?",
     )
@@ -425,15 +341,12 @@ app.put("/:tableKey", async (c) => {
   return c.json({ ok: true, layout });
 });
 
-/** DELETE /api/table-layouts/:tableKey — forget MY layout (the panel's Reset),
- *  so this table falls back to the company default again. */
 app.delete("/:tableKey", async (c) => {
   const target = mineTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
   const uid = userIdOf(c);
   if (!uid) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
   if (target.shared) {
-    // A shared board has ONE live arrangement — reset means every company slot.
     await c.env.DB.prepare(
       "DELETE FROM table_layouts WHERE table_key = ? AND user_id = ? AND name IS NULL",
     )
@@ -442,8 +355,6 @@ app.delete("/:tableKey", async (c) => {
     return c.json({ ok: true });
   }
   await c.env.DB.prepare(
-    // Their LIVE arrangement only — a reset must not take their saved layouts
-    // with it.
     "DELETE FROM table_layouts WHERE company_id = ? AND table_key = ? AND user_id = ? AND name IS NULL",
   )
     .bind(target.companyId, target.tableKey, uid)
@@ -451,14 +362,6 @@ app.delete("/:tableKey", async (c) => {
   return c.json({ ok: true });
 });
 
-/**
- * PUT /api/table-layouts/:tableKey/default — set THIS COMPANY's default view.
- *
- * Reaches only users who have never arranged this table themselves; everyone
- * else keeps their own row. Which company is written is the request's active
- * company, so the admin sets 2990's default from a 2990 window and Houzs's
- * from a Houzs window — the same window they arranged the columns in.
- */
 app.put("/:tableKey/default", requirePermission(MANAGE_DEFAULTS_PERM), async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
@@ -468,20 +371,11 @@ app.put("/:tableKey/default", requirePermission(MANAGE_DEFAULTS_PERM), async (c)
   return c.json({ ok: true, layout });
 });
 
-/**
- * PATCH /api/table-layouts/:tableKey/default — name this company's default.
- *
- * Unnamed, the picker calls it after the company ("2990's Home Layout"), which
- * is a label, not a name. Naming it is how the arrangement everyone inherits
- * gets called what it IS ("Production view"). The row is the same one
- * PUT /default writes; only the label changes, so nobody's columns move.
- */
 app.patch("/:tableKey/default", requireLayoutManager, async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
   const body = await c.req.json().catch(() => ({}));
   const raw = (body as { name?: unknown }).name;
-  // An empty name CLEARS it — back to being called after the company.
   const name = cleanName(raw);
   const res = await c.env.DB.prepare(
     `UPDATE table_layouts SET name = ?, updated_at = ?, updated_by = ?
@@ -495,8 +389,6 @@ app.patch("/:tableKey/default", requireLayoutManager, async (c) => {
   return c.json({ ok: true, name: name || null });
 });
 
-/** DELETE /api/table-layouts/:tableKey/default — drop this company's default,
- *  falling the table back to the page's own preset. The undo for a bad save. */
 app.delete("/:tableKey/default", requirePermission(MANAGE_DEFAULTS_PERM), async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
@@ -508,17 +400,7 @@ app.delete("/:tableKey/default", requirePermission(MANAGE_DEFAULTS_PERM), async 
   return c.json({ ok: true });
 });
 
-/* ── Company-SHARED named layouts (mig 20260925) ───────────────────────────
-   A team-wide named view (user_id NULL, is_shared = 1): a layout MANAGER edits
-   it, everyone in the company sees it. The Delivery Planning board uses it to
-   make its code-shipped presets editable for the whole team without a deploy —
-   the same "code constant -> DB-overridable" move mig 0236 made for the single
-   company default, extended to a NAMED set. Active company only (the request's
-   company), keyed by name (the preset's stable id). */
 
-/** PUT /api/table-layouts/:tableKey/shared — upsert a company-shared layout by
- *  name. Manager only. The name is the preset's stable id, so the same call
- *  both creates the override and later edits it. */
 app.put("/:tableKey/shared", requireLayoutManager, async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
@@ -529,14 +411,8 @@ app.put("/:tableKey/shared", requireLayoutManager, async (c) => {
   const payload = JSON.stringify(layout);
   const at = nowIso();
   const by = userIdOf(c);
-  // A cross-company board keeps ONE shared row for the whole group (like the
-  // user's live row): write it under the caller's pinned company, then collapse
-  // any copy the old scoping left under another company. A per-tenant list
-  // writes under its own company.
   const crossCompany = SHARED_TABLE_KEYS.has(target.tableKey);
   const writeCompany = crossCompany ? (pinnedCompanyIdFor(c) ?? target.companyId) : target.companyId;
-  // Update-then-insert: the partial unique is not a portable ON CONFLICT target
-  // (see upsert()). The unique still turns a lost race into an error, not a dup.
   const updated = await c.env.DB.prepare(
     `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
       WHERE company_id = ? AND table_key = ? AND user_id IS NULL AND is_shared = 1
@@ -564,15 +440,11 @@ app.put("/:tableKey/shared", requireLayoutManager, async (c) => {
   return c.json({ ok: true, name, layout });
 });
 
-/** DELETE /api/table-layouts/:tableKey/shared/:name — drop a company-shared
- *  layout, falling the preset back to the page's code default. Manager only. */
 app.delete("/:tableKey/shared/:name", requireLayoutManager, async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
   const name = cleanName(c.req.param("name"));
   if (!name) return c.json({ error: "Invalid layout name." }, 400);
-  // A cross-company board's shared row is one for the group, so a reset clears
-  // it under every company; a per-tenant list clears its own.
   const crossCompany = SHARED_TABLE_KEYS.has(target.tableKey);
   await c.env.DB.prepare(
     crossCompany
@@ -586,25 +458,12 @@ app.delete("/:tableKey/shared/:name", requireLayoutManager, async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── Named layouts (mig 0239) ──────────────────────────────────────────────
-   A saved column set the user can switch back to. Switching COPIES it into
-   their live arrangement (the unnamed row), which is why nothing here touches
-   the sync path: a layout is data, not a pointer.
-
-   Owner scoping is absolute — every statement carries `user_id = <caller>`, so
-   an id from another account matches nothing and answers 404 rather than
-   telling the caller it exists. Sharing is deliberately out of scope. */
 
 const MAX_NAME_LEN = 60;
 
-/** Trim, collapse whitespace, refuse control characters. "" when unusable. */
 function cleanName(raw: unknown): string {
   if (typeof raw !== "string") return "";
   const cleaned = raw
-    // Control characters render as nothing, which would let two layouts look
-    // identically named in the picker; whitespace runs collapse for the same
-    // reason. Filtered by code point rather than a regex class so this source
-    // file carries no invisible characters of its own.
     .split("")
     .map((ch) => (ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f ? " " : ch))
     .join("")
@@ -613,7 +472,6 @@ function cleanName(raw: unknown): string {
   return cleaned.slice(0, MAX_NAME_LEN);
 }
 
-/** GET /api/table-layouts/:tableKey/layouts — this user's saved layouts. */
 app.get("/:tableKey/layouts", async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
@@ -633,9 +491,6 @@ app.get("/:tableKey/layouts", async (c) => {
   });
 });
 
-/** POST /api/table-layouts/:tableKey/layouts — save the given columns as a
- *  new layout. Duplicate is the same call with the source's layout, so there
- *  is no second endpoint to keep in step with this one. */
 app.post("/:tableKey/layouts", requireLayoutManager, async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
@@ -652,8 +507,6 @@ app.post("/:tableKey/layouts", requireLayoutManager, async (c) => {
   )
     .bind(target.companyId, target.tableKey, uid, name)
     .first<{ id: number }>();
-  // Checked rather than left to the unique index: "You already have a layout
-  // called X" is an answer; a constraint violation is a 500.
   if (clash) return c.json({ error: `You already have a layout called “${name}”.` }, 409);
 
   const inserted = await c.env.DB.prepare(
@@ -667,7 +520,6 @@ app.post("/:tableKey/layouts", requireLayoutManager, async (c) => {
   });
 });
 
-/** PATCH /api/table-layouts/:tableKey/layouts/:id — rename. */
 app.patch("/:tableKey/layouts/:id", requireLayoutManager, async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
@@ -717,8 +569,6 @@ app.put("/:tableKey/layouts/:id", requireLayoutManager, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const layout = sanitizeLayout((body as { layout?: unknown }).layout);
   const res = await c.env.DB.prepare(
-    // `name IS NOT NULL` so this can never overwrite the live arrangement,
-    // whatever id it is handed.
     `UPDATE table_layouts SET layout = ?, updated_at = ?, updated_by = ?
       WHERE id = ? AND company_id = ? AND table_key = ? AND user_id = ? AND name IS NOT NULL`,
   )
@@ -728,7 +578,6 @@ app.put("/:tableKey/layouts/:id", requireLayoutManager, async (c) => {
   return c.json({ ok: true, layout });
 });
 
-/** DELETE /api/table-layouts/:tableKey/layouts/:id */
 app.delete("/:tableKey/layouts/:id", requireLayoutManager, async (c) => {
   const target = readTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
@@ -737,8 +586,6 @@ app.delete("/:tableKey/layouts/:id", requireLayoutManager, async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isFinite(id) || id <= 0) return c.json({ error: "Invalid layout" }, 400);
   const res = await c.env.DB.prepare(
-    // `name IS NOT NULL` so this route can never delete the live arrangement,
-    // whatever id it is handed.
     `DELETE FROM table_layouts
       WHERE id = ? AND company_id = ? AND table_key = ? AND user_id = ? AND name IS NOT NULL`,
   )

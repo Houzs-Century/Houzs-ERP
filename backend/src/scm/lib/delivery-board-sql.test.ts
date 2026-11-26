@@ -1,7 +1,3 @@
-// The SQL board path's own folds, checked against the engines they stand in for
-// (run through the fake PostgREST on the SAME rows), plus the shadow diff and the
-// switch. The SQL text itself runs on real Postgres in
-// tests-pg/deliveryBoardSql.pg.test.ts.
 import { describe, expect, it } from 'vitest';
 
 import { fakeSb, type Row } from './fake-postgrest';
@@ -11,9 +7,6 @@ import { chunkIn } from './paginate-all';
 import { BOARD_DATA_SQL, BOARD_HEAD_SQL, chunkRank, foldDeliverable, foldPoNos } from './delivery-board-sql';
 import { diffBoardRows, parseBoardSource } from './delivery-board-source';
 
-/* Two orders: A has a linked delivery, a partial return, a cancelled return, a
-   DRAFT DO that must not count and an unlinked line under a delivered DO; B has
-   an unlinked line bigger than its open qty (capped) and a cancelled DO. */
 const items: Row[] = [
   { id: 'a1', doc_no: 'A', item_code: 'SOFA-1', item_group: 'SOFA', qty: 3, cancelled: false, line_no: 1, created_at: '2026-01-01T00:00:00Z' },
   { id: 'a2', doc_no: 'A', item_code: 'bed-1 ', item_group: 'BEDFRAME', qty: 2, cancelled: false, line_no: 2, created_at: '2026-01-01T00:00:00Z' },
@@ -43,7 +36,6 @@ const drStatus: Record<string, string> = { R1: 'RECEIVED', R2: 'CANCELLED' };
 describe('foldDeliverable = soDeliverableRemaining summed per order', () => {
   it('linked, DRAFT, unlinked (capped), returns, cancelled returns', async () => {
     const doStatus = new Map(dos.map((d) => [d.id, d.status]));
-    // The PostgREST engine reads embedded parents; give the fake the embed.
     const sb = fakeSb({
       mfg_sales_order_items: items,
       mfg_sales_orders: [{ doc_no: 'A', debtor_code: null, debtor_name: null }, { doc_no: 'B', debtor_code: null, debtor_name: null }],
@@ -66,7 +58,6 @@ describe('foldDeliverable = soDeliverableRemaining summed per order', () => {
     });
     expect(Object.fromEntries(folded.deliveredByDoc)).toEqual(Object.fromEntries(engine.deliveredByDoc));
     expect(Object.fromEntries(folded.remainingByDoc)).toEqual(Object.fromEntries(engine.remainingByDoc));
-    // And the numbers themselves: A delivered 2 linked + 1 unlinked bed, returned 1 + 1.
     expect(Object.fromEntries(folded.deliveredByDoc)).toEqual({ A: 3, B: 1 });
     expect(Object.fromEntries(folded.remainingByDoc)).toEqual({ A: 4, B: 0 });
   });
@@ -145,8 +136,6 @@ describe('diffBoardRows', () => {
 });
 
 describe('JSON parameters reach Postgres as text', () => {
-  // postgres.js JSON.stringifies any parameter the server types as jsonb, so a JSON
-  // string bound to a bare $n::jsonb arrives double-encoded (a jsonb scalar).
   it('every JSON placeholder is funnelled through ::text', () => {
     for (const text of [BOARD_HEAD_SQL, BOARD_DATA_SQL]) {
       expect(text).not.toMatch(/\$\d+::jsonb/);

@@ -1,7 +1,3 @@
-// The rows of Money in › Receipts (the owner's Claude Design, batch 5 §2): each
-// kind in the design's words, All's three groups, the chips per kind, the URL
-// read safely, and the search finding a customer payment by its order's
-// reference.
 
 import { describe, expect, test } from 'vitest';
 import type { ReceiptRow } from '../../../vendor/scm/lib/accounting-queries';
@@ -27,7 +23,6 @@ describe('each kind as a row', () => {
     expect(draft.tag).toEqual({ text: 'Draft', tone: 'warn' });
     expect(officialItem(or({ status: 'FORMAL' }))).toMatchObject({ status: 'formal', group: 'final' });
     expect(officialItem(or({ status: 'CANCELLED', cancel_reason: 'Payment deleted' }))).toMatchObject({ status: 'cancelled', group: 'cancelled', cancelled: true, note: 'Payment deleted' });
-    /* A sales invoice's payment healed by ensure: doc_no is the invoice's id, never an order. */
     expect(officialItem(or({ payment_source: 'SIPAY', doc_no: 'uuid-of-an-invoice' }))).toMatchObject({ forText: 'Sales invoice', forHref: null });
   });
 
@@ -40,7 +35,6 @@ describe('each kind as a row', () => {
     const base = { kind: 'DEBTOR' as const, id: 'r1', number: 'HC-ODR-2610-001', bills: [{ billId: 'b1', no: 'HC-ODB-1', amountSen: 1 }, { billId: 'b2', no: 'HC-ODB-2', amountSen: 1 }] };
     expect(receiptItem(rr({ ...base, status: 'DRAFT' }), bank)).toMatchObject({ stage: 'Draft', status: 'draft', group: 'pending', forText: 'HC-ODB-1, HC-ODB-2', forHref: '/scm/ar-invoices/bills/b1' });
     expect(receiptItem(rr({ ...base, status: 'DRAFT', submittedAt: 'x' }), bank)).toMatchObject({ stage: 'Prepared' });
-    /* An approval whose post died is still Checked — Approve & post resumes it. */
     expect(debtorStageOf({ status: 'DRAFT', submittedAt: 'x', checkedAt: 'y' })).toBe('Checked');
     expect(receiptItem(rr({ ...base, status: 'POSTED' }), bank)).toMatchObject({ stage: 'Approved', group: 'final' });
     expect(receiptItem(rr({ ...base, status: 'CANCELLED' }), bank)).toMatchObject({ stage: 'Cancelled', group: 'cancelled' });

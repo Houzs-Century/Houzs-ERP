@@ -34,16 +34,12 @@ import { acUdfMoney, composePaymentUdf, type ErpPaymentRef } from '../../service
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped at every call site in this tree, the same alias autocount-outbox.ts and autocount-read.ts use.
 type Sb = SupabaseClient<any, any, any>;
 
-/** The header columns the balance reader needs, and the link that says the
- *  order is in the book. `readSoOutstandingSen` reads the two totals, the
- *  legacy deposit and the number. */
 const SO_PAYMENT_HEADER_COLS = 'doc_no, company_id, total_revenue_sen, local_total_sen, deposit_sen, linked_ac_docno';
 
 export interface SoPaymentEditBody {
   DocType: 'SO';
   DocNo: string;
   Header: { UDF: { BALANCE?: string; PAYEMENT?: string } };
-  /** Always empty: the host's line loop does nothing, so no line is touched. */
   Lines: [];
 }
 
@@ -98,9 +94,6 @@ export async function enqueueSoPaymentEdit(
     if (error) return await fallback();
     const h = data as Record<string, unknown> | null;
     if (!h) return false;
-    /* Not in the book yet: a pending create takes the payment into its own
-       payload, and an order the write-back never sent has nothing to edit.
-       enqueueEdit already decides both. */
     if (!h.linked_ac_docno) return await fallback();
 
     const [outstandingSen, paymentRefs] = await Promise.all([
@@ -120,7 +113,6 @@ export async function enqueueSoPaymentEdit(
         body: body as unknown as Record<string, unknown>,
         selfDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: opts.docNo },
       },
-      /* NULL, as every edit: two payments are two intents, applied in order. */
       dedupeKey: null,
       createdBy: opts.createdBy,
     });

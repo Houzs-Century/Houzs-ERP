@@ -1,52 +1,24 @@
-// ---------------------------------------------------------------------------
-// maps.ts — Google Directions route optimisation for a delivery trip.
-//
-// docs/agents/operating-spec.md §4 (Delivery agent): "Maps / distance service —
-// travel-time estimate and routing." The delivery board's schedule layer
-// (scm.trips + trip_stops) orders stops by a manual stop_no; this turns that
-// manual order into an optimised one and fills in per-stop ETA.
-//
-// GATED behind GOOGLE_MAPS_API_KEY. When the key is absent this returns
-// { configured: false } and NEVER calls Google — so nothing here bills until the
-// owner sets the key. That mirrors how the codebase already treats the key
-// (commented out in wrangler.toml; scan-so's geocoder no-ops without it).
-//
-// The URL builder and the response parser are PURE and unit-tested; only the
-// thin fetch wrapper touches the network, so the routing maths is verifiable
-// without a key.
-// ---------------------------------------------------------------------------
 
 const DIRECTIONS_BASE = 'https://maps.googleapis.com/maps/api/directions/json';
 const DISTANCE_MATRIX_BASE = 'https://maps.googleapis.com/maps/api/distancematrix/json';
 
 export interface RouteStop {
-  /** Opaque id the caller uses to match the result back (a trip_stop id). */
   ref: string;
-  /** A geocodable address string. Directions geocodes waypoints itself, so no
-   *  separate lat/lng step is needed. */
   address: string;
 }
 
 export interface OptimizedStop {
   ref: string;
   address: string;
-  /** 1-based position in the optimised order. */
   order: number;
-  /** The leg that ARRIVES at this stop (from the previous point). */
   legDistanceMetres: number;
   legDurationSeconds: number;
-  /** Cumulative drive time from the depot to arriving here — the caller adds the
-   *  trip's depart clock time to get a wall-clock ETA. Does NOT include service
-   *  time at earlier stops (unknown here). */
   etaSecondsFromDepart: number;
 }
 
 export interface RouteResult {
-  /** False = no API key; the caller must fall back to the manual order. */
   configured: boolean;
-  /** True only when a usable optimised route came back. */
   ok: boolean;
-  /** Why ok is false (never configured, or the API status), for the caller. */
   reason?: string;
   stops: OptimizedStop[];
   totalDistanceMetres: number;
@@ -72,8 +44,6 @@ export function buildDirectionsUrl(
 ): string {
   const origin = encodeURIComponent(originAddress);
   const destination = roundTrip ? origin : encodeURIComponent(stops[stops.length - 1]?.address ?? originAddress);
-  // With a round trip, ALL stops are waypoints. Without, the last stop is the
-  // destination and only the rest are waypoints.
   const waypointStops = roundTrip ? stops : stops.slice(0, -1);
   const waypoints = waypointStops.map((s) => encodeURIComponent(s.address)).join('|');
   const parts = [
@@ -113,13 +83,9 @@ export function parseOptimizedRoute(
   const route = body.routes[0];
   const legs = route.legs ?? [];
 
-  // The waypoints that were optimised. On a one-way trip the last stop is the
-  // fixed destination and is appended after the optimised waypoints.
   const waypointStops = roundTrip ? stops : stops.slice(0, -1);
   const order = route.waypoint_order ?? waypointStops.map((_, i) => i);
 
-  // Optimised sequence of stops: the reordered waypoints, then (one-way) the
-  // fixed destination stop last.
   const sequenced: RouteStop[] = order.map((i) => waypointStops[i]).filter(Boolean);
   if (!roundTrip && stops.length) sequenced.push(stops[stops.length - 1]);
 
@@ -139,8 +105,6 @@ export function parseOptimizedRoute(
       legDistanceMetres: dist, legDurationSeconds: dur, etaSecondsFromDepart: cumSeconds,
     });
   });
-  // On a round trip the final leg back to the depot still counts toward the
-  // total, though no stop arrives on it.
   if (roundTrip && legs.length > sequenced.length) {
     const back = legs[legs.length - 1];
     totalDistance += Number(back?.distance?.value ?? 0);
@@ -151,14 +115,6 @@ export function parseOptimizedRoute(
     totalDistanceMetres: totalDistance, totalDurationSeconds: totalDuration };
 }
 
-// ===========================================================================
-// Distance Matrix — the travel-time / distance MATRIX between every point, for
-// the Phase 3 "Propose times + route" scheduler. Directions optimises ONE tour;
-// the scheduler needs the full point-to-point matrix so it can sequence stops
-// under time-window constraints (residence rules) and re-cost a drag-reorder
-// WITHOUT another Google call. ONE Distance Matrix request answers all of it.
-// GATED behind GOOGLE_MAPS_API_KEY exactly like optimizeRoute.
-// ===========================================================================
 
 export interface LatLngPoint {
   lat: number;
@@ -166,14 +122,10 @@ export interface LatLngPoint {
 }
 
 export interface MatrixResult {
-  /** False = no API key; the caller must fall back. */
   configured: boolean;
-  /** True only when a full, finite matrix came back. */
   ok: boolean;
   reason?: string;
-  /** durationSeconds[i][j] = drive seconds from point i to point j. */
   durationSeconds: number[][];
-  /** distanceMetres[i][j] = drive metres from point i to point j. */
   distanceMetres: number[][];
 }
 

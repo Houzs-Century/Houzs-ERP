@@ -1,7 +1,3 @@
-/* HR · Advances (step-2 re-skin). Cash given ahead of payday, taken back in
- * full from the slip of the month it was given. New design over HrTablePage,
- * real /api/hr/advances data, record via a modal, remove an unsettled one.
- * (Ported from the old AdvancesTab.) */
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
@@ -117,7 +113,6 @@ function RecordAdvanceModal({ period, onClose, onDone }: { period: string; onClo
 
   const amountSen = senFromRm(amount);
   const installment = installmentFromInputs(mode, amountSen, months, monthly);
-  // A preview of the schedule once both the amount and a valid plan are in.
   const preview =
     mode === "lump" || !(amountSen > 0) || typeof installment === "string" || installment == null
       ? null

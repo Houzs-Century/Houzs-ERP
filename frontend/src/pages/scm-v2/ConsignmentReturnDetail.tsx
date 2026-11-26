@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// ConsignmentReturnDetail — full-page route at /scm/consignment-returns/:id.
-//
-// Editable clone of DeliveryReturnDetail (itself an SO/DO clone). View→Edit
-// gate; editable Customer / Return Info / Emergency Contact / Delivery Address /
-// Line Items + a Totals · Margin card. Reuses the shared SoLineCard + PhoneInput
-// + SalesOrderDetail.module.css UNCHANGED so the Consignment Return Detail reads
-// identically to the DR Detail. There is no payments ledger on a return.
-//
-// The DR-specific "From Delivery Order" action, the Relationship Map button, the
-// Print PDF button, and the per-line restock-warehouse column are intentionally
-// DROPPED — a consignment return is free-entry. The backend
-// `/consignment-returns` route mirrors `/delivery-returns` 1:1.
-// ----------------------------------------------------------------------------
 
 import {
   forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
@@ -101,10 +87,6 @@ type CrnHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
-  /* FINANCE-gated (CRN_FINANCE_KEYS server-side) — the detail payload OMITS
-     every one of these for a non-finance caller (canViewScmFinance), so they
-     are optional on the wire. Only the finance-gated TotalsCard reads them.
-     local_total_sen is NOT finance: the returned value is shown to everyone. */
   mattress_sofa_sen?: number;
   bedframe_sen?: number;
   accessories_sen?: number;
@@ -134,11 +116,6 @@ type CrnItem = {
   unit_price_sen: number;
   discount_sen: number;
   line_total_sen: number;
-  /* FINANCE-gated (CRN_ITEM_FINANCE_KEYS server-side) — OMITTED from the detail
-     payload for a non-finance caller, hence optional. NOTE: draftFromItem
-     collapses a missing unit_cost_sen to 0 and the save echoes it back — the
-     route's line PATCH therefore IGNORES a client cost from a non-finance
-     caller and keeps the stored one (#632's trap; see consignment-returns.ts). */
   unit_cost_sen?: number;
   line_cost_sen?: number;
   line_margin_sen?: number;
@@ -163,9 +140,6 @@ export const ConsignmentReturnDetail = () => {
   const { id } = useParams<{ id: string }>();
   const askConfirm = useConfirm();
   const notify = useNotify();
-  /* Finance-viewer gate — cost / margin (the line columns AND the whole
-     Totals·Margin card) must never render for a non-finance user. Same rule as
-     DeliveryReturnDetailV2 (#589); canViewScmFinance strips them server-side. */
   const { user } = useAuth();
   const canFinance = canViewScmCosting(user);
   const [searchParams] = useSearchParams();
@@ -295,18 +269,8 @@ export const ConsignmentReturnDetail = () => {
     });
   };
 
-  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
-     until 2026-08-17, so the loading render called fewer hooks than the loaded
-     one and React threw #310 ("rendered more hooks than during the previous
-     render") the moment the query resolved — a blank "Something went wrong
-     loading this page." on a direct URL / refresh. Arriving from the list hid
-     it: react-query already had the detail cached, so the isPending branch
-     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
-     header; it can only ever be CALLED from the preview dialog, which does not
-     exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!header) return;
-    // A consignment return has no money refund — show the goods value instead.
     const pdfHeader = { ...header, refund_sen: header.local_total_sen };
     const pdfItems = items.map((it) => ({ ...it, refund_sen: it.line_total_sen }));
     return import('../../vendor/scm/lib/delivery-return-pdf')
@@ -355,7 +319,6 @@ export const ConsignmentReturnDetail = () => {
 
   return (
     <div className="space-y-4" style={isCancelled ? { filter: 'grayscale(0.7)' } : undefined}>
-      {/* ── Header ── */}
       <PageHeader back
         eyebrow="Supply Chain"
         title={`${header.return_number} — ${header.debtor_name}`}
@@ -422,7 +385,6 @@ export const ConsignmentReturnDetail = () => {
         </div>
       )}
 
-      {/* ── Customer / Return Info / Emergency / Address cards ── */}
       <CustomerCard
         ref={customerCardRef}
         header={header}
@@ -431,7 +393,6 @@ export const ConsignmentReturnDetail = () => {
         isEditing={isEditing}
       />
 
-      {/* ── Line items ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Returned Items ({items.length})</h2>
@@ -453,14 +414,6 @@ export const ConsignmentReturnDetail = () => {
                   onChange={cb?.onChange ?? ((patch) => patchEditingDraft(it.id, patch))}
                   onRemove={cb?.onRemove ?? (() => removeEditingLine(it.id))}
                   canRemove={!isLocked}
-                              /* Downstream document: the items were already specified on the
-                              originating order and their variants ride in with them, so they
-                              are NOT re-required here. Same rule DeliveryOrderNewV2 states
-                              for the DO. Verified 2026-08-13: this document's server does no
-                              variant enforcement at all (findIncompleteVariantLines appears
-                              0 times in its route), so the default `= true` was pure
-                              client-side invention - a red ring and a ` *` for a field the
-                              backend never asked for. */
                               variantsRequired={false}
                               specLockedReason={null}
                               lineDateLocked={false}
@@ -484,10 +437,6 @@ export const ConsignmentReturnDetail = () => {
                 <th className={styles.tableRight}>Unit</th>
                 <th className={styles.tableRight}>Disc</th>
                 <th className={styles.tableRight}>Total</th>
-                {/* Cost / Margin columns are CUT for a non-finance viewer (off,
-                    not hidden — no column, no "—"). The server also strips
-                    unit_cost_sen / line_cost_sen / line_margin_sen from
-                    the detail payload for such a caller (canViewScmFinance). */}
                 {canFinance && <th className={styles.tableRight}>Unit Cost</th>}
                 {canFinance && <th className={styles.tableRight}>Line Cost</th>}
                 {canFinance && <th className={styles.tableRight}>Margin</th>}
@@ -553,10 +502,6 @@ export const ConsignmentReturnDetail = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Customer / Return Info / Emergency / Delivery Address — editable cards.
-   Mirrors DeliveryReturnDetail's CustomerCard (adapted to CRN fields).
-   ════════════════════════════════════════════════════════════════════════ */
 
 type CustomerCardHandle = {
   save: (cb: { onSuccess: () => void; onError: (msg: string) => void }) => void;
@@ -575,9 +520,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 }, ref) => {
   const localities = useLocalities();
   const localityRows = useMemo(() => localities.data ?? [], [localities.data]);
-  /* `include` carries the salesperson already ON this document, so someone the
-     onlySales narrowing hides is still named. "(former staff)" below is then
-     only reachable for a row that genuinely is gone. */
   const staffQ = usePickableStaff({ onlySales: true, include: [header.salesperson_id] });
   const staffList = (staffQ.data ?? []).filter((s) => s.active);
 
@@ -622,9 +564,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   const set = <K extends keyof typeof form>(k: K, v: string) =>
     setForm((s) => ({ ...s, [k]: v }));
 
-  /* Shared address cascade, BOTH directions (address-cascade.ts). One setForm
-     per pick so the value just chosen survives — the State picker's own handler
-     resets the cascade, so a back-filled State must not route through it. */
   const { cities, postcodes } = useAddressCascade(localityRows, form.state, form.city);
   const onCityPick = (next: string) =>
     setForm((s) => ({ ...s, ...pickCity(localityRows, s, next) }));
@@ -665,7 +604,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 
   return (
     <>
-      {/* ── CUSTOMER ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Customer</h2></header>
         <div className={styles.cardBody}>
@@ -728,7 +666,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── RETURN INFO (date / reason / note) ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Return Info</h2></header>
         <div className={styles.cardBody}>
@@ -777,7 +714,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── EMERGENCY CONTACT ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Emergency Contact</h2>
@@ -816,7 +752,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── DELIVERY ADDRESS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Delivery Address</h2></header>
         <div className={styles.cardBody}>
@@ -885,14 +820,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 CustomerCardInner.displayName = 'ConsignmentReturnCustomerCardInner';
 const CustomerCard = memo(CustomerCardInner) as typeof CustomerCardInner;
 
-/* ════════════════════════════════════════════════════════════════════════
-   Totals card (mirror of DeliveryReturnDetail's TotalsCard) — FINANCE-GATED.
-   Cost / margin never render for a non-finance viewer: the caller gates the
-   WHOLE card behind user.project_finance_viewer, exactly as
-   DeliveryReturnDetailV2 does (#589). The card is Cost/Margin end-to-end —
-   there is no non-finance half worth keeping, so it is cut whole (off, not
-   hidden). The server also strips every key it reads (canViewScmFinance).
-   ════════════════════════════════════════════════════════════════════════ */
 const TotalsCard = ({ header }: { header: CrnHeader }) => {
   const totalCost = header.total_cost_sen ?? 0;
   const totalMargin = header.total_margin_sen ?? 0;

@@ -1,6 +1,3 @@
-// B24: the four upload calls never cleared the 15-second read cache that the
-// JSON writes clear, so a photo or file just uploaded looked missing until the
-// cache expired, and staff uploaded it again.
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AUTH_TOKEN_KEY } from "../lib/authToken";
 import { setActiveCompanyId } from "../lib/activeCompany";

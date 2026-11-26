@@ -33,11 +33,6 @@ describe('seriesIsRetired', () => {
     expect(seriesIsRetired(RETIRED, 'GD2034')).toBe(false);
   });
 
-  /* THE REGRESSION THIS FILE SHIPPED, kept as the first case so it cannot come
-     back. An earlier builder took only the INACTIVE rows and trimmed them, so
-     the retired `GARFIELD ` trimmed onto the LIVE `GARFIELD` and switched it
-     off - nine colours a customer buys, measured gone minutes after deploy. A
-     LIVE row must win over a retired twin, so the question is per CODE. */
   it('a LIVE row wins over a retired padded twin — the regression', () => {
     const set = retiredSeriesSet([
       { id: 'GARFIELD', active: true },
@@ -65,8 +60,6 @@ describe('seriesIsRetired', () => {
   });
 
   it('the builder handles the real production shape', () => {
-    /* Verbatim from production 2026-09-11: two retired series, plus GARFIELD's
-       live row and its retired padded twin. */
     const set = retiredSeriesSet([
       { id: 'FG66151', active: false },
       { id: 'J9226', active: false },
@@ -103,9 +96,6 @@ describe('seriesIsRetired', () => {
   });
 
   it('is case SENSITIVE, because a fabric code is an identifier', () => {
-    // The library and the colour rows are written by the same import, so the
-    // casing agrees. Folding case here would start matching two codes that the
-    // catalogue deliberately keeps apart.
     expect(seriesIsRetired(RETIRED, 'fg66151')).toBe(false);
   });
 });

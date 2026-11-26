@@ -6,10 +6,6 @@ import {
   isScanDocumentType,
 } from './scan-document-type';
 
-// Slice 1 of the OCR scan -> GR/PI feature only adds a document-type dimension.
-// The one piece of real logic is this vocabulary + its two guards; the rest of
-// the slice threads a constant. These pin the guards so the GR/PI slices build
-// on a stable seam.
 
 describe('the scan document-type vocabulary', () => {
   test('SO is the default the SO path threads', () => {

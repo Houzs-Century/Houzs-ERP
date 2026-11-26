@@ -27,7 +27,6 @@ export function BankCardPaymentsTab({ cards }: { cards: BankCardPayment[] }) {
   const pick = useReconcilePick();
   const [find, setFind] = useState('');
   const needle = find.trim().toLowerCase();
-  /* A ticked payment stays in view whatever is typed, so the bar never counts one nobody can see. */
   const shown = needle === '' ? cards : cards.filter((p) => matches(p, needle) || pick.pickedCards.includes(cardPaymentKey(p)));
   return (
     <div className={look.section}>

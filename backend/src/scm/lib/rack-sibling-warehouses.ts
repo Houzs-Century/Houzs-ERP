@@ -1,9 +1,3 @@
-// One physical warehouse exists as one scm.warehouses record PER COMPANY, with
-// the same `code` (KL WAREHOUSE under HOUZS and under 2990 is one building). A
-// rack is materialised as one row per warehouse record, so a shelf the two
-// companies share needs the label created under each record. This picks the
-// OTHER companies' records that carry a chosen target's code, so one create can
-// fan out across companies without the caller naming foreign warehouse ids.
 
 export type WarehouseRef = { id: string; code: string; company_id: number | null };
 

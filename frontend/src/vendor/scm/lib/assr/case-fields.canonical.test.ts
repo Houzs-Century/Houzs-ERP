@@ -1,26 +1,3 @@
-/* The ASSR case field vocabularies have ONE home — and the one that had
- * already drifted is the one a customer can read.
- *
- * THE BUG. `ServiceCases.tsx` (desktop) and `MobileServiceCase.tsx` (mobile)
- * each wrote out the note-audience picker and the issue-category fallback. The
- * audience LABELS had come apart: desktop offered "Customer-visible", mobile
- * offered "Customer". Same four stored values, two different promises to the
- * person typing — and the promise is the whole point of that control, because
- * `customer` is the only bucket the portal shows. A rep on the phone reading
- * "Customer" has been told which BUCKET the note goes in; a rep on the desktop
- * reading "Customer-visible" has been told what will HAPPEN. Only one of those
- * stops a private remark from reaching the customer.
- *
- * Issue categories were still identical on both surfaces the day this was
- * written. That is not a reason to leave them: it is what the audience labels
- * looked like the day BEFORE they drifted.
- *
- * ── WHY SOURCE-SCAN ─────────────────────────────────────────────────────────
- * Same reason as assr-stage-labels.canonical.test.ts, one directory up: these
- * two screens are 8,800 and 3,400 lines and cannot be imported without a
- * router, a query client and a jsdom tree. What must not come back is a screen
- * QUOTING the list instead of reading it, and that is what the source says.
- */
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -33,8 +10,6 @@ import {
 
 const read = (rel: string): string => readFileSync(resolve(process.cwd(), rel), 'utf8');
 
-/** Comments stripped: a label QUOTED in an explanation is not a second copy of
- *  the rule, and these files explain themselves at length. */
 const code = (rel: string): string =>
   read(rel)
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -49,9 +24,6 @@ const SURFACES: Array<[string, string]> = [
 
 describe('the note audience picker names the consequence, not the bucket', () => {
   test('the stored values are the four the server accepts', () => {
-    /* backend/src/routes/assr.ts NOTE_CATEGORIES coerces anything else to
-       "service", so a typo here does not error — it silently files the note
-       under the wrong audience. `system` is auto-emitted and correctly absent. */
     expect(ASSR_NOTE_AUDIENCES.map((a) => a.value)).toEqual([
       'service',
       'customer',
@@ -100,11 +72,6 @@ describe('the note audience picker names the consequence, not the bucket', () =>
     });
 
     test(`${name} renders the shared label, not one of its own`, () => {
-      /* Scoped to the picker itself. A tree-wide scan for the bucket words was
-         the first draft and it was WRONG in the direction that wastes a
-         reader's afternoon: mobile's supplier CARD carries a `<span>Supplier
-         </span>` field label that has nothing to do with note audiences, and
-         the scan reported it as re-grown drift. Assert what the picker does. */
       const source = code(path);
       let found = 0;
       for (

@@ -1,5 +1,3 @@
-// DateRangeButton — the redesign's date-range picker: what the button says,
-// the presets, the two-click calendar, the hint, and closing.
 import { useState } from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
@@ -8,7 +6,6 @@ import { OUTSTANDING_RANGE_PRESETS } from '../lib/dateRangePresets';
 
 const TODAY = '2026-11-03';
 
-/** The picker is controlled; this holds the range like a page would. */
 function Harness({ initial, onChange }: { initial: { from: string; to: string }; onChange?: (f: string, t: string) => void }) {
   const [range, setRange] = useState(initial);
   return (
@@ -76,7 +73,6 @@ describe('DateRangeButton — the popover', () => {
     expect(within(dialog).getByText('October 2026')).toBeTruthy();
 
     fireEvent.click(within(dialog).getByRole('button', { name: '2026/10/05' }));
-    // From moves to the 5th; To (the 3rd of November) is still after it, so it stays.
     expect(onChange).toHaveBeenLastCalledWith('2026-10-05', '2026-11-03');
     expect(within(dialog).getByRole('status').textContent).toContain('now pick the end date');
 

@@ -7,9 +7,6 @@ vi.mock('../lib/sg-postcode-queries', async (orig) => ({
   ...(await orig<typeof import('../lib/sg-postcode-queries')>()),
   useSgPostcodeLookup,
 }));
-// The field maps the planning area back to a seeded { state, city } via
-// useLocalities; stub it so no QueryClient is needed and resolveSgPlanningArea
-// (kept real by the mock above) runs against these rows.
 const { useLocalities } = vi.hoisted(() => ({ useLocalities: vi.fn() }));
 vi.mock('../lib/localities-queries', () => ({ useLocalities }));
 
@@ -46,7 +43,6 @@ describe('SgPostcodeField', () => {
     });
     const onResolve = vi.fn();
     render(<SgPostcodeField value="238801" onChange={() => {}} onResolve={onResolve} />);
-    // the offer names the area it will fill, so the operator sees it before tapping
     expect(screen.getByText(/Orchard, Central/)).toBeTruthy();
     fireEvent.click(screen.getByText(/^Use:/));
     expect(onResolve).toHaveBeenCalledWith({ address: '2 ORCHARD TURN', state: 'Central', city: 'Orchard' });

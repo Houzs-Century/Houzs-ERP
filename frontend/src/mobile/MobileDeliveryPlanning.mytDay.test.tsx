@@ -1,7 +1,3 @@
-/* The driver run-sheet header names the Malaysian route day, and a today stop
-   turns "Late" by the Malaysian clock. On a phone whose clock zone is UTC,
-   at 01:30 on Monday 16 Nov (Malaysia) the header said Sunday, and a stop due
-   by 1:00PM never went late until 21:00 Malaysia time. Run with TZ=UTC. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";

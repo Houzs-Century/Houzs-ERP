@@ -30,13 +30,8 @@ import { createClient } from '@supabase/supabase-js';
 import { readMfgProductBindings } from './supplier-bindings';
 import { parsePgrestInList } from './pgrest-in-list';
 
-/* The two inch-marked codes are REAL: they are what production carries, and the
-   bug only exists because a catalogue names mattresses by their depth. */
 const INCH_CODE = 'DUNLOPILLO GENERASI 5" MATT (S)';
 
-/* The reported document's four pieces, plus enough neighbours that the
-   inch-marked code sits in the MIDDLE of the list rather than at its end —
-   which is the whole shape: what is lost is what comes AFTER it. */
 const CODES = [
   '9058-1A(RHF)',
   '9058-L(LHF)',
@@ -54,14 +49,11 @@ const ROWS: Row[] = CODES.map((code) => ({
   supplier_id: 'sup-h004',
 }));
 
-/** The query strings the reader actually put on the wire, in order. */
 function clientThatHonoursPostgrestGrammar(seen: string[]) {
   const fetchImpl: typeof fetch = async (input) => {
     const url = new URL(typeof input === 'string' ? input : String(input));
     const raw = url.searchParams.get('item_code') ?? '';
     seen.push(raw);
-    /* PostgREST reads `in.(…)`; anything it cannot parse out of that list simply
-       never becomes a predicate value, which is why the loss is silent. */
     const wanted = new Set(
       raw.startsWith('in.') ? parsePgrestInList(raw.slice('in.'.length)) : [],
     );
@@ -90,9 +82,6 @@ describe('readMfgProductBindings — the reader asks for every code it was given
     });
 
     expect(error).toBeNull();
-    /* Named individually, so a failure prints WHICH code lost its supplier
-       instead of a bare length mismatch — the same reason mrpSofaSupplier's
-       assertion is a mapped list. */
     expect([...data].map((r) => r.item_code).sort()).toEqual([...CODES].sort());
   });
 

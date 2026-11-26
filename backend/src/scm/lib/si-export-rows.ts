@@ -37,9 +37,6 @@ const LINE_COLS =
 
 export type SiExportLine = {
   id: string;
-  /** The book's Item Description / Item Group / UOM for this line's item
-   *  (services/autocount-book-item.ts), the ERP's own values where the book has
-   *  no item for the code. */
   book_description: string | null;
   book_item_group: string | null;
   book_uom: string | null;
@@ -110,7 +107,6 @@ const text = (v: unknown): string | null => {
   return s === '' ? null : s;
 };
 
-/* The invoice detail page's line order: line_no (blank last), creation, id. */
 const byLinePosition = (a: RawLine, b: RawLine): number => {
   const an = a.line_no ?? Infinity;
   const bn = b.line_no ?? Infinity;
@@ -178,15 +174,11 @@ export async function attachSiLines<H extends HeaderRow>(sbIn: unknown, c: Compa
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<{ id: string; code: string | null; name: string | null }>);
   if (wh.error) return { error: `warehouses: ${wh.error}` };
 
-  /* Salesperson names, by ids of invoices already read under the company and
-     sales scope — the staff read the Sales Invoice Detail Listing makes. */
   const staff = await lookupByIds<{ id: string; name: string | null }>(headers.map((h) => h.salesperson_id), (batch, from, to) =>
     sb.from('staff').select('id, name')
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<{ id: string; name: string | null }>);
   if (staff.error) return { error: `salespeople: ${staff.error}` };
 
-  /* A sales invoice has no supplier to narrow an item code by, exactly as the
-     write-back resolves an IV line. */
   const bookItem = new Map<string, BookLineItem>();
   try {
     const bindings = await bindingsFor(sb as never, activeCompanyId(c) ?? null, allLines.map((l) => l.item_code ?? ''));
@@ -203,8 +195,6 @@ export async function attachSiLines<H extends HeaderRow>(sbIn: unknown, c: Compa
     lines: [...(linesByHeader.get(h.id) ?? [])].sort(byLinePosition).map((l): SiExportLine => {
       const doLine = l.do_item_id ? doLines.byId.get(l.do_item_id) : undefined;
       const delivery = doLine?.delivery_order_id ? dos.byId.get(doLine.delivery_order_id) : undefined;
-      /* Where the goods shipped from: the delivery order's warehouse, else the
-         location that delivery order was sold from, else the invoice's own. */
       const place = warehouseLabel(delivery?.warehouse_id ? wh.byId.get(delivery.warehouse_id) : null)
         ?? text(delivery?.sales_location)
         ?? text(h.sales_location);

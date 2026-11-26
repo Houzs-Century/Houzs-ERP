@@ -1,24 +1,8 @@
-// Regression (sister fix Conts-ERP #209): a partial Delivery Order of a Sales
-// Order line copied the WHOLE line discount onto the DO line. 4 units with
-// RM100 off, delivered 2 + 2, took RM100 off on each DO: the customer was
-// under-billed RM100 and the DOs no longer added up to the SO.
-//
-// Drives the REAL /from-sos handler through the same minimal fake PostgREST
-// client as delivery-orders-mfg.photo-carry.test.ts and asserts on the rows it
-// hands to delivery_order_items. asDraft: true, so stock / sync / email stay out.
 import { describe, expect, test } from 'vitest';
 import { createDoFromSoLinesHandler } from './delivery-orders-mfg';
 
 type Row = Record<string, unknown>;
 
-/* Captures every row written to delivery_order_items, which is what these
-   assertions are about. Reads are served from `tables`; writes to anything else
-   (the audit row, the AutoCount skip record, the totals rollup) are accepted
-   and ignored so the convert can run to completion without the fake modelling
-   the whole schema. A Proxy, unlike the PO harness's fixed method list, because
-   this handler's read surface is far wider (remaining derivation, warehouse
-   resolution, sofa guards, doc-no minting) — any unmodelled chained method
-   filters nothing and resolves to the current row set. */
 function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
   let minted = 0;
   const mk = (table: string) => {
@@ -43,15 +27,11 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
         if (prop === 'insert') return (payload: Row | Row[]) => {
           const rows = Array.isArray(payload) ? payload : [payload];
           if (table === 'delivery_order_items') captured.push(...rows);
-          /* The DO header insert is chained `.select('id, do_number').single()`,
-             so hand back a row carrying the id the line insert keys off. */
           state.rows = table === 'delivery_orders'
             ? rows.map((r) => ({ ...r, id: `do-new-${++minted}` }))
             : rows;
           return proxy;
         };
-        // select / order / like / not / or / gte / lte / update / delete / …
-        // — chainable no-ops over the current row set.
         return (..._args: unknown[]) => proxy;
       },
     });
@@ -59,9 +39,6 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
   };
   return {
     from: (table: string) => mk(table),
-    /* The doc-no counter RPC — report it MISSING (PGRST202, the shape
-       isMissingRpc recognises) so minting falls back to the live-max path,
-       which needs only the (empty) delivery_orders table. */
     rpc: () => Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'Could not find the function in this harness' } }),
   };
 }

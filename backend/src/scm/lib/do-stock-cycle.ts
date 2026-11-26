@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// scm/lib/do-stock-cycle — a delivery order reverted to Draft can ship again.
-//
-// A revert to Draft returns the DO's stock with rows tagged 'ADJUSTMENT' + the
-// DO id, while its first OUT rows stay tagged 'DO'. Left like that, the next ship
-// finds an OUT and deducts nothing. scm.fn_retire_do_stock_cycle re-tags that
-// ship-and-return cycle 'DO_REVERTED' so the DO reads as never shipped; it
-// refuses while stock is still out.
-// ----------------------------------------------------------------------------
 
 type Rpc = { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message?: string } | null }> };
 type Head = { count: number | null; error: { message?: string } | null };

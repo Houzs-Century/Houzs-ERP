@@ -13,7 +13,6 @@ const row = (id: string, code: string, name: string): MfgProductRow => ({
   status: 'ACTIVE', unit_m3_milli: 0,
 });
 
-// Server order is by code; sorting by Description reverses it.
 const SERVER_ROWS = [row('a', 'A-001', 'ZEBRA PILLOW'), row('b', 'B-002', 'MANGO CUSHION'), row('c', 'C-003', 'APPLE BOLSTER')];
 
 const idle = { mutate: () => {}, mutateAsync: async () => ({}), isPending: false };
@@ -75,8 +74,6 @@ describe('SKU Master Edit Prices keeps the order and set on screen', () => {
     expect(codesInOrder()).toEqual(['B-002']);
   });
 
-  /* 0917 still holds: a funnel is a list of VALUES, so a description renamed
-     under it would vanish once saved. A successful Save opens the grid unfiltered. */
   test('a successful Save opens the grid with no funnel, so a renamed row cannot vanish', async () => {
     renderPage();
     fireEvent.click(screen.getByTitle('Filter & sort Description'));

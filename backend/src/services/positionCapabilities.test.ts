@@ -5,9 +5,6 @@ import {
   isValidPositionCapability,
 } from "./positionCapabilities";
 
-/* The gate for the editable Roles & Permissions matrix. Pins the fail-closed
- * contract: no caller / no grants / unknown key all DENY; the `*` wildcard
- * (role grant or god-position injection) passes everything. */
 
 describe("positionCapabilities", () => {
   it("declares a unique, non-empty catalogue", () => {

@@ -86,17 +86,11 @@ export const parseRm = (text: string): number | null => {
 type Picked = { accountCode: string; month: string };
 
 export const BankMonthTab = () => {
-  /* The redesign (owner's Claude Design, batch 3): a card per account, its
-     months by statement month, and one month open below — the account and the
-     month live in the address (?account=&month=), so To do lands on the right
-     one. With none asked for, the account with lines to decide comes up, and
-     its oldest month not yet locked: months are closed in order. */
   const [params, setParams] = useSearchParams();
   const setup = useBankSetup();
   const q = useBankMonths();
   const todo = useFinanceTodo();
   const months = q.data?.months ?? [];
-  /* To do's own rule for a statement not uploaded (bank-missing): the day the uploads stop, per account. */
   const missing = useMemo(() => {
     const out: Record<string, string> = {};
     for (const j of [...(todo.data?.mine ?? []), ...(todo.data?.others ?? [])]) {
@@ -115,7 +109,6 @@ export const BankMonthTab = () => {
     for (const [k, v] of Object.entries(patch)) { if (v == null) next.delete(k); else next.set(k, v); }
     return next;
   });
-  /* The Upload drawer, on this account (BankRecon mounts it). */
   const upload = () => setParam({ upload: '1', ...(card ? { account: card.code } : {}) });
 
   return (
@@ -123,7 +116,6 @@ export const BankMonthTab = () => {
       {q.isLoading && <div className={look.muted}>Loading…</div>}
       {q.isError && <div className={look.refusal}><AlertTriangle {...ICON} /> {refusalText(q.error, 'The bank months did not load.')}</div>}
       {cards.length > 0 && <BankCards cards={cards} selected={card?.code ?? null} onSelect={(code) => setParam({ account: code, month: null, tab: null })} />}
-      {/* Spoken only over lists that came back (the empty-state rule). */}
       {q.data && setup.data && cards.length === 0 && (
         <div className={look.empty}>
           No bank account takes statements in this company yet. Set one up under <Link to="/scm/settlement-setup">Recon setup</Link> and its card appears here.
@@ -141,27 +133,20 @@ export const BankMonthTab = () => {
   );
 };
 
-/* ── One month ────────────────────────────────────────────────────────────── */
 
-/* "To decide" / "Matched" / "Set aside" — a line's state in the redesign's words. */
 const stateWord = (state: BankLine['state']): string => (state === 'OPEN' ? 'To decide' : state === 'POSTED' ? 'Matched' : 'Set aside');
 
 const MonthView = ({ picked, bank, missingSince, onUpload }: {
   picked: Picked; bank: string; missingSince: string | null; onUpload: () => void;
 }) => {
   const q = useBankMonth(picked.accountCode, picked.month);
-  /* Back from an order opened here lands on the same spot (bank-entry-doc). */
   useReturnScroll(q.data != null);
   const setup = useBankSetup();
   const account = setup.data?.accounts.find((x) => x.account_code === picked.accountCode) ?? null;
   const [params, setParams] = useSearchParams();
-  /* The lines a person pressed "Not this" on under To match: they go to To
-     choose. Nothing is unlinked — a To match line was never linked, only
-     offered — so this lives on the screen and a reload offers it again. */
   const [chooseAnyway, setChooseAnyway] = useState<ReadonlySet<number>>(new Set());
   const typedRef = useRef<HTMLDivElement>(null);
   const tabsRef = useRef<HTMLDivElement>(null);
-  /* The A4 statement (BankReconPrint); the earlier PDF stays one release behind its "Old PDF" button. */
   const [printing, setPrinting] = useState(false);
   const goTo = (r: { current: HTMLDivElement | null }) => r.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -195,8 +180,6 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
      the line — the file screen's own order (docs/bugs/0918). */
   const ordered = byDateThenLine(open);
   const entries = data?.unmatchedEntries ?? [];
-  /* The redesign's six tabs; the tab lives in the address (?tab=) and a month
-     opens on the first with lines to work. */
   /* The card payments no merchant report has carried — a movement may take them
      in itself, its difference to terminal charges (owner 2026-11-17). */
   const cardQ = useBankCardPayments(true);
@@ -215,7 +198,6 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
 
   const a = data.assembly;
   const r = data.reconciliation;
-  /* To do's missing days, where they fall inside this month. */
   const missing = missingSince != null && missingSince >= a.monthFrom && missingSince <= a.monthTo ? missingSince : null;
   const f: MonthFacts = {
     month: data.month, accountCode: data.accountCode, assembly: a, reconciliation: r, lock: data.lock,
@@ -251,10 +233,6 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
           }} />
       )}
 
-      {/* MOUNTED ONLY WHILE OPEN. The dialog reads the company branding through
-          react-query, so mounting it closed puts a live query on every month a
-          person merely looks at. It has no entry state to preserve, so
-          mounting on the press is the same dialog and one fewer subscription. */}
       {print.open && (
         <PrintPreviewModal
           open={print.open}
@@ -271,9 +249,6 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
             },
             { label: 'Per the books', value: fmt(r.closingLedgerSen) },
             {
-              /* Said in the dialog, before the paper exists: printing a month
-                 that is short a day is a decision, and it should be one the
-                 operator makes knowingly rather than discovers on the sheet. */
               label: 'The month itself',
               value: a.complete
                 ? 'covered end to end'
@@ -288,15 +263,12 @@ const MonthView = ({ picked, bank, missingSince, onUpload }: {
       <MonthFigures f={f} onTypeClosing={needsTyping ? () => goTo(typedRef) : null} />
       <DifferenceWalk f={f} onLines={() => showTab(firstOpenTab(counts))} onLedger={() => showTab('not-on-bank')} onAside={() => showTab('set-aside')} />
 
-      {/* The inconsistency comes before anything is read off the walk: a walk
-          the numbers cannot account for looks like work has been done. */}
       {!r.consistent && (
         <div className={look.gaps}>
           <b><AlertTriangle {...ICON} /> These numbers do not add up</b>
           <div>{r.inconsistency}</div>
         </div>
       )}
-      {/* WHAT THE MONTH IS MISSING, under the figures it makes wrong. */}
       {!a.complete && <WhatIsMissing a={a} />}
       <WhereTheFiguresCameFrom a={a} />
 
@@ -391,9 +363,6 @@ const MonthHeader = ({ data, picked, bank, open, asideSen, onPrint, onExport }: 
       {held && asking && (
         <div className={look.ask}>
           <span>Unlocking needs the approve right and a reason. The month stays as it is until then.</span>
-          {/* Required, and the server requires it too. A month that was locked
-              and is open again with no explanation is the one state the lock
-              table exists to make impossible. */}
           <input value={note} onChange={(e) => setNote(e.target.value)} aria-label="Why this month is being unlocked"
             placeholder="Why? e.g. the bank re-issued 12 Sep with a corrected charge" />
           <div>
@@ -413,7 +382,6 @@ const MonthHeader = ({ data, picked, bank, open, asideSen, onPrint, onExport }: 
   );
 };
 
-/* ── What this month does not have ────────────────────────────────────────── */
 
 const WhatIsMissing = ({ a }: { a: BankMonthAssembly }) => (
   <div className={look.gaps}>
@@ -423,8 +391,6 @@ const WhatIsMissing = ({ a }: { a: BankMonthAssembly }) => (
     </ul>
     {a.breaks.length > 0 && (
       <div style={{ marginTop: 8 }}>
-        {/* The amount, named, because it is the size of what he has not
-            uploaded — and it is the number the difference below is short by. */}
         Upload the days between them and the month closes. Until then the difference above is missing{' '}
         <strong>{fmt(a.breaks.reduce((s, b) => s + Math.abs(b.gapSen), 0))}</strong> of movement.
       </div>
@@ -432,7 +398,6 @@ const WhatIsMissing = ({ a }: { a: BankMonthAssembly }) => (
   </div>
 );
 
-/* ── Which file each figure was taken off ─────────────────────────────────── */
 
 /* "per d01.csv (2026-09-01)", or — for a figure nobody's file printed — who
    typed it, for which month, and when (docs/bugs/0858). */
@@ -445,9 +410,6 @@ const figureSource = (src: BankBalanceSource): string => (src.typed
     : `per ${src.fileName ?? ''} (${src.on})`);
 
 const WhereTheFiguresCameFrom = ({ a }: { a: BankMonthAssembly }) => {
-  /* A balance with no provenance is a number nobody can check. Both ends are
-     named with the file and the day, so a reader can open that file and look
-     — or with the person who typed it, so a reader knows whom to ask. */
   if (a.openingFrom == null && a.closingFrom == null) return null;
   return (
     <div style={softText}>
@@ -461,7 +423,6 @@ const WhereTheFiguresCameFrom = ({ a }: { a: BankMonthAssembly }) => {
   );
 };
 
-/* ── How much is left, and the rule that clears the obvious part ──────────── */
 
 const StillToDecide = ({ open, locked, statements, repeats }: {
   open: number; locked: boolean; statements: Array<{ id: number; fileName: string }>;
@@ -524,10 +485,6 @@ const LeaveOutRepeats = ({ count, statements }: { count: number; statements: Arr
   );
 };
 
-/* The file screen's rule, run over EVERY file that fed this month, one after
-   the other; the answer is the sum. A file the server refuses (one crossing
-   into a closed month, say) is named and the rest still run — one refusal
-   must not stop the other files being matched. */
 const MatchTheObviousOnes = ({ statements }: { statements: Array<{ id: number; fileName: string }> }) => {
   const run = useAutoMatchStatement();
   const [busy, setBusy] = useState(false);
@@ -576,10 +533,6 @@ const MatchTheObviousOnes = ({ statements }: { statements: Array<{ id: number; f
 
 /* ── The month-end figure typed off the bank's own statement (docs/bugs/0858) ── */
 
-/* Shown only where a figure is NOT printed by any file: Maybank's Account
-   Activity Report lists movements and no balance, so without a typed figure
-   the month has nothing to tally against and can never close. A file that
-   prints the balance always wins, so the box is not offered where one did. */
 const TypedBalances = ({ assembly, balances, picked }: {
   assembly: BankMonthAssembly; balances?: BankMonthBalances; picked: Picked;
 }) => {
@@ -653,7 +606,6 @@ const TypedFigure = ({ label, ariaLabel, month, current, picked, save }: {
   );
 };
 
-/* ── The files that fed the month ─────────────────────────────────────────── */
 
 const TheFiles = ({ data }: {
   data: { statements: Array<{ id: number; file_name: string; period_from: string | null; period_to: string | null; opening_balance_sen: number | null; closing_balance_sen: number | null; spanning: boolean }> };
@@ -676,8 +628,6 @@ const TheFiles = ({ data }: {
             <td className={grid.num}>{s.opening_balance_sen == null ? '—' : fmt(s.opening_balance_sen)}</td>
             <td className={grid.num}>{s.closing_balance_sen == null ? '—' : fmt(s.closing_balance_sen)}</td>
             <td>
-              {/* Said out loud rather than silently ignored: its movements in
-                  this month DO count, and its balances belong to another. */}
               {s.spanning
                 ? <span style={{ color: danger, fontSize: 'var(--fs-12)' }}>
                     crosses the month edge — its movements here count, its balances do not

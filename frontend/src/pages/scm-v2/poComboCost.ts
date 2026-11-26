@@ -1,7 +1,3 @@
-/* From-scratch PO: a sofa SET is costed at the supplier's combo price, the same
-   rule as a PO converted from a sales order (backend mfg-purchase-orders.ts,
-   "Combo redistribution"). The combo in force is the one effective on the PO
-   date (pickComboMatch's asOf). Pure. */
 
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
@@ -13,7 +9,6 @@ export type ComboLine = {
   itemCode: string;
   category?: string;
   qty: number;
-  /** Per-unit cost from the supplier's price table, before any combo. */
   unitPriceSen: number;
   priceTouched?: boolean;
   tier: SofaPriceTier | null;
@@ -49,7 +44,6 @@ export function applySupplierCombos(
     );
     if (!match || match.comboPriceSen <= 0) continue;
     const matched = match.matchedIndices.map((i) => members[i]);
-    // Mixed quantities have no clean set count: skip rather than under-book.
     if (matched.length === 0 || new Set(matched.map((m) => Math.max(1, m.qty))).size !== 1) continue;
     const spread = spreadComboTotal(matched.map((m) => m.unitPriceSen), match.comboPriceSen);
     matched.forEach((m, i) => out.set(m.rid, spread[i] ?? 0));

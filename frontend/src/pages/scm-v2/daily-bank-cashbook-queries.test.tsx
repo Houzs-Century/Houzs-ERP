@@ -44,7 +44,6 @@ describe('Daily Bank cash book hooks — the wire contract', () => {
 
   test('each write sends its verb, path and body, and refreshes the day and the cash-book board', async () => {
     const refreshed = vi.spyOn(qc, 'invalidateQueries');
-    /* Each write through its own hook, with its own typed arguments. */
     const send = {
       saveStart: () => renderHook(() => useSaveCashbookStart(), { wrapper }).result.current
         .mutateAsync({ accountCode: '310-0010', startDate: '2026-11-24', balanceSen: -250_000, note: null }),

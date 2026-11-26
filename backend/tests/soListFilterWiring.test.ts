@@ -31,7 +31,7 @@ const listBlock = (): string => {
 /* The paginated arm only — the legacy arm is left byte-identical on purpose. */
 const pagedArm = (): string => {
   const block = listBlock();
-  const at = block.indexOf('PAGINATED PATH');
+  const at = block.indexOf('page = Math.max(0, Math.trunc(Number(pageRaw)) || 0);');
   expect(at).toBeGreaterThan(-1);
   return block.slice(at);
 };

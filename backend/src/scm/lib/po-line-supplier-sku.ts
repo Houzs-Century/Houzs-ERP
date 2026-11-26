@@ -19,7 +19,6 @@
 
 import { readMfgProductBindings } from './supplier-bindings';
 
-// The SCM routes carry an untyped supabase-js client; the shared reader takes the same.
 type Sb = { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 /**
@@ -45,8 +44,6 @@ export async function supplierSkuFor(
     select: 'item_code, supplier_sku, is_main_supplier',
   });
   if (error) throw new Error(`supplier code lookup failed for ${code}: ${error.message}`);
-  // Ordered is_main_supplier DESC by the reader: the first row for the code wins,
-  // exactly as the convert path's `bindByCode` takes it.
   const row = data.find((b) => b.item_code === code);
   const sku = String(row?.supplier_sku ?? '').trim();
   return sku || null;

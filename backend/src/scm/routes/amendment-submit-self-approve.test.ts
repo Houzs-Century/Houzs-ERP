@@ -13,7 +13,6 @@
  * 12,000-line router that cannot be driven end to end here, so this pins the
  * WIRING and shared/amendment-self-approve.test.ts pins the rule. */
 import { describe, expect, it } from 'vitest';
-/* `?raw`, not node:fs — backend/tsconfig.json types Workers only. */
 import { soRouterSource } from '../../../tests/lib/so-router-source';
 const rawRoute = soRouterSource();
 
@@ -30,10 +29,6 @@ describe('the submit route offers the delivery desk its own change', () => {
     expect(handler).toMatch(
       /laneSelfApproves\(laneKey, \{ holdsLaneKey: holdsDeliveryKey, hasLineChanges: half\.lines\.length > 0 \}\)/,
     );
-    /* The key comes from the shared table, not a fourth spelling of it. The pin
-       is on the CALL, not on the absence of the literal: the literal appears
-       once more in this handler, in the pre-existing isLaneApprover gate that
-       lets an approver RAISE a request. */
     expect(handler).toMatch(/hasHouzsPerm\(c, SELF_APPROVE_KEY\)/);
   });
 
@@ -45,8 +40,6 @@ describe('the submit route offers the delivery desk its own change', () => {
     const insert = handler.slice(handler.indexOf("from('so_amendments').insert("));
     expect(insert).toMatch(/status:\s+'REQUESTED',/);
     expect(insert).not.toContain("'SO_APPROVED'");
-    /* Not a call to the apply engine anywhere: the three mentions of it in this
-       handler are comments about what the APPROVE step re-checks. */
     expect(handler).not.toMatch(/applySoAmendment\(/);
     expect(handler).not.toContain('approveSoCommandHandler');
   });

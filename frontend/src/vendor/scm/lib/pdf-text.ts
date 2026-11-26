@@ -21,8 +21,6 @@ export type PdfText = { kind: typeof PDF_TEXT_KIND; pages: PdfTextPage[] };
 /** The marker the server checks before reading the pages. */
 export const PDF_TEXT_KIND = 'houzs-pdf-text/1';
 
-/** Two pieces of text are on one line when their baselines are within this
-    many points — pdf.js reports a hair of drift along a printed row. */
 const LINE_TOLERANCE = 2;
 
 export async function extractPdfText(data: ArrayBuffer): Promise<PdfText> {
@@ -46,7 +44,6 @@ export async function extractPdfText(data: ArrayBuffer): Promise<PdfText> {
         const at = rows.get(key);
         if (at) at.push(cell); else rows.set(key, [cell]);
       }
-      /* Top of the page first (pdf.js measures y upwards), left to right. */
       pages.push({
         lines: [...rows.entries()]
           .sort((a, b) => b[0] - a[0])

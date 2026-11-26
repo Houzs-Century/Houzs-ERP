@@ -1,13 +1,3 @@
-// ---------------------------------------------------------------------------
-// grn-scan-load — the DB reads behind the GR scan matcher, kept out of the pure
-// matcher (grn-scan-match.ts) so that stays unit-testable. Loads the OPEN,
-// receivable PO lines a scanned delivery order could clear, plus the supplier
-// SKU bindings that bridge the supplier's Article No / Barcode to our item code.
-//
-// Company-scoped: the caller passes the scan job's companyId. A null companyId
-// (legacy / cold-start) loads unscoped, matching how the rest of the scan
-// pipeline degrades — the convert core re-scopes and re-validates every pick.
-// ---------------------------------------------------------------------------
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { isDocumentHeld } from './document-hold';
@@ -19,9 +9,6 @@ import type { OpenPoLine, PoStatusRef, SupplierRef, SupplierSkuBinding } from '.
 
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
-// The open+receivable PO lines in scope, with remaining qty computed. Held POs
-// are excluded here so the matcher never picks one (the convert core would
-// reject the whole batch with po_not_receivable if it did).
 export async function loadOpenPoLines(
   svc: SupabaseClient,
   companyId: number | null,
@@ -48,7 +35,6 @@ export async function loadOpenPoLines(
     po: { id: string; po_number: string; supplier_id: string | null; status: string | null; on_hold: boolean | null; purchase_location_id: string | null } | null;
   };
   const rows = (data ?? []) as unknown as Row[];
-  // The line's own warehouse overrides the PO header's (outstanding-po-lines.ts).
   const whOf = (r: Row): string | null => r.warehouse_id ?? r.po?.purchase_location_id ?? null;
   const whIds = [...new Set(rows.map(whOf).filter((x): x is string => Boolean(x)))];
   const codeById = new Map<string, string>();
@@ -57,8 +43,6 @@ export async function loadOpenPoLines(
     if (whErr) throw new Error(`load PO warehouses failed: ${whErr.message}`);
     for (const w of whs as Array<{ id: string; code: string | null }>) if (w.code) codeById.set(w.id, w.code);
   }
-  // The SO each line was raised for, so a delivery-order row printing our SO
-  // number (Dorsettloft "*HC-SO-013339") can be received as that set.
   const soItemIds = [...new Set(rows.map((r) => r.so_item_id).filter((x): x is string => Boolean(x)))];
   const soDocByItem = new Map<string, string>();
   for (let i = 0; i < soItemIds.length; i += 200) {
@@ -68,9 +52,9 @@ export async function loadOpenPoLines(
   }
   const out: OpenPoLine[] = [];
   for (const r of rows) {
-    if (!r.po || isDocumentHeld(r.po)) continue; // held PO is not receivable
+    if (!r.po || isDocumentHeld(r.po)) continue;
     const remaining = (r.qty ?? 0) - (r.received_qty ?? 0);
-    if (remaining <= 0) continue; // nothing left to receive on this line
+    if (remaining <= 0) continue;
     out.push({
       poItemId: r.id,
       poId: r.purchase_order_id,
@@ -91,8 +75,6 @@ export async function loadOpenPoLines(
   return out;
 }
 
-// The supplier_material_bindings rows for the company: supplier SKU / AutoCount
-// code -> our item code. Only rows carrying a usable mapping are returned.
 export async function loadSupplierBindings(
   svc: SupabaseClient,
   companyId: number | null,
@@ -116,7 +98,6 @@ export async function loadSupplierBindings(
   return out;
 }
 
-// The company's suppliers (id, code, name) for resolveScannedSupplier.
 export async function loadSuppliers(
   svc: SupabaseClient,
   companyId: number | null,
@@ -131,8 +112,6 @@ export async function loadSuppliers(
   return ((data ?? []) as unknown as Row[]).map((r) => ({ id: r.id, code: r.code, name: r.name }));
 }
 
-// Every PO number in the company with its status, open or not, so a delivery
-// order row whose PO is not open can say why ("already fully received").
 export async function loadPoStatuses(
   svc: SupabaseClient,
   companyId: number | null,

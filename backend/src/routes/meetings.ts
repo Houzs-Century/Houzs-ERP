@@ -1,25 +1,3 @@
-// /api/meetings — meeting rooms shared by every company and every ERP.
-//
-// Rooms, meetings, guest links and the cross-ERP staff directory live in the Houzs IT
-// Hub (houzs-hub routes/sysMeetings.ts), so a Hookka colleague booked from here sees it
-// in Hookka ERP. This router is the only thing that talks to it, server to server, the
-// same way routes/itSupport.ts does:
-//
-//   browser --session--> /api/meetings/* --Bearer key + X-Reporter-Id + X-Person-*--> hub
-//
-// Access: every signed-in staff user (the calendar is for everyone). WHO is asking is the
-// session's user, never a value from the request; the hub also takes their name, email,
-// company and Org Chart department from here. Adding and changing rooms needs
-// "meetings.manage_rooms", decided HERE and passed as X-Can-Manage-Rooms; the hub trusts it
-// because only this Worker holds the key.
-//
-// The hub's 409 is a booking conflict ("Adrian is busy 2-3pm; everyone is free at 3pm")
-// and is relayed with its body unchanged, because the page builds the conflict dialog
-// from it. Not connected is 501, hub down is 502, as in IT Support.
-//
-// The guest side (publicMeetings, mounted before auth at /api/public/meetings) lets a
-// person with a booking link see free times and book. It is proxied as X-Reporter-Id:
-// guest, which the hub only lets reach its /public routes, and is rate-limited per IP.
 
 import { Hono, type Context } from "hono";
 import type { Env } from "../types";
@@ -46,14 +24,12 @@ const UNREACHABLE = "Meetings could not be reached. Please try again in a moment
 
 type Hub = { base: string; key: string; headers: Record<string, string> };
 
-/** The hub key for a company code, or "" when this environment has none. */
 function keyFor(env: Env, company: string): string {
   const secret = COMPANY_CODE.test(company) ? (env as unknown as Record<string, unknown>)[`IT_HUB_API_KEY_${company}`] : undefined;
   return typeof secret === "string" ? secret.trim() : "";
 }
 const hubBase = (env: Env) => (env.IT_HUB_URL ?? "").trim().replace(/\/+$/, "");
 
-/** Header values must be plain text: no line breaks, at most 200 characters. */
 const clean = (v: string | null | undefined) => (v ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 200);
 
 function hubFor(c: Ctx): Hub | Response {
@@ -86,7 +62,6 @@ function hubFetch(hub: Hub, path: string, init: RequestInit = {}): Promise<Respo
   return fetch(`${hub.base}/api/v1/sys/meetings${path}`, { ...init, headers, signal: AbortSignal.timeout(HUB_TIMEOUT_MS) });
 }
 
-/** One hub call answered to the browser. 400/403/404/409/413/429 carry the hub's own sentence. */
 async function relay(c: Ctx, call: Promise<Response>): Promise<Response> {
   let res: Response;
   try {
@@ -103,15 +78,12 @@ async function relay(c: Ctx, call: Promise<Response>): Promise<Response> {
   }
   if (res.ok && body) return c.json(body, res.status === 201 ? 201 : 200);
   if (body && [400, 403, 404, 409, 413, 429].includes(res.status)) {
-    // 409 is a booking conflict: the whole body goes back, the page draws the dialog from it.
     return c.json(body, res.status as 400 | 403 | 404 | 409 | 413 | 429);
   }
-  // 401 means OUR key is wrong; passing it on would sign the user out.
   console.warn(`[meetings] hub answered ${res.status}: ${typeof body?.error === "string" ? body.error : ""}`);
   return c.json({ error: UNREACHABLE }, 502);
 }
 
-/** The browser's JSON body, or null when it is not JSON (the route answers 400). */
 async function json(c: Ctx): Promise<Record<string, unknown> | null> {
   try {
     return (await c.req.json()) as Record<string, unknown>;
@@ -121,8 +93,6 @@ async function json(c: Ctx): Promise<Record<string, unknown> | null> {
 }
 const jsonInit = (method: string, body: unknown): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
 
-/** After a booking, change or cancellation, send the emails it made through this ERP's Mail Center
- *  (services/meetingMail.ts), once the answer has gone. The 5-minute cron sends anything left. */
 async function thenMail(c: Ctx, company: string, res: Promise<Response>): Promise<Response> {
   const out = await res;
   if (out.ok) {
@@ -130,13 +100,11 @@ async function thenMail(c: Ctx, company: string, res: Promise<Response>): Promis
     try {
       c.executionCtx.waitUntil(run);
     } catch {
-      // No execution context (tests): the run above carries on by itself.
     }
   }
   return out;
 }
 
-// ---- Connected? (the menu row is listed only where this is true) -----------
 app.get("/status", (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub.status === 501 ? c.json({ connected: false }) : hub;
@@ -164,7 +132,6 @@ app.get("/mine", (c) => {
   return relay(c, hubFetch(hub, "/mine"));
 });
 
-// For the red count on the menu row, in the { count } shape every sidebar count reads.
 app.get("/unread-count", async (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub;
@@ -180,7 +147,6 @@ app.post("/notifications/read", (c) => {
   return relay(c, hubFetch(hub, "/notifications/read", { method: "POST" }));
 });
 
-// A new Google Meet link for the booking window (the hub creates it).
 app.post("/meet-link", (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub;
@@ -313,9 +279,7 @@ app.patch("/links/:id", async (c) => {
   return relay(c, hubFetch(hub, `/links/${id}`, jsonInit("PATCH", body ?? {})));
 });
 
-// ---- Guests (no login) ------------------------------------------------------
 
-/** Guests come in on this ERP's address; that address picks the company key. */
 const guestCompany = (c: Ctx) => defaultCompanyCodeForHost(c.req.header("Host") ?? new URL(c.req.url).host);
 function guestHub(c: Ctx): Hub | Response {
   const base = hubBase(c.env);
@@ -350,7 +314,6 @@ publicMeetings.get("/links/:code/slots", async (c) => {
   return relay(c, hubFetch(hub, `/public/links/${code}/slots?day=${day}`));
 });
 
-// One day of a link: each room's taken times (no titles, no people), for the guest to pick a room and time.
 publicMeetings.get("/links/:code/day", async (c) => {
   const code = c.req.param("code");
   const day = c.req.query("day") ?? "";
@@ -372,7 +335,6 @@ publicMeetings.post("/links/:code/book", async (c) => {
   if (hub instanceof Response) return hub;
   const b = await json(c);
   if (!b) return c.json({ error: "That could not be read. Please try again." }, 400);
-  // Only these fields reach the hub. roomId / end / title / people / department: the guest picks the room and time.
   const body = { start: b.start, end: b.end, roomId: b.roomId, name: b.name, phone: b.phone, email: b.email, company: b.company, department: b.department, title: b.title, people: b.people };
   return thenMail(c, guestCompany(c), relay(c, hubFetch(hub, `/public/links/${code}/book`, jsonInit("POST", body))));
 });

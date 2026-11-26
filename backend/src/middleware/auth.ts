@@ -16,9 +16,6 @@ import {
   type AccessLevel,
 } from "../services/pageAccess";
 
-// Legacy "service" user — used when a request authenticates with the
-// shared DASHBOARD_API_KEY env var (cron jobs, internal tooling). Has
-// the wildcard permission, so it can hit anything.
 const SERVICE_USER: AuthUser = {
   id: 0,
   email: "service@local",
@@ -36,21 +33,13 @@ const SERVICE_USER: AuthUser = {
   department_name: null,
   brand_scope: null,
   page_access: fullAccessMap(),
-  // Service user holds `*`, so scmAreaGuard bypasses it via the wildcard
-  // branch regardless of this flag.
   scm_l2_configured: false,
 };
 
 declare module "hono" {
   interface ContextVariableMap {
     user: AuthUser;
-    /** Shortcut for `c.get("user").id` — set in the auth middleware
-     *  alongside `user`. ASSR routes read this for audit columns
-     *  (created_by, verified_by, etc.). */
     userId: number | null;
-    /** Page-level access for the current request — set by
-     *  `requirePageAccess`. Routes that need partial/full branching
-     *  read this instead of recomputing. */
     access_level: AccessLevel;
     /** WHICH AUTH PATH THIS REQUEST TOOK — 'pass' skipped the two joined
      *  authorization reads, 'session-db' paid them. Set here and read ONLY by
@@ -58,21 +47,7 @@ declare module "hono" {
      *  actually firing" is an observation rather than a reading of this file
      *  (docs/bugs/0593 is what a reading got wrong). */
     authPath: 'pass' | 'session-db';
-    /** Per-request id (set by requestLog, echoed as X-Request-Id).
-     *  The audit trail stamps it on each event so a logged action can
-     *  be correlated back to its access-log line. */
     requestId: string;
-    /** The DOOR this request's session was minted at — 'pos' (POS PIN login)
-     *  or undefined (every other door, and every session minted before mig
-     *  0120). Server-assigned at mint time and never accepted from the
-     *  request, so unlike the `X-Client` header it replaced, a caller can
-     *  neither claim nor shed it. Read by the SO pricing envelope
-     *  (scm/routes/mfg-sales-orders.ts isPosTabletCaller).
-     *
-     *  This is the ONLY channel the origin may be read from inside
-     *  /api/scm/*: the SCM auth bridge overwrites `user` with a pinned system
-     *  staff row but leaves this var alone. Undefined = not-POS, always the
-     *  safe direction. */
     sessionOrigin?: string;
   }
 }
@@ -186,13 +161,6 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
     return c.json({ error: "Your session has expired. Please sign in again." }, 401);
   }
 
-  // AI Connector token (routes/mcp.ts). Honoured ONLY on the connector's own
-  // in-process call (per-isolate secret header) and only for reads, with ONE
-  // exception: the call confirm_action makes for an action the person just
-  // confirmed (services/mcp-inner.ts admitMcpWrite: armed action id, same token,
-  // ACTION_ALLOWLIST route, single use). A token copied out of an AI app gets
-  // 403 here, and so does every other write. Runs the route as the real person,
-  // so their permissions and company scope decide.
   if (token.startsWith(MCP_TOKEN_PREFIX)) {
     if (!isMcpInner(c.req.header(MCP_INNER_HEADER))) {
       return c.json({ error: "AI Connector tokens only work through the connector." }, 403);
@@ -202,7 +170,6 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
     if (!isRead && !actionId) {
       return c.json({ error: "The AI Connector is read-only." }, 403);
     }
-    // Verified at the door of this same tool call (routes/mcp.ts); else check now.
     const id = recallVerified<McpIdentity>(token, Date.now()) ?? (await mcpIdentity(c.env, token));
     if (!id) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
     if (!isRead && !admitMcpWrite({ method: c.req.method, path, actionId, tokenId: id.tokenId, now: Date.now() })) {
@@ -216,12 +183,6 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
     return;
   }
 
-  // Service-tier access. DASHBOARD_API_KEY = legacy shared key (tooling/cron);
-  // CONNECT_SERVICE_TOKEN = dedicated key for Houzs Connect's org sync, so that
-  // integration has its own credential and the legacy key never needs rotating.
-  // No session row exists, so `sessionOrigin` is deliberately left unset: these
-  // are trusted backend callers, never a POS tablet, and must keep pricing
-  // freely.
   if (
     (c.env.DASHBOARD_API_KEY && timingSafeEqualStr(token, c.env.DASHBOARD_API_KEY)) ||
     (c.env.CONNECT_SERVICE_TOKEN && timingSafeEqualStr(token, c.env.CONNECT_SERVICE_TOKEN))
@@ -232,13 +193,6 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
     return;
   }
 
-  // STAGE 3 — a valid, current signed pass authorizes with NO database read.
-  // tryPassAuth returns null on ANY doubt (feature off / no pass / bad or
-  // expired signature / revoked), and every one of those falls straight through
-  // to the authoritative getUserBySession path below. So a pass NEVER grants
-  // access on its own — it only ever SKIPS the DB when it is genuinely valid and
-  // has not been revoked. When SESSION_SIGNING_KEY is unset this is a no-op and
-  // every request takes the DB path exactly as before.
   const passUser = await tryPassAuth(c.env, c.req.header("X-Session-Pass") || "", token, Date.now());
   if (passUser) {
     const refused = fieldSessionRefusal(passUser, path) ?? passwordChangeSessionRefusal(passUser);
@@ -251,7 +205,6 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
     return;
   }
 
-  // Otherwise it's a session token.
   const user = await getUserBySession(c.env, token);
   if (!user) {
     return c.json({ error: "Your session has expired. Please sign in again." }, 401);
@@ -282,16 +235,7 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
 
   c.set("authPath", "session-db");
   c.set("user", user);
-  // ASSR routes (assr.ts + assrPortal.ts) read `c.get("userId")` for
-  // audit columns (created_by, verified_by, etc.). Set it alongside
-  // `user` so those 15+ callsites don't all need to be rewritten —
-  // and so `verified_by` no longer ends up as NULL on every patch.
   c.set("userId", user.id);
-  // Republish the session's origin as a first-class request fact (mig 0120).
-  // It must NOT be read off `user` downstream — the SCM auth bridge replaces
-  // that object entirely — so this var is the single reader-facing channel.
-  // `?? undefined` collapses the DB's NULL onto the same "not-POS" value an
-  // absent var already has, so every consumer has ONE falsy case to handle.
   c.set("sessionOrigin", user.session_origin ?? undefined);
   await next();
 };
@@ -306,9 +250,6 @@ export function requirePermission(perm: string): MiddlewareHandler<{ Bindings: E
   return async (c, next) => {
     const user = c.get("user");
     if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
-    // Fast path: O(1) Set lookup. Falls back to the array form for
-    // any caller that builds AuthUser without going through
-    // hydrateAuthUser (e.g. tests / scripts).
     const granted = user.permissions_set ?? user.permissions;
     if (!hasPermission(granted, perm)) {
       return c.json({ error: "You don't have permission to do that." }, 403);
@@ -406,7 +347,6 @@ export function requirePageAccessOrSalesView(
     const user = c.get("user");
     if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
     const granted = user.permissions_set ?? user.permissions;
-    // 1) Wildcard / matrix path — identical to requirePageAccess, unchanged.
     if (hasPermission(granted, "*")) {
       c.set("access_level", "full");
       await next();
@@ -418,7 +358,6 @@ export function requirePageAccessOrSalesView(
       await next();
       return;
     }
-    // 2) Additive code-keyed Sales/director admittance.
     if (isDirectorUser(user)) {
       c.set("access_level", "full");
       await next();
@@ -462,18 +401,6 @@ export function requireAnyPermission(perms: string[]): MiddlewareHandler<{ Bindi
   };
 }
 
-/**
- * Gate for `/api/hr/*`. A broad reader (hr.employees.read / .manage, or `*`)
- * reaches everything, exactly as before. A NARROW `hr.attendance.read` reaches
- * only the time-safe GET reads the Attendance tab needs (the daily punches and
- * the working-hours grid) — never salary, pay, the employee master or payroll.
- *
- * DEFAULT-DENY: a narrow caller is refused any path not on the allow-list, so a
- * new HR endpoint is private to the broad readers until it is deliberately
- * added here — a missed route cannot leak salary. Writes are unaffected: each
- * handler still checks hr.employees.manage, and only GET is allowed for the
- * narrow key regardless.
- */
 const HR_ATTENDANCE_READ_PATHS = ["/api/hr/attendance", "/api/hr/working-hours"];
 export const requireHrRead: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const user = c.get("user");
@@ -508,22 +435,10 @@ export const requireScmAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, 
   const user = c.get("user");
   if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
   const granted = user.permissions_set ?? user.permissions;
-  // Legacy pass conditions, plus any SCM page-access area granted at >= view.
   if (hasScmUmbrella(user)) {
     await next();
     return;
   }
-  // Additive (go-live review #5): a code-keyed Sales rep — Sales by STABLE ORG
-  // FIELD (position "Sales …" / dept name containing "sales", pmsAccess.
-  // isSalesUser), with NO matrix grant — is otherwise 403'd from the
-  // Sales-Orders backend even though the FE (allowSales) shows it and every SO
-  // route scopes them to own+downline (salesScope). Admit such a caller for the
-  // SALES-ORDERS AREA ONLY (the /mfg-sales-orders sub-router). This used to say
-  // it mirrors how assr.ts canAccessServiceCases OR-ins isSalesUser; that stopped
-  // being true when Service Cases moved to the company grant, so the two gates
-  // now answer "who is a rep" differently ON PURPOSE. Deliberately TIGHT — the
-  // path gate keeps procurement / warehouse / finance SCM areas closed to a
-  // Sales rep with no explicit grant.
   if (c.req.path.includes("/mfg-sales-orders") && isSalesUser(user)) {
     await next();
     return;
@@ -568,15 +483,6 @@ export const requireScmAccess: MiddlewareHandler<{ Bindings: Env }> = async (c, 
     await next();
     return;
   }
-  // Additive (PMS project logistics view, owner 2026-07): the Projects "Setup &
-  // Dismantle" crew editor is READ-ONLY for Sales but must still SHOW the
-  // currently-scheduled lorry plates. Admit a code-keyed Sales/Director for the
-  // GET /api/scm/lorries LIST ONLY — view-only, no write path opened. TIGHT: the
-  // method + exact-path check keeps every other SCM area (and every lorries
-  // write) closed to a Sales rep with no explicit grant. (A Sales user with an
-  // explicit SCM L2 config still passes the downstream scmAreaGuard via its
-  // no-lockout fallback; if ever L2-restricted, the FE keeps a graceful empty
-  // dropdown rather than 403-crashing.)
   if (
     c.req.method === "GET" &&
     /\/scm\/lorries\/?$/.test(c.req.path) &&

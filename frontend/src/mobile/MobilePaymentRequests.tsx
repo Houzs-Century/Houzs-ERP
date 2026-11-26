@@ -89,7 +89,6 @@ const StageText = ({ r }: { r: PaymentRequest }) => (
   <span style={{ fontSize: 11.5, fontWeight: 600, color: STAGE[r.stage].tone }}>{stageLabel(r)}</span>
 );
 
-/* ── The list ─────────────────────────────────────────────────────────────── */
 function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNew: () => void; onOpen: (id: string) => void }) {
   const q = usePaymentRequests(false);
   const rows = useMemo(() => q.data?.requests ?? [], [q.data]);
@@ -145,7 +144,6 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
   );
 }
 
-/* ── One request ──────────────────────────────────────────────────────────── */
 function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; onBack: () => void; onEdit: (r: PaymentRequest) => void; onBalance: (r: PaymentRequest) => void }) {
   const { user } = useAuth();
   const q = usePaymentRequest(id);
@@ -321,12 +319,10 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
   );
 }
 
-/* ── New / edit ───────────────────────────────────────────────────────────── */
 function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentRequest | null; onBack: () => void; onDone: (id: string) => void }) {
   const create = useCreatePaymentRequest();
   const update = useUpdatePaymentRequest();
   const upload = useUploadPaymentRequestFile();
-  /* Whether the company runs events (2990 does not) — the list's own answer. */
   const hasEvents = usePaymentRequests(false).data?.hasEvents ?? true;
   const camRef = useRef<HTMLInputElement>(null);
   const libRef = useRef<HTMLInputElement>(null);
@@ -345,7 +341,6 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
   }));
   /* The bill is READ as it is attached (owner 2026-10-01, item 1). */
   const billRead = useRequestBillRead();
-  /* What the last read offered each field — page by page, a later read may say more. */
   const lastOffer = useRef<BillOffer>({});
   const [noEvent, setNoEvent] = useState(() => !!initial?.no_event_reason);
   const [noEventReason, setNoEventReason] = useState(initial?.no_event_reason ?? "");
@@ -407,7 +402,6 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: PaymentReques
         try {
           await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
         } catch {
-          /* The request stands; the detail screen says the bill is missing and takes it again. */
           break;
         }
       }

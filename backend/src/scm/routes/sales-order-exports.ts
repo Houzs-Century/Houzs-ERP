@@ -39,8 +39,6 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
 export async function soExportRowsHandler(c: Ctx) {
   const sb = c.get('supabase');
-  /* The same row-level visibility as the list: view-all callers see every
-     order, everyone else their own + downline (lib/salesScope.ts). */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
   const params = readSoListParams((k) => c.req.query(k), (k) => c.req.queries(k), canViewScmFinance(c));
   const read = await prepareSoListRead(sb, c, params, scopeIds, c.get('houzsUser')?.id ?? null, new Date());
@@ -54,10 +52,6 @@ export const salesOrderExports = new Hono<{ Bindings: Env; Variables: Variables 
 salesOrderExports.use('*', supabaseAuth);
 salesOrderExports.get('/export/rows', soExportRowsHandler);
 
-/* GET /mfg-sales-orders/funnel-values -> { values: { <grid column>: string[] }, truncated }
-   Every value each server-run column funnel can take across the caller's orders
-   in the active company (lib/so-list-column-funnels.ts), so the grid can offer a
-   value that is not on the loaded page. Company + sales scope as the list. */
 export async function soFunnelValuesHandler(c: Ctx) {
   const sb = c.get('supabase');
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));

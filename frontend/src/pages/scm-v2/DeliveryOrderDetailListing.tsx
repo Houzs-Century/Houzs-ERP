@@ -1,8 +1,3 @@
-// ----------------------------------------------------------------------------
-// DeliveryOrderDetailListing — Task #120 L2 page for Delivery Orders.
-// One row per delivery_order_items line, with the DO header denormalised.
-// Mirrors the SalesOrderDetailListing structure via DetailListingShell.
-// ----------------------------------------------------------------------------
 
 import { useCallback } from 'react';
 import { fmtDateOrDash, fmtQty, fmtSen } from '../../vendor/shared/format';
@@ -176,9 +171,6 @@ export const DeliveryOrderDetailListing = () => {
       docNoPlaceholder="DO-2605-001"
       useDetailQuery={useDeliveryOrderDetailListing}
       buildColumns={buildColumns}
-      // Delivery Orders have no payment ledger — "Outstanding" here is
-      // doc-level: a DO whose status hasn't reached DELIVERED / INVOICED.
-      // We compute it as undelivered lines × line_total.
       computeKpis={(rows) => {
         const totalLines = rows.length;
         const uniqueDocs = new Set<string>();
@@ -190,7 +182,6 @@ export const DeliveryOrderDetailListing = () => {
           revenue += Number(r.total_sen ?? 0);
           docStatuses.set(r.doc_no, String(r.status ?? ''));
         }
-        // Sum the LINE totals per doc whose status is still in-flight.
         for (const r of rows) {
           const status = docStatuses.get(r.doc_no) ?? '';
           if (status === 'DELIVERED' || status === 'INVOICED' || status === 'CANCELLED') continue;

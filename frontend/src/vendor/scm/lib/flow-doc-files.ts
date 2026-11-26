@@ -1,10 +1,3 @@
-// Files on the receiving and return documents (backlog A3): Goods Received,
-// Purchase Invoice, Delivery Return, Purchase Return. One hook set for all
-// four, keyed by the document kind, so the desktop page and the phone detail
-// read and write through the same calls. The server
-// (backend/src/scm/routes/flow-doc-files.ts) owns the rules; the client only
-// reads its `locked` answer and treats CANCELLED as closed, which the server
-// also refuses.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';

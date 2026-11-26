@@ -9,8 +9,6 @@ import {
   type EntryStatus as SalesEntryStatus,
 } from "../Sales";
 
-/* An exhibition's sales on the project page. Lives outside Projects.tsx, which
-   sits at its file-size ceiling. */
 
 const depositOf = (e: SalesEntry) => e.deposit_amount ?? e.amount;
 const balanceOf = (e: SalesEntry) => Math.max(0, e.amount - depositOf(e));

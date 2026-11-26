@@ -24,7 +24,6 @@ export type ExportFormat = "text" | "number" | "money" | "rate" | "date";
 export type LineExportColumn<T, L> = {
   key: string;
   label: string;
-  /** The exported header when it must differ from the on-screen label. */
   exportLabel?: string;
   getValue?: (row: T) => string | number | boolean | null | undefined;
   exportValue?: (row: T) => ExportCell;
@@ -34,18 +33,9 @@ export type LineExportColumn<T, L> = {
 
 /** What a page gives DataTable to export by line. */
 export type DataTableLineExport<T, L> = {
-  /**
-   * EVERY row the list's SERVER filter matches (tab, search, sort — all pages),
-   * in the list's row shape, each carrying its lines. `exportKeys` are the
-   * columns the file will hold and `filterKeys` the columns with an active
-   * funnel, so a page fetches derived data (MRP enrichment) only when one of
-   * them needs it. THROW to refuse — e.g. the server stopped reading
-   * (`truncated`); a short file that looks complete is the defect this replaces.
-   */
   fetchRows: (need: { exportKeys: string[]; filterKeys: string[] }) => Promise<T[]>;
   linesOf: (row: T) => readonly L[];
   sheetName: string;
-  /** Required: a failed export must reach the operator (CLAUDE.md R62). */
   onError: (e: Error) => void;
 };
 
@@ -128,7 +118,6 @@ const NUMBER_FORMAT: Record<ExportFormat, string | null> = {
   date: "yyyy/mm/dd",
 };
 
-/* A wide character takes two cells' width. */
 const widthOfText = (s: string): number => [...s].reduce((w, ch) => w + ((ch.codePointAt(0) ?? 0) > 0x2e7f ? 2 : 1), 0);
 const shownInSheet = (cell: ExportCell, format: ExportFormat): string => {
   if (cell === null) return "";
@@ -151,8 +140,6 @@ export function fittedColumnWidths(matrix: LineExportMatrix): number[] {
 
 type Xlsx = typeof import("../lib/xlsx-runtime");
 
-/** One sheet: the lines above its table, if any (a title, a note — then a blank row),
- *  the header and rows, each column's Excel format, each column fitted. */
 function sheetOf(XLSX: Xlsx, matrix: LineExportMatrix, heading: readonly string[] = []): Record<string, unknown> {
   const above = heading.length > 0 ? [...heading.map((line) => [line]), []] : [];
   const ws = XLSX.utils.aoa_to_sheet([...above, matrix.header, ...matrix.body]) as Record<string, unknown>;

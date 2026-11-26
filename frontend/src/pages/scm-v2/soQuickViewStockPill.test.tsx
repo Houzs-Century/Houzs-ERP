@@ -90,8 +90,6 @@ const mount = () =>
 
 const openDrawer = async () => {
   mount();
-  // The list renders a desktop table and a mobile card for the same row, so the
-  // debtor name appears twice; clicking either fires the row's onRowClick.
   fireEvent.click(screen.getAllByText("TAN AH KOW")[0]!);
   const drawer = await screen.findByRole("dialog", { name: new RegExp(`Sales order ${DOC}`) });
   await waitFor(() => within(drawer).getByText("Order lines"));
@@ -124,9 +122,6 @@ describe("SO quick-view drawer: per-line Stock", () => {
   });
 
   it("renders the coverage-healed verdict — the same overlay the drill-down uses", async () => {
-    // The base detail payload defers MRP, so its stored verdict is PENDING;
-    // GET /:docNo/coverage heals it to READY. The drawer must show READY, or it
-    // would disagree with the drill-down and the SO detail page for one order.
     h.detailItems = [
       { id: "L1", item_code: "SOFA A", description: "SOFA A", item_group: "SOFA", qty: 1,
         unit_price_sen: 500000, total_sen: 500000, stock_status: "PENDING", stock_status_effective: "PENDING",

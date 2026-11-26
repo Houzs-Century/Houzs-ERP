@@ -11,7 +11,6 @@ describe('resolveCarrierLink — attaching a carrier forces outsource', () => {
   });
 
   it('a caller claiming in-house while attaching a carrier is overridden', () => {
-    // The form cannot make a 3PL's lorry ours by ticking a box.
     expect(resolveCarrierLink({ threeplCompanyId: CARRIER, ownFlag: true }))
       .toEqual({ carrierId: CARRIER, ownFlag: false });
   });
@@ -19,7 +18,6 @@ describe('resolveCarrierLink — attaching a carrier forces outsource', () => {
 
 describe('resolveCarrierLink — detaching', () => {
   it('explicit null clears the link and leaves the flag alone when none was sent', () => {
-    // A detached row is not automatically ours again — a human decides.
     expect(resolveCarrierLink({ threeplCompanyId: null })).toEqual({ carrierId: null });
   });
 
@@ -60,7 +58,6 @@ describe('carrierLinkForInsert — both fields always resolve', () => {
   });
 
   it('no carrier but an explicit outsource claim is honoured', () => {
-    // The pre-3PL way of marking an outsourced row still works, unlinked.
     expect(carrierLinkForInsert({ ownFlag: false })).toEqual({ carrierId: null, ownFlag: false });
   });
 

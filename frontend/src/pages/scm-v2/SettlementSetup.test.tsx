@@ -27,7 +27,6 @@ const DATA: MaintenanceData = {
       /* The till calls Public Bank "Public" (owner 2026-10-21: Public=PBB). */
       so_names: ['Public'],
       ready: true, autoMatchable: true,
-      /* His own case: the same merchant, two companies, two banks. */
       byCompany: {
         '1': { enabled: true, linked: true, bankAccountCode: '310-0020', feeAccountCode: '900-B001' },
         '2': { enabled: true, linked: true, bankAccountCode: '310-0010', transitAccountCode: '326-0010' },
@@ -55,7 +54,6 @@ const DATA: MaintenanceData = {
       account_code: '310-0020', account_name: 'Bank — Hong Leong Current',
       byCompany: {
         '1': { inChart: true, enabled: true, usedBy: ['PBB'] },
-        /* 2990 does not carry this code at all — not a box it could tick. */
         '2': { inChart: false, enabled: false, usedBy: [] },
       },
     },
@@ -87,8 +85,6 @@ const saveLayout = vi.fn();
 const rematchMutateAsync = vi.fn();
 let bankError: unknown = null;
 
-/* The recognition-rules card's hooks — stubbed with one live rule so the card
-   renders; its write contract is tests/bankRoutes.test.ts. */
 const saveRule = vi.fn();
 const createRule = vi.fn();
 vi.mock('./bank-queries', () => ({
@@ -98,8 +94,6 @@ vi.mock('./bank-queries', () => ({
   ] }, isLoading: false }),
   useSaveBankRule: () => ({ mutate: saveRule, isPending: false }),
   useCreateBankRule: () => ({ mutate: createRule, isPending: false }),
-  /* The bank-statements card (2026-09-08): one account set up, the reader's
-     built-in headings for the placeholders. */
   useBankConfigs: () => ({ data: { configs: [
     { id: 7, account_code: '310-0010', bank_code: 'MBB', account_no: '0000564418610346', statement_format: 'CSV', delimiter: '|', amount_format: 'integer-sen', credit_indicator: 'CR', column_map: { date: ['EFFECT DATE'], description: ['TRX DESCRIPTION'], amount: ['AMOUNT'], indicator: ['AMOUNT IND'] }, is_active: true },
   ], defaultHeadings: { date: ['Date', 'Transaction Date'], description: ['Transaction Description', 'Remarks'], reference: ['Ref. No.'], credit: ['Deposit', 'Credit Amount'], debit: ['Withdrawal', 'Payment Amount'], amount: ['Amount'], indicator: ['Amount Ind'], balance: ['Balance'] } }, isLoading: false }),
@@ -116,9 +110,6 @@ vi.mock('./accounting-phase1-queries', () => ({
   ] } }),
   useSaveVoucherNumbering: () => ({ mutate: saveNumbering, isPending: false }),
 }));
-/* The default-bank card's hooks (vendor accounting-queries) — stubbed so this
-   file stays about the maintenance page; the card's own contract is the
-   PaymentVoucherNew tests' business. */
 const saveBankDefault = vi.fn();
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({
   isControlSpecial: (s: string | null | undefined) => s === 'SDC' || s === 'SCC' || s === 'SBS',
@@ -145,8 +136,6 @@ import { SettlementSetup } from './SettlementSetup';
 
 const draw = () => render(<MemoryRouter><SettlementSetup /></MemoryRouter>);
 
-/* A merchant code appears in its own row AND in the "used by" of the bank it
-   pays into — find the row by its first-column tick, which is unique. */
 const merchantRow = (code: string) =>
   screen.getByLabelText(`${code} for Houzs Century`).closest('tr') as HTMLElement;
 const lastBody = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls.at(-1)![0] as unknown;
@@ -168,7 +157,6 @@ describe('the maintenance table', () => {
     draw();
     expect(screen.getAllByText('Houzs Century').length).toBeGreaterThan(0);
     expect(screen.getAllByText("2990's Home").length).toBeGreaterThan(0);
-    // one tick per merchant per company, named so a cell is never ambiguous
     expect((screen.getByLabelText('PBB for Houzs Century') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('CIMB for Houzs Century') as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText("CIMB for 2990's Home") as HTMLInputElement).checked).toBe(false);
@@ -182,8 +170,6 @@ describe('the maintenance table', () => {
     expect(lastBody(merchantMutate)).toEqual({ companyId: 2, code: 'CIMB', enabled: true });
   });
 
-  /* The whole reason he wanted a matrix: PBB pays Houzs into Hong Leong and
-     2990 into Maybank, and both are on screen at once. */
   test('the same merchant can pay two companies into two different banks', () => {
     draw();
     expect((screen.getByLabelText('PBB bank for Houzs Century') as HTMLSelectElement).value).toBe('310-0020');
@@ -193,8 +179,6 @@ describe('the maintenance table', () => {
     expect(lastBody(merchantMutate)).toEqual({ companyId: 1, code: 'PBB', bankAccountCode: '310-0010' });
   });
 
-  /* Only banks THAT company has can receive THAT company's money; none picked
-     = the company's default bank. */
   test('a company is only offered its own banks, by name', () => {
     draw();
     const houzs = screen.getByLabelText('PBB bank for Houzs Century') as HTMLSelectElement;
@@ -219,7 +203,6 @@ describe('the bank matrix', () => {
     expect(within(screen.getByLabelText('310-0020 for Houzs Century').closest('td') as HTMLElement).getByText('PBB')).toBeTruthy();
   });
 
-  /* A code a company does not carry is not an unticked box it could tick. */
   test('an account missing from a company chart says so instead of offering a tick', () => {
     draw();
     expect(screen.queryByLabelText("310-0020 for 2990's Home")).toBeNull();
@@ -240,7 +223,6 @@ describe('the report layout — the shared half', () => {
   test('it sits outside every company column as the design’s chips, and opens in a modal', () => {
     draw();
     const row = merchantRow('PBB');
-    /* File, reference, fee and drift, on the row — no company's. */
     for (const chip of ['CSV', 'Unique ref', 'Gross − net', '±3 days']) expect(within(row).getByText(chip)).toBeTruthy();
     expect(within(merchantRow('CIMB')).getByText('Not taught yet')).toBeTruthy();
     expect(within(merchantRow('CIMB')).getByText('Ref ?')).toBeTruthy();
@@ -337,7 +319,6 @@ describe('the bank recognition rules card', () => {
   test('a rule edits in place and saves only what changed; a new rule needs acquirer + pattern', () => {
     saveRule.mockClear(); createRule.mockClear();
     draw();
-    /* Edit the live PBB rule's pattern — the row's Save wakes up. */
     const pattern = screen.getByLabelText('Pattern for PBB rule 1') as HTMLInputElement;
     expect(pattern.value).toBe('PBB-PBCS');
     fireEvent.change(pattern, { target: { value: 'PBB-PBCS|PBCS-IBG' } });
@@ -347,7 +328,6 @@ describe('the bank recognition rules card', () => {
       expect.anything(),
     );
 
-    /* The add row: acquirer + pattern then Add rule. */
     fireEvent.change(screen.getByLabelText('New rule acquirer'), { target: { value: 'PBB' } });
     fireEvent.change(screen.getByLabelText('New rule pattern'), { target: { value: 'IBG CREDIT' } });
     fireEvent.click(screen.getByText('Add rule'));
@@ -372,13 +352,11 @@ describe('the bank recognition rules card', () => {
     draw();
     const order = screen.getByLabelText('Order for PBB rule 1') as HTMLInputElement;
     expect(order.value).toBe('20');
-    // A leading zero typed in front survives while focused, then normalises on blur …
     fireEvent.focus(order);
     fireEvent.change(order, { target: { value: '0100' } });
     expect(order.value).toBe('0100');
     fireEvent.blur(order);
     expect(order.value).toBe('100');
-    // … and the number committed to the draft is never corrupted.
     fireEvent.click(screen.getByText('Save'));
     expect(saveRule).toHaveBeenCalledWith(
       expect.objectContaining({ id: 1, sortOrder: 100 }),
@@ -393,7 +371,6 @@ describe('the bank recognition rules card', () => {
     expect(saveRule.mock.calls[0]![0]).toEqual({ id: 2, isActive: true });
   });
 
-  /* g4: there is no delete — Remove switches the rule off, after asking. */
   test('Remove asks, then switches the rule off; it is never deleted', async () => {
     saveRule.mockClear(); confirmFn.mockClear();
     draw();
@@ -406,7 +383,6 @@ describe('the bank recognition rules card', () => {
     expect(asked.confirmLabel).toBe('Switch off');
     expect(asked.danger).toBe(true);
     expect(saveRule.mock.calls[0]![0]).toEqual({ id: 1, isActive: false });
-    /* An off rule has nothing to remove. */
     expect((screen.getByLabelText('Remove the HLB rule 2') as HTMLButtonElement).disabled).toBe(true);
   });
 });
@@ -423,13 +399,10 @@ describe('the clearing account per merchant', () => {
     expect([...pick.options].map((o) => o.value)).toEqual(['326-0000', '326-0010']);
     fireEvent.change(pick, { target: { value: '326-0000' } });
     expect(lastBody(merchantMutate)).toEqual({ companyId: 2, code: 'PBB', transitAccountCode: '326-0000' });
-    /* HOUZS has only the generic account listed — the picker still shows it,
-       reading the generic default. */
     expect((screen.getByLabelText('PBB clearing for Houzs Century') as HTMLSelectElement).value).toBe('326-0000');
   });
 });
 
-/* ── Voucher numbering and the default bank ─────────────────────────────── */
 describe('voucher numbering', () => {
   test('one letter per money account, the cash drawer fixed at C; Save numbering sends only what changed', () => {
     saveNumbering.mockClear();
@@ -494,7 +467,6 @@ describe('the bank statements card', () => {
       accountCode: '310-0010', bankCode: 'HLB', accountNo: '23600602788', statementFormat: 'CSV', amountFormat: 'decimal',
       columnMap: { date: ['Date', 'Transaction Date'], reference: ['Ref. No.', 'Sender / Receiver Name'] },
     });
-    /* Roles left blank are not sent — the reader's built-in names apply. */
     expect((saveConfig.mock.calls[0]![0] as { columnMap: Record<string, unknown> }).columnMap.description).toBeUndefined();
   });
 
@@ -534,8 +506,6 @@ describe('the merchant fee account', () => {
     const row = merchantRow('PBB');
     const houzs = within(row).getByLabelText('PBB fee account for Houzs Century') as HTMLSelectElement;
     const c2990 = within(row).getByLabelText("PBB fee account for 2990's Home") as HTMLSelectElement;
-    /* HOUZS's chart offers one, 2990's offers two — a shared list would give
-       both the same options. */
     expect([...houzs.options].map((o) => o.value).filter(Boolean)).toEqual(['900-B001']);
     expect([...c2990.options].map((o) => o.value).filter(Boolean)).toEqual(['900-B001', '900-T009']);
   });
@@ -553,9 +523,6 @@ describe('the merchant fee account', () => {
     expect(lastBody(merchantMutate)).toEqual({ companyId: 2, code: 'PBB', feeAccountCode: '900-T009' });
   });
 
-  /* THE ONE THAT MATTERS. A fee account the chart can no longer post to is
-     NAMED, not shown as an empty select — that silence is exactly how 930-0000
-     went unnoticed while every confirm in both companies refused. */
   test('names a fee account this chart cannot post to', () => {
     const was = DATA.merchants[0]!.byCompany['1']!;
     DATA.merchants[0]!.byCompany['1'] = { ...was, feeAccountCode: '930-0000' };

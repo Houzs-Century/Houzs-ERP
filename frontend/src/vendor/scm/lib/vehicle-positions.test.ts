@@ -12,7 +12,7 @@ describe("vehiclePositionsFrom", () => {
       fix("t1", "2026-10-08T02:00:00Z", 3.0),
       fix("t1", "2026-10-08T02:05:00Z", 3.2),
       fix("t2", "2026-10-08T02:01:00Z"),
-      fix("t-other", "2026-10-08T02:01:00Z"), // a run not on this page is not drawn
+      fix("t-other", "2026-10-08T02:01:00Z"),
     ], runs);
     expect(out).toHaveLength(2);
     expect(out.find((v) => v.tripId === "t1")).toMatchObject({ key: "l1", lorryId: "l1", label: "VAA1234", lat: 3.2, source: "phone" });
@@ -22,7 +22,6 @@ describe("vehiclePositionsFrom", () => {
 
 describe("stopStatusByRef", () => {
   test("uses Malaysia's clock, not the browser's", () => {
-    // 16:30 UTC is 00:30 the next day in Malaysia
     expect(mytClock(new Date("2026-10-07T16:30:00Z"))).toEqual({ today: "2026-10-08", nowMinutes: 30 });
   });
 

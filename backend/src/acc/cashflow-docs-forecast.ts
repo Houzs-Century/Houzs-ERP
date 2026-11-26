@@ -40,11 +40,8 @@ export type OwedBill = { supplierCode: string | null; supplier: string; kind: Bi
 
 /** An owed bill with what times and places it. */
 export type DueBill = OwedBill & {
-  /** Bills to pay: the day Finance plans to pay it. */
   plannedOn: string | null;
-  /** The supplier's payment term, for a bill with neither a plan nor a due date. */
   term: TermInfo;
-  /** The accounts it was bought on, weighted; none = the creditor control. */
   parts: Array<{ code: string; name: string; sen: number }>;
 };
 
@@ -56,7 +53,6 @@ export function owedBills(rows: readonly AgingRow[]): OwedBill[] {
   const out: OwedBill[] = [];
   for (const r of rows) {
     let credit = Math.max(0, -r.unappliedSen);
-    /* ageEntries lists a row's items oldest first. */
     for (const it of r.items) {
       const take = Math.min(credit, it.openSen);
       credit -= take;
@@ -88,31 +84,20 @@ const SETTLEMENT = { id: 'BAL' as const, label: 'Settlement' };
 
 export type DocsForecastInput = {
   currentYm: string;
-  /** The last month a later month may be. */
   lastYm: string;
-  /** The debtor control: where the customers' money lands. */
   arCode: string;
-  /** The creditor control: a bill past due, and a line with no bill behind it. */
   ap: { code: string; name: string };
-  /** The current month's orders and bills as at its 1st. */
   baseline: { orders: readonly OpenOrder[]; bills: readonly DueBill[] };
-  /** Today's. */
   live: { orders: readonly OpenOrder[]; bills: readonly DueBill[] };
-  /** The Forecast P&L's legs other than sales and purchases — the P&L forecast column's own. */
   costs: readonly CashLeg[];
-  /** The Capex & financing table's legs. */
   inputs: readonly CashLeg[];
 };
 
 export type DocsForecast = {
-  /** The current month, then each later month shown. */
   months: string[];
   legs: CashLeg[];
-  /** Open orders with no delivery date, by the year they were ordered: in no month. */
   undated: Array<{ year: string; orders: number; sen: number }>;
-  /** Orders and bills expected after the last month shown. */
   beyond: { orders: number; orderSen: number; bills: number; billSen: number };
-  /** Suppliers a bill of which was timed a month later for want of a payment term. */
   flagged: string[];
 };
 
@@ -135,7 +120,6 @@ export function buildDocsLegs(input: DocsForecastInput): DocsForecast {
     return spreadSen(b.sen, b.parts.map((p) => ({ ...p, weight: p.sen }))).map((p) => ({ ...base, code: p.code, key: p.code, name: p.name, sen: p.sen }));
   };
 
-  /* The current month, as at its 1st: what was expected in it, and what was already late. */
   for (const o of input.baseline.orders) {
     const ym = deliveryYm(o);
     if (ym != null && ym <= currentYm && o.balanceSen > 0) legs.push(orderLeg(currentYm, o, ym < currentYm));
@@ -145,7 +129,6 @@ export function buildDocsLegs(input: DocsForecastInput): DocsForecast {
     if (ym <= currentYm && b.sen > 0) legs.push(...billLegs(currentYm, b, ym < currentYm));
   }
 
-  /* The later months, from today's orders and bills: as far as one reaches, a year at most. */
   const later = (ym: string | null): ym is string => ym != null && ym > currentYm && ym <= lastYm;
   let horizon = currentYm;
   const reach = (ym: string | null): void => { if (later(ym) && ym > horizon) horizon = ym; };
@@ -176,7 +159,6 @@ export function buildDocsLegs(input: DocsForecastInput): DocsForecast {
   for (let ym = addMonthsYm(currentYm, 1); ym <= horizon; ym = addMonthsYm(ym, 1)) months.push(ym);
   const shown = new Set(months);
 
-  /* The Forecast P&L's other lines, less the bills already counted on the same account that month. */
   const billed = new Map<string, number>();
   for (const l of legs) if (l.source === 'bill' && l.key === l.code) billed.set(`${l.ym}|${l.code}`, (billed.get(`${l.ym}|${l.code}`) ?? 0) + l.sen);
   for (const c of input.costs) {

@@ -1,7 +1,3 @@
-// Locked delivery days (scm.delivery_day_locks via /delivery-zones/locks). A lock
-// marks a day as settled on Delivery Date Arrangement; it is a marker, nothing
-// on the server refuses a change to a locked day. Locks made here and there are
-// company-wide (no warehouse), the same as the ones that page creates.
 import { useState } from 'react';
 import { Lock } from 'lucide-react';
 import { fmtDate, todayMY } from '../../../vendor/shared/format';
@@ -22,8 +18,6 @@ export function LockedDays() {
   const [date, setDate] = useState('');
   const [notes, setNotes] = useState('');
   const list = locks.data ?? [];
-  // The lock table's unique key includes a nullable warehouse, so the server does
-  // not stop a second company-wide lock on the same day; refuse it here.
   const already = date !== '' && list.some((l) => l.deliveryDate === date && l.warehouseId == null);
 
   const save = () => {

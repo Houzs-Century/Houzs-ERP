@@ -17,8 +17,6 @@
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useRef, useState } from 'react';
-// HOUZS VENDOR — Link lives on 'react-router-dom' in react-router v6 (the
-// version Houzs ships). Only the import specifier changed.
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, Trash2, X, ArrowRightLeft } from 'lucide-react';
 import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
@@ -105,29 +103,13 @@ type DraftLine = {
   unitPriceSen: number;
   discountSen?: number;
   deliveryDate?: string;
-  /* Mig 0026 — supplier-revised per-line delivery dates (optional). The
-     supplier pushes the date back; effective = MAX over non-null of
-     [deliveryDate, date2, date3, date4]. */
   supplierDeliveryDate2?: string;
   supplierDeliveryDate3?: string;
   supplierDeliveryDate4?: string;
   warehouseId?: string;
-  /* PR #126 — set when itemCode matches an mfg_product so the row knows
-     which variant editor to render (sofa / bedframe / mattress). Lowercase
-     to match SoLineCard's itemGroup convention. */
   category?: string;
-  /** PR #126 — variant payload (fabric / color / design / total height /
-      seat / leg / size depending on category). Shipped to API as
-      NewPoItem.variants. */
   variants: Record<string, unknown>;
-  /** Phase 3 (2026-05-29) — true once the operator types into Unit Price.
-      A manual override always wins: auto-pricing from the supplier price
-      table + maintenance surcharges stops touching this line's cost. */
   priceTouched?: boolean;
-  /** Commander 2026-05-29 (BUG 1) — the source SO line this PO line came from
-      (set only when added via "From SO"). Threaded through the create payload
-      so the API increments mfg_sales_order_items.po_qty_picked, which drops the
-      line from the From-SO picker. NULL for manual / one-off PO lines. */
   soItemId?: string | null;
 };
 
@@ -147,27 +129,18 @@ export const PurchaseOrderNew = () => {
   const { touched: formTouched, markTouched } = useFormTouched();
   const { allowLeave } = useLeaveGuard(formTouched, null);
   const create   = useCreatePurchaseOrder();
-  /* One key for the one PO this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the PO detail on success, so the MOUNT is
-     exactly one PO: stable across re-renders (lazy init) and across a re-press
-     after a stalled submit — which is the point, since a duplicate PO orders and
-     pays for the same goods twice from a real supplier — and fresh on remount. */
   const idemKey  = useIdempotencyKey();
   const notify   = useNotify();
 
-  // ── Header state ────────────────────────────────────────────────────
   const [supplierId, setSupplierId]   = useState<string>('');
   const [poDate, setPoDate]           = useState<string>(() => todayMyt());
   const [expectedAt, setExpectedAt]   = useState<string>('');
-  /* Mig 0026 — supplier-revised header delivery dates. Fan down to lines that
-     don't carry their own revised date. */
   const [supplierDeliveryDate2, setSupplierDeliveryDate2] = useState<string>('');
   const [supplierDeliveryDate3, setSupplierDeliveryDate3] = useState<string>('');
   const [supplierDeliveryDate4, setSupplierDeliveryDate4] = useState<string>('');
   const [purchaseLocationId, setPurchaseLocationId] = useState<string>('');
   const [notes, setNotes]             = useState<string>('');
 
-  // ── Items state ─────────────────────────────────────────────────────
   const [lines, setLines] = useState<DraftLine[]>([newLine()]);
 
   /* Commander 2026-05-29 (BUG 2) — in-app result dialog. Used to surface the
@@ -176,7 +149,6 @@ export const PurchaseOrderNew = () => {
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
 
 
-  // ── Data ────────────────────────────────────────────────────────────
   const suppliers       = useSuppliers({ status: 'ACTIVE' });
   const supplierDetail  = useSupplierDetail(supplierId || null);
   const priceHistoryQ   = useSupplierPriceHistory(supplierId || null);
@@ -196,12 +168,6 @@ export const PurchaseOrderNew = () => {
   //   0 bindings  → one-off purchase, commander enters everything manually
   const allSkus = useMfgProducts();
   const pickable = useMemo(() => pickableBindings(bindings, allSkus.data ?? []), [bindings, allSkus.data]);
-  /* PR #126 — Pull maintenance config + fabrics list so per-category variant
-     editors can render the same dropdowns SO uses (single source of truth).
-     PR #208 — when a supplier is picked, surcharges resolve from the supplier
-     scope first (commander's per-supplier price book) and fall back to the
-     master / selling-price config when no supplier row exists. The query is
-     gated so a no-supplier PO doesn't fire a doomed lookup. */
   const supplierMaintQ = useMaintenanceConfig(
     supplierId ? `supplier:${supplierId}` : '',
     { enabled: Boolean(supplierId) },
@@ -209,7 +175,6 @@ export const PurchaseOrderNew = () => {
   const masterMaintQ = useMaintenanceConfig('master');
   const maint =
     supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
-  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
   const pickerMaint = useMemo(
     () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
     [maint, masterMaintQ.data?.data],
@@ -231,9 +196,6 @@ export const PurchaseOrderNew = () => {
     return { bedframe: pick('BEDFRAME'), sofa: pick('SOFA') };
   }, [specialAddonsQ.data]);
 
-  /* PR #126 — Helper: look up an mfg_product by code → returns its category
-     (lowercased). Used by both supplier-first and item-first flows to tag
-     the line with which variant editor to show. */
   const categoryForCode = (code: string): string | undefined => {
     const sku = (allSkus.data ?? []).find((p) => p.code === code);
     return sku?.category.toLowerCase();
@@ -263,15 +225,9 @@ export const PurchaseOrderNew = () => {
       } : l)));
       setPendingItemPick(null);
     }
-    // Several suppliers and no single main one — leave pendingItemPick set so the hint banner renders.
-    // 0      — keep pendingItemPick so the "no bindings, free entry" hint renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
   }, [pendingItemPick, supplierId, itemSuppliersQuery.isLoading, itemSuppliersQuery.data]);
 
-  // Item-first companion effect — once supplier resolves (commander clicked a
-  // hint banner link, or picked manually after typing an item), backfill any
-  // line whose itemCode matches a binding but lacks a bindingId. Mirrors
-  // pickBinding without forcing commander to re-type the code.
   useEffect(() => {
     if (!supplierId || bindings.length === 0) return;
     setLines((prev) => prev.map((l) => {
@@ -288,7 +244,6 @@ export const PurchaseOrderNew = () => {
         category:       l.category ?? categoryForCode(b.item_code),
       };
     }));
-    // Banner has done its job once a supplier is chosen.
     setPendingItemPick(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
   }, [supplierId, bindings]);
@@ -308,23 +263,9 @@ export const PurchaseOrderNew = () => {
     setLines((prev) => prev.map((l) => ({ ...l, deliveryDate: expectedAt })));
   }, [expectedAt]);
 
-  /* "From SO" → add the picked SO lines into THIS form (Commander 2026-05-29).
-     A PO is one supplier, so adopt the picks' main supplier; the binding /
-     price backfill effects above then fill each line's supplier SKU + cost.
-
-     Commander 2026-05-29 (BUG 2) — a PO is ONE supplier. The picker greys out
-     other suppliers within a session, but the form may already be bound to a
-     supplier (a creditor was chosen, or earlier From-SO picks set one) before a
-     SECOND From-SO trip brings back a DIFFERENT supplier's lines. Guard here:
-     resolve the form's current supplier, and only append picks that match it.
-     If the form has no supplier yet, adopt the picks' supplier (old behaviour).
-     Mismatched picks are dropped and surfaced via the result dialog. */
   const applyFromSo = (picks: Array<OutstandingSoItem & { _pickQty?: number }>) => {
     if (picks.length === 0) return;
 
-    // The supplier CODE the form is already bound to (if any): explicit creditor
-    // wins; else fall back to the first existing non-empty line's resolved
-    // binding supplier code.
     const formSupplierCode = (() => {
       if (supplierId) {
         return (suppliers.data ?? []).find((s) => s.id === supplierId)?.code ?? null;
@@ -334,17 +275,12 @@ export const PurchaseOrderNew = () => {
       const b = existing.bindingId
         ? bindings.find((x) => x.id === existing.bindingId)
         : bindings.find((x) => x.item_code === existing.itemCode);
-      // bindings only resolve once a supplierId is set, so this is mostly a
-      // no-op when supplierId is empty — the explicit-creditor branch above is
-      // the real guard. Returned for completeness.
       return b ? (suppliers.data ?? []).find((s) => s.id === b.supplier_id)?.code ?? null : null;
     })();
 
-    // The picks' bound supplier — first pick that HAS a main supplier.
     const picksSupplierCode = picks.find((p) => p.mainSupplierCode)?.mainSupplierCode ?? null;
 
     if (formSupplierCode && picksSupplierCode && picksSupplierCode !== formSupplierCode) {
-      // Whole batch belongs to a different supplier — reject all, tell the user.
       setDialog({
         title: 'One supplier per PO',
         body: `These Sales Order lines belong to supplier ${picksSupplierCode}, but this PO is already bound to ${formSupplierCode}. Clear this PO first, or start a new PO to convert them.`,
@@ -352,15 +288,11 @@ export const PurchaseOrderNew = () => {
       return;
     }
 
-    // When the form is already bound, only keep picks that match (or are unbound
-    // — they ride as one-off lines under the current creditor). Drop the rest.
     const keep = formSupplierCode
       ? picks.filter((p) => !p.mainSupplierCode || p.mainSupplierCode === formSupplierCode)
       : picks;
     const dropped = picks.length - keep.length;
 
-    // No supplier yet → adopt the picks' supplier (old behaviour); the binding /
-    // price backfill effects then fill each line's supplier SKU + cost.
     if (!formSupplierCode && picksSupplierCode) {
       const sup = (suppliers.data ?? []).find((s) => s.code === picksSupplierCode);
       if (sup) setSupplierId(sup.id);
@@ -411,11 +343,8 @@ export const PurchaseOrderNew = () => {
          was the only one that guessed. */
       category: p.itemGroup || categoryForCode(p.itemCode),
       deliveryDate: p.lineDeliveryDate ?? p.deliveryDate ?? undefined,
-      // Commander 2026-05-29 (BUG 1) — remember the source SO line so the
-      // create call can increment its po_qty_picked (drops it from the picker).
       soItemId: p.soItemId,
     }));
-    // Replace the initial blank line if the form is still empty; else append.
     setLines((prev) => (prev.some((l) => l.itemCode.trim()) ? [...prev, ...mapped] : mapped));
 
     /* Commander 2026-05-29 — carry the SO's header context onto the PO so the
@@ -434,8 +363,6 @@ export const PurchaseOrderNew = () => {
       if (wh) setPurchaseLocationId((cur) => cur || wh.id);
     }
 
-    // If some (but not all) picks were a supplier mismatch, tell the user what
-    // was skipped so the omission isn't silent.
     if (dropped > 0) {
       setDialog({
         title: 'Some lines skipped',
@@ -444,27 +371,10 @@ export const PurchaseOrderNew = () => {
     }
   };
 
-  /* Commander 2026-05-29 — when the From-SO grid hands back a selection, it
-     stashes the picked rows in sessionStorage and returns here. Apply them once
-     suppliers have loaded (so the creditor can resolve), then clear.
-
-     Commander 2026-05-29 (fix) — clicking "From SO" NAVIGATES away, which
-     unmounts this form and wipes the lines you already added. So before
-     leaving we stash the whole draft (header + lines) under `poNewDraft`; on
-     return we RESTORE that draft first, then applyFromSo APPENDS the new picks
-     to it (instead of the old behaviour where the remounted form started blank
-     and the picks replaced everything). The draft is only consumed when picks
-     are actually present; a stale draft (user cancelled the picker) is dropped
-     on the next New-PO mount. */
   const appliedFromSoRef = useRef(false);
   useEffect(() => {
     if (appliedFromSoRef.current || suppliers.isLoading) return;
     const pickedRows = readScmHandoff<Array<OutstandingSoItem & { _pickQty?: number }>>('poFromSoPicks');
-    /* Commander 2026-05-30 — restore the stashed draft REGARDLESS of whether
-       picks came back. If the operator hit Cancel on the picker, picks are
-       absent but they STILL want their in-progress lines/header back — losing
-       the draft on Cancel was the original complaint. The draft is cleared
-       once it's been read so a fresh /new visit (no draft) starts blank. */
     const draft = readScmHandoff<{
       supplierId?: string; poDate?: string; expectedAt?: string;
       purchaseLocationId?: string; notes?: string; lines?: DraftLine[];
@@ -472,10 +382,8 @@ export const PurchaseOrderNew = () => {
     removeScmHandoff('poNewDraft');
 
     appliedFromSoRef.current = true;
-    // Lines brought back from the picker are work the person did.
     if (draft || pickedRows) markTouched();
     try {
-      // Restore the prior draft (header + lines) FIRST so any picks append.
       if (draft) {
         if (draft.supplierId)         setSupplierId(draft.supplierId);
         if (draft.poDate)             setPoDate(draft.poDate);
@@ -488,7 +396,7 @@ export const PurchaseOrderNew = () => {
         removeScmHandoff('poFromSoPicks');
         if (Array.isArray(pickedRows) && pickedRows.length) applyFromSo(pickedRows);
       }
-    } catch { /* malformed — ignore */ }
+    } catch { }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suppliers.isLoading]);
 
@@ -499,10 +407,6 @@ export const PurchaseOrderNew = () => {
      rule the SO copy applies, so auto-pricing does not silently re-cost it. */
   const [searchParams] = useSearchParams();
   const copyFrom = searchParams.get('copyFrom');
-  /* Opened from a service case (?fromAssrCase=<id>): the case page already
-     seeded supplier/line via the poNewDraft handoff above; this only carries the
-     case id into the create body so the server stamps assr_case_id and the case
-     shows this exchange PO (services/assr.ts attachExchangePos). */
   const fromAssrCase = searchParams.get('fromAssrCase');
   const copySource = usePurchaseOrderDetail(copyFrom);
   const copyApplied = useRef(false);
@@ -535,12 +439,6 @@ export const PurchaseOrderNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
   }, [copyFrom, copySource.data]);
 
-  /* Raised from a product request instead of a PC Order (2990-0015,
-     ?fromProductRequest=): the PC Order New seed — supplier, purchase location,
-     expected delivery, one line per request line with its fabric / seat / leg —
-     with each line remark on the PO line's own notes. The binding and the
-     price resolve once the supplier's bindings load. On save the PO claims the
-     request (PO_ISSUED). */
   const fromProductRequest = searchParams.get('fromProductRequest');
   const requestQ = useProductRequest(fromProductRequest);
   const sourceRequest = requestQ.data?.request ?? null;
@@ -575,9 +473,6 @@ export const PurchaseOrderNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
   }, [fromProductRequest, sourceRequest]);
 
-  /* Persist the in-progress draft, then go to the full-page From-SO picker.
-     Restored on return (see the effect above) so the picked lines APPEND to
-     what's already here instead of resetting the form. */
   const goToFromSo = () => {
     if (!writeScmHandoff('poNewDraft', {
       supplierId, poDate, expectedAt, purchaseLocationId, notes, lines,
@@ -589,11 +484,6 @@ export const PurchaseOrderNew = () => {
     navigate('/scm/purchase-orders/from-so');
   };
 
-  /* Phase 3 (2026-05-29) — Resolve the fabric tier for a line from the
-     `fabrics` list by the line's `variants.fabricCode`, split per category
-     (sofa → sofa_price_tier, bedframe → bedframe_price_tier), mirroring
-     SoLineCard. Returns null for non-tiered categories or when no fabric /
-     tier is set → the cost engine then defaults to P2. */
   const fabricTierForLine = (line: DraftLine): MfgFabricTier | null => {
     const code = String(line.variants.fabricCode ?? '');
     if (!code) return null;
@@ -605,24 +495,12 @@ export const PurchaseOrderNew = () => {
     return null;
   };
 
-  /* Phase 3 (2026-05-29) — Auto-fill a PO line's unit COST from the SUPPLIER's
-     own price table (binding.price_matrix) + that supplier's maintenance
-     surcharges, instead of the flat binding.unit_price_sen. Falls back to
-     the flat binding price when there's no binding / matrix / maint, and is a
-     no-op (returns the line's current cost) when the operator has manually
-     overridden the price (priceTouched). Sofa SETS matching a supplier combo are
-     re-spread across the matched lines by the effect below (2990-0013). */
   const recomputeLineCost = (line: DraftLine): number => {
-    // Find the line's binding: by id when known, else by item_code.
     const current = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
       : bindings.find((b) => b.item_code === line.itemCode);
     if (!current) return line.unitPriceSen;
-    // The supplier price in force on the PO date; the current price when none is dated.
     const binding = bindingAsOf(current, priceHistoryQ.data?.history ?? [], poDate || todayMyt());
-    // No maint config loaded yet (or none seeded) → don't crash / zero out;
-    // computeMfgPoUnitCost still returns the matrix/flat base with no
-    // surcharges, which is the right fallback.
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
     if (!category) return binding.unit_price_sen;
@@ -634,14 +512,10 @@ export const PurchaseOrderNew = () => {
         priceMatrix:    (binding.price_matrix ?? null) as PoPriceMatrix,
         unitPriceSen: binding.unit_price_sen,
         fabricTier:     fabricTierForLine(line),
-        // Sofa seat SIZE lives on variants.seatHeight; sofa leg height is the
-        // same variants.legHeight field (the editor only renders one leg input).
         seatSize:       category === 'SOFA' ? (v.seatHeight as string | undefined) ?? null : null,
         divanHeight:    (v.divanHeight as string | undefined) ?? null,
         legHeight:      category === 'BEDFRAME' ? (v.legHeight as string | undefined) ?? null : null,
         sofaLegHeight:  category === 'SOFA' ? (v.legHeight as string | undefined) ?? null : null,
-        // Bedframe Total Heights surcharge — Commander 2026-05-29: picking a
-        // total height now re-prices the line (engine reads totalHeights).
         totalHeight:    (v.totalHeight as string | undefined) ?? null,
         specials,
       },
@@ -650,7 +524,6 @@ export const PurchaseOrderNew = () => {
     return breakdown.unitPriceSen;
   };
 
-  // ── Helpers ─────────────────────────────────────────────────────────
   const setLine  = (rid: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const addLine  = () => setLines((prev) => [...prev, { ...newLine(), warehouseId: purchaseLocationId || undefined, deliveryDate: expectedAt || undefined }]);
@@ -667,20 +540,10 @@ export const PurchaseOrderNew = () => {
       supplierSku:    b.supplier_sku,
       unitPriceSen: b.unit_price_sen,
       category:       categoryForCode(b.item_code),
-      // Phase 3 — picking a (new) SKU re-arms supplier-price auto-fill; the
-      // auto-pricing effect below then overwrites the flat seed with the
-      // matrix + maintenance cost (mirrors SoLineCard re-enabling on re-pick).
       priceTouched:   false,
     });
   };
 
-  /* PR #126 — Patch only the variants bag for a line. Used by per-category
-     editors so other line fields (qty, price, supplier SKU) stay untouched.
-     Commander 2026-05-29: bedframe Total Height is NOT a manual pick — it's
-     AUTO-COMPUTED = Divan + Leg + Gap, recomputed whenever one of those three
-     changes. The arithmetic AND the "what if all three are blank" answer live
-     in vendor/shared/total-height.ts — this screen used to carry its own copy,
-     one of sixteen. */
   const setVariant = (rid: string, k: string, v: unknown) =>
     setLines((prev) => prev.map((l) => {
       if (l.rid !== rid) return l;
@@ -691,17 +554,8 @@ export const PurchaseOrderNew = () => {
       return { ...l, variants };
     }));
 
-  // The picked supplier's own sofa combos (cost side), every effective date, so the
-  // one in force on the PO date can be chosen (supplier-scoped; master combos excluded).
   const supplierCombosQ = useSofaCombos({ supplierId: supplierId || undefined, includeAll: true, enabled: !!supplierId });
 
-  /* Phase 3 (2026-05-29) — Auto-fill each line's unit COST from the supplier
-     price table + maintenance surcharges whenever a binding is picked
-     (pickBinding / the two item-first effects) or variants change (setVariant).
-     Centralised here so all those paths share one recompute. A manually
-     overridden line (priceTouched) is left alone — the manual value wins.
-     Updates only lines whose computed cost differs from the current value, so
-     this doesn't loop. */
   useEffect(() => {
     setLines((prev) => {
       let changed = false;
@@ -727,8 +581,6 @@ export const PurchaseOrderNew = () => {
       });
       return changed ? next : prev;
     });
-    // recomputeLineCost closes over bindings / fabrics / maint; re-run when any
-    // of those (or the lines' pricing-relevant fields) change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bindings, fabrics, maint, lines, supplierCombosQ.data, poDate, priceHistoryQ.data]);
 
@@ -740,9 +592,6 @@ export const PurchaseOrderNew = () => {
     [lines],
   );
 
-  // Draft/Confirmed — asDraft saves the PO as DRAFT (review queue; no MRP
-  // supply, no SO-quota lock) instead of a live SUBMITTED PO. Omitted/false
-  // keeps the original "Create Purchase Order" -> SUBMITTED behaviour.
   const onSave = (asDraft = false) => {
     if (!supplierId) {
       notify({ title: 'Pick a Creditor (supplier) first.', tone: 'error' });
@@ -788,19 +637,12 @@ export const PurchaseOrderNew = () => {
       bindingId:      l.bindingId,
       discountSen:  l.discountSen,
       deliveryDate:   l.deliveryDate || undefined,
-      /* Mig 0026 — per-line supplier-revised delivery dates. */
       supplierDeliveryDate2: l.supplierDeliveryDate2 || undefined,
       supplierDeliveryDate3: l.supplierDeliveryDate3 || undefined,
       supplierDeliveryDate4: l.supplierDeliveryDate4 || undefined,
       warehouseId:    l.warehouseId  || undefined,
-      /* PR #126 — Per-line variants + itemGroup. NewPoItem already supports
-         these (PR #41 schema). The API §POST handler persists them onto
-         purchase_order_items.variants JSONB / item_group. */
       itemGroup:      l.category,
       variants:       Object.keys(l.variants).length ? l.variants : undefined,
-      // Commander 2026-05-29 (BUG 1) — pass the source SO line id (when this
-      // line came from "From SO") so the API rolls po_qty_picked forward and
-      // the line disappears from the From-SO picker.
       soItemId:       l.soItemId ?? null,
     }));
 
@@ -810,7 +652,6 @@ export const PurchaseOrderNew = () => {
       currency,
       poDate,
       expectedAt,
-      /* Mig 0026 — supplier-revised header delivery dates. */
       supplierDeliveryDate2: supplierDeliveryDate2 || undefined,
       supplierDeliveryDate3: supplierDeliveryDate3 || undefined,
       supplierDeliveryDate4: supplierDeliveryDate4 || undefined,
@@ -821,29 +662,16 @@ export const PurchaseOrderNew = () => {
       assrCaseId: fromAssrCase ? Number(fromAssrCase) : undefined,
     };
 
-    /* Over-convert soft-warn -> confirm -> replay (mirror of the confirmShortStock
-       "ship anyway?" gate in authedFetch). SO-sourced lines are capped server-side
-       at the source SO line's remaining qty; the backend returns 409
-       qty_exceeds_remaining. On confirm we replay the SAME create with
-       confirmOverConvert set — the server marked that 409 no-write, so the
-       idempotency key re-runs instead of replaying the rejection. */
     const runCreate = (confirmOverConvert = false) => {
       create.mutate(
         confirmOverConvert ? { ...basePayload, confirmOverConvert } : basePayload,
         {
           onSuccess: async (res) => {
-            /* THE ACCOUNTS MAY HAVE REFUSED IT, and nothing said so before
-               2026-08-19: the reason went into a queue behind a permission key
-               buyers do not hold. BEFORE the navigation, so the page change
-               cannot swallow it. Never blocks — the order exists and the remedy
-               (a creditor code, a duplicate item to retire) is master data this
-               buyer does not own. */
             await notifyAcNotSent(notify, res, 'Purchase order');
             if (fromProductRequest) {
               try {
                 await linkRequest.mutateAsync({ id: fromProductRequest, poId: res.id });
               } catch {
-                /* writeFailedAs already said why; the PO stands, unlinked. */
               }
             }
             allowLeave();
@@ -862,7 +690,7 @@ export const PurchaseOrderNew = () => {
                 const ln = lines.find((l) => l.soItemId === b.soItemId);
                 const code = ln?.itemCode || ln?.materialName || 'This line';
                 detail = `${code}: ordering ${b.requested}, but this Sales Order line only needs ${b.remaining} more.`;
-              } catch { /* keep the generic fallback */ }
+              } catch { }
               const proceed = await serviceConfirm({
                 title: 'Ordering more than this Sales Order needs',
                 body: `${detail}\n\nCreate the Purchase Order anyway? The extra quantity will be ordered beyond what the Sales Order requires.`,
@@ -888,16 +716,12 @@ export const PurchaseOrderNew = () => {
         title="New Purchase Order"
         actions={
           <div className={styles.actions}>
-            {/* PR — Commander 2026-05-27: parity with PO list — quick swap into
-                the SO-driven flow without bouncing back to the list page. */}
             <Button variant="ghost" size="md" onClick={goToFromSo}>
               <ArrowRightLeft {...ICON} /> From Sales Order
             </Button>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-orders')}>
               <X {...ICON} /> Cancel
             </Button>
-            {/* Draft/Confirmed — opt-in DRAFT save. Lands the PO in the Draft
-                review queue (no MRP supply, no SO-quota lock) until Confirmed. */}
             <Button
               variant="ghost" size="md"
               onClick={() => onSave(true)}
@@ -918,14 +742,12 @@ export const PurchaseOrderNew = () => {
         }
       />
 
-      {/* Header card — 2-column grid */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Header</h2>
         </div>
         <div className={styles.cardBody}>
           <div className={styles.formGrid2}>
-            {/* LEFT column */}
             <label className={styles.field}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Creditor <span className={styles.req}>*</span></span>
               <select
@@ -940,7 +762,6 @@ export const PurchaseOrderNew = () => {
               </select>
             </label>
 
-            {/* RIGHT column */}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>P/O No</span>
               <input
@@ -985,9 +806,6 @@ export const PurchaseOrderNew = () => {
               <DateField fullWidth value={expectedAt} onChange={(iso) => setExpectedAt(iso)} className={styles.fieldInput}/>
             </label>
 
-            {/* Mig 0026 — supplier-revised header delivery dates. Optional; the
-                supplier pushes the delivery back. Fan down to lines that don't
-                carry their own revised date. */}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Supplier Date 2</span>
               <DateField fullWidth value={supplierDeliveryDate2} onChange={(iso) => setSupplierDeliveryDate2(iso)} className={styles.fieldInput}/>
@@ -1054,10 +872,6 @@ export const PurchaseOrderNew = () => {
         </div>
       </section>
 
-      {/* Item-first lookup hint — only renders when commander picked an item
-          before a supplier and the reverse lookup found >1 bound suppliers
-          (or 0). The 1-supplier case is handled silently by the useEffect
-          above. */}
       {pendingItemPick && !supplierId && !itemSuppliersQuery.isLoading && (() => {
         const matches = itemSuppliersQuery.data?.bindings ?? [];
         if (matches.length === 0) {
@@ -1075,7 +889,6 @@ export const PurchaseOrderNew = () => {
             </div>
           );
         }
-        // N > 1
         return (
           <div style={{
             padding: 'var(--space-3) var(--space-4)',
@@ -1117,7 +930,6 @@ export const PurchaseOrderNew = () => {
         );
       })()}
 
-      {/* Items card */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>
@@ -1125,9 +937,6 @@ export const PurchaseOrderNew = () => {
             {supplierId
               ? (pickable.length > 0
                   ? `${pickable.length} item(s) bound to this supplier — picker filters to these`
-                  // PR — Commander 2026-05-28: a supplier with no SKU bindings used
-                  // to leave the Item Code picker empty (dead field). Fall back to
-                  // the full catalogue so a one-off purchase is still pickable.
                   : `No SKUs bound to this supplier yet — picker shows all ${(allSkus.data ?? []).length} SKUs (one-off purchase)`)
               : `Pick any item from ${(allSkus.data ?? []).length} SKUs — supplier auto-narrows`}
           </span>
@@ -1180,7 +989,6 @@ export const PurchaseOrderNew = () => {
                   gap: 'var(--space-3)',
                 }}
               >
-                {/* Card header — Line N · category badge · line total · remove */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                     <span style={{
@@ -1227,7 +1035,6 @@ export const PurchaseOrderNew = () => {
                   </div>
                 </div>
 
-                {/* Identity row — Internal code + Supplier SKU side by side */}
                 <div className={styles.formGrid2}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Item Code (Internal)</span>
@@ -1237,14 +1044,10 @@ export const PurchaseOrderNew = () => {
                       value={l.itemCode}
                       onChange={(e) => {
                         const code = e.target.value;
-                        // Bound match wins (autofills supplier SKU + price).
                         const match = supplierId
                           ? pickable.find((b) => b.item_code === code)
                           : undefined;
                         if (match) { pickBinding(l.rid, match); return; }
-                        // No binding (no supplier yet, OR supplier has no binding
-                        // for this code) → one-off line: pull name + category
-                        // from the master SKU list so the row isn't left blank.
                         const sku = (allSkus.data ?? []).find((p) => p.code === code);
                         setLine(l.rid, {
                           itemCode: code,
@@ -1252,8 +1055,6 @@ export const PurchaseOrderNew = () => {
                           bindingId: undefined,
                           category: sku?.category.toLowerCase() ?? categoryForCode(code),
                         });
-                        // Reverse supplier lookup only matters before a supplier
-                        // is chosen; once one is picked we don't re-narrow.
                         if (!supplierId) setPendingItemPick(code ? { rid: l.rid, code } : null);
                       }}
                       placeholder="Type or pick our internal SKU…"
@@ -1261,9 +1062,6 @@ export const PurchaseOrderNew = () => {
                       style={{ fontFamily: 'var(--font-mono)' }}
                     />
                     <datalist id={`bindings-${l.rid}`}>
-                      {/* PR — Commander 2026-05-28: only show bound SKUs when the
-                          supplier actually HAS bindings; otherwise fall back to
-                          the full catalogue so the picker is never dead. */}
                       {supplierId && pickable.length > 0
                         ? sortByText(pickable).map((b) => (
                             <option key={b.id} value={b.item_code}>
@@ -1319,7 +1117,6 @@ export const PurchaseOrderNew = () => {
                   </label>
                 </div>
 
-                {/* Description — full width */}
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Description</span>
                   <input
@@ -1331,9 +1128,6 @@ export const PurchaseOrderNew = () => {
                   />
                 </label>
 
-                {/* Remarks — full width. Same box PoLineCard renders on Edit,
-                    so a note typed on Create survives into the edit view rather
-                    than appearing only after someone re-opens the line. */}
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Remarks</span>
                   <input
@@ -1345,7 +1139,6 @@ export const PurchaseOrderNew = () => {
                   />
                 </label>
 
-                {/* Per-category variant editor (PR #126 logic, PR #129 card layout) */}
                 {specialSurface.block && (
                   <div style={{
                     background: 'var(--c-cream)',
@@ -1382,10 +1175,6 @@ export const PurchaseOrderNew = () => {
                       {mfgCategoryLabel(l.category)} Variants
                     </div>
 
-                    {/* BEDFRAME — Commander 2026-05-28: mirror the Sales Order
-                        variant editor exactly — Fabrics · Gaps · Divan · Leg
-                        (dropdowns) + Special Orders. Dropped the free-text
-                        Color + Design fields. */}
                     {l.category === 'bedframe' && (
                       <>
                         <div className={styles.formGrid4}>
@@ -1437,10 +1226,6 @@ export const PurchaseOrderNew = () => {
                               {sortByNumeric(activeOptions(pickerMaint!.legHeights, String(l.variants.legHeight ?? ''))).map((o) => (<option key={o.value} value={o.value}>{o.value}</option>))}
                             </select>
                           </label>
-                          {/* Total Heights — Commander 2026-05-29: removed the
-                              manual picker. Total Height is AUTO-COMPUTED from
-                              Divan + Leg + Gap (see setVariant), so there's
-                              nothing to choose here. */}
                         </div>
                         <SpecialOrders
                           options={specialsPools.bedframe}
@@ -1471,9 +1256,6 @@ export const PurchaseOrderNew = () => {
                         </label>
                       </div>
                     )}
-                    {/* SOFA — Commander 2026-05-28: mirror the SO editor —
-                        Fabrics · Seat · Leg + Special Orders. Dropped free-text
-                        Color. */}
                     {l.category === 'sofa' && (
                       <>
                         <div className={styles.formGrid4}>
@@ -1527,13 +1309,9 @@ export const PurchaseOrderNew = () => {
                       </>
                     )}
 
-                    {/* PR #135 — mattress block removed: size + branding are
-                        already encoded in the mattress SKU code itself, no
-                        need for a separate editor. */}
                   </div>
                 )}
 
-                {/* Pricing row — Qty · Unit Price · Discount · Delivery · Ship-to */}
                 <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))' }}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Qty</span>
@@ -1548,10 +1326,6 @@ export const PurchaseOrderNew = () => {
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Unit Price ({currency})</span>
-                    {/* MoneyInput — free typing, no mid-keystroke reformat
-                        (Commander "500→5" fix). Phase 3 — manual edit wins:
-                        flag priceTouched so supplier-price auto-fill stops
-                        overwriting this line. */}
                     <MoneyInput
                       bare
                       valueSen={l.unitPriceSen}
@@ -1603,7 +1377,6 @@ export const PurchaseOrderNew = () => {
         </div>
       </section>
 
-      {/* Totals card aligned right — lg:pr-32 clears the fixed FAB cluster. */}
       <div className="lg:pr-32" style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <section className={styles.card} style={{ maxWidth: 360, width: '100%' }}>
           <div className={styles.cardBody}>
@@ -1626,7 +1399,6 @@ export const PurchaseOrderNew = () => {
         </section>
       </div>
 
-      {/* BUG 2 — one-supplier-per-PO guard surfaced in-app (no window.alert). */}
       {dialog && (
         <ActionResultDialog
           title={dialog.title}

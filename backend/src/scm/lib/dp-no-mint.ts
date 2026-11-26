@@ -1,30 +1,6 @@
-// ---------------------------------------------------------------------------
-// dp-no-mint.ts — the DB-aware half of DP numbering.
-//
-// lib/dp-no.ts stays PURE (string maths, tested without a database). This file is
-// the part that has to talk to Postgres: resolve the lorry's plate, read the
-// numbers already handed out, and mint the next one.
-//
-// THE REGISTRY IS BOTH TABLES. A DP number can exist in two places:
-//   • scm.trip_stops.dp_no  — every scheduled job, whichever entry path made it
-//   • scm.dp_orders.dp_no   — a manually-created order, including one scheduled
-//                             HEADER-ONLY (date + lorry, no trip yet), which has
-//                             no stop to carry the number
-// Reading only one of them is how the two paths would hand out the same number.
-// The manual path's own bug was exactly this shape before the unification: it read
-// dp_orders alone, which was complete only while dp_orders was the sole minter.
-//
-// max+1, NEVER count+1 — inherited from lib/doc-no.ts and the 2026-06-12 POS
-// outage it commemorates: a deleted row makes count+1 collapse onto a live number.
-// ---------------------------------------------------------------------------
 
 import { dpNoPrefix, formatDpNo, nextDpSeq, plateLetters } from './dp-no';
 
-/* The PostgREST client is typed `any` here, matching lib/deliveryScope.ts. The
-   real SupabaseClient's builders are thenable-but-not-Promise and deeply generic;
-   a hand-written structural type for them does not unify (TS2589 "excessively
-   deep") and buys no safety, since every field read below is already validated at
-   runtime. The tests pass a small fake through the same door. */
 type Sb = any;
 
 /** The day-wide prefix used to read candidates: `DP-YYMMDD-`. Plate letters are
@@ -73,10 +49,6 @@ export async function mintNextDpNo(
       sb.from('trip_stops').select('dp_no').like('dp_no', like),
       sb.from('dp_orders').select('dp_no').like('dp_no', like),
     ]);
-    // supabase-js RESOLVES a failed select as { data: null, error } — it does NOT
-    // throw, so the catch below never sees a read failure. Inspect the error
-    // explicitly: otherwise data:null reads as an empty registry and mints 01 over
-    // a live number. An unread registry must yield NO number, never a low one.
     if (stops.error || orders.error) return null;
     const existing = [...collectDpNos(stops.data), ...collectDpNos(orders.data)];
     const prefix = dpNoPrefix(args.tripDate, args.plate);

@@ -11,7 +11,6 @@ import {
 
 type Row = Record<string, unknown>;
 
-/** An in-memory PostgREST stand-in: the tables the record reads and writes. */
 function fakeDb(tables: Record<string, Row[]>) {
   const calls: string[] = [];
   const from = (table: string) => {

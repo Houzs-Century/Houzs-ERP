@@ -1,27 +1,3 @@
-// ---------------------------------------------------------------------------
-// pi-scan-match — turn a read supplier invoice (PiScanExtract) into the GRN
-// LINE picks that pi-from-grn-core converts into a DRAFT Purchase Invoice.
-//
-// THE SAFETY RULE (tasks/PLAN-ocr-scan-gr-pi.md): a scan NEVER guesses a wrong
-// link and NEVER fabricates a standalone PI. So the match is anchored on the
-// DOCUMENT NUMBER first — the invoice's DO No against our grns.delivery_note_ref,
-// then its PO No against our purchase_orders.po_number — and only WITHIN the
-// GRN(s) that anchor identifies do we match line item codes. An invoice we
-// cannot anchor to a received GRN produces ZERO picks: the caller then lands a
-// needs-review outcome (a notice for the operator to bill the GRN by hand),
-// never a PI billed against a guessed receipt.
-//
-// The doc-number and line-matching logic here is PURE (no DB, no clock) so it is
-// unit-tested directly; pi-scan-run.ts does the reads and calls these.
-//
-// Confirmed against production 2026-09-19 (project anogrigyjbduyzclzjgn):
-//   · grns.grn_number  = "HC-GRN-2609-069" / "2990-GRN-2609-018" (company prefix)
-//   · grns.delivery_note_ref = the supplier's DO No, e.g. "DGSN26001880"
-//   · purchase_orders.po_number = "HC-PO-010070"; the supplier writes the bare
-//     "PO-010070" on the invoice — so PO matching is suffix-tolerant.
-//   · supplier_material_bindings.supplier_sku -> item_code is the Article-No map
-//     (for DIGLANT the two are identical; other suppliers differ).
-// ---------------------------------------------------------------------------
 
 import type { PiScanExtract, PiScanLine } from './pi-scan-extract';
 
@@ -32,11 +8,6 @@ export function normalizeDocRef(s: string | null | undefined): string {
   return (s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
-/** Does a scanned reference identify our document number? Exact after
- *  normalization, or one is a suffix of the other (our "HCPO010070" ends with
- *  the supplier's "PO010070"). Empty scanned ref never matches. */
-/* HOOKKA INV-2610-097 prints "EX-HC-PO-2609-151": an exchange (replacement) for
-   HC-PO-2609-151. The mark goes, so the reference anchors to the order it replaces. */
 const EXCHANGE_MARK = /^(?:EXCH|EX)(?:\s*-\s*|\s+)(?=[A-Z0-9])/i;
 const printedRefs = (printed: string | null | undefined): string[] =>
   (printed ?? '').split(/[,;&\n]|\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
@@ -72,7 +43,6 @@ export function docRefMatches(scanned: string | null | undefined, ours: string |
   const b = normalizeDocRef(ours);
   if (a === '' || b === '') return false;
   if (a === b) return true;
-  // Guard against trivially-short suffixes matching by accident.
   const shorter = a.length <= b.length ? a : b;
   const longer = a.length <= b.length ? b : a;
   return shorter.length >= 5 && longer.endsWith(shorter);
@@ -132,7 +102,6 @@ export type PiMatchUnmatched = {
 export type PiLineMatchResult = {
   picks: PiMatchPick[];
   unmatched: PiMatchUnmatched[];
-  /** invoice lines that produced at least one pick. */
   matchedLineCount: number;
 };
 
@@ -152,8 +121,6 @@ export function matchInvoiceLinesToGrnLines(
   grnLines: PiMatchGrnLine[],
   bindingBySku: Map<string, string>,
 ): PiLineMatchResult {
-  // Index candidate GRN lines by normalized item code. Stable FIFO order so the
-  // same invoice always allocates the same way (reproducible drafts).
   const byCode = new Map<string, PiMatchGrnLine[]>();
   const ordered = [...grnLines].sort((a, b) =>
     a.grnNumber !== b.grnNumber ? a.grnNumber.localeCompare(b.grnNumber) : a.grnItemId.localeCompare(b.grnItemId),
@@ -166,8 +133,6 @@ export function matchInvoiceLinesToGrnLines(
     byCode.set(key, list);
   }
 
-  // Remaining-to-bill consumed WITHIN this batch (a GRN line may serve several
-  // invoice lines, and must never be over-allocated across them).
   const consumed = new Map<string, number>();
   const remainingOf = (g: PiMatchGrnLine): number => g.remaining - (consumed.get(g.grnItemId) ?? 0);
 
@@ -177,7 +142,6 @@ export function matchInvoiceLinesToGrnLines(
 
   invoiceLines.forEach((line, invoiceLineIndex) => {
     const wantRaw = line.qty;
-    // A line with no readable positive quantity cannot be billed.
     if (wantRaw == null || !(wantRaw > 0)) {
       unmatched.push({
         invoiceLineIndex, itemCode: line.itemCode, articleNo: line.articleNo,
@@ -186,8 +150,6 @@ export function matchInvoiceLinesToGrnLines(
       return;
     }
 
-    // Resolve the code(s) to look for: the printed item code, the article no,
-    // and the article no mapped through the supplier binding to our code.
     const candidateCodes = new Set<string>();
     for (const raw of [line.itemCode, line.articleNo]) {
       const c = normalizeCode(raw);
@@ -197,7 +159,6 @@ export function matchInvoiceLinesToGrnLines(
     const mapped = skuCode ? bindingBySku.get(skuCode) : undefined;
     if (mapped && sameSize(skuCode, mapped)) candidateCodes.add(normalizeCode(mapped));
 
-    // A row printed at RM 0 never bills a receipt line that costs money (INV-2610-097).
     const free = isFreePrice(line.unitPrice, line.lineTotal);
     const matches = [...candidateCodes].flatMap((c) => byCode.get(c) ?? []).filter((g) => !free || g.unitPriceSen === 0);
     if (matches.length === 0) {
@@ -208,7 +169,6 @@ export function matchInvoiceLinesToGrnLines(
       return;
     }
 
-    // Allocate FIFO across the matching GRN lines' remaining.
     let want = Math.floor(wantRaw);
     if (want <= 0) want = 0;
     let billed = 0;
@@ -224,12 +184,6 @@ export function matchInvoiceLinesToGrnLines(
     }
 
     if (billed > 0) matchedLineCount += 1;
-    // Anything the invoice asked for beyond what the GRN(s) still had to bill —
-    // the operator sees it (a real quantity mismatch to reconcile), and it never
-    // over-bills the receipt.
-    // Code matched (we returned early otherwise), so any shortfall — down to
-    // zero when every matching GRN line was already consumed by an earlier
-    // invoice line — is a quantity the receipt could not cover.
     if (billed < Math.floor(wantRaw)) {
       unmatched.push({
         invoiceLineIndex, itemCode: line.itemCode, articleNo: line.articleNo,

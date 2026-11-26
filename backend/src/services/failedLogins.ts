@@ -33,7 +33,6 @@ export function recordFailedLogin(
   const write = insertFailedLogin(c.env, email, userId, clientIp(c), reason).catch((e) => {
     console.error("[failed-logins] record failed", e);
   });
-  // c.executionCtx throws when the runtime supplied none (test harnesses).
   try {
     c.executionCtx.waitUntil(write);
   } catch {

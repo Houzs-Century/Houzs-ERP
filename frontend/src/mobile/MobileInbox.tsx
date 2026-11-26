@@ -7,9 +7,6 @@ import {
 } from "../hooks/useNotifications";
 import "./mobile.css";
 
-// Activity-type -> icon tile (matches the design's inboxRow icon slot). The
-// feed is project-activity notifications, so the icon is derived from the row's
-// action rather than a stored type. Falls back to a neutral bell.
 function ActivityIcon({ action }: { action: string }) {
   const common = { width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", stroke: "#16695f", strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   switch (action) {
@@ -33,8 +30,6 @@ function ActivityIcon({ action }: { action: string }) {
   }
 }
 
-/** One-line summary of an activity row. Mirrors the desktop Notifications
- *  page copy so the two surfaces read identically. */
 function activityLine(a: NotificationItem): string {
   const who = a.user_name ? `${a.user_name} · ` : "";
   switch (a.action) {
@@ -80,8 +75,6 @@ export function MobileInbox({
   onOpen?: (item: NotificationItem) => void;
   onBack?: () => void;
 }) {
-  /* `unreadByProject` still drives each row's unread dot — only the mark-read
-     LOOP moved to the provider, not the read of who is unread. */
   const { feed, totalUnread, unreadByProject, loadFailed, reload, markAllRead } = useNotifications();
   const [marking, setMarking] = useState(false);
 
@@ -105,15 +98,6 @@ export function MobileInbox({
     return { today, earlier };
   }, [feed]);
 
-  /* The LOOP moved to useNotifications (`markAllRead`) so the desktop
-     Notifications page can perform the same action instead of having no write
-     at all. This screen keeps only its own busy flag and its own way of saying
-     it went wrong.
-
-     It used to end each request with `.catch(() => {})`. A bulk mark-read that
-     failed for every project then looked exactly like one that worked — the
-     spinner stopped, the feed reloaded, and the badge simply stayed up with no
-     explanation. The shared action returns counts; this is what renders them. */
   const [markError, setMarkError] = useState<string | null>(null);
   const markAll = async () => {
     if (marking) return;
@@ -135,12 +119,6 @@ export function MobileInbox({
     }
   };
 
-  // Designer feed layout (#inbox / renderInbox): an "Activity / Inbox" header
-  // with a bordered "Mark all read" pill (check icon), then Today / Earlier
-  // groups where each group is ONE card and rows are divider-separated — a
-  // leading unread dot, an activity-type icon tile, the title, a one-line body,
-  // and the relative time. Wired to the shared notifications feed + bulk
-  // mark-read.
   return (
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
       <header className="hdr">
@@ -178,10 +156,6 @@ export function MobileInbox({
 
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 120 }}>
         {feed.length === 0 && loadFailed ? (
-          /* An empty feed we FAILED to load is not an empty feed. Telling the
-             user they are all caught up when we never got an answer is the most
-             damaging sentence on this screen — it is the one they read to decide
-             whether anything needs them. */
           <div className="empty">
             <div className="empty-t">We couldn't load your notifications.</div>
             <div className="empty-s">This is not the same as having none. Pull down to try again.</div>

@@ -29,13 +29,9 @@ export function Gate({
   fallback = null,
   children,
 }: {
-  /** Single permission required. */
   perm?: string;
-  /** Any one of these permissions unlocks the gate. */
   anyPerm?: readonly string[];
-  /** Every listed permission required. */
   allPerm?: readonly string[];
-  /** Rendered when the gate is closed. Defaults to nothing. */
   fallback?: ReactNode;
   children: ReactNode;
 }) {

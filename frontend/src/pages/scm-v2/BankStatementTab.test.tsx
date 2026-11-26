@@ -1,17 +1,3 @@
-// The bank statement screen's render contract. The rules are pinned on the
-// server (backend/src/acc/bank-*.test.ts and tests/bankRoutes); what is proved
-// here is that the screen SAYS them:
-//
-//   • a difference is BROKEN DOWN into the two sides that make it up, never
-//     shown as a bare number;
-//   • numbers that do not add up REPLACE the verdict rather than sitting beside
-//     it — publishing a difference nothing can account for looks like work;
-//   • the select is seeded from what the MATCHER decided, not from the first
-//     candidate of that acquirer;
-//   • a split payout shows the gross the bank actually credited, or the amount
-//     matches no line on the page the operator is holding;
-//   • leaving a movement out demands a reason, because it leaves the difference
-//     for ever.
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -44,7 +30,6 @@ const LINE: BankLine = {
   ],
 };
 
-/* The split payout: RM 875.00 credited, RM 3.94 taken back. */
 const SPLIT: BankLine = {
   ...LINE, id: 2, line_no: 7, booked_on: '2026-08-09',
   description: 'DR/CARD SALES M/N 2259020 DATED 08082026', reference: 'D90200808',
@@ -205,7 +190,6 @@ describe('choosing an entry for several movements at once', () => {
     const list = screen.getByText(/Outstanding items — in the books, not yet on the bank \(2\)/).closest('section') as HTMLElement;
     expect(within(list).getAllByText('HOUZS VENTURE HOLDING SDN BHD', { selector: 'td' })).toHaveLength(2);
     expect(within(list).getByLabelText('Entry 2990-JE-2604-0017 for the picked movements')).toBeTruthy();
-    /* Clear empties both sides and the bar goes. */
     fireEvent.click(within(bar).getByText('Clear'));
     expect(screen.queryByRole('region', { name: 'Match the ticked movements and entries' })).toBeNull();
   });
@@ -282,7 +266,6 @@ describe('amounts in two columns', () => {
     const table = screen.getByText(/Outstanding items — in the books, not yet on the bank \(3\)/).closest('section') as HTMLElement;
     expect(cellsOf(within(table).getByText('2990-JE-2608-0044').closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2608-0044', '2026/08/05', '2990DraftOR-2608-001 · 2990-SO-2606-014', 'Ah Meng']);
     expect(cellsOf(within(table).getByText('2990-JE-2608-0145').closest('tr') as HTMLElement).slice(2, 5)).toEqual(['2026/08/12', '2990-HPV-2608-017', 'LOO WEN WEI']);
-    /* No reference from the server: the source, and the note for who. */
     expect(cellsOf(within(table).getByText(/2990-JE-2607-0001/).closest('tr') as HTMLElement).slice(1, 5)).toEqual(['2990-JE-2607-0001 · earlier month', '2026/07/01', 'MANUAL', 'Opening']);
     expect(screen.queryByText('cacb0d35-8f9f-4a94-a156-d1b0f96b52d0')).toBeNull();
   });
@@ -295,7 +278,6 @@ describe('amounts in two columns', () => {
     expect(heads).not.toContain('Amount');
     const charge = screen.getByText('SERVICE CHARGE').closest('tr') as HTMLElement;
     const cells = cellsOf(charge);
-    /* tick box, the movement, Deposit, Withdrawal, what it looks like, what to do */
     expect(cells[2]).toBe('');
     expect(cells[3]).toBe('RM 25.00');
     expect(screen.queryByText('RM -25.00')).toBeNull();
@@ -366,7 +348,6 @@ describe('the list of statements read', () => {
     expect(screen.getByText('3 of 9 · 2 card payout(s)')).toBeTruthy();
   });
 
-  /* The upload is the page's Upload drawer now (BankUpload.test.tsx); the list keeps one door to it. */
   test('opens the Upload drawer, and carries no upload box of its own', () => {
     const onUpload = vi.fn();
     render(<BankStatementTab onUpload={onUpload} />);
@@ -390,8 +371,6 @@ describe('the list of statements read', () => {
    panel lays that walk out, says whether it TALLIES, and calls a month whose
    only difference is an unpresented payment reconciled — not "differing". */
 describe('the reconciliation panel', () => {
-  /* April on 2990's Hong Leong account: books −2,163.31, one payment of
-     3,101.68 the bank has not paid yet, bank 938.37. */
   const APRIL: Reconciliation = {
     ...RECON,
     closingStatementSen: 93837, closingLedgerSen: -216331, differenceSen: 310168,
@@ -451,7 +430,6 @@ describe('the reconciliation panel', () => {
 describe('a movement still to decide', () => {
   test('ticks the statement the MATCHER chose, not the first candidate', () => {
     openStatement();
-    /* Candidate 3 is listed first; 7 is the one whose day and amount agreed. */
     expect((screen.getByLabelText('Report mbb-credit.csv for line 2') as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(screen.getAllByText('Money received')[0]!);
@@ -471,19 +449,15 @@ describe('a movement still to decide', () => {
 
     fireEvent.click(screen.getByLabelText('Other reports for line 2'));
     expect((screen.getByLabelText('Report other.csv for line 2') as HTMLInputElement).checked).toBe(false);
-    /* And it folds back, so one look does not leave the screen noisy. */
     fireEvent.click(screen.getByLabelText('Other reports for line 2'));
     expect(screen.queryByLabelText('Report other.csv for line 2')).toBeNull();
   });
 
-  /* The escape hatch has to be visible, or a wrong match is a dead end. */
   test('says how many other reports there are', () => {
     openStatement();
     expect(screen.getByText('Not this one? 1 other report(s)')).toBeTruthy();
   });
 
-  /* An UNSURE line has decided nothing, so hiding candidates would hide the
-     whole question. Every one stays on screen. */
   test('an unsure line still shows every report to choose from', () => {
     openStatement();
     expect(screen.getByLabelText('Report other.csv for line 7')).toBeTruthy();
@@ -491,8 +465,6 @@ describe('a movement still to decide', () => {
     expect(screen.queryByLabelText('Other reports for line 7')).toBeNull();
   });
 
-  /* Anything less than certain is left blank: a pre-filled guess is a guess
-     somebody will press. */
   test('leaves an unsure payout for a person to choose', () => {
     openStatement();
     expect((screen.getByLabelText('Report other.csv for line 7') as HTMLInputElement).checked).toBe(false);
@@ -516,8 +488,6 @@ describe('a movement still to decide', () => {
     lines = [LINE, SPLIT, OTHER];
   });
 
-  /* The same rule the merchant side applies to a swipe covering two orders: a
-     leftover is a difference, and a difference must not be booked. */
   test('will not post a selection that does not add up, and says by how much', () => {
     lines = [{ ...LINE, kind: 'PAYOUT_SPLIT', amount_sen: 602004, matched_batch_id: null,
       split: [{ batchId: 3, amountSen: 374304 }, { batchId: 7, amountSen: 227700 }] }];
@@ -532,8 +502,6 @@ describe('a movement still to decide', () => {
 
   test('shows the gross the bank actually credited when it split the payout', () => {
     openStatement();
-    /* RM 871.06 arrived as RM 875.00 less RM 3.94 — without this the amount
-       matches no line on the page he is holding. */
     expect(screen.getByText('RM 875.00 less RM 3.94 charge')).toBeTruthy();
   });
 
@@ -547,8 +515,6 @@ describe('a movement still to decide', () => {
     expect(screen.queryByLabelText('Merchant report for line 9')).toBeNull();
   });
 
-  /* An ignored movement leaves the difference for ever and this sentence is
-     all the next person will have. */
   test('will not leave a movement out without a reason', () => {
     openStatement();
     const row = screen.getByText('SERVICE CHARGE').closest('tr') as HTMLElement;
@@ -583,11 +549,9 @@ describe('a credit short by a charge the acquirer kept', () => {
     expect(button.disabled).toBe(true);
 
     fireEvent.click(screen.getByLabelText('The bank kept RM 54.00 for line 11'));
-    /* The acquirer's fee account first; the one Finance picks wins. */
     const account = screen.getByLabelText('Charge account for line 11') as HTMLSelectElement;
     expect(account.value).toBe('900-T009');
     fireEvent.change(account, { target: { value: '900-T003' } });
-    /* Not without saying what it was for. */
     expect(button.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('What the bank kept it for, line 11'), { target: { value: 'GHL terminal rental' } });
     expect(button.disabled).toBe(false);
@@ -614,7 +578,6 @@ describe('what is in the books and not on the statement', () => {
     lines = [LINE];
     render(<MemoryRouter><BankStatementTab /></MemoryRouter>);
     fireEvent.click(screen.getByText('Reconcile'));
-    /* With none, the section stays off the screen rather than showing a zero. */
     expect(screen.queryByText(/In the books, not on this statement/)).toBeNull();
     lines = [LINE, SPLIT, OTHER];
   });
@@ -664,9 +627,6 @@ describe('a movement that is already in the books', () => {
     lines = [LINE, SPLIT, OTHER];
   });
 
-  /* An entry a few days off is offered — a cheque banked on Friday clears on
-     Monday — but the distance is SHOWN, because that is the thing the operator
-     has to weigh. */
   test('says how far off a candidate is, and says nothing when it is the same day', () => {
     openWith(IN_BOOKS);
     expect(screen.getByText(/2d apart/)).toBeTruthy();
@@ -674,8 +634,6 @@ describe('a movement that is already in the books', () => {
     lines = [LINE, SPLIT, OTHER];
   });
 
-  /* THE ONE THAT MATTERS. Two records being one fact is a judgement; a
-     pre-ticked answer would make it for him. */
   test('pre-selects nothing, and will not fire until he chooses', () => {
     openWith(IN_BOOKS);
     const go = screen.getByText('This is that entry').closest('button')!;
@@ -695,8 +653,6 @@ describe('a movement that is already in the books', () => {
     lines = [LINE, SPLIT, OTHER];
   });
 
-  /* Leaving it out stays available — some movements really are none of our
-     business — but it is no longer the only thing on offer. */
   test('still offers to leave it out', () => {
     openWith(IN_BOOKS);
     expect(screen.getByText('Not ours to reconcile')).toBeTruthy();
@@ -728,11 +684,6 @@ describe('where a reconciliation is saved', () => {
     expect(screen.getByText(/By month/)).toBeTruthy();
   });
 
-  /* When the file is finished, name the month by number so the person is not
-     translating a date range in his head. */
-  /* Spoken only over movements that were READ and counted. A failed read hands
-     back an empty list, which is indistinguishable from a finished statement —
-     so an absence must never be reported as completion. */
   test('says nothing about being finished when no movement came back', () => {
     lines = [];
     openStatement();
@@ -808,11 +759,9 @@ describe('a row whose decision changes under it', () => {
     lines = [before];
     const r = render(<MemoryRouter><BankStatementTab /></MemoryRouter>);
     fireEvent.click(screen.getByText('Reconcile'));
-    /* Undecided: every report offered, nothing ticked, the button dead. */
     expect(screen.getAllByRole('checkbox', { name: /Report .* for line 12/ })).toHaveLength(4);
     expect((screen.getByText('Money received').closest('button') as HTMLButtonElement).disabled).toBe(true);
 
-    /* The next read: three reports now add up to it exactly. */
     lines = [{
       ...before, kind: 'PAYOUT_SPLIT',
       split: [{ batchId: 21, amountSen: 166869 }, { batchId: 22, amountSen: 312660 }, { batchId: 23, amountSen: 333640 }],

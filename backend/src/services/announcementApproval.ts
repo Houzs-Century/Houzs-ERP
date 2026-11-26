@@ -170,7 +170,6 @@ export async function submitForApproval(
 
 type DeptRow = { department_id?: number | null; departmentId?: number | null; dept_name?: string | null; deptName?: string | null; code?: string | null };
 
-/** The submitter's department code — the [DEPT] segment of the number. */
 async function submitterDeptCode(env: Env, userId: number | null): Promise<{ code: string | null; deptName: string | null; hasDept: boolean }> {
   if (userId == null) return { code: null, deptName: null, hasDept: false };
   // company-scope: one user row by primary key (the submitter), joined to the global departments table.
@@ -260,8 +259,6 @@ export async function approveAnnouncement(
     { reviewed_by: actor.id, reviewed_at: nowIso, reject_reason: null, ref_no: ref.refNo },
     nowIso,
   );
-  // The notice just became visible to its audience — orphan every cached
-  // banner snapshot, exactly as a create does.
   await bumpConfigVersion(env, "banner");
   const title = titleOf(row);
   await writeAudit(env, {
@@ -317,7 +314,6 @@ export async function voidAnnouncement(
   )
     .bind(actor.id, nowIso, text, nowIso, String(row.id))
     .run();
-  // It leaves every reader's banner — orphan the cached snapshots.
   await bumpConfigVersion(env, "banner");
   const title = titleOf(row);
   await writeAudit(env, {

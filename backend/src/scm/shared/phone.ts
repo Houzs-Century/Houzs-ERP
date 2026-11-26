@@ -14,8 +14,6 @@
 // pattern (e.g. legacy / international), we return it as-is rather than
 // mangle it.
 
-/** Strip every character except digits. `+` is reinjected after we decide
- *  whether the input had a country code. */
 const onlyDigits = (s: string): string => s.replace(/\D+/g, '');
 
 /**
@@ -60,25 +58,19 @@ export function normalizePhone(raw: string | null | undefined): string | null {
 
   let normalized: string;
   if (hadPlus) {
-    // Explicit international prefix — trust the user's country code and keep
-    // the digits exactly as typed (Malaysia or otherwise).
     normalized = digits;
   } else if (digits.startsWith('60')) {
     normalized = digits;
   } else if (digits.startsWith('0')) {
-    // Malaysian local form: drop the leading 0 and prepend 60.
     normalized = '60' + digits.slice(1);
   } else if (digits.length >= 8) {
-    // Bare 8+ digits with no country code — assume Malaysia.
     normalized = '60' + digits;
   } else {
-    // Too short to be a real phone number (likely mid-typing).
     return null;
   }
 
   normalized = collapseDoubledMalaysianPrefix(normalized);
 
-  // After normalization we should have at least 7 total digits to be plausible.
   if (normalized.length < 7) return null;
 
   return '+' + normalized;
@@ -102,44 +94,26 @@ export function formatPhone(stored: string | null | undefined): string {
   const digits = onlyDigits(raw);
   if (digits.length === 0) return raw;
 
-  // Only attempt the Malaysian formatter for +60 numbers. Anything else
-  // (rare non-MY entries, half-typed input) gets returned untouched so we
-  // don't garble it.
   if (!digits.startsWith('60')) return formatInternational(raw, digits);
 
-  const local = digits.slice(2); // strip "60"
+  const local = digits.slice(2);
 
-  // Mobile: starts with `1`, total local length 9 or 10.
-  // E.g. "1161556133" (10) → "11-6155 6133"
-  //      "161556133"  (9)  → "16-155 6133" — we still want the dash after the
-  //      carrier digit-block. Malaysian mobile prefix is `1X` (`X` = digit),
-  //      so for a 9-digit local we group "16-1556 133"? — actually Maxis-era
-  //      9-digit numbers are formatted as `1X-XXX XXXX`: take the first 2
-  //      after `60` as the prefix, then 3 + 4. For 10-digit (e.g. 11-xxxx-
-  //      xxxx) it's `1X-XXXX XXXX`: prefix 2, then 4 + 4.
   if (local.startsWith('1')) {
     if (local.length === 10) {
-      // 11-6155 6133 pattern
       const prefix = local.slice(0, 2);
       const mid = local.slice(2, 6);
       const tail = local.slice(6);
       return `+60 ${prefix}-${mid} ${tail}`;
     }
     if (local.length === 9) {
-      // 16-155 6133 pattern (older 9-digit mobile)
       const prefix = local.slice(0, 2);
       const mid = local.slice(2, 5);
       const tail = local.slice(5);
       return `+60 ${prefix}-${mid} ${tail}`;
     }
-    // Unrecognised mobile length — give up, return raw.
     return raw;
   }
 
-  // Landline: starts with state digit `3` (KL/Selangor), `4` (Penang),
-  // `7` (Johor), etc. Local digits 8 or 9 total.
-  // E.g. "316155633" (9) → "3-1615 5633" — single state digit + 4 + 4
-  //      "31234567" (8)  → "3-123 4567" — single state digit + 3 + 4
   if (local.length === 9) {
     const state = local.slice(0, 1);
     const mid = local.slice(1, 5);
@@ -153,20 +127,14 @@ export function formatPhone(stored: string | null | undefined): string {
     return `+60 ${state}-${mid} ${tail}`;
   }
 
-  // Anything else (too short / too long for MY) — leave alone.
   return raw;
 }
 
 
-/* ────────────────────────────────────────────────────────────────────────
-   Country dial codes — for the country-selectable phone input. Malaysia is
-   first so it is the default selection everywhere (Backend + POS). Curated
-   list (no libphonenumber): ASEAN + the regions we actually trade with.
-   ──────────────────────────────────────────────────────────────────────── */
 export type CountryDial = { iso: string; name: string; dial: string; flag: string };
 
 export const COUNTRY_DIAL_CODES: CountryDial[] = [
-  { iso: 'MY', name: 'Malaysia',        dial: '60',  flag: '🇲🇾' }, // default
+  { iso: 'MY', name: 'Malaysia',        dial: '60',  flag: '🇲🇾' },
   { iso: 'SG', name: 'Singapore',       dial: '65',  flag: '🇸🇬' },
   { iso: 'ID', name: 'Indonesia',       dial: '62',  flag: '🇮🇩' },
   { iso: 'TH', name: 'Thailand',        dial: '66',  flag: '🇹🇭' },
@@ -196,7 +164,6 @@ export const COUNTRY_DIAL_CODES: CountryDial[] = [
 /** Default country dial code (Malaysia). */
 export const DEFAULT_DIAL = '60';
 
-// Longest dial codes first so prefix matching is greedy (e.g. 673 before 6, 65).
 const DIALS_BY_LEN = [...COUNTRY_DIAL_CODES].sort((a, b) => b.dial.length - a.dial.length);
 
 /**
@@ -208,27 +175,13 @@ export function splitE164(stored: string | null | undefined): { dial: string; na
   const raw = String(stored ?? '');
   const digits = collapseDoubledMalaysianPrefix(onlyDigits(raw));
   if (digits.length === 0) return { dial: DEFAULT_DIAL, national: '' };
-  // Country-code matching ONLY when the value carries an explicit international
-  // `+` prefix. Without it the digits are a bare national number and the greedy
-  // dial-code scan would mis-claim a Malaysian mobile as a foreign country —
-  // most painfully "197770309" (a +60 number written without the country code,
-  // per the OCR "+60 without the leading 0" rule) matching US +1 and showing
-  // the selector as "us +1" on a Malaysian number (bug #1, 2026-06-24). A real
-  // foreign number always reaches the UI in E.164 (+65…/+62…) so the `+` gate
-  // never strips a legitimate country code.
   if (raw.trim().startsWith('+')) {
     for (const c of DIALS_BY_LEN) {
       if (digits.startsWith(c.dial)) return { dial: c.dial, national: digits.slice(c.dial.length) };
     }
   } else if (digits.startsWith('60')) {
-    // Plus-less but explicitly Malaysian (e.g. "60197770309").
     return { dial: DEFAULT_DIAL, national: digits.slice(2) };
   }
-  // No explicit country code and not 60-prefixed — assume a Malaysian national
-  // number. Strip the local trunk prefix `0` when defaulting to +60: a slip /
-  // OCR phone written "0197770309" is the Malaysian local form whose leading 0
-  // is replaced by the +60 country code, so the national part is "197770309" →
-  // displays "19-777 0309", never "0197770309" (request 2026-06-24).
   return { dial: DEFAULT_DIAL, national: digits.replace(/^0+/, '') };
 }
 
@@ -281,43 +234,12 @@ export function isValidMalaysianPhone(stored: string | null | undefined): boolea
 export function canonicalizeSinglePhone(raw: string | null | undefined): string {
   const trimmed = String(raw ?? '').trim();
   if (trimmed === '') return '';
-  // A separator that implies a LIST, or an extension marker. Either way this is
-  // not one number and must not be collapsed into one.
   if (/[/,;&]|\bext\.?\b|\bx\d/i.test(trimmed)) return trimmed;
   const digits = trimmed.replace(/\D+/g, '');
-  // E.164 allows at most 15 digits; below 7 is not a phone. Outside that range
-  // the value is something else (two numbers run together, an account number).
   if (digits.length < 7 || digits.length > 15) return trimmed;
   return normalizePhone(trimmed) ?? trimmed;
 }
 
-/* Readable grouping for a NON-Malaysian number.
- *
- * Before this existed, formatPhone returned any non-+60 value untouched, so a
- * Singapore customer's number printed on an invoice as the unbroken run
- * "+6561234567" while the Malaysian one beside it read "+60 12-345 6789".
- *
- * WHAT THIS IS NOT: locale-canonical formatting. Doing that properly needs
- * libphonenumber, which this module deliberately does not carry (200KB+, see
- * the header). So this splits the KNOWN dial code off — the same curated list
- * the country picker uses, matched longest-first so 673 wins over 6 — and
- * groups the national part for READABILITY:
- *
- *    8  digits -> 4 4      "+65 6123 4567"
- *    9  digits -> 3 3 3    "+66 812 345 678"
- *    10 digits -> 3 3 4    "+1 415 555 0123"
- *    11 digits -> 3 4 4    "+86 138 0013 8000"
- *    else      -> blocks of 4 from the RIGHT, first block takes the remainder
- *
- * Several of those match the local convention (SG, CN, ID, US); Thailand's
- * real grouping is 2-3-4, so "+66 812 345 678" is readable but not canonical.
- * That trade is deliberate and is why this is named "international" rather than
- * "format": it makes a foreign number legible without claiming to be correct
- * for 200 numbering plans.
- *
- * Unknown dial code, or a length too short to group, returns the input
- * untouched — never mangled.
- */
 function formatInternational(raw: string, digits: string): string {
   const country = DIALS_BY_LEN.find((c) => digits.startsWith(c.dial));
   if (!country) return raw;
@@ -334,7 +256,6 @@ function formatInternational(raw: string, digits: string): string {
   else if (national.length === 10) push(3, 3, 4);
   else if (national.length === 11) push(3, 4, 4);
   else {
-    // Blocks of 4 from the right; whatever is left leads.
     let rest = national;
     const tail: string[] = [];
     while (rest.length > 4) { tail.unshift(rest.slice(-4)); rest = rest.slice(0, -4); }

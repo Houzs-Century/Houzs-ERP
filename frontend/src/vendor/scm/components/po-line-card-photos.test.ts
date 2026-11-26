@@ -42,9 +42,6 @@ describe('a PO line offers photos wherever it is editable', () => {
   });
 
   test('BOTH surfaces gate on the same cohort and the same key ownership', () => {
-    /* Two screens writing to one column must not disagree about who may write
-       or about which keys they own — a carried SO key is managed on the Sales
-       Order and the server refuses its deletion either way. */
     for (const [name, src] of [['edit', EDIT], ['table', TABLE]] as const) {
       expect(src, `${name} must use the shared cohort gate`).toContain('canOperatePurchaseOrders');
       expect(src, `${name} must use the shared key-ownership test`).toContain('isPoOwnedPhotoKey');
@@ -52,15 +49,10 @@ describe('a PO line offers photos wherever it is editable', () => {
   });
 
   test('a line with no id is TOLD why, not silently left without a rail', () => {
-    /* The photo key is `po-items/<po>/<item id>/…`, so an unsaved line has
-       nowhere to put one. Saying so is the whole point: a rail that is simply
-       absent is what sent the owner looking for it. */
     expect(EDIT).toContain('Save this line first');
   });
 
   test('the card itself knows nothing about documents or permissions', () => {
-    /* The slot is a node so the card stays a layout. If it ever grows an
-       upload of its own there will be two, and they will drift. */
     expect(CARD).not.toContain('uploadPoItemPhoto');
     expect(CARD).not.toContain('canOperatePurchaseOrders');
   });

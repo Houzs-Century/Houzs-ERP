@@ -7,7 +7,6 @@ describe('buildDistanceMatrixUrl', () => {
       [{ lat: 3.1, lng: 101.7 }, { lat: 3.2, lng: 101.6 }],
       'KEY123',
     );
-    // origins and destinations both carry the encoded "3.1,101.7|3.2,101.6".
     const enc = encodeURIComponent('3.1,101.7|3.2,101.6');
     expect(url).toContain(`origins=${enc}`);
     expect(url).toContain(`destinations=${enc}`);

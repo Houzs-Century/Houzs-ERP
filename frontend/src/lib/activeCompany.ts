@@ -56,9 +56,6 @@
 // company.
 
 export const ACTIVE_COMPANY_KEY = "houzs.activeCompanyId";
-// Concatenation, not a template literal: the browser-storage registry test
-// resolves `const X = "a" + "b"` when it inventories literal keys, and a
-// template expression would make these two keys invisible to that audit.
 /** Durable per-user record. */
 export const ACTIVE_COMPANY_BY_USER_KEY = ACTIVE_COMPANY_KEY + ".v2";
 /** This tab's resolved pick. */
@@ -66,7 +63,6 @@ export const ACTIVE_COMPANY_TAB_KEY = ACTIVE_COMPANY_KEY + ".tab";
 
 type TabPick = { user: number | null; company: number };
 
-/** Who this tab is signed in as, once /auth/me has said so. */
 let boundUserId: number | null = null;
 
 const validId = (value: unknown): value is number =>
@@ -95,8 +91,6 @@ function writeByUser(userId: number, companyId: number | null): void {
     else next[`u${userId}`] = companyId;
     localStorage.setItem(ACTIVE_COMPANY_BY_USER_KEY, JSON.stringify(next));
   } catch {
-    // Storage disabled (private mode): the tab pick below still works for this
-    // session; only durability across a restart is lost.
   }
 }
 
@@ -122,13 +116,6 @@ function writeTabPick(pick: TabPick | null): void {
   } catch {}
 }
 
-/** Drop the ownerless pre-v2 keys: the original origin-wide
- *  `houzs.activeCompanyId` and the short-lived `houzs.activeCompanyId:<token
- *  hash>` variants. They are deliberately NOT migrated into the per-user map —
- *  neither one records WHOSE selection it was, and seeding the wrong user's
- *  tenant is exactly the failure this module must not commit. A user re-picks
- *  once; until then the switcher shows the company the backend actually
- *  resolved, never a guess. */
 function purgeLegacyKeys(): void {
   try {
     const stale: string[] = [];
@@ -152,11 +139,6 @@ function emit(): void {
   for (const fn of listeners) fn();
 }
 
-// There is deliberately NO `storage`-event listener here. The durable map
-// changing in another tab (the same user switching company there) must NOT
-// touch this tab's pick — per-window independence is the whole point (see the
-// header). Another USER's tab writing its own `u<id>` entry never concerned
-// this tab either way.
 
 /** Current active company id, or null when unset (→ no X-Company-Id header). */
 export function getActiveCompanyId(): number | null {
@@ -209,17 +191,8 @@ export function adoptActiveCompanyForUser(userId: number): number | null {
   const pick = readTabPick();
   const durable = readByUser()[`u${userId}`] ?? null;
 
-  // This tab already made a pick as this user (e.g. a reload) — keep it. The
-  // durable record is deliberately NOT rewritten to match: it is the default
-  // for the NEXT window, not a mirror of this one, and a Houzs window merely
-  // reloading must not steal that default back from a later 2990 switch.
   if (pick && pick.user === userId) return pick.company;
 
-  // A pick with no owner can only have come from this same tab before the id
-  // was known (a `?company=` window seed, or a pre-auth switcher pick); claim
-  // it for this user — again WITHOUT touching the durable default, so opening
-  // a 2990 window doesn't make 2990 what every future window boots into. A
-  // pick owned by SOMEBODY ELSE is discarded rather than inherited.
   const claimed = pick && pick.user === null ? pick.company : durable;
   const before = pick?.company ?? null;
   if (claimed === null) {
@@ -275,6 +248,5 @@ export function consumeCompanyUrlSeed(): void {
     const id = Number(raw);
     if (validId(id)) writeTabPick({ user: null, company: id });
   } catch {
-    // Malformed URL / storage disabled: boot exactly as an unseeded tab.
   }
 }

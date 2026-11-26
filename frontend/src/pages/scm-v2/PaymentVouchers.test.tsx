@@ -19,12 +19,10 @@ const checkAsync = vi.fn(async (_id: string) => ({}));
 const approveAsync = vi.fn(async (_id: string) => ({}));
 type RemindOut = { reminded: Array<{ id: string; pvNumber: string }>; refused: Array<{ id: string; pvNumber: string | null; error: string; message: string }>; approvers: number; nextAt: string };
 const remindAsync = vi.fn(async (_ids: string[]): Promise<RemindOut> => ({ reminded: [], refused: [], approvers: 1, nextAt: '' }));
-/* Keys this viewer lacks (every key is held unless named here). */
 const denied = new Set<string>();
 const toastSuccess = vi.fn((_m: string) => undefined);
 const toastError = vi.fn((_m: string) => undefined);
 vi.mock('../../hooks/useToast', () => ({ useToastOptional: () => ({ success: toastSuccess, error: toastError, info: vi.fn(), warning: vi.fn() }) }));
-/* The list (with the server's stage counts), or — asked with q — what the server's search found. */
 const searched = vi.fn((q: string) => [{ id: 'old', pv_number: 'HCMPV-2601-004', payee_name: 'Found Co', status: 'POSTED', voucher_date: '2026-01-04', total_sen: 7000, currency: 'MYR', exchange_rate: 1, submitted_at: 'x', checked_at: 'y', approved_at: 'z', notes: `about ${q}`, je_no: 'HC-JE-2601-0007' }]);
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   usePaymentVouchers: (opts: { q?: string; enabled?: boolean } = {}) => (opts.q
@@ -44,22 +42,16 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCheckPaymentVoucher: () => ({ mutateAsync: checkAsync, isPending: false }),
   useApprovePaymentVoucher: () => ({ mutateAsync: approveAsync, isPending: false }),
   useRemindApprover: () => ({ mutateAsync: remindAsync, isPending: false }),
-  /* Batch-print fetches — never called here (no test clicks Print), stubbed
-     because this factory replaces the WHOLE module. */
   fetchPvPrintDetail: vi.fn(),
   fetchPvPrintBundle: vi.fn(),
 }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: (key: string) => !denied.has(key) }) }));
-/* Pay from names its account (code, name below). */
 vi.mock('../../vendor/scm/lib/accounting-queries', () => ({ useAccounts: () => ({ data: { accounts: [{ account_code: '310-0001', account_name: 'HONG LEONG BANK' }] } }) }));
 const confirmFn = vi.fn(async (_a: unknown) => true);
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmFn }));
 const notifyFn = vi.fn((_a: unknown) => undefined);
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => notifyFn }));
-/* The waiting-requests reminder has its own contract (PaymentRequestsWaiting.test.tsx). */
 vi.mock('./PaymentRequestsWaiting', () => ({ PaymentRequestsWaiting: () => null }));
-/* The list on paper has its own contract (pv-list-pdf.test.ts): here, what the header's
-   Export to PDF hands it. The words on top stay real. */
 const printed: Array<{ view: { keys: string[]; rows: ReadonlyArray<{ id: string }> }; opts: { cutTo: string; action?: string } }> = [];
 vi.mock('../../vendor/scm/lib/pv-list-pdf', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/pv-list-pdf')>()),
@@ -80,7 +72,7 @@ describe('批量 tick yes', () => {
        the batch print" (owner 2026-09-03: 可选多张 pv + document). */
     expect(boxes.map((b) => b.disabled)).toEqual([false, false, false, false, false, false]);
 
-    fireEvent.click(boxes[3]!); // posted — printable, not approvable
+    fireEvent.click(boxes[3]!);
     expect(screen.getByText('Print 1 + files')).toBeTruthy();
     expect(screen.getByText('Save as PDF')).toBeTruthy();
     /* The files toggle (owner 2026-09-04: 批量那边也要有这个选) — default ON;
@@ -105,7 +97,7 @@ describe('批量 tick yes', () => {
     prepareAsync.mockClear(); confirmFn.mockClear(); notifyFn.mockClear();
     draw();
     const boxes = screen.getAllByLabelText('Select row') as HTMLInputElement[];
-    fireEvent.click(boxes[0]!); // raw draft
+    fireEvent.click(boxes[0]!);
     expect(screen.getByText('Prepare 1')).toBeTruthy();
     fireEvent.click(screen.getByText('Prepare 1'));
     await waitFor(() => expect(prepareAsync).toHaveBeenCalledWith('raw'));
@@ -118,8 +110,8 @@ describe('批量 tick yes', () => {
     checkAsync.mockClear(); approveAsync.mockClear(); confirmFn.mockClear(); notifyFn.mockClear();
     draw();
     const boxes = screen.getAllByLabelText('Select row') as HTMLInputElement[];
-    fireEvent.click(boxes[1]!); // prepared
-    fireEvent.click(boxes[2]!); // checked
+    fireEvent.click(boxes[1]!);
+    fireEvent.click(boxes[2]!);
 
     expect(screen.getByText('2 ticked')).toBeTruthy();
     expect(screen.getByText('Check 1')).toBeTruthy();
@@ -128,7 +120,6 @@ describe('批量 tick yes', () => {
     fireEvent.click(screen.getByText('Approve & post 1'));
     await waitFor(() => expect(approveAsync).toHaveBeenCalledWith('chk'));
     expect(checkAsync).not.toHaveBeenCalled();
-    /* The dialog carried the MYR figure of ITS targets only (RM 300.00). */
     expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/300\.00/);
     await waitFor(() => expect(notifyFn).toHaveBeenCalled());
     expect(JSON.stringify(notifyFn.mock.calls[0]![0])).toMatch(/1 of 1 approved/);
@@ -139,7 +130,7 @@ describe('批量 tick yes', () => {
     checkAsync.mockRejectedValueOnce(new Error('This voucher is already checked — it is waiting for approval.'));
     draw();
     const boxes = screen.getAllByLabelText('Select row') as HTMLInputElement[];
-    fireEvent.click(boxes[1]!); // prepared — the one Check target
+    fireEvent.click(boxes[1]!);
     fireEvent.click(screen.getByText('Check 1'));
     await waitFor(() => expect(notifyFn).toHaveBeenCalled());
     const said = JSON.stringify(notifyFn.mock.calls[0]![0]);
@@ -152,7 +143,6 @@ describe('an advance not yet knocked off (owner 2026-09-06)', () => {
   test('the row says the open amount on its For line and wears the Advance open tag, and the chip keeps only such rows', () => {
     render(<MemoryRouter><PaymentVouchers /></MemoryRouter>);
     expect(screen.getByText('RM 2,143.74 not knocked off')).toBeTruthy();
-    /* The chip comes first, the row's tag after it. */
     const [chip, tag] = screen.getAllByText('Advance open');
     expect(tag).toBeTruthy();
     fireEvent.click(chip!);
@@ -167,8 +157,8 @@ describe('the batch runs in voucher-date order (docs/bugs/0653)', () => {
     checkAsync.mockClear(); confirmFn.mockClear(); notifyFn.mockClear();
     draw();
     const boxes = screen.getAllByLabelText('Select row') as HTMLInputElement[];
-    fireEvent.click(boxes[1]!); // prepared, dated 2026-09-01 — ticked FIRST
-    fireEvent.click(boxes[5]!); // earlier prepared, dated 2026-07-05 — ticked second
+    fireEvent.click(boxes[1]!);
+    fireEvent.click(boxes[5]!);
     expect(screen.getByText('Check 2')).toBeTruthy();
     fireEvent.click(screen.getByText('Check 2'));
     await waitFor(() => expect(checkAsync).toHaveBeenCalledTimes(2));
@@ -183,15 +173,12 @@ describe('the Description column (owner 2026-11-09: 对我来说 description 就
     const items = 'BOOTH RENTAL (ZANOTTI) - 6 UNIT @ 5,000.00';
     const cell = screen.getByText(items).closest('td');
     expect(cell?.getAttribute('title')).toBe(items);
-    /* The typed remark, with its bill number, is not the Description. */
     expect(screen.queryByText(/BILL MLE-0925/)).toBeNull();
-    /* The other five carry none. */
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(5);
   });
 
   test('Bank and Account no. stand beside it; no Purpose column, and the Remark is off the list unless chosen', () => {
     draw();
-    /* The grid title-cases a header: Account no. reads Account No. */
     for (const name of [/^Bank(?! charges)/, /^Account no\./i]) expect(screen.getByRole('columnheader', { name })).toBeTruthy();
     expect(screen.queryByRole('columnheader', { name: /^Purpose/ })).toBeNull();
     expect(screen.queryByRole('columnheader', { name: /^Remark/ })).toBeNull();
@@ -202,7 +189,6 @@ describe('the Description column (owner 2026-11-09: 对我来说 description 就
   test('the search box asks the server for any voucher, every stage and month, and says what it found', async () => {
     draw();
     fireEvent.change(screen.getByLabelText('Find any voucher'), { target: { value: 'penang' } });
-    /* The newest-500 list makes way for what the search found — an older voucher too. */
     expect(await screen.findByText('HCMPV-2601-004')).toBeTruthy();
     expect(screen.queryByText('PV-2609-002')).toBeNull();
     expect(searched).toHaveBeenLastCalledWith('penang');
@@ -242,7 +228,6 @@ describe('the Total and the list on paper (owner 2026-11-09: 表格最下面的�
   test("the header's right-click prints the list showing, and says the stage and month it was cut to", async () => {
     printed.length = 0;
     draw();
-    /* The chip comes first, the row's tag after it. */
     fireEvent.click(screen.getAllByText('Checked')[0]!);
     expect(screen.queryByText('PV-2609-001')).toBeNull();
     fireEvent.contextMenu(screen.getByRole('columnheader', { name: /^Payee/ }));
@@ -272,7 +257,6 @@ describe('the header (the redesign)', () => {
     draw();
     expect(screen.getByText(/Every voucher in any stage/)).toBeTruthy();
     expect(screen.getByRole('button', { name: /^All months/ }).getAttribute('aria-pressed')).toBe('true');
-    /* The chip, not the row tag of the same word. */
     fireEvent.click(screen.getAllByText('Checked')[0]!);
     expect(screen.getByText(/Locked and reserved; only its words can still change\. Approving posts the journal in the same step/)).toBeTruthy();
   });
@@ -317,7 +301,7 @@ describe('the next step on each row (the redesign)', () => {
 
 describe('Remind approver (the design\'s e8; owner 2026-11-03: 主要是付款吧)', () => {
   const APPROVE = 'scm.payment_voucher.approve';
-  const NEXT = '2026-11-03T08:05:00Z'; // 16:05 in Malaysia
+  const NEXT = '2026-11-03T08:05:00Z';
 
   test('the approver sees Approve & post on a checked voucher, never Remind approver', () => {
     denied.clear();
@@ -360,8 +344,8 @@ describe('Remind approver (the design\'s e8; owner 2026-11-03: 主要是付款�
     remindAsync.mockResolvedValueOnce({ reminded: [{ id: 'chk', pvNumber: 'PV-2609-003' }], refused: [], approvers: 3, nextAt: NEXT });
     draw();
     const boxes = screen.getAllByLabelText('Select row') as HTMLInputElement[];
-    fireEvent.click(boxes[1]!); // prepared
-    fireEvent.click(boxes[2]!); // checked
+    fireEvent.click(boxes[1]!);
+    fireEvent.click(boxes[2]!);
     expect(screen.getByText('Check 1')).toBeTruthy();
     expect(screen.queryByText(/Approve & post \d/)).toBeNull();
     expect(screen.getByText(/Approving needs the approve right\. Remind approver sends one note for them all, once an hour per voucher\./)).toBeTruthy();

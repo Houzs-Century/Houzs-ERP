@@ -1,8 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 
-/* SkuHistoryTabs renders the active tab's rows from three hooks. Mock the hooks
-   so the tabs can be exercised without a server; fmtSen (money) stays real. */
 const data = vi.hoisted(() => ({
   cost: {
     isLoading: false,

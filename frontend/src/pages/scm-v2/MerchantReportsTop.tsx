@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// MerchantReportsTop — the top of Merchant reports (the owner's Claude Design
-// redesign, batch 3): a card per acquirer — what is left to decide on its
-// reports and where it stands — and, for the chosen one, its reports by the
-// day customers swiped: open work first, then the latest, with every report a
-// click away under "All reports". The cards come from the data — every active
-// acquirer and any with reports — never from a fixed list.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
@@ -162,9 +154,7 @@ export function ReportStrip({ code, batches, openId, missingDay, onOpen, extra }
   );
 }
 
-/* ── One report: where it stands, and its money ─────────────────────────── */
 
-/* 'done' is the Confirmed tab: the key stays clear of the stored status words (confirmRungReadsSubmitted.test.ts). */
 export type ReportTab = 'to-confirm' | 'to-choose' | 'no-sale' | 'done' | 'set-aside';
 
 /** Which tab a report's line sits in (the design's five). */

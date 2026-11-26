@@ -1,36 +1,3 @@
-// ---------------------------------------------------------------------------
-// cs-agent.ts — the Houzs CS (customer-service) Agent's deterministic ENGINE.
-// Two jobs, both PROPOSAL-ONLY: approving a proposal only marks it ready for the
-// office to act on. This engine NEVER edits a sales order or an ASSR case — it
-// writes ONLY cs_agent_proposals + cs_agent_briefs (public schema, migration
-// 0095). No LLM calls, no invented dates, money is integer sen.
-//
-//   Job A  PROMISE_DATE — an honest, feasible delivery promise per active SO,
-//          derived from live MRP supply. For each SO we look at every MRP line
-//          (mrp.skus[].lines) and every sofa set (mrp.sofaSets[]):
-//            - If ANY of them is an UNCOVERED shortage (short with no PO ETA),
-//              the SO CANNOT be promised — we skip it and count it under
-//              cannotPromise. We never manufacture a date for an SO we can't
-//              actually supply.
-//            - Otherwise stockReadyDate = the MAX PO ETA across the SO's
-//              lines/sets that have one (fully-in-stock SO => today MYT), and
-//              promiseDate = that advanced by the customer state's transit
-//              WORKING days (Sundays skipped). A proposal is raised only when the
-//              customer currently shows no date, or a date earlier than the
-//              feasible one the supply chain can hit.
-//          Transit days come from app_settings['agents.delivery'].transitDaysByState
-//          (the Delivery Agent owns that config), default 3, clamped 0..30.
-//   Job B  ASSR_SLA — OPEN ASSR cases (public.assr_cases) whose deadline_at is
-//          already breached or falls inside the warn window (default 24h ahead,
-//          tunable cs.assrWarnHours 1..168). Wrapped in try/catch so a renamed
-//          ASSR column can never sink Job A.
-//
-// DB access, following house patterns:
-//   - scm reads (MRP, SO headers) go through getSupabaseService(env) (PostgREST,
-//     schema 'scm', snake_case columns verbatim — no dual-read).
-//   - public tables (cs_agent_*, app_settings, assr_cases) go through env.DB (the
-//     d1-compat shim over postgres.js).
-// ---------------------------------------------------------------------------
 
 import type { Env } from '../../types';
 import { computeMrp, type MrpResult } from '../../scm/routes/mrp';
@@ -43,21 +10,16 @@ import { todayMyt } from '../../scm/lib/my-time';
 import { effectiveSoDelivery } from '../../scm/shared';
 import { paginateAll } from '../../scm/lib/paginate-all';
 
-// ── Config keys ──────────────────────────────────────────────────────────────
 
 /** app_settings key for the CS Agent's own tunables (warn window). */
 export const CS_AGENT_SETTING_KEY = 'agents.cs';
 
-/** The Delivery Agent owns the per-state transit table; the CS Agent only reads it. */
 const DELIVERY_AGENT_SETTING_KEY = 'agents.delivery';
 
-/** Working-day transit assumed for a state with no configured value. */
 const DEFAULT_TRANSIT_DAYS = 3;
 
-/** ASSR SLA warn window (hours ahead of deadline) when unconfigured. */
 const DEFAULT_ASSR_WARN_HOURS = 24;
 
-// ── Small helpers ────────────────────────────────────────────────────────────
 
 function s(v: unknown): string {
   return v == null ? '' : String(v);
@@ -67,11 +29,6 @@ function num(v: unknown): number {
   return Number.isFinite(x) ? x : 0;
 }
 
-/**
- * Add N WORKING days (Sundays skipped) to a YYYY-MM-DD, returning a YYYY-MM-DD.
- * UTC throughout so the result never drifts with the server timezone. This is
- * the forward inverse of delivery-agent.ts's transitWorkingDays step counter.
- */
 function addWorkingDays(fromYmd: string, days: number): string {
   const d = new Date(`${fromYmd}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return fromYmd;
@@ -81,19 +38,16 @@ function addWorkingDays(fromYmd: string, days: number): string {
   while (added < target && guard < 400) {
     d.setUTCDate(d.getUTCDate() + 1);
     guard++;
-    if (d.getUTCDay() !== 0) added++; // Sunday (0) is not a working day
+    if (d.getUTCDay() !== 0) added++;
   }
   return d.toISOString().slice(0, 10);
 }
 
-/** True when `a` is a strictly-earlier calendar date than `b` (YMD/ISO). */
 function isEarlier(a: string | null, b: string | null): boolean {
   if (!a || !b) return false;
   return a.slice(0, 10) < b.slice(0, 10);
 }
 
-/** Per-state transit working-day table (uppercased keys), read from the
- *  Delivery Agent's config. Lookup falls back to DEFAULT_TRANSIT_DAYS. */
 async function loadTransitDays(db: D1Database): Promise<Record<string, number>> {
   const raw = (await readAgentSetting<{ transitDaysByState?: Record<string, unknown> }>(
     db,
@@ -107,7 +61,6 @@ async function loadTransitDays(db: D1Database): Promise<Record<string, number>> 
   return byState;
 }
 
-/** ASSR warn window in hours from app_settings['agents.cs'], clamped 1..168. */
 async function assrWarnHours(db: D1Database): Promise<number> {
   const cfg = await readAgentSetting<Record<string, unknown>>(db, CS_AGENT_SETTING_KEY);
   const n = Number(cfg?.assrWarnHours);
@@ -115,13 +68,11 @@ async function assrWarnHours(db: D1Database): Promise<number> {
   return Math.floor(n);
 }
 
-// ── Proposal persistence (cs_agent_proposals, public schema) ─────────────────
 
 export type CsProposalKind = 'PROMISE_DATE' | 'ASSR_SLA';
 
 interface ProposalInsert {
   kind: CsProposalKind;
-  /** Dedupe key — an OPEN (PENDING) proposal with the same kind+key blocks re-creation. */
   key: string;
   payload: unknown;
   summary: string;
@@ -152,7 +103,7 @@ async function openProposalCounts(db: D1Database): Promise<{ total: number; byKi
       byKind[s(r.kind) || 'UNKNOWN'] = c;
       total += c;
     }
-  } catch { /* table empty / pre-migration — zeros */ }
+  } catch { }
   return { total, byKind };
 }
 
@@ -166,9 +117,7 @@ async function insertProposal(db: D1Database, p: ProposalInsert, nowIso: string)
     .run();
 }
 
-// ── Job A — honest PROMISE_DATE proposals ────────────────────────────────────
 
-/** A normalised supply item (one MRP line or one sofa set) belonging to an SO. */
 interface SupplyItem {
   itemCode: string | null;
   source: 'stock' | 'po' | 'shortage';
@@ -185,7 +134,6 @@ interface SoHeader {
   currentPromised: string | null;
 }
 
-/** SO statuses that no longer need a delivery promise. */
 const DELIVERED_STATUSES = new Set(['DELIVERED', 'INVOICED', 'CLOSED']);
 
 interface PromiseProposalRow {
@@ -213,9 +161,6 @@ type SoHeaderRow = {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-/* companyId: scope the promise to ONE book. Undefined ONLY when the companies
-   master is unresolved (single-company / cold-start), where no predicate is the
-   correct legacy behaviour — see agent-company.ts. */
 async function loadSoHeaders(sb: any, companyId: number | undefined): Promise<Map<string, SoHeader>> {
   const { data: rows, error } = await paginateAll<SoHeaderRow>((from, to) => {
     let q = sb.from('mfg_sales_orders')
@@ -243,7 +188,6 @@ async function loadSoHeaders(sb: any, companyId: number | undefined): Promise<Ma
   return map;
 }
 
-/** Group every MRP line + sofa set by SO doc number into normalised supply items. */
 function groupSupplyBySo(mrp: MrpResult): Map<string, SupplyItem[]> {
   const bySo = new Map<string, SupplyItem[]>();
   const push = (docNo: string, item: SupplyItem) => {
@@ -290,10 +234,9 @@ function buildPromiseProposals(
 
   for (const [docNo, items] of supplyBySo) {
     const header = headers.get(docNo);
-    if (!header) continue; // no live header (draft/cancelled/absent) — not our concern
-    if (DELIVERED_STATUSES.has(header.status)) continue; // already fulfilled
+    if (!header) continue;
+    if (DELIVERED_STATUSES.has(header.status)) continue;
 
-    // Uncovered shortage anywhere => the SO cannot be honestly promised.
     const hasUncovered = items.some(
       (it) => it.source === 'shortage' && it.shortageQty > 0 && !it.poEta,
     );
@@ -303,7 +246,6 @@ function buildPromiseProposals(
     }
     promisable++;
 
-    // stockReadyDate = latest PO ETA across the SO; fully-in-stock => today.
     const etas = items.map((it) => it.poEta).filter((e): e is string => !!e);
     const basis: 'stock' | 'po' = etas.length > 0 ? 'po' : 'stock';
     const stockReadyDate =
@@ -315,7 +257,6 @@ function buildPromiseProposals(
     );
     const computedPromiseDate = addWorkingDays(stockReadyDate, transitDays);
 
-    // Only propose when the customer has no date, or a date earlier than feasible.
     const needsProposal =
       header.currentPromised == null || isEarlier(header.currentPromised, computedPromiseDate);
     if (!needsProposal) continue;
@@ -358,7 +299,6 @@ function buildPromiseProposals(
   return { proposals, promisable, cannotPromise, upcoming };
 }
 
-// ── Job B — ASSR SLA watch ───────────────────────────────────────────────────
 
 interface AssrFinding {
   proposal: ProposalInsert;
@@ -373,11 +313,6 @@ interface AssrResult {
   byPriority: Record<string, number>;
 }
 
-/**
- * OPEN ASSR cases (stage != completed, status != Closed) whose deadline is
- * breached or inside the warn window. Wrapped by the caller in try/catch so a
- * missing/renamed column can never sink Job A — here we just do the read + math.
- */
 async function collectAssrFindings(db: D1Database, warnHours: number, nowMs: number): Promise<AssrResult> {
   const res = await db
     .prepare(
@@ -416,7 +351,7 @@ async function collectAssrFindings(db: D1Database, warnHours: number, nowMs: num
     if (breached) breachedCount++;
     else atRiskCount++;
 
-    const hoursOverdue = Math.round((nowMs - deadlineMs) / 3_600_000); // negative = still ahead
+    const hoursOverdue = Math.round((nowMs - deadlineMs) / 3_600_000);
     const assrNo = s(r.assr_no) || s(r.doc_no) || '(unknown ASSR)';
     const customer = s(r.customer_name);
     const stage = s(r.stage) || 'unknown';
@@ -456,10 +391,9 @@ async function collectAssrFindings(db: D1Database, warnHours: number, nowMs: num
   };
 }
 
-// ── Brief shape (integrator contract) ────────────────────────────────────────
 
 export interface CsBriefData {
-  generatedAt: string; // ISO
+  generatedAt: string;
   promise: {
     promisable: number;
     cannotPromise: number;
@@ -475,7 +409,6 @@ export interface CsBriefData {
   openProposals: { total: number; byKind: Record<string, number> };
 }
 
-// ── Orchestrator ─────────────────────────────────────────────────────────────
 
 export async function runCsAgent(
   env: Env,
@@ -486,16 +419,11 @@ export async function runCsAgent(
   const nowIso = new Date().toISOString();
   const nowMs = Date.now();
 
-  /* ONE company's books. Job A tells a CUSTOMER when their order will arrive;
-     computed across both companies it was answering that question with the other
-     company's stock. computeMrp's companyId is optional and no-ops when omitted
-     (its own doc names "agent callers"), and this caller omitted it. */
   const company = scopeFor(await resolveAgentCompany(db, CS_AGENT_SETTING_KEY));
   if (company.refuse) {
     throw new Error(`cs_company_unresolved: ${company.refuse}`);
   }
 
-  // Job A — honest promise dates from live MRP supply.
   const [mrp, headers, transitByState] = await Promise.all([
     computeMrp(sb, {
       catFilter: null,
@@ -510,7 +438,6 @@ export async function runCsAgent(
   const supplyBySo = groupSupplyBySo(mrp);
   const promise = buildPromiseProposals(headers, supplyBySo, transitByState, today);
 
-  // Job B — ASSR SLA watch, isolated so a schema drift can never sink Job A.
   const warnHours = await assrWarnHours(db);
   let assr: AssrResult = { proposals: [], openCases: 0, breached: 0, atRisk: 0, byPriority: {} };
   try {
@@ -519,7 +446,6 @@ export async function runCsAgent(
     console.warn('[cs-agent] ASSR SLA watch skipped (Job A unaffected):', e);
   }
 
-  // Insert both jobs' proposals with kind+key dedupe against OPEN (PENDING) rows.
   const openKeys = await openProposalKeys(db);
   let proposalsCreated = 0;
   for (const p of [...promise.proposals, ...assr.proposals]) {
@@ -549,7 +475,6 @@ export async function runCsAgent(
     openProposals,
   };
 
-  // One snapshot per run — ai_focus stays NULL; the lead's brain call fills it.
   try {
     await db
       .prepare('INSERT INTO cs_agent_briefs (id, brief, ai_focus, created_at) VALUES (?, ?::text::jsonb, NULL, ?)')
@@ -567,7 +492,6 @@ export async function runCsAgent(
   return { summary, brief, proposalsCreated };
 }
 
-// ── Console card counters ────────────────────────────────────────────────────
 
 export async function csAgentStatus(
   env: Env,
@@ -580,6 +504,6 @@ export async function csAgentStatus(
       .prepare('SELECT MAX(created_at) AS last FROM cs_agent_briefs')
       .first<{ last?: string | null }>();
     lastBriefAt = r?.last ?? null;
-  } catch { /* pre-migration — null */ }
+  } catch { }
   return { openProposals: total, openByKind: byKind, lastBriefAt };
 }

@@ -74,8 +74,6 @@ async function loadEmployees(db: Db, companyId: number, ids: number[] | null): P
   return rows.map((r) => rowToEmployee(r as EmployeeRow, r.user_id != null ? userById.get(r.user_id) ?? null : null, r.department_id != null ? deptById.get(r.department_id) ?? null : null));
 }
 
-/** Keep hr_employees.basic_salary_sen equal to the salary in force today, so
- *  the list shows what they earn now and a future-dated raise waits its day. */
 async function syncCurrentSalary(db: Db, companyId: number, employeeId: number): Promise<void> {
   const history = await db
     .select({ effective_from: hr_employee_salary_history.effective_from, basic_salary_sen: hr_employee_salary_history.basic_salary_sen })
@@ -86,7 +84,6 @@ async function syncCurrentSalary(db: Db, companyId: number, employeeId: number):
   await db.update(hr_employees).set({ basic_salary_sen: current }).where(and(eq(hr_employees.company_id, companyId), eq(hr_employees.id, employeeId)));
 }
 
-/** The ERP account and department must exist, and one account is one employee per company. */
 async function linkProblem(db: Db, companyId: number, userId: number | null, departmentId: number | null, selfId: number | null): Promise<string | null> {
   if (userId != null) {
     const found = await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1);
@@ -105,10 +102,6 @@ async function linkProblem(db: Db, companyId: number, userId: number | null, dep
   return null;
 }
 
-/** Insert one employee and its starting-salary row, the way POST /employees
- *  does, so the bulk paths and the single add write identical shapes. Returns
- *  the new id. The caller handles a unique-violation (a clash on Emp No or on
- *  the ERP account link). */
 async function insertEmployeeWithSalary(db: Db, companyId: number, input: EmployeeInput, by: number, today: string): Promise<number> {
   const [row] = await db
     .insert(hr_employees)
@@ -125,7 +118,6 @@ async function insertEmployeeWithSalary(db: Db, companyId: number, input: Employ
   return row.id;
 }
 
-/* ── employees ─────────────────────────────────────────────────────────── */
 
 hr.get("/employees", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -182,10 +174,6 @@ hr.post("/employees", async (c) => {
   return c.json({ employee }, 201);
 });
 
-/* Bulk add from the ERP accounts that already exist (option 1). The accounts
-   carry the name / phone / department / position; HR fills salary and statutory
-   per person afterwards. Best-effort per account: a clash is reported as
-   skipped, not a failure, so the rest still go in. */
 hr.post("/employees/bulk-link", async (c) => {
   if (!canManage(c)) return c.json(FORBIDDEN, 403);
   const co = requireActiveCompanyId(c);
@@ -208,8 +196,6 @@ hr.post("/employees/bulk-link", async (c) => {
   const byId = new Map(accts.map((a) => [a.id, a]));
   const linkedUserIds = new Set(linked.filter((l) => l.user_id != null).map((l) => l.user_id as number));
   const existingEmpNos = linked.map((l) => l.emp_no);
-  // Keep the order the accounts were chosen, and flag any that went inactive or
-  // vanished between the picker loading and this call.
   const skipped: Array<{ userId: number; name: string; reason: string }> = [];
   const ordered: BulkAccount[] = [];
   for (const uid of userIds) {
@@ -248,13 +234,6 @@ hr.post("/employees/bulk-link", async (c) => {
   return c.json({ created, skipped }, 201);
 });
 
-/* Bulk add OR enrich from a spreadsheet (option 2). The browser maps the file
-   to rows and previews them; the server is the authority and re-checks every
-   row. A row that matches someone already in the book — by its linked ERP
-   account, else by an exact Emp No — updates that record in place with only the
-   cells the sheet filled (salary and the Emp No are never touched); every other
-   row is created. The result lists what was created, what was updated, and what
-   was refused and why. */
 const IMPORT_UPDATABLE: ReadonlyArray<keyof EmployeeInput> = [
   "name", "phone", "departmentId", "position", "joinDate", "nationality", "icNumber", "passportNumber", "bankName", "bankAccount", "epfEnabled", "socsoEnabled", "eisEnabled", "pcbEnabled", "tripNames",
 ];
@@ -273,7 +252,6 @@ hr.post("/employees/bulk-import", async (c) => {
     const input = parseEmployeeInput(rec, today);
     if (!input.joinDate) input.joinDate = today;
     const email = typeof rec.accountEmail === "string" ? rec.accountEmail.trim() : "";
-    // Which fields the sheet actually gave, so a re-import patches only those.
     const provided = new Set<keyof EmployeeInput>(IMPORT_UPDATABLE.filter((k) => k in rec && rec[k] != null));
     return { input, provided, accountEmail: email || null };
   });
@@ -421,7 +399,6 @@ hr.delete("/employees/:id/salary-history/:rowId", async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── public holidays ───────────────────────────────────────────────────── */
 
 hr.get("/holidays", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -462,7 +439,6 @@ hr.delete("/holidays/:date", async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── pay rules (effective-dated) ───────────────────────────────────────── */
 
 hr.get("/pay-rules", async (c) => {
   const co = requireActiveCompanyId(c);

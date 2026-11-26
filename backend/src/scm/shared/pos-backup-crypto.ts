@@ -1,13 +1,3 @@
-/* The Houzs POS backup file's cipher (layouts P14 / E8), shared by the device
- * that writes it and the ERP that imports it: AES-GCM under a key derived by
- * PBKDF2 from the SHA-256 of the device token. The device holds the token;
- * the ERP holds only that hash (pos_terminals.token_hash), which is exactly
- * enough to read the file and nothing more. WebCrypto on both sides.
- *
- * ONE home. backend/src/scm/shared/pos-backup-crypto.ts is the original and
- * frontend/src/vendor/shared/pos-backup-crypto.ts its byte-identical copy
- * (check-shared-mirrors.mjs); the POS app imports the vendored copy.
- */
 
 const SALT = "houzs-pos-backup";
 

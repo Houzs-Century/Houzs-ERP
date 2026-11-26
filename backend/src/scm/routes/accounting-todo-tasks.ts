@@ -100,7 +100,6 @@ const groupsOf = (v: unknown): TodoGroupDef[] =>
     .map((g) => ({ id: String((g as Record<string, unknown>)?.id ?? ''), label: String((g as Record<string, unknown>)?.label ?? '') }))
     .filter((g) => g.id && g.label);
 
-/* ── Reads for the page ─────────────────────────────────────────────────── */
 
 export type TodoTaskFacts = {
   tasks: TodoTask[];
@@ -108,11 +107,9 @@ export type TodoTaskFacts = {
   remarkCounts: Record<string, number>;
   rulesOff: string[];
   groups: TodoGroupDef[];
-  /** Finance's own rules, as defined (what each finds is read separately). */
   customRuleDefs: CustomRule[];
 };
 
-/** The custom rules stored on the settings row, those that make sense. */
 const customRulesOf = (v: unknown): CustomRule[] =>
   (Array.isArray(v) ? v : [])
     .map((r) => r as Record<string, unknown>)
@@ -134,7 +131,6 @@ export async function readTodoTaskFacts(sb: any, companyId: number): Promise<{ o
   const occurrences: Record<string, TaskOccurrence[]> = {};
   for (const r of (occ.data ?? []) as Rows) (occurrences[String(r.task_id)] ??= []).push(occurrenceOf(r));
   const remarkCounts: Record<string, number> = {};
-  /* People's remarks only: a line recording a change to the task is its history, not a remark. */
   for (const r of (remarks.data ?? []) as Rows) {
     if (r.tag === 'edit') continue;
     remarkCounts[String(r.task_id)] = (remarkCounts[String(r.task_id)] ?? 0) + 1;
@@ -149,7 +145,6 @@ export async function readTodoTaskFacts(sb: any, companyId: number): Promise<{ o
   };
 }
 
-/* ── People ─────────────────────────────────────────────────────────────── */
 
 const FINANCE_KEYS = ['*', 'scm.payment_voucher.create', 'scm.payment_voucher.post'];
 
@@ -179,12 +174,10 @@ export const todoPeopleHandler = async (c: any): Promise<Response> => {
   try { people = await financePeople(c.env, co.companyId); } catch (e) {
     return c.json({ error: 'load_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
   }
-  /* The viewer can always give a task to themselves. */
   if (me.id != null && !people.some((p) => p.id === me.id)) people.unshift({ id: me.id, name: me.name });
   return c.json({ people, me });
 };
 
-/* ── Settings ───────────────────────────────────────────────────────────── */
 
 async function loadSettings(sb: any, companyId: number): Promise<{ ok: true; rulesOff: string[]; groups: TodoGroupDef[]; customRules: CustomRule[] } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('acc_todo_settings').select('rules_off, groups, custom_rules').eq('company_id', companyId).maybeSingle();
@@ -246,11 +239,9 @@ export const todoGroupAddHandler = async (c: any): Promise<Response> => {
   return c.json({ group, groups });
 };
 
-/* ── Tasks ──────────────────────────────────────────────────────────────── */
 
 type Fields = Record<string, unknown>;
 
-/** A task's repeat, as the form sends it, checked and put in the table's words. */
 function readRepeat(b: Fields): { ok: true; row: Fields } | { ok: false; message: string } {
   const repeat = String(b.repeat ?? 'none');
   if (!['none', 'day', 'week', 'month', 'year'].includes(repeat)) return { ok: false, message: 'Repeat is one of: none, day, week, month, year.' };
@@ -295,7 +286,6 @@ export const todoTaskCreateHandler = async (c: any): Promise<Response> => {
     return c.json({ error: 'bad_group', message: 'Put it under one of the groups on the page.' }, 400);
   }
   const me = actor(c);
-  /* Whoever it is given to must work Finance here — the viewer always may take it. */
   const assigneeId = b.assigneeId == null ? me.id : Number(b.assigneeId);
   let assigneeName = me.name;
   if (assigneeId !== me.id) {
@@ -322,7 +312,6 @@ export const todoTaskCreateHandler = async (c: any): Promise<Response> => {
   return c.json({ task: taskOf(data) }, 201);
 };
 
-/** One task of this company (and its row), or the response that says why not. */
 async function loadTask(c: any, companyId: number): Promise<{ task: TodoTask; row: Record<string, any> } | { resp: Response }> {
   const id = String(c.req.param('id') ?? '');
   if (!/^[0-9a-f-]{36}$/i.test(id)) return { resp: c.json({ error: 'not_found', message: 'No such task.' }, 404) };
@@ -364,12 +353,10 @@ export const todoTaskGetHandler = async (c: any): Promise<Response> => {
       editedAt: r.edited_at ?? null, createdAt: String(r.created_at), mine: me.id != null && Number(r.author_id) === me.id,
     })),
     me,
-    /* Edit and Delete show for these only; the server asks again on the write. */
     mayEdit: !found.task.isOff && mayChangeTask(c, found.task),
   });
 };
 
-/** A task's change, checked field by field against what it holds; only what moved is written and said. */
 async function editTask(c: any, companyId: number, t: TodoTask, row: Record<string, any>, b: Fields): Promise<Response> {
   if (!mayChangeTask(c, t)) return c.json(notYours(t), 403);
   if (t.isOff) return c.json({ error: 'deleted', message: 'This task was deleted.' }, 409);
@@ -400,7 +387,6 @@ async function editTask(c: any, companyId: number, t: TodoTask, row: Record<stri
     patch.group_key = groupKey;
   }
   if ('assigneeId' in b) {
-    /* Whoever it is given to must work Finance here — the one changing it always may take it. */
     const me = actor(c);
     const assigneeId = b.assigneeId == null ? me.id : Number(b.assigneeId);
     if (assigneeId === me.id) {
@@ -421,7 +407,6 @@ async function editTask(c: any, companyId: number, t: TodoTask, row: Record<stri
     patch.link = link;
   }
 
-  /* What moved, in the page's words; nothing moved, nothing written. */
   const after = taskOf({ ...row, ...patch });
   const groupName = (key: string): string =>
     (BUILT_IN_GROUP_LABELS as Record<string, string>)[key] ?? s.groups.find((g) => g.id === key)?.label ?? key;
@@ -440,9 +425,6 @@ async function editTask(c: any, companyId: number, t: TodoTask, row: Record<stri
   said((after.link?.to ?? null) !== (t.link?.to ?? null), `Linked to: ${t.link?.no || '—'} → ${after.link?.no || '—'}`, ['link']);
   if (lines.length === 0) return c.json({ task: t, unchanged: true });
 
-  /* Guarded on the row: a delete landing in between wins, and nothing is written. The due day
-     was checked as YYYY-MM-DD above; the payload still goes through the shared blank-date
-     coercion, the shape every request-built write takes (tests/dateWriteCoercion.test.ts). */
   const { data, error } = await sb.from('acc_todo_tasks').update(coerceEmptyDates({ ...writes, updated_at: new Date().toISOString() }))
     .eq('company_id', companyId).eq('id', t.id).eq('is_off', false).select(TASK_COLS).maybeSingle();
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
@@ -462,7 +444,6 @@ export const todoTaskPatchHandler = async (c: any): Promise<Response> => {
   const found = await loadTask(c, co.companyId);
   if ('resp' in found) return found.resp;
   const b = await c.req.json().catch(() => ({})) as Fields;
-  /* A task is its asker's to change (Edit); below is a routine's, Setup › To do rules. */
   if (found.task.kind === 'task') return editTask(c, co.companyId, found.task, found.row, b);
   const patch: Fields = {};
   if ('isOff' in b) patch.is_off = b.isOff === true;
@@ -486,9 +467,6 @@ export const todoTaskPatchHandler = async (c: any): Promise<Response> => {
   return c.json({ task: taskOf(data) });
 };
 
-/* DELETE /accounting/todo/tasks/:id — the To do's own rule: nothing is deleted, a task
-   is switched off. It leaves the To do and the calendar; its done days and remarks
-   stay, and the thread says who deleted it. A routine is switched off under Setup. */
 export const todoTaskDeleteHandler = async (c: any): Promise<Response> => {
   if (!mayWork(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -511,10 +489,8 @@ export const todoTaskDeleteHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/** Whether `day` is a day this task falls on. */
 const fallsOn = (t: TodoTask, day: string): boolean => DAY.test(day) && occurrenceDays(t, day, day).includes(day);
 
-/** A task's occurrence is marked by whoever it was given to or whoever asked; a routine by anyone in Finance. */
 const mayMark = (t: TodoTask, me: { id: number | null }): boolean =>
   t.kind === 'routine' || (me.id != null && (t.assigneeId === me.id || t.createdById === me.id));
 
@@ -544,7 +520,6 @@ async function occurrenceWrite(c: any, kind: 'done' | 'reopen' | 'move'): Promis
   const { error } = await sb.from('acc_todo_occurrences').upsert(row, { onConflict: 'task_id,occurs_on' });
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   if (kind !== 'move') {
-    /* The thread says who marked it, and the words they gave with it. */
     const r = await sb.from('acc_todo_remarks').insert({
       task_id: t.id, company_id: co.companyId, author_id: me.id, author_name: me.name,
       body: String(b.remark ?? '').trim().slice(0, 2000), tag: kind, occurs_on: occursOn,
@@ -588,14 +563,12 @@ export const todoRemarkEditHandler = async (c: any): Promise<Response> => {
     .eq('company_id', co.companyId).eq('id', id).maybeSingle();
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   if (!r) return c.json({ error: 'not_found', message: 'No such remark.' }, 404);
-  /* A line that records a change or a delete is the task's history: nobody rewrites it. */
   if (r.tag === 'edit' || r.tag === 'deleted') {
     return c.json({ error: 'change_line', message: 'This line records a change to the task — it stays as it is.' }, 409);
   }
   const me = actor(c);
   if (me.id == null || Number(r.author_id) !== me.id) return c.json({ error: 'not_yours', message: 'Only whoever wrote a remark can change it.' }, 403);
   if (text === String(r.body ?? '')) return c.json({ ok: true, unchanged: true });
-  /* The earlier wording stays, with when it was written. */
   const history = [...(Array.isArray(r.history) ? r.history : []), { text: String(r.body ?? ''), at: String(r.edited_at ?? r.created_at) }];
   const now = new Date().toISOString();
   const { error } = await sb.from('acc_todo_remarks').update({ body: text, history, edited_at: now }).eq('company_id', co.companyId).eq('id', id);
@@ -603,12 +576,10 @@ export const todoRemarkEditHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/* ── What a task can be linked to ───────────────────────────────────────── */
 
 export const todoLinkSearchHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* Letters, digits and the separators document numbers use — nothing a filter could read as syntax. */
   const q = String(c.req.query('q') ?? '').replace(/[^A-Za-z0-9 .\-/&]/g, '').trim().slice(0, 40);
   if (q.length < 2) return c.json({ results: [] });
   const sb = c.get('supabase');
@@ -632,9 +603,7 @@ export const todoLinkSearchHandler = async (c: any): Promise<Response> => {
   return c.json({ results });
 };
 
-/* ── Finance's own rules (Setup › To do rules › New rule) ──────────────── */
 
-/** The template's number: days for bills and drafts, ringgit for payments. */
 const PARAM_LIMITS: Record<CustomTemplate, { max: number; what: string }> = {
   bills: { max: 90, what: 'Due within 1 to 90 days.' },
   drafts: { max: 90, what: 'Older than 1 to 90 days.' },
@@ -668,7 +637,6 @@ export const todoRuleAddHandler = async (c: any): Promise<Response> => {
 /** What a custom rule finds today: the bills, drafts or payments its template looks for. */
 export async function readCustomRuleItems(sb: any, companyId: number, today: string, rule: CustomRule): Promise<CustomItem[]> {
   if (rule.tpl === 'bills') {
-    /* Supplier bills still owing that fall due from today to N days on — a bill already late is the AP aging's. */
     const until = addDays(today, rule.param);
     const [api, pi] = await Promise.all([
       paginateAll<Record<string, any>>((lo, hi) => sb.from('ap_invoices').select('id, invoice_number, supplier_id, due_date, total_sen, paid_sen, exchange_rate')
@@ -687,7 +655,6 @@ export async function readCustomRuleItems(sb: any, companyId: number, today: str
       .filter((i) => (i.amountSen ?? 0) > 0);
   }
   if (rule.tpl === 'drafts') {
-    /* Finance's own papers still in draft after N days: vouchers not yet prepared, bills not posted, journals not posted. */
     const before = new Date(`${addDays(today, -rule.param)}T00:00:00+08:00`).toISOString();
     const [pv, api, je] = await Promise.all([
       sb.from('payment_vouchers').select('pv_number, payee_name, created_at').eq('company_id', companyId).eq('status', 'DRAFT').is('submitted_at', null).lt('created_at', before).limit(200),
@@ -703,7 +670,6 @@ export async function readCustomRuleItems(sb: any, companyId: number, today: str
       ...((je.data ?? []) as Rows).map((r) => ({ no: String(r.je_no ?? 'Journal'), name: '', amountSen: null, day: day(r.created_at) })),
     ];
   }
-  /* Customer payments this month over RM N — each needs its own e-invoice. */
   const first = `${today.slice(0, 7)}-01`;
   const so = await paginateAll<Record<string, any>>((lo, hi) => sb.from('mfg_sales_order_payments').select('id, so_doc_no, paid_at, amount_sen, method')
     .eq('company_id', companyId).gte('paid_at', first).lte('paid_at', today).gt('amount_sen', rule.param * 100).order('id').range(lo, hi));

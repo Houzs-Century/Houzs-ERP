@@ -65,9 +65,6 @@ import { CONVERT_LABEL, CONVERTED_METHOD } from "../vendor/scm/lib/so-money-quer
 import { DateField } from "../vendor/scm/components/DateField";
 import { openLoadedTab } from "../lib/openLoadedTab";
 
-/* A persisted payment as either mobile surface holds it. Superset of
-   RecordedPaymentLike; the casing pairs cover the postgres.js / PostgREST drift
-   (dual-read camelCase ?? snake_case — the historical #1 bug on this stack). */
 export type RecordedPayment = RecordedPaymentLike & {
   id: string;
   version: number;
@@ -75,9 +72,6 @@ export type RecordedPayment = RecordedPaymentLike & {
   collected_by?: string | null;
   slip_key?: string | null;
   slipKey?: string | null;
-  /* Row creation instant (UTC) — drives the same-day EDIT affordance (a payment
-     may be corrected only on the MY calendar day it was recorded, unless the SO
-     is still a DRAFT). */
   created_at?: string | null;
   createdAt?: string | null;
 };
@@ -86,25 +80,16 @@ const slipKeyOf = (p: RecordedPayment) => p.slipKey ?? p.slip_key ?? null;
 const createdAtOf = (p: RecordedPayment) => p.createdAt ?? p.created_at ?? null;
 
 
-/* Offline fallback + parsing seed only; the rendered dropdowns read the LIVE
-   maintenance catalog via useSoDropdownOptions. Single-sourced from
-   FALLBACK_OPTIONS so it can't drift ("Maybank" -> "MBB", "One Shot" -> "One-off"). */
 const PLAN_OPTS = FALLBACK_OPTIONS.installment_plan.map((o) => o.value);
 
-/* 'One Shot' → null (no installment term); 'N months' → N. */
 const planToMonths = (label: string): number | null => {
   const m = /^(\d+)\s*month/i.exec(String(label).trim());
   return m ? Number(m[1]) : null;
 };
-/* installment_months (int|null) → the Plan option label to rehydrate the select
-   when editing. null / unmatched → the first plan ("One-off"). */
 const monthsToPlan = (months: number | null | undefined): string => {
   if (!months) return PLAN_OPTS[0];
   return PLAN_OPTS.find((p) => planToMonths(p) === months) ?? `${months} months`;
 };
-/* Reverse of the shared method map (backend enum → sheet label). Imported, not
-   retyped: this file carried its own byte-identical copy, which is the same
-   hand-copied-list bug the Method picker below had. */
 const CODE_TO_PAY_METHOD = PAYMENT_METHOD_CODE_TO_VALUE as Record<string, string>;
 const toSen = (s: string) => Math.round((parseFloat(String(s).replace(/,/g, "")) || 0) * 100);
 
@@ -145,10 +130,6 @@ function SlipLink({ docNo, paymentId }: { docNo: string; paymentId: string }) {
   const [isImage, setIsImage] = useState(false);
   const notify = useNotify();
 
-  /* Resolve the slip once per row so the thumbnail can render inline. A failure
-     here is NOT surfaced as a dialog — an unreachable thumbnail on a list row
-     is not something the operator asked for. It falls back to the glyph, and
-     the tap path below still reports a real failure loudly. */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -200,11 +181,6 @@ function SlipLink({ docNo, paymentId }: { docNo: string; paymentId: string }) {
   );
 }
 
-/* Existing-slip preview for the Edit Payment sheet — blob-fetches the persisted
-   payment's slip (same GET /:docNo/payments/:id/slip-url the read-view SlipLink
-   uses) and shows it as a thumbnail the operator taps to open full-size, so they
-   SEE which slip is attached while editing. PDFs (no <img> render) fall back to a
-   "View slip" link. The slip itself is never changed by an edit. */
 function PaymentSlipPreview({ docNo, paymentId }: { docNo: string; paymentId: string }) {
   const [url, setUrl] = useState<string | null>(null);
   const [contentType, setContentType] = useState<string>("");
@@ -280,37 +256,24 @@ export function AddPaymentSheet({
      docs/bugs/0888). Null asks nothing. The sheet cannot decide this itself:
      the permission and the draft flag live with the list. */
   reasonWhy?: ReasonWhy | null;
-  /* Collected By default for a NEW payment = logged-in user's staff id. */
   defaultCollectedBy?: string;
-  /* When set, the sheet EDITS this persisted payment (PATCH) instead of adding
-     a new one (POST). Same fields, seeded from the row. */
   editPayment?: RecordedPayment | null;
   onClose: () => void;
   onSaved: () => void | Promise<void>;
 }) {
   const notify = useNotify();
-  /* The backdate exception, read the way the server reads it (flat key or the
-     wildcard) — same call as the desktop panel's `mayBackdateSlip`. */
   const { can: canSheet } = useHouzsAuth();
   const addPaymentMut = useAddSalesOrderPayment();
   const editPaymentMut = useEditSalesOrderPayment();
   const raiseBackdateMut = useRaiseBackdateRequest();
   const askReason = usePrompt();
   const isEdit = Boolean(editPayment);
-  /* One key for the one payment this sheet is open to record (lib/idempotency.ts).
-     The sheet's MOUNT is the intent: both parents render it behind `payOpen` /
-     `editPay` and close it in onSaved, so re-opening always starts a new intent
-     with a new key, while every retry of THIS submit reuses this one. */
   const idemKey = useIdempotencyKey();
-  /* `busy` is state, so a second tap in the same tick still saw it false; the lock refuses it outright. */
   const saveLock = useSubmitLock();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [method, setMethod] = useState<string>(
     () => (editPayment ? CODE_TO_PAY_METHOD[editPayment.method ?? "cash"] ?? "Cash" : "Cash"),
   );
-  /* The cancelled orders this order's customer still has money on — the
-     method is offered only while there is one, and never on an edit (a
-     converted row is not edited; it is deleted to move the money back). */
   const convertSources = useMobileConvertSources({ docNo: isEdit ? null : docNo });
   const [convertFrom, setConvertFrom] = useState("");
   const [date, setDate] = useState<string>(
@@ -337,24 +300,9 @@ export function AddPaymentSheet({
   const [online, setOnline] = useState(
     editPayment ? (editPayment.onlineType ?? editPayment.online_type ?? "") : "",
   );
-  /* Account Sheet ("where the money landed") is DERIVED server-side from the
-     payment's own method + bank / online sub-type (deriveAccountSheet,
-     mfg-sales-orders.ts); a hand-typed value wins. Send it verbatim exactly as
-     desktop's PaymentsTable does — the server owns the re-derive when the Bank
-     changes (2026-07-16), so the rule lives in ONE place and both platforms get
-     the same answer. Do NOT add a client-side derive here. */
-  /* Live payment dropdowns from the maintenance catalog (same API as desktop) —
-     each keeps the row's stored value selectable even when the catalog dropped
-     it (withStoredOption), so the select can never display a different bank
-     than the one on the row. */
   const bankOpts = withStoredOption(optionsOrFallback("payment_merchant", useSoDropdownOptions("payment_merchant").data), bank);
   const planOpts = withStoredOption(optionsOrFallback("installment_plan", useSoDropdownOptions("installment_plan").data), plan);
   const onlineOpts = withStoredOption(optionsOrFallback("online_type", useSoDropdownOptions("online_type").data), online);
-  /* Method was the ONE picker on this sheet still rendering a hardcoded list,
-     while its three sub-pickers above already read the live catalog. It offered
-     'Installment', which mig 0037 retired as an L1 method, and it could not
-     offer anything maintenance added. withStoredOption keeps a grandfathered
-     stored value selectable for the same reason the Bank picker needs it. */
   const methodOpts = withConvertOption(withStoredOption(optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data), method), !isEdit && convertSources.length > 0);
   const [slipName, setSlipName] = useState("");
   const [slipSession, setSlipSession] = useState("");
@@ -384,11 +332,6 @@ export function AddPaymentSheet({
   /* Too old for the window: a new payment goes to an admin as a request
      instead (owner 2026-09-30) — the desktop panel's rule, same helper. */
   const needsRequest = !isEdit && method !== CONVERT_LABEL && slipDateNeedsRequest(date, todayMyt(), maySheetBackdate);
-  /* Method ⇒ sub-field cascade, via the SHARED desktop rule (missingMethodSubField,
-     PaymentsTable) rather than a mobile re-implementation: Merchant needs a Bank
-     + Plan, Online needs a Sub-Type. The server enforces the same on write
-     (payment_method_field_required, 2026-07-16) — this surfaces it before the
-     round-trip instead of as a 400. */
   const missingSubField = amtOk
     ? missingMethodSubField({
         methodLabel: method,
@@ -408,9 +351,6 @@ export function AddPaymentSheet({
     if (!canSave) return;
     setError(null);
     setBusy(true);
-    /* Same body MobileNewSO.recordNewPayments POSTs — do NOT reimplement
-       pricing; the backend recomputes the balance. In EDIT mode the same fields
-       PATCH the existing row (slip untouched). */
     const code = method === CONVERT_LABEL ? CONVERTED_METHOD : paymentMethodCodeForValue(method) ?? "cash";
     const body: Record<string, unknown> = code === CONVERTED_METHOD ? convertedBody(convertFrom, toSen(amount)) : {
       paidAt: date,
@@ -420,7 +360,6 @@ export function AddPaymentSheet({
       approvalCode: approval.trim() || null,
       collectedBy: collectedBy || null,
     };
-    // The slip session rides with every new keyed row (canSave holds until it is uploaded); a converted row carries none.
     if (!isEdit && slipSession && code !== CONVERTED_METHOD) body.uploadSessionId = slipSession;
     if (code === "merchant") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
     else if (code === "installment") { body.merchantProvider = bank || null; body.installmentMonths = planToMonths(plan); }
@@ -440,12 +379,7 @@ export function AddPaymentSheet({
     const reason = reasonWhy ? await askReason(paymentReasonAsk(isEdit ? "edit" : "add", reasonWhy)) : "";
     if (reason === null) { setBusy(false); return; }
     try {
-      /* The shared vendored mutations — mobile shares the desktop payment write
-         path (they invalidate the payments ledger key useSalesOrderPayments reads). */
       if (isEdit && editPayment) {
-        /* No key on the EDIT path, deliberately: a PATCH sets named fields on ONE
-           row addressed by id, so firing it twice writes the same row the same
-           way. It cannot duplicate money; only the POST below creates a row. */
         await editPaymentMut.mutateAsync({ docNo, id: editPayment.id, version: editPayment.version, ...body, ...(reason ? { reason } : {}) });
       } else {
         await addPaymentMut.mutateAsync({ docNo, ...body, ...(reason ? { reason } : {}), idempotencyKey: idemKey });
@@ -539,8 +473,6 @@ export function AddPaymentSheet({
                 </div>
               </div>
             )}
-            {/* Money moved from a cancelled order: which one. Picking it fills an
-                empty amount with what is left there (desktop parity). */}
             {method === CONVERT_LABEL && (
               <ConvertSourceField sources={convertSources} value={convertFrom}
                 onChange={(d, left) => { setConvertFrom(d); if (toSen(amount) <= 0) setAmount(rmInput(left)); }} />
@@ -576,9 +508,6 @@ export function AddPaymentSheet({
                 {staff.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
-            {/* Edit mode — show the EXISTING attached slip so the operator can
-                see what's on the row while editing (owner request). The slip is
-                not changed by an edit; this is view-only. */}
             {isEdit && editPayment && slipKeyOf(editPayment) && (
               <PaymentSlipPreview docNo={docNo} paymentId={editPayment.id} />
             )}
@@ -609,8 +538,6 @@ export function AddPaymentSheet({
                 </button>
               </div>
             )}
-            {/* Plain-language block reason (owner standing rule) — say what is
-                missing instead of only greying Save out. */}
             {slipMissing && amtOk && !missingSubField && slipPhase !== "uploading" && (
               <div style={{ fontSize: 11.5, color: "var(--hz-c-accent)", textAlign: "center" }}>{slipMissing}</div>
             )}
@@ -631,12 +558,6 @@ export function AddPaymentSheet({
   );
 }
 
-/* ── RecordedPaymentsList — the shared persisted-payment ledger ───────────────
-   Renders every recorded payment as info (PaymentInfoBlock) + slip + amount +
-   edit + delete, and owns the delete flow and the edit sheet. This is the ONE
-   payments card the owner asked for: the scan-draft review screen and the Edit
-   Sales Order sheet both mount it, so entering Edit can never offer LESS than
-   the screen it was opened from. */
 export function RecordedPaymentsList({
   docNo,
   payments,
@@ -653,18 +574,11 @@ export function RecordedPaymentsList({
   payments: RecordedPayment[];
   staff: Array<{ id: string; name: string }>;
   defaultCollectedBy?: string;
-  /** Payments are add/edit/delete-able. Desktop parity (SalesOrderDetail):
-   *  isDraftSo || !isLocked — i.e. a DRAFT is ALWAYS editable. */
   canEdit: boolean;
-  /** Parent SO is a DRAFT — lifts the per-row same-day EDIT lock. */
   draftUnlocked?: boolean;
-  /** Parent has an action in flight — dims the row affordances. */
   busy?: boolean;
-  /** Rows sit inside a padded card body (MobileNewSO) rather than directly in a
-   *  card (MobileSODetail). Layout only — no behaviour differs. */
   inset?: boolean;
   emptyText?: string;
-  /** Refresh the caller's payments + any derived KPI after a write. */
   onChanged: () => void | Promise<void>;
 }) {
   const confirm = useConfirm();
@@ -746,15 +660,12 @@ export function RecordedPaymentsList({
     if (day === null) return false;
     return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).mutable;
   };
-  /* WHY a row may change — 'amend' is the one that owes a reason. */
   const rowVia = (p: RecordedPayment): PaymentChangeVia => {
     const day = mytDayOf(createdAtOf(p));
     if (day === null) return null;
     return paymentRowMutable(day, todayMyt(), draftUnlocked, { mayAmend }).via;
   };
 
-  /* Delete a persisted payment — parity with the desktop PaymentsTable trash
-     action. In-app confirm (no-naked-edits), then the shared mutation. */
   const deletePayment = async (paymentId: string) => {
     if (disabled) return;
     if (!(await confirm({
@@ -780,9 +691,6 @@ export function RecordedPaymentsList({
     }
   };
 
-  /* Row chrome is the SO detail's verbatim (hairline between rows, none above
-     the first — the card header already separates it). `inset` only drops the
-     horizontal padding for a caller that already pads its card body. */
   const rowStyle = (i: number): CSSProperties => ({
     display: "flex",
     justifyContent: "space-between",
@@ -794,10 +702,6 @@ export function RecordedPaymentsList({
 
   return (
     <>
-      {/* One picker for every row — `attachTargetRef` says which. Accepts the
-          same mimes as the desktop SlipUploadField; `capture` is deliberately
-          omitted so the phone offers Camera / Photos / Files rather than forcing
-          a live shot (the slip is usually already in the camera roll). */}
       <input
         ref={attachInputRef}
         type="file"
@@ -811,8 +715,6 @@ export function RecordedPaymentsList({
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {slipKeyOf(p) ? <SlipLink docNo={docNo} paymentId={p.id} /> : null}
             <span className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-primary-ink)" }}>{fmtSen(p.amount_sen)}</span>
-            {/* Attach / replace the proof — see openAttachPicker: gated by
-                `canEdit` only, never by the same-day window. */}
             {canEdit && (
               <button
                 type="button"
@@ -834,8 +736,6 @@ export function RecordedPaymentsList({
                 MYT midnight it locks). A DRAFT's rows are never same-day-locked
                 (draftUnlocked), matching the server, which exempts DRAFT from the
                 same-day PATCH lock. */}
-            {/* A converted row has no pencil (the server refuses the edit): the
-                money goes back by deleting it — the trash beside stays. */}
             {canEdit && rowMutable(p) && p.method !== CONVERTED_METHOD && (
               <button
                 type="button"
@@ -873,8 +773,6 @@ export function RecordedPaymentsList({
         <div style={{ padding: inset ? "9px 0" : "11px 13px", borderTop: inset ? "none" : "1px solid var(--line2)", fontSize: 11.5, color: "var(--mut2)" }}>{emptyText}</div>
       )}
       {error && <div style={{ padding: inset ? "4px 0" : "0 13px 9px", fontSize: 11.5, color: "var(--red)" }}>{error}</div>}
-      {/* Payments sent to an admin because the slip is older than 14 days —
-          the same card the desktop panel shows. */}
       <BackdateRequestsPanel docNo={docNo} style={{ margin: inset ? "8px 0" : "8px 13px" }} />
       {editPay && (
         <AddPaymentSheet

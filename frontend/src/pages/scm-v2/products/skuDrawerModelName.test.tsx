@@ -1,7 +1,3 @@
-/* BUG-31 follow-up: the SKU drawer's "Belongs to model" line printed the SKU's
- * base_model, which is blank on a 1:1 model (CROWN (SS+S) after the Modular
- * backfill), so it read "Belongs to model —". It names the model from the
- * model's own row now. */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';

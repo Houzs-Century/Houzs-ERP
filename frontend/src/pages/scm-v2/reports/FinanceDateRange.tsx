@@ -1,7 +1,3 @@
-// FinanceDateRange — the reports' shared date-range picker (batch 6 §4.1): the
-// redesign's DateRangeButton (batch 5) with the reports' presets, bound to the
-// range in the address (useReportRange). One picker, presets from the one
-// home (lib/dateRangePresets REPORT_RANGE_PRESETS).
 
 import { DateRangeButton } from '../../../components/DateRangeButton';
 import { REPORT_RANGE_PRESETS } from '../../../lib/dateRangePresets';

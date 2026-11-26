@@ -4,9 +4,6 @@ import { parseCsv, parseWorkbook, importErrorDetail } from './fabric-csv';
 import { FABRIC_COLUMNS } from '../components/FabricsTable';
 import { gridColumnToTableColumn } from '../../../components/DataGridCompat';
 
-// Build an .xlsx workbook buffer in memory from an array-of-arrays, so the test
-// exercises the real SheetJS read path parseWorkbook uses (no committed binary
-// fixture). Mirrors dependencySecurity.test.ts's producer.
 async function xlsxBufferFromAoa(aoa: unknown[][]): Promise<ArrayBuffer> {
   const XLSX = await import('../../../lib/xlsx-runtime');
   const sheet = XLSX.utils.aoa_to_sheet(aoa);
@@ -18,10 +15,9 @@ async function xlsxBufferFromAoa(aoa: unknown[][]): Promise<ArrayBuffer> {
 describe('parseWorkbook — Excel imports the same shape as CSV', () => {
   test('an .xlsx buffer parses to the expected rows', async () => {
     const buf = await xlsxBufferFromAoa([
-      // header row uses spaces + mixed case — must map like the snake_case export
       ['Fabric Code', 'Fabric Description', 'Sofa Price Tier', 'price_sen', 'lead_time_days'],
       ['AVANI 09', 'IVORY', 'PRICE_1', 1500, 30],
-      ['BF-01', '', 'PRICE_2', '', ''],  // blank cells -> null
+      ['BF-01', '', 'PRICE_2', '', ''],
     ]);
 
     const { rows, errors } = await parseWorkbook(buf);
@@ -68,7 +64,6 @@ describe('parseWorkbook — Excel imports the same shape as CSV', () => {
 });
 
 describe('the table toolbar export imports back (BUG-88)', () => {
-  // Verbatim header + rows from the 2990 file that imported 0 rows.
   const TABLE_EXPORT =
     'Code,Series,Description,Supplier Code,Sofa Tier,Bedframe Tier,Active,actions\r\n' +
     'KN06,ALTA,ALTA-01 Cream,ALTA-01,Price 2,Price 2,Yes,\r\n' +
@@ -109,7 +104,6 @@ describe('the table toolbar export imports back (BUG-88)', () => {
     expect(errors).toEqual(['Row 3: sofa_price_tier must be Price 1, 2, 3 or 4 ("Gold")']);
   });
 
-  // 2990-0024: the table export labels sofa Price 3 / 4 with their leather grade.
   test('sofa Price 3 (HL) and Price 4 (FL) import; bedframe Price 4 is refused', () => {
     const { rows, errors } = parseCsv(
       'fabric_code,sofa_price_tier,bedframe_price_tier\r\n' +

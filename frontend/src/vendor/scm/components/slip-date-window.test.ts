@@ -22,7 +22,7 @@ import { PAYMENT_SLIP_WINDOW_DAYS, shiftIsoDay } from "../lib/payment-slip-date"
 import { humanApiError } from "../lib/authed-fetch";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const src = (rel: string) => rel.split("+").map((r) => readFileSync(resolve(HERE, r), "utf8")).join(" "); // "a+b" = one surface split over two files
+const src = (rel: string) => rel.split("+").map((r) => readFileSync(resolve(HERE, r), "utf8")).join(" ");
 
 const TODAY = "2026-09-23";
 const OUT = shiftIsoDay(TODAY, -(PAYMENT_SLIP_WINDOW_DAYS + 1));
@@ -52,13 +52,12 @@ describe("every surface that keys a payment date bounds its own field", () => {
   const surfaces: Array<[string, string, boolean]> = [
     ["the desktop payments panel", "./PaymentsTable.tsx", true],
     ["the mobile payments sheet", "../../../mobile/RecordedPayments.tsx", true],
-    ["the mobile New SO", "../../../mobile/MobileNewSO.tsx+../../../mobile/MobileSoPayCard.tsx", true], // the form + its payment row
+    ["the mobile New SO", "../../../mobile/MobileNewSO.tsx+../../../mobile/MobileSoPayCard.tsx", true],
   ];
 
   for (const [name, rel, requests] of surfaces) {
     test(`${name} reads the shared window and bounds the picker`, () => {
       const text = src(rel);
-      // Non-vacuous: the file still renders a payment date field.
       expect(text).toContain("paymentSlipDateWindow");
       if (requests) {
         expect(text).not.toMatch(/slipWindow\.min/);
@@ -68,7 +67,6 @@ describe("every surface that keys a payment date bounds its own field", () => {
         expect(text).toMatch(/min=\{may\w*[Bb]ackdate\w*\s*\?\s*undefined\s*:\s*slipWindow\.min\}/);
       }
       expect(text).toMatch(/max=\{may\w*[Bb]ackdate\w*\s*\?\s*undefined\s*:\s*slipWindow\.max\}/);
-      // Quote style differs by file; the KEY is what must not drift.
       expect(text).toMatch(/can\w*\(\s*["']scm\.payment\.backdate["']\s*\)/);
     });
   }
@@ -87,11 +85,6 @@ describe("every surface that keys a payment date bounds its own field", () => {
   });
 });
 
-/* The server's refusal has to REACH the operator. humanApiError drops a reason
-   that reads like internals and falls back to the status line ("Some of the
-   details weren't accepted"), which would hide the one fact that lets someone
-   act — which date is the earliest. An uncurated code like this one depends
-   entirely on the sentence staying plain, so it is pinned. */
 describe("the server's refusal survives the client's error filter", () => {
   test("the too-old sentence renders verbatim, not as the generic 400 line", () => {
     const body = JSON.stringify({

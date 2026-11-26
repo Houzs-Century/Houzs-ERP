@@ -47,8 +47,6 @@ const CLAUDE_MODEL = 'claude-sonnet-4-6';
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
-/** ArrayBuffer -> base64 (chunked; Workers have no Node Buffer). Inlined from
- *  scan-so.ts's toBase64 — kept private so scan-so's surface does not widen. */
 function toBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   const chunkSize = 0x8000;
@@ -60,8 +58,6 @@ function toBase64(buf: ArrayBuffer): string {
   return btoa(binary);
 }
 
-/** Claude sometimes wraps JSON in fences or adds a preamble — take the first `{`
- *  to the last `}`. Inlined verbatim from scan-so.ts's stripJsonFences. */
 function stripJsonFences(text: string): string {
   let trimmed = text.trim();
   const fenceMatch = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/);
@@ -84,12 +80,10 @@ export interface ExtractedRepairLine {
   qty: number | null;
   unitPriceRm: number | null;
   discountPct: number | null;
-  /** The amount PRINTED on the line. Null when the document shows none. */
   amountRm: number | null;
 }
 
 export interface ExtractedRepairDoc {
-  /** QUOTATION or INVOICE — which kind of paper this is. */
   docKind: 'QUOTATION' | 'INVOICE' | null;
   docNo: string | null;
   docDate: string | null;
@@ -102,11 +96,8 @@ export interface ExtractedRepairDoc {
   plate: string | null;
   readyDate: string | null;
   lines: ExtractedRepairLine[];
-  /** The GRAND TOTAL printed on the document — the cross-check, not a leg. */
   grandTotalRm: number | null;
-  /** 0..1. Below ~0.6 the review screen should make the operator look. */
   confidence: number | null;
-  /** Anything the model could not read or had to guess at. */
   warnings: string[];
 }
 
@@ -170,8 +161,6 @@ const str = (v: unknown): string | null => {
 };
 const numOrNull = (v: unknown): number | null => {
   if (v == null || v === '') return null;
-  /* The model is told to send numbers, but a "1,100.00" slips through often
-     enough that stripping separators here is cheaper than a re-ask. */
   const n = typeof v === 'number' ? v : Number(String(v).replace(/[,\s]/g, '').replace(/[^0-9.\-]/g, ''));
   return Number.isFinite(n) ? n : null;
 };
@@ -199,8 +188,6 @@ export function normalizeDoc(raw: unknown): ExtractedRepairDoc {
       uom: str(r.uom)?.toUpperCase() ?? null,
       qty: numOrNull(r.qty),
       unitPriceRm: numOrNull(r.unitPriceRm),
-      /* Out-of-range is dropped, not clamped: a "150%" discount means the
-         column was misread, and silently making it 100% would zero the line. */
       discountPct: pct != null && pct >= 0 && pct <= 100 ? pct : null,
       amountRm: numOrNull(r.amountRm),
     };
@@ -259,7 +246,6 @@ export function reconcile(doc: ExtractedRepairDoc): { linesSen: number; printedS
   return { linesSen, printedSen, matches: Math.abs(delta) <= Math.max(1, doc.lines.length), deltaSen: delta };
 }
 
-// ── POST /extract ────────────────────────────────────────────────────────────
 scanLorryInvoice.post('/extract', async (c) => {
   const apiKey = c.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -315,8 +301,6 @@ scanLorryInvoice.post('/extract', async (c) => {
 
   try {
     const resp = await recordAi(usage, fetch(ANTHROPIC_URL, {
-      /* One document, one shot, an operator waiting. 110s matches scan-so's
-         own ceiling and sits under the frontend's 120s scan allowance. */
       signal: AbortSignal.timeout(110_000),
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
@@ -362,7 +346,7 @@ scanLorryInvoice.post('/extract', async (c) => {
       : `Could not reach the reader: ${e instanceof Error ? e.message : 'unknown error'}`;
   }
 
-  const scanFileKey = await keptKey; // kept alongside the model read; never throws
+  const scanFileKey = await keptKey;
   timer.mark('parse');
   if (!parsed) {
     timer.done(c.env, null, 'error');
@@ -375,13 +359,9 @@ scanLorryInvoice.post('/extract', async (c) => {
     document: parsed,
     /* The kept original; the work-order create links it (HC-0006 T7). */
     scanFileKey,
-    /* Everything below is DERIVED for the review screen. The record is not
-       written here — the operator confirms first. */
     totals: {
       linesSen: check.linesSen,
       printedTotalSen: check.printedSen,
-      /* null = the document printed no total, so there was nothing to check
-         against. That is not the same as "checked and agreed". */
       reconciles: check.matches,
       deltaSen: check.deltaSen,
     },

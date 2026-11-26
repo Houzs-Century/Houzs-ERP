@@ -33,7 +33,6 @@ export type DeptCounts = {
   active: number;
   invited: number;
   disabled: number;
-  /** active + invited — what the tree shows (disabled excluded). */
   visible: number;
 };
 
@@ -56,8 +55,6 @@ export type DeptNode = {
   counts: DeptCounts;
   divisions: DivisionNode[];
   lead: TeamMember | null;
-  /** true when `lead` is the department's EXPLICITLY chosen lead
-   *  (dept.lead_user_id), false when it was derived from manager_id. */
   leadIsChosen: boolean;
 };
 
@@ -127,10 +124,6 @@ export function buildDeptNodes(
     const divisions: DivisionNode[] = [...byDivision.entries()]
       .map(([name, ms]) => ({ name, counts: countByStatus(ms) }))
       .sort((a, b) => b.counts.visible - a.counts.visible || a.name.localeCompare(b.name));
-    // The REAL lead (dept.lead_user_id, mig-pg 0331) wins over the derived one:
-    // an explicit choice beats an inference. Falls back to deriveDeptLead only
-    // when no lead is set, or when the chosen person is no longer a member — so
-    // the red "No lead" state still keys off "nobody, derived or chosen".
     const chosenLead =
       dept.lead_user_id != null
         ? members.find((m) => m.id === dept.lead_user_id) ?? null
@@ -209,11 +202,6 @@ export function roleOptions(
 export const FIELD_SELECT_CLS =
   "h-[38px] w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary";
 
-// ──────────────────────────────────────────────────────────
-// Segmented tab switcher — the design's inset pill strip
-// (bg-surface-2 track, active segment lifts on bg-surface).
-// Used for the Profile sub-tabs and the Mailboxes view tabs.
-// ──────────────────────────────────────────────────────────
 
 export type SegmentOption<V extends string> = {
   value: V;

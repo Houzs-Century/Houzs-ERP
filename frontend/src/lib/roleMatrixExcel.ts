@@ -45,7 +45,6 @@ import {
 export type CellValue = string | number | boolean | null;
 export interface SheetData {
   name: string;
-  /** Array of arrays, row-major, header row first. */
   aoa: CellValue[][];
 }
 export interface WorkbookData {
@@ -65,7 +64,6 @@ export interface RoleLite {
  *  per-page levels. Everything export writes and import diffs against. */
 export interface MatrixSnapshot {
   roles: RoleLite[];
-  /** Page catalogue (GET /api/roles/page-access), retired already excluded. */
   pages: PageLite[];
   permissions: PermissionDef[];
   permsByRole: Map<number, ReadonlySet<string>>;
@@ -101,7 +99,6 @@ export function roleColumnHeader(r: RoleLite): string {
   return `${r.name}\n(${r.memberCount} ${r.memberCount === 1 ? "member" : "members"})`;
 }
 
-// ── Building a snapshot from the three API payloads ────────────────────────
 
 /** Assemble a snapshot from the raw API shapes the matrix already loads, so the
  *  desktop tab, the mobile editor and the tests build it the one way. */
@@ -135,10 +132,7 @@ export function snapshotFromApi(
   };
 }
 
-// ── Export ─────────────────────────────────────────────────────────────────
 
-/** Pages the owner may set a level on — the catalogue minus the parent-derived
- *  umbrella keys (scm), which `pageRowsToSend` recomputes from the areas. */
 function editablePages(pages: PageLite[]): PageLite[] {
   return pages.filter((p) => !PARENT_DERIVED_KEYS.includes(p.key));
 }
@@ -152,8 +146,6 @@ function pageModuleLabels(snap: MatrixSnapshot): Map<string, string> {
   return out;
 }
 
-/** Permission keys the matrix exports/imports: the whole catalogue except `*`
- *  (the wildcard belongs to locked roles only), in catalogue order. */
 function exportablePermissions(permissions: PermissionDef[]): PermissionDef[] {
   return permissions.filter((p) => p.key !== "*");
 }
@@ -206,7 +198,6 @@ export function buildWorkbook(snap: MatrixSnapshot): WorkbookData {
   };
 }
 
-// ── Cell parsing ─────────────────────────────────────────────────────────
 
 function cellText(v: CellValue): string {
   if (v === null) return "";
@@ -215,12 +206,8 @@ function cellText(v: CellValue): string {
 }
 
 const GRANT_TOKENS = new Set(["✓", "✔", "√", "y", "yes", "true", "1", "有", "是", "x"]);
-// NOTE: `x` is treated as GRANT (a hand-filled tick), never revoke, to match the
-// owner's files. Revoke is an explicit dash or a clear negative.
 const REVOKE_TOKENS = new Set(["-", "–", "—", "−", "0", "n", "no", "false", "否", "无"]);
 
-// Callers handle a blank cell (per blankMode) before calling these, so the
-// parsers only classify a NON-empty cell.
 type GrantParse = "grant" | "revoke" | "bad";
 function parseGrantCell(raw: string): GrantParse {
   const t = raw.trim().toLowerCase();
@@ -246,15 +233,12 @@ function parseLevelCell(raw: string): LevelParse {
   return level ? { level } : "bad";
 }
 
-// ── Column detection ───────────────────────────────────────────────────────
 
-/** Read the leading integer of a role-column header, e.g. `247 · Sales…`. */
 function leadingId(header: string): number | null {
   const m = /^\s*#?\s*(\d+)\b/.exec(header);
   return m ? Number(m[1]) : null;
 }
 
-/** Strip a `247 ·`/`#247 -` id prefix so the remainder can be name-matched. */
 function stripIdPrefix(header: string): string {
   return header.replace(/^\s*#?\s*\d+\s*[·.\-:：]?\s*/, "").trim();
 }
@@ -274,10 +258,6 @@ type ColumnMatch =
   | { kind: "ambiguous" }
   | { kind: "none" };
 
-/** Decide whether a header names one of the snapshot's roles. An `id ·` prefix
- *  wins; then an exact (case-insensitive) name match on the decoration-stripped
- *  header (or with an id prefix removed). A name shared by two roles is
- *  ambiguous and reported, never guessed. */
 function matchRoleColumn(header: string, roles: RoleLite[]): ColumnMatch {
   const id = leadingId(header);
   if (id !== null) {
@@ -294,7 +274,6 @@ function matchRoleColumn(header: string, roles: RoleLite[]): ColumnMatch {
   return { kind: "none" };
 }
 
-// ── Import ───────────────────────────────────────────────────────────────
 
 export interface PageChange {
   pageKey: string;
@@ -310,15 +289,11 @@ export interface RoleImportResult {
   functionsAdded: string[];
   functionsRemoved: string[];
   pageChanges: PageChange[];
-  /** Grants raised (function added, or page level raised). */
   addedCount: number;
-  /** Grants withdrawn (function removed, or page level lowered). */
   removedCount: number;
   permsChanged: boolean;
   pagesChanged: boolean;
-  /** Full permissions array for PATCH /api/roles/:id. */
   permsPayload: string[];
-  /** Full replace-set for PATCH /api/roles/:id/page-access. */
   pagePayload: Array<{ pageKey: string; level: MatrixLevel }>;
 }
 
@@ -329,29 +304,20 @@ export interface BadCell {
 }
 
 export interface ParsedImport {
-  /** Every role that appeared as a column and is writable, with its diff. */
   roleResults: RoleImportResult[];
-  /** The subset with at least one change (what Apply will write). */
   changedRoles: RoleImportResult[];
-  /** Columns that look like roles but match none (reported, not applied). */
   ignoredColumns: string[];
-  /** Columns whose header matched two roles by name — not applied. */
   ambiguousColumns: string[];
-  /** Function/page keys in the file that are not in this build's catalogue. */
   unknownKeys: string[];
-  /** Locked roles (system / `*`) that carried edits — reported, never written. */
   lockedWithEdits: string[];
-  /** Up to a cap of unreadable cells, so the owner can fix the file. */
   badCells: BadCell[];
   totalAdded: number;
   totalRemoved: number;
-  /** True when no sheet had a detectable key column — nothing to import. */
   empty: boolean;
 }
 
 const BAD_CELL_CAP = 50;
 
-/** A1-style cell reference for a 0-based (row, col), for the bad-cell report. */
 function cellRef(row: number, col: number): string {
   let c = col;
   let s = "";
@@ -386,7 +352,6 @@ export function parseMatrixWorkbook(
   const permKeys = new Set(snap.permissions.filter((p) => p.key !== "*").map((p) => p.key));
   const knownKeys = new Set<string>([...permKeys, ...snap.pages.map((p) => p.key)]);
 
-  // One working copy per role, seeded from the live matrix.
   const working = new Map<number, WorkingRole>();
   for (const r of snap.roles) {
     working.set(r.id, {
@@ -413,8 +378,7 @@ export function parseMatrixWorkbook(
     if (rows.length < 2) continue;
     const header = rows[0]!;
 
-    // Role columns by header; everything else is a candidate label/key column.
-    const roleColOf = new Map<number, number>(); // column index → roleId
+    const roleColOf = new Map<number, number>();
     const otherCols: number[] = [];
     for (let c = 0; c < header.length; c++) {
       const h = cellText(header[c] ?? null);
@@ -429,8 +393,6 @@ export function parseMatrixWorkbook(
       } else if (match.kind === "ambiguous") {
         ambiguousColumns.add(h);
       } else if (leadingId(h) !== null) {
-        // A header with an id prefix (clearly meant as a role column) whose id is
-        // no role in this build is reported; a plain label column is not.
         ignoredColumns.add(h);
       } else {
         otherCols.push(c);
@@ -466,28 +428,22 @@ export function parseMatrixWorkbook(
       const isPage = pageByKey.has(key) && !PARENT_DERIVED_KEYS.includes(key);
       if (!isPerm && !isPage) {
         if (!knownKeys.has(key)) unknownKeys.add(key);
-        continue; // a retired/umbrella/unknown key sets nothing
+        continue;
       }
       for (const [roleId, col] of roleColOf) {
         const raw = cellText(rows[r]![col] ?? null);
         const w = working.get(roleId);
         if (!w) continue;
-        // Locked roles (system / `*`) are never written. Flag the role only when
-        // the file actually puts a value in its column (not for a blank cell).
         if (lockedById.get(roleId)) {
           if (raw !== "") lockedTouched.add(roleId);
           continue;
         }
         if (isPerm) {
-          // scm.access is DERIVED from the SCM page levels (reconcileScmAccess
-          // below), never set by a function cell — so a blank/ticked scm.access
-          // cell can't wrongly revoke or grant Supply-Chain access when the page
-          // half of the file isn't imported.
           if (key === SCM_ACCESS_KEY) continue;
           let grant: boolean;
           if (raw === "") {
-            if (blankMode !== "none") continue; // blank = leave as-is
-            grant = false; // blank = not granted (complete-matrix)
+            if (blankMode !== "none") continue;
+            grant = false;
           } else {
             const g = parseGrantCell(raw);
             if (g === "bad") {
@@ -501,8 +457,8 @@ export function parseMatrixWorkbook(
         } else {
           let level: MatrixLevel;
           if (raw === "") {
-            if (blankMode !== "none") continue; // blank = leave as-is
-            level = "none"; // blank = not visible (complete-matrix)
+            if (blankMode !== "none") continue;
+            level = "none";
           } else {
             const lv = parseLevelCell(raw);
             if (lv === "bad") {
@@ -517,8 +473,6 @@ export function parseMatrixWorkbook(
     }
   }
 
-  // Reconcile scm.access from the final page levels (matches the UI) before the
-  // diff, so the umbrella is shown and written consistently.
   for (const [roleId, w] of working) {
     if (lockedById.get(roleId)) continue;
     const reconciled = reconcileScmAccess(w.perms, w.levels);
@@ -527,8 +481,8 @@ export function parseMatrixWorkbook(
 
   const roleResults: RoleImportResult[] = [];
   for (const role of snap.roles) {
-    if (!rolesInFile.has(role.id)) continue; // only roles present in the file
-    if (role.locked) continue; // locked roles never produce a payload
+    if (!rolesInFile.has(role.id)) continue;
+    if (role.locked) continue;
     const w = working.get(role.id)!;
     const current = snap.permsByRole.get(role.id) ?? new Set<string>();
     const currentLevels = snap.levelsByRole.get(role.id) ?? {};

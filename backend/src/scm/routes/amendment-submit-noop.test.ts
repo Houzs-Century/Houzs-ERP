@@ -5,7 +5,6 @@
  * ask. The rule is pinned in lib/amendment-noop-lines.test.ts; this pins the
  * WIRING and its ORDER on the two handlers' source. */
 import { describe, expect, it } from 'vitest';
-/* `?raw`, not node:fs — backend/tsconfig.json types Workers only. */
 import rawRoute from './mfg-sales-orders.ts?raw';
 import rawPreview from './so-amendment-lane-preview.ts?raw';
 

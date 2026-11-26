@@ -24,12 +24,10 @@ describe('buildDefaultSofaCells', () => {
       ['CNR', 312, 0, 90],
       ['1A(RHF)', 312, 95, 90],
     ]);
-    // Each leg's arm is on its FRONT end (toward the TV), its back to the outside.
     const leftLeg = cellEdges(cells[0]!);
     const rightLeg = cellEdges(cells[5]!);
     expect([leftLeg[0], leftLeg[3]]).toEqual(['back', 'arm']);
     expect([rightLeg[2], rightLeg[3]]).toEqual(['back', 'arm']);
-    // Corners have their backrests on the outside of the U.
     expect(cellEdges(cells[1]!).slice(0, 2)).toEqual(['arm', 'arm']);
     expect(cellEdges(cells[4]!).slice(1, 3)).toEqual(['arm', 'arm']);
   });
@@ -96,7 +94,6 @@ describe('buildDefaultSofaCells — separate sofas and Console joins', () => {
     expect(at('CNR').y).toBe(0);
     expect(at('2NA').y).toBe(0);
     expect(at('Console').x).toBeGreaterThan(at('2NA').x);
-    // Just in front of the 2NA it sits before, not below the 1A(LHF) leg.
     const back = moduleFootprint(findModule('2NA')!, 0, '28').h;
     const leg = at('1A(LHF)');
     const legFp = moduleFootprint(findModule('1A(LHF)')!, 270, '28');

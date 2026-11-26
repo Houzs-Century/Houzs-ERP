@@ -119,7 +119,7 @@ export function lineLinkItemMismatch(
   labels: { source: string },
 ): LineLinkMismatch | null {
   for (const claim of claims) {
-    if (!claim.linkId) continue; // an unlinked line is not this function's business
+    if (!claim.linkId) continue;
     const sourceCode = sourceItemCodeById.get(claim.linkId);
     const src = normLinkItemCode(sourceCode);
     const mine = normLinkItemCode(claim.itemCode);

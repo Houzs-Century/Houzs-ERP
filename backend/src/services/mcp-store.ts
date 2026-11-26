@@ -12,14 +12,13 @@ type Db = Env["DB"];
 
 export const MCP_TOKEN_PREFIX = "hzmcp_";
 export const MCP_REFRESH_PREFIX = "hzmcpr_";
-export const ACCESS_TTL_MS = 24 * 60 * 60 * 1000; // 24 h
-export const REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
-export const CODE_TTL_MS = 10 * 60 * 1000; // 10 min
+export const ACCESS_TTL_MS = 24 * 60 * 60 * 1000;
+export const REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+export const CODE_TTL_MS = 10 * 60 * 1000;
 
 /** Who may manage the connector (approve, disconnect). The Owner's "*" covers it. */
 export const MCP_ADMIN_PERMISSION = "ai_connector.manage";
 
-// ── crypto helpers ───────────────────────────────────────────────────────────
 
 export function randomToken(bytes = 32): string {
   const a = new Uint8Array(bytes);
@@ -46,7 +45,6 @@ const str = (r: Record<string, unknown>, ...keys: string[]): string => {
   return "";
 };
 
-// ── access (who may connect) ────────────────────────────────────────────────
 
 /** Admins (holders of MCP_ADMIN_PERMISSION, via "*" too) always may; others need approval. */
 export async function hasMcpAccess(db: Db, userId: number, isAdmin: boolean): Promise<boolean> {
@@ -55,7 +53,6 @@ export async function hasMcpAccess(db: Db, userId: number, isAdmin: boolean): Pr
   return !!row;
 }
 
-// ── clients ─────────────────────────────────────────────────────────────────
 
 export type McpClient = { clientId: string; clientName: string; redirectUris: string[] };
 
@@ -103,7 +100,6 @@ export function appLabel(clientName: string): string {
   return clientName || "AI app";
 }
 
-// ── pending "Allow?" screens ────────────────────────────────────────────────
 
 export type AuthRequest = { id: string; clientId: string; redirectUri: string; state: string; codeChallenge: string };
 
@@ -135,7 +131,6 @@ export async function takeAuthRequest(db: Db, id: string): Promise<AuthRequest |
   return { id: str(r, "id"), clientId: str(r, "client_id"), redirectUri: str(r, "redirect_uri"), state: str(r, "state"), codeChallenge: str(r, "code_challenge") };
 }
 
-// ── authorization codes ─────────────────────────────────────────────────────
 
 export async function createCode(db: Db, a: { clientId: string; userId: number; redirectUri: string; codeChallenge: string }): Promise<string> {
   const code = randomToken(32);
@@ -163,7 +158,6 @@ export async function consumeCode(db: Db, code: string): Promise<{ clientId: str
   return { clientId: str(r, "client_id"), userId: Number(str(r, "user_id")), redirectUri: str(r, "redirect_uri"), codeChallenge: str(r, "code_challenge") };
 }
 
-// ── tokens ──────────────────────────────────────────────────────────────────
 
 export type IssuedTokens = { accessToken: string; refreshToken: string; expiresIn: number; tokenId: string };
 
@@ -234,7 +228,6 @@ export async function resolveAccessToken(db: Db, token: string): Promise<McpToke
     try {
       await db.prepare("UPDATE mcp_tokens SET last_used_at = ? WHERE id = ?").bind(new Date().toISOString(), row.tokenId).run();
     } catch {
-      /* cosmetic */
     }
   }
   return row;
@@ -256,7 +249,6 @@ export async function revokeUserTokens(db: Db, userId: number): Promise<number> 
   return r.results.length;
 }
 
-// ── call log ────────────────────────────────────────────────────────────────
 
 export async function logCall(
   db: Db,
@@ -275,7 +267,6 @@ export async function logCall(
   }
 }
 
-// ── AI actions: the switch and pending actions (services/mcp-actions.ts) ─────
 
 const ACTIONS_KEY = "mcp_actions_enabled";
 

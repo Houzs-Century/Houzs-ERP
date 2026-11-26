@@ -1,6 +1,3 @@
-// A small .xlsx writer for files people fill in by colour. SheetJS community edition
-// drops cell fills on write, and the colour is the instruction on these sheets, so the
-// few parts the format needs are written directly. Text is inline, never a formula.
 
 import { strToU8, zipSync } from 'fflate';
 

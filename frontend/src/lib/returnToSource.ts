@@ -10,15 +10,14 @@ const detail = (base: string) => (id: string | null | undefined): string | null 
 
 /** Detail-page route of each source document; null when the URL carried no id. */
 export const sourceDocPath = {
-  salesOrder: detail('/scm/sales-orders'), // keyed by doc no
+  salesOrder: detail('/scm/sales-orders'),
   deliveryOrder: detail('/scm/delivery-orders'),
   purchaseOrder: detail('/scm/purchase-orders'),
   goodsReceipt: detail('/scm/grns'),
   purchaseInvoice: detail('/scm/purchase-invoices'),
-  consignmentOrder: detail('/scm/consignment-orders'), // keyed by doc no
+  consignmentOrder: detail('/scm/consignment-orders'),
   consignmentNote: detail('/scm/consignment-notes'),
   purchaseConsignmentOrder: detail('/scm/purchase-consignment-orders'),
   purchaseConsignmentReceive: detail('/scm/purchase-consignment-receives'),
-  // No detail page: the request list reopens the request's drawer from ?open=.
   paymentRequest: (id: string | null | undefined): string | null => (id ? `/scm/payment-requests?open=${encodeURIComponent(id)}` : null),
 };

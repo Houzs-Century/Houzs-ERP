@@ -76,8 +76,6 @@ type AccountRow = {
   is_active: boolean;
   acc_money: boolean | null;
   special_type: string | null;
-  /** The AutoCount top node the account hangs under — decides account_type
-      (lib/account-sections.ts). NULL only on a row older than the migration. */
   section: string | null;
   /** 需要 Event / the PMS event page's row (owner 2026-10-01, payment-request item 4). */
   needs_event?: boolean | null;
@@ -88,13 +86,8 @@ type AccountRow = {
   department_row?: string | null;
 };
 
-/* Every field a definition COPY carries (tick-ON, create chains, re-parent
-   instantiation) — one list, so a new column cannot be copied in one walk and
-   forgotten in another. */
 const DEFINITION_FIELDS = 'account_code, account_name, account_type, parent_code, acc_money, special_type, section, needs_event, pms_row, logistics_row, department_row';
 
-/** The caller's company allow-list, fail-CLOSED like every scoping helper:
-    no resolved list means no cross-company picture. */
 const allowedIds = (c: any): number[] => {
   const ids = c.get('allowedCompanyIds') as number[] | undefined;
   if (Array.isArray(ids)) return ids;
@@ -102,12 +95,6 @@ const allowedIds = (c: any): number[] => {
   return typeof active === 'number' ? [active] : [];
 };
 
-/* The audit rule (who, when, from -> to) on the chart: an edit here decides
-   where every later posting lands, in every company carrying the code, and
-   before 2026-11-10 it left no trace. The pre-flight runs BEFORE the first
-   write so a refusal can truthfully say nothing changed (entity-audit.ts);
-   the rows are written after, one per company touched, so each company's
-   trail reads whole. */
 const chartAuditRefusal = async (c: any, code: string | null, action: AuditAction): Promise<Response | null> => {
   const pf = await assertAuditWritable(c.get('supabase'), { entityType: 'GL_ACCOUNT', entityId: code, action, companyId: null });
   return pf.ok ? null : c.json(auditUnavailableBody(), 409);
@@ -130,7 +117,6 @@ const AUDITED_FIELDS = ['account_name', 'account_type', 'parent_code', 'acc_mone
 const definitionChanges = (before: Record<string, unknown> | null, after: Record<string, unknown>): Array<FieldChange | null> =>
   AUDITED_FIELDS.filter((f) => after[f] !== undefined).map((f) => fieldChange(f, before?.[f] ?? null, after[f]));
 
-/* ── GET /accounting/chart — the union, one row per code ─────────────────── */
 export const chartUnionHandler = async (c: any): Promise<Response> => {
   if (!requireChartPerm(c)) {
     return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
@@ -144,9 +130,6 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
     .in('company_id', ids);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  /* One row per code. Definition fields prefer the LOWEST company id that
-     carries the code (company 1 = the master book where the accountant's
-     import lands), so a rename there leads the union. */
   const byCode = new Map<string, { code: string; name: string; type: string; parentCode: string | null; accMoney: boolean; special: string | null; section: string | null; needsEvent: boolean; pmsRow: string | null; logisticsRow: string | null; departmentRow: string | null; definedBy: number; perCompany: Record<number, { active: boolean }> }>();
   for (const raw of (data ?? []) as AccountRow[]) {
     const cur = byCode.get(raw.account_code);
@@ -175,21 +158,14 @@ export const chartUnionHandler = async (c: any): Promise<Response> => {
     .map((co) => ({ id: co.id, code: co.code }));
   return c.json({
     companies,
-    /* The section vocabulary rides along, in render order — the page's
-       headers, its Section pickers and the import's heading check all read
-       THIS list, never a copy of their own. */
     sections: ACCOUNT_SECTIONS,
-    /* The PMS event page's rows an account can fill (item 4) — one list, read by the page's picker. */
     pmsRows: PMS_ROWS.map((row) => ({ row, label: PMS_ROW_LABELS[row] })),
-    /* The Logistics P&L's rows an account can feed, each with the account type it takes — one list. */
     logisticsRows: LOGISTICS_ROWS.map((row) => ({ row, label: logisticsRowLabel(row), type: logisticsRowType(row) })),
-    /* The Department P&L's values an expense account can take (G&A, or an Operation row in a region) — one list. */
     departmentRows: DEPARTMENT_ROWS.map((row) => ({ row, label: departmentRowLabel(row) })),
     accounts: [...byCode.values()].map(({ definedBy: _d, ...row }) => row),
   });
 };
 
-/* ── PUT /accounting/chart/tick — {companyId, code, active} ──────────────── */
 export const chartTickHandler = async (c: any): Promise<Response> => {
   if (!requireChartPerm(c)) {
     return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
@@ -209,9 +185,6 @@ export const chartTickHandler = async (c: any): Promise<Response> => {
   if (auditRefused) return auditRefused;
 
   if (active) {
-    /* Ticking may have to INSTANTIATE the row (and its parent — a child never
-       arrives without its header, the tree stays whole) from the master
-       definition: the lowest-company row that carries the code. */
     const chain: string[] = [];
     let cursor: string | null = code;
     for (let depth = 0; cursor && depth < 4; depth += 1) {
@@ -296,7 +269,6 @@ export const chartTickHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true, companyId, code, active: false, disabled: toDisable });
 };
 
-/* ── POST /accounting/chart/import — the accountant's export, upserted ───── */
 export const chartImportHandler = async (c: any): Promise<Response> => {
   if (!requireChartPerm(c)) {
     return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
@@ -317,10 +289,6 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
   for (const [i, r] of rows.entries()) {
     const code = String(r?.code ?? '').trim();
     const name = String(r?.name ?? '').trim();
-    /* The section HEADING the file put the row under, when it is one of the
-       vocabulary; it decides the type. A row without one (an unknown heading
-       — the screen names those) keeps the type it was sent with and takes the
-       default shelf for it. */
     const sectionRaw = r?.section != null ? String(r.section).trim().toUpperCase() : '';
     const section = isAccountSection(sectionRaw) ? sectionRaw : null;
     const type = section ? String(sectionType(section)) : String(r?.accountType ?? '').trim().toUpperCase();
@@ -341,8 +309,6 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
       shared: r?.shared === true,
     });
   }
-  /* Parents must be rows of the same file (or already known) — a child that
-     points nowhere would orphan the tree. */
   for (const r of clean) {
     if (r.parent && !seen.has(r.parent)) {
       return c.json({ error: 'bad_row', message: `${r.code} names parent ${r.parent}, which is not in the file.` }, 400);
@@ -364,7 +330,6 @@ export const chartImportHandler = async (c: any): Promise<Response> => {
 
   const importRefused = await chartAuditRefusal(c, null, 'UPDATE');
   if (importRefused) return importRefused;
-  /* Chunked: up to 1000 codes would not fit one request URL. */
   const beforeRows: Array<Record<string, unknown>> = [];
   for (let i = 0; i < clean.length; i += 150) {
     const beforeRes = await sb.from('accounts').select(`company_id, is_active, ${DEFINITION_FIELDS}`)
@@ -478,9 +443,6 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
   if (ids.length === 0) return c.json({ error: 'no_companies', message: 'No company grants resolve for this session.' }, 409);
   const code = String(body.code ?? '').trim();
   const name = String(body.name ?? '').trim();
-  /* The SECTION decides the type (CAPITAL is EQUITY, COST OF GOODS SOLD is
-     EXPENSE — lib/account-sections.ts); a caller naming only a type lands on
-     that type's default shelf, the way the migration seeded the old rows. */
   const sectionRaw = body.section != null ? String(body.section).trim().toUpperCase() : '';
   const sectionShown = sectionRaw;
   if (sectionRaw && !isAccountSection(sectionRaw)) {
@@ -544,9 +506,6 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
     }
   }
 
-  /* The parent chain, from the master definition (lowest company carrying
-     each code) — same walk as tick-ON, so a child never lands without its
-     header in ANY company that receives it. */
   const chain: AccountRow[] = [];
   let cursor: string | null = parent;
   for (let depth = 0; cursor && depth < 4; depth += 1) {
@@ -562,15 +521,11 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
     chain.unshift(lookRes.data as AccountRow);
     cursor = (lookRes.data as AccountRow).parent_code;
   }
-  /* A child sits where its header sits — a parent in another section would
-     split the tree across two headers on the page. */
   const header = chain.length > 0 ? chain[chain.length - 1] : undefined;
   if (header?.section && header.section !== section) {
     return c.json({ error: 'section_mismatch', message: `${parent} sits under ${header.section} — a child takes its header's section.` }, 400);
   }
 
-  /* SBK/SCH ARE money — the import applies the same equivalence; a manual
-     create must not be able to disagree with the vocabulary. */
   const money = special === 'SBK' || special === 'SCH' ? true : body.accMoney === true;
 
   for (const companyId of targets) {
@@ -605,7 +560,6 @@ export const chartCreateHandler = async (c: any): Promise<Response> => {
     }, { onConflict: 'company_id,account_code' });
     if (insErr) return c.json({ error: 'save_failed', reason: insErr.message }, 500);
     if (dep) {
-      /* The twin lives beside the asset — same parent, same type, SAD. */
       const { error: depErr } = await sb.from('accounts').upsert({
         company_id: companyId,
         account_code: dep.code,
@@ -659,11 +613,6 @@ export const chartRenameHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true, oldCode, newCode, moved: data ?? {} });
 };
 
-/* ── PUT /accounting/chart/update — {code, name?, accountType?, accMoney?} ──
-   Definition edits that DON'T change identity: they apply to the code in
-   EVERY company carrying it, because the union screen shows one definition
-   per code and two companies disagreeing about what 310-0010 is called would
-   be a lie in both books. */
 export const chartUpdateHandler = async (c: any): Promise<Response> => {
   if (!requireChartPerm(c)) {
     return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
@@ -735,7 +684,6 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
     if (self.parent_code && (body.parentCode === undefined || body.parentCode)) {
       return c.json({ error: 'section_child', message: `${code} sits under ${self.parent_code} — drag its header instead (a child moves with its header), or move it to the root first.` }, 400);
     }
-    /* The subtree: every code whose parent chain reaches this one. */
     const kidsOf = new Map<string, string[]>();
     for (const r of rows) {
       if (!r.parent_code) continue;
@@ -762,7 +710,7 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
   if (body.parentCode !== undefined) {
     const parent = body.parentCode == null ? '' : String(body.parentCode).trim();
     if (parent === '') {
-      newParent = null; // move to root
+      newParent = null;
     } else {
       if (parent === code) return c.json({ error: 'bad_parent', message: 'An account cannot be its own parent.' }, 400);
       const { data: pRow, error: pErr } = await sb.from('accounts')
@@ -778,7 +726,6 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
       if ((pRow as { account_type: string }).account_type !== selfType) {
         return c.json({ error: 'bad_parent', message: `A parent shares the child's type — ${parent} is ${(pRow as { account_type: string }).account_type}, ${code} is ${String(selfType)}.` }, 400);
       }
-      /* No cycles: the target may not sit anywhere BELOW the moved code. */
       let cursor: string | null = (pRow as { parent_code: string | null }).parent_code;
       for (let depth = 0; cursor && depth < 6; depth += 1) {
         if (cursor === code) return c.json({ error: 'bad_parent', message: `${parent} sits under ${code} — that loop would swallow the tree.` }, 400);
@@ -787,7 +734,6 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
         if (upErr) return c.json({ error: 'load_failed', reason: upErr.message }, 500);
         cursor = (up as { parent_code: string | null } | null)?.parent_code ?? null;
       }
-      /* Already a header? Then it already takes no postings — pass. */
       const { data: kids, error: kErr } = await sb.from('accounts')
         .select('account_code').eq('parent_code', parent).eq('is_active', true).limit(1);
       if (kErr) return c.json({ error: 'load_failed', reason: kErr.message }, 500);
@@ -830,8 +776,6 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
   if (priorRes.error) return c.json({ error: 'load_failed', reason: priorRes.error.message }, 500);
   const prior = ((priorRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({ ...r }));
 
-  /* One amount, one department: the Logistics column and the Department column never
-     both claim an expense account. */
   const was = prior[0] as { logistics_row?: string | null; department_row?: string | null; account_type?: string | null } | undefined;
   const nextLogistics = patch.logistics_row !== undefined ? patch.logistics_row as string | null : was?.logistics_row ?? null;
   const nextDepartment = patch.department_row !== undefined ? patch.department_row as string | null : was?.department_row ?? null;
@@ -863,8 +807,6 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
     }
   }
 
-  /* A section move carries the subtree: the children take ONLY the section
-     and the type it decides — their names, parents and flags are their own. */
   if (sectionCodes && sectionCodes.length > 1) {
     const { error: subErr } = await sb
       .from('accounts')
@@ -887,9 +829,6 @@ export const chartUpdateHandler = async (c: any): Promise<Response> => {
     ...(sectionCodes && sectionCodes.length > 1 ? { note: `Sub-accounts moved with it: ${sectionCodes.slice(1).join(', ')}` } : {}),
   })));
 
-  /* A re-parented child must find its header in EVERY company it lives in —
-     instantiate the parent chain from the master definition where missing
-     (the tick-ON walk, reused in spirit). */
   if (typeof newParent === 'string') {
     for (const t of touched) {
       const chain: string[] = [];

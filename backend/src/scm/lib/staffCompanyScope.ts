@@ -1,12 +1,6 @@
 import { activeCompanyId, houzsCompanyId, mirrorCompanyId } from "./companyScope";
 import type { Env } from "../env";
 
-/* The seeded super_admin system row (mig 0022 / 0066; the SCM auth bridge pins
-   every caller to it). Same literal as middleware/auth.ts + staff-mirror.ts —
-   it carries user_id NULL but is a HOUZS artifact, not a 2990 mirror row. Lives
-   here rather than in a route file because the scoping rule below is the thing
-   that needs it; it used to be a file-local const in scm/routes/staff.ts, which
-   is part of why hr.ts could not reuse the pass. */
 export const SCM_SYSTEM_STAFF_ID = "00000000-0000-4000-8000-000000000001";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -55,18 +49,8 @@ export const SCM_SYSTEM_STAFF_ID = "00000000-0000-4000-8000-000000000001";
 
 /** The company ids this request needs, all resolved from companies.code. */
 export interface StaffScopeCompanyIds {
-  /** The ACTIVE company for the request — a positive integer. The route
-   *  resolves it before calling here; there is no "unresolved" branch to fall
-   *  through, matching the REQUIRED-predicate rule for company scoping. */
   active: number;
-  /** companies.code === 'HOUZS' — the base company an ungranted LINKED user and
-   *  the system row default to. undefined only if the companies master lacks a
-   *  HOUZS row (then those rows resolve to no company → hidden, i.e. fail
-   *  closed). */
   houzs: number | undefined;
-  /** companies.code === '2990' — the mirror-source company UNLINKED rows are
-   *  attributed to. undefined only if the master lacks a 2990 row (then unlinked
-   *  rows resolve to no company → hidden). */
   mirror: number | undefined;
 }
 
@@ -91,18 +75,14 @@ export function staffCompanyIds(
   ids: Pick<StaffScopeCompanyIds, "houzs" | "mirror">,
   systemStaffId: string,
 ): number[] {
-  // The seeded system row is a Houzs artifact, not a 2990 mirror row — even
-  // though it carries user_id NULL like the mirror rows do. Attribute to HOUZS.
   if (row.id === systemStaffId) return ids.houzs != null ? [ids.houzs] : [];
 
   if (row.user_id != null) {
     const grants = grantsByUserId.get(Number(row.user_id));
     if (grants && grants.length > 0) return grants.slice();
-    // LINKED but ungranted → HOUZS base (Team backfill rule 1). NOT fail-open.
     return ids.houzs != null ? [ids.houzs] : [];
   }
 
-  // UNLINKED (no Houzs user) → the 2990 mirror source.
   return ids.mirror != null ? [ids.mirror] : [];
 }
 
@@ -131,25 +111,6 @@ export function filterStaffToCompany<T extends StaffScopeRow>(
   return rows.filter((r) => staffRowInActiveCompany(r, grantsByUserId, ids, systemStaffId));
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   THE APPLIED PASS — moved here from scm/routes/staff.ts on 2026-08-18.
-
-   The pure rule above had one caller and the rule's own header names the leak
-   class it closes, so a SECOND staff picker that never called it was invisible:
-   scm/routes/hr.ts GET /pickers returned every active staff row platform-wide
-   while its four immediate siblings in the same Promise.all each carried
-   `.eq('company_id', co.companyId)`. Chained with GET /staff/by-ids — which is
-   deliberately unfiltered because the caller must already hold the ids, and
-   which returns EMAIL and PHONE — the leak yielded the other company's staff
-   directory from an endpoint whose own comment said the picker was "unscoped by
-   design".
-
-   That comment was reasoning from the wrong fact. scm.staff genuinely has no
-   company_id (mig 0089 lists it under shared reference data), and it does not
-   follow that the picker is unscopable — this file exists precisely because the
-   attribution is DERIVED. A helper only one file can reach is a helper the next
-   file re-derives or skips, so the applied pass lives with the rule now.
-   ═══════════════════════════════════════════════════════════════════════════ */
 
 /** A staff row's linked Houzs user id, reading camelCase ?? snake_case (the
  *  PostgREST driver may camelCase result columns). Null when unlinked. */
@@ -182,11 +143,6 @@ export async function loadGrantsByUserId(
     )
       .bind(...userIds)
       .all<{ user_id: number | string; company_id: number | string }>();
-    /* The `?? []` the rule calls redundant is the only guard left: the D1 shim
-       TYPES `results` as non-nullable while the ops-script PostgREST shim can
-       return it absent, and a picker that throws is worse than one that falls
-       back to the base company. Same shape as the ?? guards in the money
-       routes, which the backend lint ratchet documents in ci.yml. */
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
     for (const row of res.results ?? []) {
       const uid = Number(row.user_id);
@@ -197,18 +153,10 @@ export async function loadGrantsByUserId(
       else map.set(uid, [cid]);
     }
   } catch {
-    // user_companies absent (pre-0f) or a transient DB error — keep the empty
-    // map. Never throw: a picker that 500s is worse than one that falls back to
-    // the HOUZS-base default for linked rows.
   }
   return map;
 }
 
-// The shared scoping pass: filter a raw staff-row set to the caller's ACTIVE
-// company via Team grants. Every staff PICKER goes through this — staff.ts
-// GET / and GET /pickable, and hr.ts GET /pickers — so the three cannot drift
-// on the scope rule. See filterStaffToCompany above and the THREE-STATE
-// contract on staff.ts GET /pickable for the full spec.
 export async function scopeStaffRowsToActiveCompany(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a Hono Context or the synthetic headless one; see CompanyScopeCtx
   c: any,
@@ -219,12 +167,8 @@ export async function scopeStaffRowsToActiveCompany(
   failClosed: boolean;
 }> {
   const companies = c.get("companies") ?? [];
-  // Pre-migration / cold-start: no companies master → single-company Houzs.
-  // Degrade to the full roster (the pre-fix behaviour) — the caller then
-  // renders the full list unchanged.
   if (companies.length === 0) return { scoped: rows, degrade: true, failClosed: false };
   const active = activeCompanyId(c);
-  // Multi-company context but no resolvable active company → fail closed.
   if (active == null) return { scoped: [], degrade: false, failClosed: true };
   const linkedIds = Array.from(
     new Set(rows.map(rowUserId).filter((n): n is number => n != null)),

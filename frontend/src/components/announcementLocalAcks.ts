@@ -41,7 +41,6 @@ export function mergeAndWriteAnnouncementAcks(
   try {
     localStorage.setItem(storageKey, JSON.stringify(merged));
   } catch {
-    // Persistence is best-effort; keep the in-memory result.
   }
   return merged;
 }
@@ -60,8 +59,6 @@ export function mergeAndWriteAnnouncementAcks(
 // slack — the reader is never blocked from opening the page to read it first.
 
 export const MAX_ANNOUNCEMENT_SKIPS = 1;
-// Bound against a corrupted blob claiming an absurd count; well above anything
-// a user can reach through the UI (dismiss controls disappear at the limit).
 const MAX_SKIP_COUNT = 99;
 
 export type AnnouncementSkip = { n: number; at: number };
@@ -93,10 +90,6 @@ export function readAnnouncementSkips(storageKey: string | null): AnnouncementSk
   }
 }
 
-// Plain overwrite, unlike the additive ack merge: an ack CLEARS the notice's
-// entry, and a read-merge would resurrect it from the stored copy. A racing
-// tab's lost increment only grants one extra skip — benign, and the storage
-// event re-syncs both tabs.
 export function writeAnnouncementSkips(
   storageKey: string | null,
   next: AnnouncementSkips,
@@ -106,7 +99,6 @@ export function writeAnnouncementSkips(
   try {
     localStorage.setItem(storageKey, JSON.stringify(sane));
   } catch {
-    // Persistence is best-effort; keep the in-memory result.
   }
   return sane;
 }

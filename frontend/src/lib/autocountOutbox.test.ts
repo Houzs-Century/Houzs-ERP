@@ -58,12 +58,8 @@ import {
   type AcOutboxResponse,
   type AcOutboxRow,
 } from "./autocountOutbox";
-/* `acListTotal` lives beside the Cleared tab it exists for; see that file's
-   header for why the archive half is a separate module. */
 import { acListTotal } from "./autocountArchive";
 
-/* Braces, not a concise arrow — a returned mock becomes vitest's teardown and
-   fires api.post after every test. Same trap as the two page suites. */
 beforeEach(() => { apiPost.mockReset(); });
 
 const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
@@ -110,8 +106,6 @@ describe("buildAcOutboxQs", () => {
       .toBe("?state=attention&docNo=HC-SO-1");
   });
 
-  /* The type strip has to count EVERY type. A server already narrowed to one
-     would make every other chip read zero, so the type never goes on the wire. */
   it("never sends the document type — the type is a lens on this side", () => {
     expect(buildAcOutboxQs({ state: "attention", docNo: "" })).not.toContain("docType");
   });
@@ -119,8 +113,6 @@ describe("buildAcOutboxQs", () => {
 
 describe("the document type words", () => {
   it("spells the plural out instead of appending an s", () => {
-    /* "GOODS RECEIVEDS" and "Invoice invoice" both shipped on the first mockup
-       from exactly that shortcut. */
     expect(AC_DOC_TYPE_PLURAL.GR).toBe("Goods received");
     expect(AC_DOC_TYPE_PLURAL.GR).not.toBe(`${AC_DOC_TYPE_LABEL.GR}s`);
     for (const t of AC_DOC_TYPES) expect(AC_DOC_TYPE_PLURAL[t]).not.toMatch(/receiveds/i);
@@ -180,8 +172,6 @@ describe("no coding words on this screen", () => {
   it("names the operation in words, and passes an unknown one through untranslated", () => {
     expect(acOpLabel("so_to_do")).toBe("Delivery order from a sales order");
     expect(acOpLabel("create_so")).toBe("New sales order");
-    /* An op nobody has words for reads as itself. Inventing a label for a value
-       this build has never seen would be a guess printed as a fact. */
     expect(acOpLabel("brand_new_op")).toBe("brand_new_op");
   });
 });
@@ -203,8 +193,6 @@ describe("acHeadline — the owner's question, answered in one line", () => {
       counts: { pending: 0, sent: 3, failed: 1, skipped: 2, requeued: 4, attention: 3, archived: 0, total: 10 },
     }));
     expect(h.tone).toBe("bad");
-    /* The four-tab change merged failed + skipped into "Not accepted", so the
-       headline no longer breaks the two out — it names the merged total only. */
     expect(h.text).toContain("3 documents are not in the account book");
     expect(h.text).toContain("need your attention");
     expect(h.text).not.toContain("held back");
@@ -217,8 +205,6 @@ describe("acHeadline — the owner's question, answered in one line", () => {
     expect(h.text).toContain("1 document is not in the account book");
   });
 
-  /* A re-queued skip is history. If it leaked into `attention` the owner would
-     see a permanent phantom failure. */
   it("re-queued rows alone do not make the page red", () => {
     const h = acHeadline(payload({
       counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 5, attention: 0, archived: 0, total: 6 },
@@ -252,15 +238,9 @@ describe("acHeadline — the owner's question, answered in one line", () => {
     expect(h.text).not.toContain("Everything is in AutoCount");
     expect(h.tone).not.toBe("good");
     expect(h.text).toMatch(/cannot say whether everything reached AutoCount/i);
-    /* And it must not simply repeat AC_COUNTS_PARTIAL_LINE, which sits directly
-       under it on both screens — two copies of one sentence teach the reader to
-       skip both. */
     expect(h.text).not.toContain("at least this many");
   });
 
-  /* The guard must not swallow the alarm. A partial count that ALREADY shows
-     refused documents is still showing refused documents — a floor above zero
-     is above zero — so `attention` keeps winning. */
   it("still raises the alarm when a partial count already found refusals", () => {
     const h = acHeadline(payload({
       counts_complete: false,
@@ -270,8 +250,6 @@ describe("acHeadline — the owner's question, answered in one line", () => {
     expect(h.text).toContain("need your attention");
   });
 
-  /* The empty-queue line is a claim too: "nothing has ever been queued" is a
-     fact about the world, and a scan that stopped early cannot establish it. */
   it("does not report an unfinished count as an empty queue", () => {
     const h = acHeadline(payload({ counts_complete: false }));
     expect(h.text).not.toContain("nothing has ever been queued");
@@ -285,8 +263,6 @@ describe("acWritebackLine — the switch, without the setting it lives in", () =
       .toContain("every company");
   });
 
-  /* A typo like 'On ' is OFF. The page used to print the config key to make it
-     visible; it prints the VALUE now, which is the half that helps. */
   it("shows a value that does not read as on, without naming the setting", () => {
     const line = acWritebackLine(payload({ writeback: { value: "On ", on: false, scope: "off" } }));
     expect(line).toContain('"On "');
@@ -299,17 +275,6 @@ describe("acWritebackLine — the switch, without the setting it lives in", () =
       .toContain("never been set");
   });
 
-  /* OFF FOR THIS COMPANY IS NOT OFF ALTOGETHER — the switch is a company
-     ALLOW-LIST, and until 2026-08-18 the server published "is it on for
-     anybody" under the name `on`. A reader in the company NOT on the list was
-     told sending was switched on FOR HIS COMPANY, and that saving a document
-     would queue it. Neither was true, his queue is company-scoped and stays
-     empty, and nothing errors. Same screen, same build, two organisations, and
-     one of them was reading a false sentence.
-
-     The old off-branch would have been just as wrong in the other direction: it
-     would have called a perfectly well-formed value a typo that "does not read
-     as on". Name the real situation instead. */
   it("says on for ANOTHER company, not that the value is a typo", () => {
     const line = acWritebackLine(payload({ writeback: { value: "1", on: false, scope: "1" } }));
     expect(line).toContain("switched off for this company");
@@ -322,10 +287,6 @@ describe("acWritebackLine — the switch, without the setting it lives in", () =
       .toContain("other companies");
   });
 
-  /* NULL IS ITS OWN STATE. The server could not resolve which company the
-     reader is in, so it declines rather than guessing — and the page must
-     decline too. Rendering that as "switched off" would state as fact the very
-     thing that could not be established. */
   it("declines to answer when the company could not be resolved", () => {
     const line = acWritebackLine(payload({ writeback: { value: "1", on: null, scope: "1" } }));
     expect(line).toContain("could not be checked");
@@ -345,11 +306,6 @@ describe("the refusal, in three parts", () => {
   });
 
   it("has copy for every skip kind the server can classify", () => {
-    /* Every kind in AC_SKIP_KINDS (backend/src/scm/lib/autocount-outbox-status.ts,
-       catalogued in docs/autocount-sync-reasons.md §2), plus the key the server
-       uses when it recognises nothing. A kind with no copy here falls through to
-       the unrecognised text and quietly loses its remedy — which is what
-       happened on the server side to three refusal classes until 2026-08-16. */
     for (const kind of [
       "keyless-line", "sofa-collapse", "item-code", "desc2-too-long", "missing-location",
       "missing-agent", "missing-sales-location", "missing-creditor",
@@ -370,8 +326,6 @@ describe("the refusal, in three parts", () => {
     expect(acReasonCopy("failed", null, null)).toBe(AC_FAILED_COPY);
   });
 
-  /* A To fix line on a row that has already been sent again would send somebody
-     to fix what is already fixed — the whole reason `requeued` exists. */
   it("gives a re-queued row no To fix, even though it still carries a kind", () => {
     expect(acReasonCopy("requeued", "item-code", null)).toBeNull();
   });
@@ -383,11 +337,6 @@ describe("the refusal, in three parts", () => {
 });
 
 describe("what to do about each Send again answer", () => {
-  /* Every outcome docs/autocount-sync-reasons.md §1 catalogues, which is the
-     RequeueOutcome union in backend/src/scm/lib/autocount-requeue.ts. The codes
-     are the join between the server's "what happened" sentence and this side's
-     "what to do next" — a code with neither would reach the owner as a bare
-     hyphenated key, which is what the shared header warns against. */
   const OUTCOMES = [
     "would-requeue", "requeued", "requeued-as-recorded", "still-refused", "not-recoverable",
     "already-in-autocount", "already-queued", "already-requeued", "already-sent",
@@ -426,9 +375,6 @@ describe("who said it", () => {
     expect(AC_REPLY_LABEL.autocount).toBe("AutoCount replied");
   });
 
-  /* A waiting row's note may be AutoCount's answer OR the ERP saying it is still
-     waiting on a parent, and nothing the server sends tells the two apart.
-     Claiming either would be a guess. */
   it("claims neither for a row still being retried", () => {
     expect(acReplySource("pending", "waiting: parent has no AutoCount document yet")).toBe("attempt");
   });
@@ -465,9 +411,6 @@ describe("the type strip counts", () => {
     expect(acGroupsOfType(groups, "")).toHaveLength(4);
   });
 
-  /* The status chips take the SERVER's numbers, which are exact and cover the
-     whole company — a different kind of number from the type counts above, and
-     the reason the two strips are fed from two different helpers. */
   it("takes the status count from the server, with Everything meaning the total", () => {
     const d = payload({
       counts: { pending: 1, sent: 2, failed: 3, skipped: 4, requeued: 5, attention: 7, archived: 0, total: 15 },
@@ -500,10 +443,6 @@ describe("the words", () => {
   });
 
   it("shares its words with the badge where a tab and a state overlap", () => {
-    /* Since 2026-08-21 the four tabs and the five row-badges are no longer the
-       same list — but where they DO name the same thing the words must match, so
-       a reader sees one vocabulary. pending and sent map straight across; the
-       "Not accepted" tab (attention) carries the failed badge's word. */
     expect(AC_FILTER_STATE_LABEL.pending).toBe(acStateLabel("pending"));
     expect(AC_FILTER_STATE_LABEL.sent).toBe(acStateLabel("sent"));
     expect(AC_FILTER_STATE_LABEL.attention).toBe(acStateLabel("failed"));
@@ -539,8 +478,6 @@ describe("acAge", () => {
 
 describe("requeueAcOutboxRow", () => {
   it("POSTs the row id and no body — the company is the header, never a parameter", async () => {
-    /* Passing a company would be inventing a second, weaker boundary beside the
-       route's own predicate. Same argument as useAutoCountOutbox above. */
     const answer = {
       accepted: true,
       code: "requeued",
@@ -564,10 +501,6 @@ describe("requeueAcOutboxRow", () => {
   });
 
   it("RESOLVES on a refusal — it is the server answering, not the call failing", async () => {
-    /* The distinction a caller must render: a refusal has a code and a sentence
-       to show, a throw has neither. A component that only handled the throw
-       would leave the owner pressing a button that does nothing visible, which
-       is the silent-mutation shape check-silent-mutations.mjs exists to catch. */
     apiPost.mockResolvedValueOnce({
       accepted: false,
       code: "already-sent",
@@ -609,8 +542,6 @@ describe("the page opens on what is stuck", () => {
       counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 900 },
     });
     expect(acEmptyLine(healthy, "attention")).toMatch(/Nothing needs your attention/);
-    /* Same company, a filter the reader CHOSE: "try another" is the right
-       answer there and the wrong one on arrival. */
     expect(acEmptyLine(healthy, "sent")).toMatch(/Try another status/);
     expect(acEmptyLine(payload(), "attention")).toMatch(/Nothing has ever been queued/);
   });
@@ -643,8 +574,6 @@ describe("acRowDetail — the headline stays, the rest goes behind the opener", 
     });
   });
 
-  /* Even a `sent` row that carries a note has nothing to open: it ARRIVED, and
-     a warning on a document that is in the book is noise on the majority row. */
   it("keeps a sent row quiet even when the server left a note on it", () => {
     expect(acRowDetail(row({ state: "sent", reason: "a stale note" }), false).expandable).toBe(false);
   });
@@ -655,7 +584,6 @@ describe("acRowDetail — the headline stays, the rest goes behind the opener", 
       false,
     );
     expect(d.line).toBe(AC_REASON_COPY["missing-location"]!.headline);
-    /* The sentence and the To fix line are reachable, not printed. */
     expect(d.copy).toBe(AC_REASON_COPY["missing-location"]);
     expect(d.said?.label).toBe(AC_REPLY_LABEL.erp);
     expect(d.expandable).toBe(true);
@@ -668,8 +596,6 @@ describe("acRowDetail — the headline stays, the rest goes behind the opener", 
     expect(acReplySource("skipped", "MissingLocationError")).toBe("erp");
   });
 
-  /* No copy exists for this one — a waiting row carrying its last attempt's
-     note — so the line says WHO spoke rather than inventing a headline. */
   it("falls back to who spoke when there is no plain wording for the row", () => {
     const d = acRowDetail(row({ state: "pending", attempts: 2, reason: "timeout" }), false);
     expect(d.line).toBe(AC_REPLY_LABEL.attempt);
@@ -685,9 +611,6 @@ describe("acRowDetail — the headline stays, the rest goes behind the opener", 
     expect(AC_REPLACED_NOTE).toMatch(/record of the first refusal/);
   });
 
-  /* An accepted re-send takes the WHOLE reason off, opener included: "To fix:
-     go and change it in AutoCount" on a document that has just gone back into
-     the queue is a false instruction. */
   it("takes the reason off a document that has just been accepted back", () => {
     const d = acRowDetail(
       row({ state: "failed", reason: "FK_SO_SalesAgent", reason_kind: null }),
@@ -719,22 +642,8 @@ describe("acRowDetail — the headline stays, the rest goes behind the opener", 
    class nobody has written yet.
    ─────────────────────────────────────────────────────────────────────────── */
 describe("what the server wrote never reaches the page as prose", () => {
-  /* VERBATIM PRODUCTION STRINGS, each with the writer that produces it. They
-     are literals rather than imports on purpose: this is the frontend suite and
-     it cannot import backend modules, and a paraphrase would test the
-     paraphrase. Re-derive with, from the repo root:
-
-       grep -n "last_error:\|reason:$\|reason:" backend/src/scm/lib/autocount-outbox.ts
-
-     and AcSyncService.cs for the `||` half. */
   const LIVE_NOTES: Array<{ what: string; row: AcOutboxRow }> = [
     {
-      /* recordParentlessCreate, backend/src/scm/lib/autocount-outbox.ts — AS THE
-         QUEUE STILL HOLDS IT. The writer stopped producing this sentence in the
-         same change as this test, and that alone fixes nothing the owner is
-         looking at: scm.autocount_outbox is append-only and `last_error` is
-         never rewritten (the re-queue marker is PREPENDED, isRequeuedNote), so
-         every row already written keeps these exact words for good. */
       what: "the parentless invoice, as production wrote it",
       row: row({
         id: "hist", doc_no: "HC-IV-2608-004", doc_type: "IV", op: "do_to_iv",
@@ -748,9 +657,6 @@ describe("what the server wrote never reaches the page as prose", () => {
       }),
     },
     {
-      /* noteReadFailure writes `refused, nothing sent (${e.name}): …` for eight
-         error classes. The class name is the CLASSIFIER's needle and has to stay
-         in the column; it must not be on the screen. */
       what: "a refusal class name in the ERP's own note",
       row: row({
         id: "kl", doc_no: "HC-SO-2608-009", status: "skipped", state: "skipped",
@@ -759,8 +665,6 @@ describe("what the server wrote never reaches the page as prose", () => {
       }),
     },
     {
-      /* AcSyncService.cs's transfer arm, added 2026-08-16, reaching the ERP
-         through `Gave up after N attempts. Last error: …`. This is the wall. */
       what: "AutoCount's refusal plus the account book, line by line",
       row: row({
         id: "dump", doc_no: "HC-DO-2608-002", doc_type: "DO", op: "so_to_do",
@@ -776,7 +680,6 @@ describe("what the server wrote never reaches the page as prose", () => {
     },
   ];
 
-  /** Everything a reader sees WITHOUT opening the technical disclosure. */
   const plainSideOf = (r: AcOutboxRow): string => {
     const d = acRowDetail(r, false);
     return [d.line, d.copy?.explain, d.copy?.toFix, d.said?.label, d.said?.said]
@@ -798,15 +701,10 @@ describe("what the server wrote never reaches the page as prose", () => {
     }
   });
 
-  /* THE OTHER HALF, AND IT MATTERS AS MUCH. Hiding the evidence would be a
-     different bug: the per-line dump is what refuted the standing diagnosis for
-     these two delivery orders (docs/autocount-sync-reasons.md §4). It moves; it
-     does not go. */
   it("keeps every one of them REACHABLE, behind the technical disclosure", () => {
     for (const { what, row: r } of LIVE_NOTES) {
       const said = acRowDetail(r, false).said;
       expect(said?.technical, what).toBeTruthy();
-      /* Whatever was taken off the plain side is in there, whole. */
       expect(`${said?.said ?? ""}${said?.technical ?? ""}`, what).toContain(
         r.reason!.slice(-40),
       );
@@ -818,8 +716,6 @@ describe("what the server wrote never reaches the page as prose", () => {
     expect(acRowDetail(LIVE_NOTES[2]!.row, false).said?.label).toBe("AutoCount replied");
   });
 
-  /* THE HEADLINE IS NOT MACHINERY AND DOES NOT MOVE. He rejected a design where
-     the reason sat behind a click; this change moves only what is under it. */
   it("leaves the plain-language headline on the row, unclicked, for all of them", () => {
     for (const { what, row: r } of LIVE_NOTES) {
       expect(acRowDetail(r, false).line, what).toBeTruthy();
@@ -842,8 +738,6 @@ describe("acSplitMachineText — the separator the AutoCount service itself writ
       .toEqual({ said: "Invalid Debtor Code.", detail: null });
   });
 
-  /* Only the FIRST separator splits. The dump itself is semicolon-separated and
-     a second `||` inside it belongs to the evidence, not to a third section. */
   it("splits once, at the first mark", () => {
     expect(acSplitMachineText("a || b || c").detail).toBe("b || c");
   });
@@ -863,43 +757,22 @@ describe("acWhatWasSaid — who spoke, and how much of it is on screen", () => {
     expect(said.label).toBe("AutoCount was not asked");
   });
 
-  /* A refusal nobody has copy for yet: the quote IS the answer, and taking it
-     off the screen would leave the row saying only that nobody has words. */
   it("shows the ERP's note when this file has NO words for the row", () => {
     expect(acWhatWasSaid(erp, false).said).toBe(erp.reason);
   });
 
-  /* THIS USED TO ASSERT "never folds AutoCount's own sentence away, plain words
-     or not", by calling acWhatWasSaid directly with hasWords=true. That flag
-     said "who spoke" when it was written, because the only notes this file had
-     words for were the ERP's — so for an AutoCount answer the true branch was
-     unreachable and asserting it pinned a case the page could not produce.
-
-     `AC_AUTOCOUNT_SAID` made it reachable, and the PROPERTY worth protecting is
-     unchanged: an AutoCount refusal this file cannot explain must keep its words
-     ON THE ROW, because there the machine's sentence is the entire diagnosis.
-     What changed is that the property is now asserted through `acRowDetail`, the
-     caller that actually decides the flag — a test that hand-feeds an argument
-     its only caller would never pass proves nothing about the screen. */
   it("never folds an AutoCount sentence this file cannot explain", () => {
     const failed = row({
       state: "failed",
       reason: "Invalid transfer item. || source SO lines as the book holds them: 905348 Qty=1",
     });
-    /* Through the real caller: no translation exists for this string, so the
-       generic failed copy is used and the quote stays in view. */
     const detail = acRowDetail(failed, false);
     expect(detail.said!.said).toBe("Invalid transfer item.");
     expect(detail.said!.technical).toBe("source SO lines as the book holds them: 905348 Qty=1");
-    /* And directly, on the branch acRowDetail computes for it. */
     const said = acWhatWasSaid(failed, false);
     expect(said.said).toBe("Invalid transfer item.");
   });
 
-  /* The other half of the same rule, and the reason the flag stopped being about
-     who spoke: where this file DOES say what the note says, the raw text is
-     duplication on the face of the row and belongs in the disclosure — exactly
-     where the ERP's own notes already go. */
   it("folds an AutoCount sentence away once this file has plain words for it", () => {
     const refused = row({
       state: "failed",
@@ -946,8 +819,6 @@ describe("the To fix line for a refusal AutoCount did not explain", () => {
     expect(AC_FAILED_COPY.toFix).toMatch(/document number/i);
   });
 
-  /* The other half stays: plenty of AutoCount refusals DO name a master, and
-     "we cannot help you" would be as wrong in that direction. */
   it("still tells somebody what to do when AutoCount did name something", () => {
     expect(AC_FAILED_COPY.toFix).toMatch(/salesperson|warehouse|customer/);
     expect(AC_FAILED_COPY.toFix).toMatch(/save the document here again/i);
@@ -967,7 +838,6 @@ describe("the To fix line for a refusal AutoCount did not explain", () => {
    then edited three times IS four rows, for good. The list was the wrong unit.
    ─────────────────────────────────────────────────────────────────────────── */
 describe("one row per document", () => {
-  /** His four rows, in the order the route returns them: newest first. */
   const HC_SO_2608_002: AcOutboxRow[] = [
     row({ id: "s4", op: "edit", doc_no: "HC-SO-2608-002", state: "sent", status: "sent",
       ac_doc_no: "SO-00002", created_at: "2026-08-16T08:31:40.000Z" }),
@@ -979,7 +849,6 @@ describe("one row per document", () => {
       ac_doc_no: "SO-00002", created_at: "2026-08-14T17:25:00.000Z" }),
   ];
 
-  /** The other two sales orders that made up his six rows. */
   const others: AcOutboxRow[] = [
     row({ id: "o1", doc_no: "HC-SO-2608-003", state: "sent", status: "sent",
       ac_doc_no: "SO-00003", created_at: "2026-08-16T02:00:00.000Z" }),
@@ -987,7 +856,6 @@ describe("one row per document", () => {
       ac_doc_no: "SO-00004", created_at: "2026-08-16T01:00:00.000Z" }),
   ];
 
-  /* THE DEFECT, AS A NUMBER. Six rows, three documents. */
   it("renders one sales order once, however many times it was sent", () => {
     const rows = [...HC_SO_2608_002, ...others];
     expect(rows).toHaveLength(6);
@@ -996,8 +864,6 @@ describe("one row per document", () => {
     expect(groups.filter((g) => g.docNo === "HC-SO-2608-002")).toHaveLength(1);
   });
 
-  /* AND THE COUNT UNDER THE STRIPS AGREES WITH THE LIST. "6 of 17 documents"
-     over six rows for three documents was the other half of what he read. */
   it("counts the documents on screen, not the sends", () => {
     const groups = acGroupByDocument([...HC_SO_2608_002, ...others]);
     expect(acDocTypeCounts(groups).SO).toBe(3);
@@ -1006,10 +872,6 @@ describe("one row per document", () => {
     expect(acListCountLine(1, 1)).toBe("1 of 1 document");
   });
 
-  /* MEASURED ON PRODUCTION, 2026-09-08, minutes after the Cleared tab shipped:
-     three cleared documents rendered under "3 of 1 document". `counts.total`
-     counts what is ON the page and deliberately excludes the cleared shelf, so
-     it is the wrong denominator for the one filter that looks at that shelf. */
   it("counts a cleared list against the CLEARED total, not the page total", () => {
     const d = {
       counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 3, total: 1 },
@@ -1028,8 +890,6 @@ describe("one row per document", () => {
   });
 
   it("draws the row from the NEWEST send, whatever order they arrive in", () => {
-    /* Shuffled on purpose: the route orders created_at descending and this must
-       not depend on it, because `current` is what the whole row is drawn from. */
     const shuffled = [HC_SO_2608_002[2]!, HC_SO_2608_002[0]!, HC_SO_2608_002[3]!, HC_SO_2608_002[1]!];
     const g = acGroupByDocument(shuffled)[0]!;
     expect(g.current.id).toBe("s4");
@@ -1037,9 +897,6 @@ describe("one row per document", () => {
     expect(g.earlier.map((r) => r.id)).toEqual(["s3", "s2", "s1"]);
   });
 
-  /* THE SEND HISTORY IS THE AUDIT TRAIL AND NOTHING IS DROPPED. A year later
-     "what did we tell AutoCount, when, and what did it answer" has to still be
-     answerable — 0277's own reason for existing. */
   it("keeps every send, behind the document", () => {
     const g = acGroupByDocument(HC_SO_2608_002)[0]!;
     expect(g.sends).toHaveLength(4);
@@ -1054,11 +911,6 @@ describe("one row per document", () => {
     expect(AC_EARLIER_SENDS_NOTE).toMatch(/record of what/i);
   });
 
-  /* A DOCUMENT NUMBER IS NOT A DOCUMENT. The six types are independent
-     sequences and the same number can legitimately belong to two of them;
-     folding those together would LOSE a document, which is worse than showing
-     one twice. This is why the key is the pair, matching the table's own
-     autocount_outbox_doc_idx (company_id, doc_type, doc_no). */
   it("keeps two types carrying one number apart", () => {
     const groups = acGroupByDocument([
       row({ id: "so", doc_type: "SO", doc_no: "2608-002" }),
@@ -1068,9 +920,6 @@ describe("one row per document", () => {
     expect(acDocumentKey(groups[0]!.current)).not.toBe(acDocumentKey(groups[1]!.current));
   });
 
-  /* A document carries several OPS — 0277 admits eight — and they are the same
-     document. Grouping on the op as well would put the create and its edits on
-     separate rows, which is the defect with an extra step. */
   it("folds a create and its edits into one document", () => {
     const groups = acGroupByDocument([
       row({ id: "e", op: "edit", doc_no: "HC-SO-2608-002" }),
@@ -1088,9 +937,6 @@ describe("one row per document", () => {
     expect(groups.map((g) => g.docNo)).toEqual(["SO-B", "SO-A"]);
   });
 
-  /* A send with no timestamp still has to land somewhere, and the safe place is
-     LAST: a null created_at must never take over the row and decide what the
-     document's state is. */
   it("does not let an undated send draw the row", () => {
     const g = acGroupByDocument([
       row({ id: "undated", state: "skipped", created_at: null }),
@@ -1122,17 +968,12 @@ describe("one row per document", () => {
 describe("the replaced state does not read as an instruction", () => {
   it("no longer wears the button's words", () => {
     expect(AC_STATE_LABEL.requeued).toBe("Replaced");
-    /* The button is unchanged and still says Send again — which is the whole
-       reason the badge may not. */
     expect(AC_SEND_AGAIN_LABEL).toBe("Send again");
     for (const s of [AC_STATE_LABEL.requeued]) {
       expect(s.toLowerCase()).not.toContain("send again");
     }
   });
 
-  /* THE ROW'S OWN BODY HAS TO AGREE WITH THE BADGE. It said "Already sent
-     again ... this row is history" under a badge saying "Sent again", which is
-     the same instruction twice. */
   it("says the same thing on the badge, the line and the status", () => {
     const replaced = row({ state: "requeued", reason: "[re-queued …] refused" });
     expect(acRowStatusLine(replaced, 6)).toBe("Replaced by a newer send");
@@ -1143,17 +984,12 @@ describe("the replaced state does not read as an instruction", () => {
     }
   });
 
-  /* It has to say what to DO, and the answer is nothing. "This row is history"
-     left the reader to work that out. */
   it("says there is nothing to do rather than leaving it to be inferred", () => {
     expect(AC_REPLACED_LINE).toMatch(/nothing to do/i);
     expect(AC_REPLACED_NOTE).toMatch(/not something to act on/i);
     expect(AC_STATE_PLAIN_MEANING.requeued).toMatch(/nothing to do here/i);
   });
 
-  /* No coding vocabulary, which is the display contract in
-     docs/autocount-sync-reasons.md §0 — "requeued", "re-queue" and the marker
-     are the server's words and stay there. */
   it("uses none of the machinery's words for it", () => {
     for (const s of [
       AC_STATE_LABEL.requeued, AC_REPLACED_LINE,
@@ -1167,11 +1003,6 @@ describe("the replaced state does not read as an instruction", () => {
   });
 });
 
-/* ───────────────────────────────────────────────────────────────────────────
-   HALF THE LIST WAS HISTORY. Fifteen rows on the live page, SIX of them
-   replaced refusals, with two delivery orders appearing twice. A replaced
-   document is a record, not a task.
-   ─────────────────────────────────────────────────────────────────────────── */
 describe("replaced documents are a record, not the list", () => {
   const live = row({ id: "a", doc_no: "HC-DO-2608-001", doc_type: "DO", state: "failed",
     needs_attention: true, created_at: "2026-08-16T05:00:00.000Z" });
@@ -1181,10 +1012,6 @@ describe("replaced documents are a record, not the list", () => {
     created_at: "2026-08-16T02:00:00.000Z" });
   const mixed = acGroupByDocument([old1, live, old2]);
 
-  /* GROUPING ALONE FIXES HALF OF THIS. HC-DO-2608-001's refusal and the row it
-     was replaced by are ONE document, so the record is folded under the live row
-     rather than beside it, and only HC-DO-2608-002 — which has nothing newer —
-     is a record in its own right. */
   it("puts a replaced send under its own document rather than beside it", () => {
     expect(mixed).toHaveLength(2);
     const first = mixed[0]!;
@@ -1193,9 +1020,6 @@ describe("replaced documents are a record, not the list", () => {
     expect(first.earlier.map((r) => r.id)).toEqual(["b"]);
   });
 
-  /* Since the four-tab change there is no "requeued" tab to expand the history
-     into, so the fold is unconditional — a replaced record leaves the list on
-     every filter and is reached through the Replaced disclosure instead. */
   it("takes the records out of the list, on every filter", () => {
     const split = acSplitReplaced(mixed);
     expect(split.live.map((g) => g.docNo)).toEqual(["HC-DO-2608-001"]);
@@ -1210,7 +1034,6 @@ describe("replaced documents are a record, not the list", () => {
   it("counts them in words, both forms written out", () => {
     expect(acReplacedHeading(1)).toBe("1 replaced document, kept as a record");
     expect(acReplacedHeading(6)).toBe("6 replaced documents, kept as a record");
-    /* Not `document` + "s" — the same shortcut that produced "GOODS RECEIVEDS". */
     expect(acReplacedHeading(1)).not.toContain("documents");
   });
 

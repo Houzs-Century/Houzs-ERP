@@ -17,11 +17,8 @@ const DEFAULT_PITCH = 20;
 const MIN_PITCH = -10;
 const MAX_PITCH = 80;
 
-// One scale (px per ft) for every lorry, so two drawings compare honestly.
-// It only shrinks when a lorry would not fit the drawing.
 const SCALE = 9;
 
-// The cab is a fixed size; only the container follows the entered size.
 const CAB = { length: 5.4, width: 6.2, bottom: 1.3, top: 7.6 };
 const FLOOR = 2.6;
 const GAP = 0.6;
@@ -133,11 +130,9 @@ function buildLorry(box: LorryBox | null, yaw: number, pitch: number): Built {
     lines(segs, ribStyle);
   };
 
-  // chassis rails: the part under the container has no top, so it never paints over the floor
   cuboid(-0.3, L, c - 0.5, c, zm - 1.5, zm + 1.5, 'dark', true);
   cuboid(L, x1 + 0.4, c - 0.5, c - 0.08, zm - 1.5, zm + 1.5, 'dark');
 
-  // container
   if (face([[0, c, W], [L, c, W], [L, c + H, W], [0, c + H, W]], [0, 0, 1], 'box')) sideRibs(W);
   if (face([[0, c, 0], [0, c + H, 0], [L, c + H, 0], [L, c, 0]], [0, 0, -1], 'box')) sideRibs(0);
   if (face([[0, c + H, 0], [0, c + H, W], [L, c + H, W], [L, c + H, 0]], [0, 1, 0], 'box') && ok) {
@@ -163,7 +158,6 @@ function buildLorry(box: LorryBox | null, yaw: number, pitch: number): Built {
     lines(bars, barStyle);
   }
 
-  // cab-over cab: flat front, small roof bevel
   const prof: V2[] = [[x1, CAB.bottom], [x2, CAB.bottom], [x2, CAB.top - 0.35], [x2 - 0.35, CAB.top], [x1, CAB.top]];
   const capDetails = (z: number) => {
     decal([[x2 - 2.3, 4.9, z], [x2 - 0.35, 4.9, z], [x2 - 0.35, 6.95, z], [x2 - 2.3, 6.95, z]], glassStyle);
@@ -191,11 +185,10 @@ function buildLorry(box: LorryBox | null, yaw: number, pitch: number): Built {
       lines(grille, { fill: 'none', stroke: '#0b3b35', strokeWidth: 1.1 });
     }
   }
-  cuboid(x2 - 0.05, x2 + 0.3, CAB.bottom - 0.2, CAB.bottom + 0.55, cz0 - 0.05, cz1 + 0.05, 'dark'); // bumper
-  cuboid(x2 - 0.35, x2 - 0.15, 4.5, 5.8, cz1, cz1 + 0.45, 'dark'); // mirrors
+  cuboid(x2 - 0.05, x2 + 0.3, CAB.bottom - 0.2, CAB.bottom + 0.55, cz0 - 0.05, cz1 + 0.05, 'dark');
+  cuboid(x2 - 0.35, x2 - 0.15, 4.5, 5.8, cz1, cz1 + 0.45, 'dark');
   cuboid(x2 - 0.35, x2 - 0.15, 4.5, 5.8, cz0 - 0.45, cz0, 'dark');
 
-  // wheels: single front, dual rear
   const r = WHEEL_R;
   const ring = (xc: number, z: number, rad: number): V3[] =>
     Array.from({ length: 18 }, (_, k) => {
@@ -216,7 +209,6 @@ function buildLorry(box: LorryBox | null, yaw: number, pitch: number): Built {
 
   groups.sort((m, n) => m.depth - n.depth);
 
-  // fit
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const g of groups) for (const it of g.items) {
     const all = it.pts ?? (it.segs ?? []).flat();
@@ -234,7 +226,6 @@ function buildLorry(box: LorryBox | null, yaw: number, pitch: number): Built {
     paths.push({ d, style: it.style });
   }
 
-  // dimension lines on the outermost container edges (the back end, never the cab end)
   const P3 = (x: number, y: number, z: number) => S2(rot([x, y, z]));
   const C = P3(L / 2, c + H / 2, W / 2);
   const cands: number[][][] = [
@@ -386,7 +377,6 @@ export function Lorry3D({ box, height }: { box: LorryBox | null; height: number 
   };
 
   const built = buildLorry(box, view.yaw, view.pitch);
-  // where the 360x220 drawing actually sits inside the box (preserveAspectRatio meet)
   const k = Math.min(size.w / VIEW_W, size.h / VIEW_H);
   const offX = (size.w - VIEW_W * k) / 2;
   const offY = (size.h - VIEW_H * k) / 2;
@@ -460,8 +450,6 @@ export function LorrySide({ box }: { box: LorryBox | null }) {
   }
   const r = WHEEL_R * s, wy = gy - r, xf = cabLeft + cabL * 0.45, xr = boxL + Math.max(r + 2, L * s * 0.3);
   const label = b ? `Lorry with container ${fmt(b.length)} by ${fmt(b.height)} ft` : 'Lorry, container size not entered';
-  /* Every lorry keeps the one scale (s); only its position moves, so a short lorry sits in
-     the middle of its box instead of against the right edge. */
   const dx = (260 - (cabR - (boxL - 1))) / 2 - (boxL - 1);
   return (
     <svg viewBox="0 0 260 64" width="100%" role="img" aria-label={label} style={{ display: 'block', background: 'var(--hz-dk-surface-2, #f6f8f7)', borderRadius: 8 }}>

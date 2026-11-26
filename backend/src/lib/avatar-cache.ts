@@ -20,8 +20,6 @@ export function avatarCacheControl(
   requestedKey: string | null | undefined,
   currentKey: string | null | undefined,
 ): string {
-  // An absent current key cannot be matched by anything — guard explicitly so
-  // two undefineds can never compare equal into the immutable branch.
   if (!currentKey || !requestedKey) return AVATAR_CACHE_UNVERSIONED;
   return requestedKey === currentKey
     ? AVATAR_CACHE_VERSIONED

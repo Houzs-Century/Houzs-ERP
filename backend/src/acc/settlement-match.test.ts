@@ -51,8 +51,6 @@ describe('the unique reference is the only automatic path', () => {
     expect(d.bucket).toBe('NEEDS_CONFIRM');
   });
 
-  /* Two payments of the same amount on the same day is a QUESTION. Ticking one
-     of them for him would be the system guessing with his money. */
   it('two payments on the same amount and date are offered but never pre-ticked', () => {
     const [d] = matchStatement(cfg(), [row({ ref: 'ZZZ' })], [
       pay({ approvalCode: 'A9' }),
@@ -79,7 +77,7 @@ describe('the unique reference is the only automatic path', () => {
     expect(d.bucket).toBe('NEEDS_CONFIRM');
     expect(d.matchReason).toBe('amount+date');
     expect(d.suggested.map((p) => p.docNo)).toEqual(['SO-2608-001']);
-    expect(d.matched).toHaveLength(0);            // suggested is not taken
+    expect(d.matched).toHaveLength(0);
     expect(d.clue).toMatch(/Reference ZZZ matched nothing/);
     expect(d.clue).toMatch(/Check it and confirm/);
   });
@@ -101,8 +99,6 @@ describe('one payment carrying the reference, but for a different amount', () =>
     expect(d.matchReason).toBe('ref');
     expect(d.matched).toEqual([]);
     expect(d.suggested).toEqual([]);
-    /* The code's own payment first, then the exact amount, then the rest; the
-       one outside the window is not offered. */
     expect(d.candidates.map((p) => p.id)).toEqual(['p97', 'x2', 'x1']);
     expect(d.comboHints).toEqual([['p97', 'x1']]);
     expect(d.clue).toBe('Reference 213017 is on HC-SO-2609-097, but for RM 3,500.00 — this line is RM 4,000.00. Pick the payment(s) that make it.');
@@ -114,8 +110,6 @@ describe('one payment carrying the reference, but for a different amount', () =>
       row({ lineNo: 2, ref: '555', grossSen: 350000 }),
     ], [pay({ id: 'p97', approvalCode: '213017', amountSen: 350000 })]);
     expect(ds[0]!.bucket).toBe('NEEDS_CONFIRM');
-    /* The second line has no code match; the payment is still unclaimed, so the
-       amount+date path can still offer it. */
     expect(ds[1]!.candidates.map((p) => p.id)).toEqual(['p97']);
   });
 });
@@ -218,8 +212,6 @@ describe('one swipe settling several orders', () => {
     expect(line(123456).comboHints).toEqual([]);
   });
 
-  /* A screen offering more possibilities than a person can weigh is not
-     helping, so the list is capped rather than exhaustive. */
   it('stops at five suggestions', () => {
     const many = Array.from({ length: 10 }, (_, i) => pay(`p${i}`, 10000));
     const d = matchStatement(
@@ -232,9 +224,6 @@ describe('one swipe settling several orders', () => {
   });
 });
 
-/* A set that adds up ONE way is an answer whatever its size — the pre-tick used
-   to require exactly two documents, so a customer settling three orders with one
-   swipe was found and then not offered. */
 describe('pre-ticking the set that adds up', () => {
   const pay = (id: string, sen: number): PaymentCandidate =>
     ({ source: 'SOPAY', id, docNo: `SO-${id}`, paidOn: '2026-08-01', amountSen: sen, approvalCode: null, customerName: null });
@@ -257,8 +246,6 @@ describe('pre-ticking the set that adds up', () => {
     expect(d.clue).toMatch(/add up to it exactly/);
   });
 
-  /* Two ways to make the amount is a question. Nothing is ticked, and the
-     screen says how many ways there are rather than picking one. */
   it('ticks nothing when the amount can be made two ways', () => {
     const d = decide(100000, [pay('a', 60000), pay('b', 40000), pay('c', 60000), pay('d', 40000)]);
     expect(d.suggested).toEqual([]);
@@ -308,8 +295,6 @@ describe('one swipe, one reference, several documents', () => {
     expect(d.clue).toMatch(/1 other payment\(s\) carry this reference and are not part of it — they stay open/);
   });
 
-  /* And the one left behind is not swept away: it is unsettled, so it shows on
-     the watchlist, which is exactly where a mis-keyed code should surface. */
   it('leaves the odd one unclaimed, so the watchlist can carry it', () => {
     const pool = [pay('a', 80000, 'A123'), pay('b', 45000, 'A123'), pay('c', 30000, 'A123')];
     const d = decide(125000, pool);
@@ -317,15 +302,12 @@ describe('one swipe, one reference, several documents', () => {
     expect(recordedNotArrived(pool, taken, '2026-08-05').map((p) => p.id)).toEqual(['c']);
   });
 
-  /* One payment among them making the amount by itself is still one way. */
   it('takes a single payment when that is what adds up', () => {
     const d = decide(125000, [pay('a', 125000, 'A123'), pay('b', 30000, 'A123')]);
     expect(d.bucket).toBe('MATCHED');
     expect(d.matched.map((p) => p.id)).toEqual(['a']);
   });
 
-  /* TWO ways to make it is a question no evidence here can answer: 700 + 550
-     + 550 against a line of 1,250 — which 550 was on the swipe? */
   it('asks when the amount can be made two ways', () => {
     const d = decide(125000, [pay('a', 70000, 'A123'), pay('b', 55000, 'A123'), pay('c', 55000, 'A123')]);
     expect(d.bucket).toBe('NEEDS_CONFIRM');
@@ -338,8 +320,6 @@ describe('one swipe, one reference, several documents', () => {
     expect(d.clue).toMatch(/no combination of them makes RM 1,250\.00 \(they come to RM 1,100\.00\)/);
   });
 
-  /* The claim is on all of them: a second line of the same file must not take
-     a payment this one already used. */
   it('claims every payment it took', () => {
     const ds = matchStatement(
       { code: 'MBB', has_unique_ref: true, date_tolerance_days: 3 },
@@ -354,8 +334,6 @@ describe('one swipe, one reference, several documents', () => {
     expect(ds[1]!.bucket).not.toBe('MATCHED');
   });
 
-  /* An acquirer that sends no unique reference may never auto-match, whatever
-     the till happened to key in — the brief forbids it outright. */
   it('never auto-matches for an acquirer with no unique reference', () => {
     const d = matchStatement(
       { code: 'GHL', has_unique_ref: false, date_tolerance_days: 3 },
@@ -395,7 +373,6 @@ describe('a swipe covering many documents', () => {
     expect(d.matched).toHaveLength(10);
   });
 
-  /* And still finds the subset when one of many carries a mis-keyed code. */
   it('picks five out of six when the sixth is not part of it', () => {
     const d = byRef(150000, [
       pay('a', 10000), pay('b', 20000), pay('c', 30000),
@@ -406,8 +383,6 @@ describe('a swipe covering many documents', () => {
     expect(d.clue).toMatch(/1 other payment\(s\)/);
   });
 
-  /* The amount-only path is deliberately shallower — see the comment on
-     exactPairs — but it reaches well past two. */
   it('hints at five documents when the code matched nothing', () => {
     const d = matchStatement(
       { code: 'GHL', has_unique_ref: false, date_tolerance_days: 3 },
@@ -415,8 +390,6 @@ describe('a swipe covering many documents', () => {
       [pay('a', 10000, null), pay('b', 20000, null), pay('c', 30000, null), pay('d', 40000, null), pay('e', 50000, null)],
       new Set<string>(),
     )[0]!;
-    /* Largest first — that branch offers the window sorted by amount, which is
-       the order a person reads a list of candidates in. */
     expect([...(d.suggested ?? [])].map((p) => p.id).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 });
@@ -447,7 +420,6 @@ describe('a reference that matches outside the date window', () => {
     expect(d.bucket).toBe('NEEDS_CONFIRM');
     expect(d.matched).toEqual([]);
     expect(d.candidates.map((p) => p.id)).toEqual(['late']);
-    /* Pre-ticked: the evidence is strong, the decision is still his. */
     expect(d.suggested.map((p) => p.id)).toEqual(['late']);
   });
 
@@ -459,7 +431,6 @@ describe('a reference that matches outside the date window', () => {
     expect(d.clue).toMatch(/outside the 3-day window/);
   });
 
-  /* Inside the window nothing changes — the ordinary auto-match still stands. */
   it('inside the window it is still taken automatically', () => {
     const [d] = far(2);
     expect(d.bucket).toBe('MATCHED');
@@ -472,8 +443,6 @@ describe('a reference that matches outside the date window', () => {
     expect(far(4)[0]!.bucket).toBe('NEEDS_CONFIRM');
   });
 
-  /* A far reference is not claimed, so the SAME payment stays available to a
-     line that matches it properly. Taking it would settle the wrong line. */
   it('does not claim the payment away from a nearer line', () => {
     const ds = matchStatement(
       cfg({ date_tolerance_days: 3 }),
@@ -483,7 +452,6 @@ describe('a reference that matches outside the date window', () => {
     );
     expect(ds[0]!.bucket).toBe('NEEDS_CONFIRM');
     expect(ds[0]!.suggested.map((p) => p.id)).toEqual(['one']);
-    /* The line it really belongs to still auto-matches. */
     expect(ds[1]!.bucket).toBe('MATCHED');
     expect(ds[1]!.matched.map((p) => p.id)).toEqual(['one']);
   });

@@ -1,13 +1,3 @@
-/* ----------------------------------------------------------------------------
-   The detail-page half of the stale-build print recovery.
-
-   Incident 2026-09-14: HC-SO-012016's Print preview failed with "Failed to fetch
-   dynamically imported module: …/assets3/sales-order-pdf-C9QaiR37.js" after a
-   deploy deleted that file, and pressing Print again failed identically. The
-   hooks every print button already uses must (1) mark the click as a print in
-   flight, so chunkActionRecovery may reload for it, and (2) register the page as
-   able to reopen its preview, and reopen it on the load after that reload.
-   ---------------------------------------------------------------------------- */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";

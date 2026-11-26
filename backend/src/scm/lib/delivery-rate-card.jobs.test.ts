@@ -54,9 +54,6 @@ const SAMPLE_FACTS: Array<[string, DeliveryFacts, boolean]> = [
   ['nothing', {}, false],
 ];
 
-/* The totals this card priced BEFORE job types and Applies to existed, read off
-   the previous engine for the same facts. A card nobody has touched must keep
-   pricing exactly these. */
 const TOTALS_BEFORE: Record<string, number> = {
   'one set in town': 12_000,
   'seven sets, two sofas, Johor by zone': 73_100,
@@ -134,7 +131,6 @@ describe('outstation Applies to', () => {
   });
 
   test('the job and the zone must be the same stop', () => {
-    /* A delivery to Johor and a setup in Melaka: Johor's setup-only price is not reached by the setup. */
     const b = computeDeliveryCost(johorFor(['SETUP']), {
       setCount: 1, setupCount: 1,
       stops: [{ zone: 'JOHOR', addressText: 'Johor Bahru' }, { zone: 'MELAKA', addressText: 'Melaka', jobType: 'SETUP' }],

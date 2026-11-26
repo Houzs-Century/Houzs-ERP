@@ -25,7 +25,6 @@ export interface ScanRow {
   document_type: string;
   status: string;
   error: string | null;
-  /** GR/PI check-first scans: reading / pending / created / discarded; null on scan-straight-to-draft jobs. */
   review_state: string | null;
   doc_no: string | null;
   created_at: string | Date;
@@ -34,17 +33,12 @@ export interface ScanRow {
   sample_error: string | null;
   extracted: unknown;
   corrected: unknown;
-  /** The draft as the scan built it; null on scans from before it was kept. */
   draft_baseline: unknown;
-  /** SO only: the draft this scan made no longer exists (deleted). */
   so_missing: boolean;
-  /** SO only: the sample kept the draft as the scan built it. */
   has_baseline: boolean;
-  /** SO only: R2 key of the slip photo the scan read (`scan-slips/<sampleId>`). */
   slip_image_key: string | null;
 }
 
-/** scan-so.ts writes this prefix on a `done` job whose slip it could not read (a blank shell draft). */
 const UNREADABLE_PREFIX = "The scan could not read";
 
 export function classifyScan(r: ScanRow): { outcome: ScanOutcome; detail: string | null } {
@@ -59,8 +53,6 @@ export function classifyScan(r: ScanRow): { outcome: ScanOutcome; detail: string
     return { outcome: "needsReview", detail: r.error ?? "No document was created" };
   }
   if (so && r.so_missing) return { outcome: "discarded", detail: null };
-  // Only the SO review records whether the operator edited the read: GR marks
-  // every posted scan ACCEPTED, and an edited PI leaves no trace.
   if (!so) return { outcome: "imported", detail: null };
   if (r.sample_status === "ACCEPTED") return { outcome: "clean", detail: null };
   if (r.sample_status === "CONFIRMED") {
@@ -70,7 +62,6 @@ export function classifyScan(r: ScanRow): { outcome: ScanOutcome; detail: string
   return { outcome: "awaiting", detail: null };
 }
 
-// ── Report ───────────────────────────────────────────────────────────────────
 
 export interface DocTypeStats {
   documentType: string;
@@ -84,9 +75,7 @@ export interface DocTypeStats {
   clean: number;
   corrected: number;
   imported: number;
-  /** clean / reviewed, over reviewed scans with a draft baseline; null where the review is not recorded (GR, PI). */
   accuracy: { clean: number; reviewed: number } | null;
-  /** SO only: fields read right / fields on the slip, over reviewed scans whose edits are recorded exactly. */
   fieldAccuracy: { correct: number; total: number; scans: number } | null;
   avgSec: number | null;
   p90Sec: number | null;
@@ -99,18 +88,14 @@ export interface ProblemScan {
   docNo: string | null;
   outcome: "failed" | "needsReview" | "corrected";
   detail: string | null;
-  /** Before/after per changed field; null when the scan has no draft snapshot. */
   changes: FieldChange[] | null;
-  /** Corrected SO scans only: fields read right / fields on the slip; null before edits were recorded exactly. */
   fieldAccuracy: { correct: number; total: number } | null;
-  /** The slip photo the scan read, served by GET /scan-so/slip-image; null when none was kept. */
   slipImageKey: string | null;
 }
 export interface OcrReport {
   month: string;
   model: string;
   docTypes: DocTypeStats[];
-  /** SO only: per field, how many reviewed scans (with a draft baseline) the operator corrected it on. */
   fieldMisses: { reviewed: number; fields: FieldMiss[] };
   problems: ProblemScan[];
 }

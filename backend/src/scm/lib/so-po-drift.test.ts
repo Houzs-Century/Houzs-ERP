@@ -1,6 +1,3 @@
-// so-po-drift — the SO→PO drift arms, and specifically the warehouse arm that
-// used to cry a false "SO warehouse moved" on a line whose SO source carries a
-// NULL warehouse (it inherits the header). Bug 0539.
 
 import { describe, expect, test } from 'vitest';
 import { computeSoDrift } from './so-po-drift';
@@ -16,8 +13,6 @@ const masters: SoWarehouseMasters = {
 const KL_HEADER = { sales_location: 'KL WAREHOUSE' };
 
 describe('computeSoDrift', () => {
-  // THE REGRESSION. PO line bound to KL; SO line never set a per-line warehouse
-  // and inherits the KL header. The old raw compare (KL !== NULL) flagged a move.
   test('identical lines with a NULL SO-line warehouse are NOT drift', () => {
     const line = { item_code: 'XAMMAR-2A(RHF)', item_group: 'sofa', variants: { fabricCode: 'EZ-001' } };
     expect(
@@ -60,8 +55,6 @@ describe('computeSoDrift', () => {
     ).toBeNull();
   });
 
-  // A REAL spec change still reports, and neither side's message carries the
-  // display-only supplier code.
   test('a real spec change is still flagged, with the supplier code out of both messages', () => {
     const drift = computeSoDrift(
       { item_code: 'X', item_group: 'sofa', variants: { fabricCode: 'EZ-010', seatHeight: '30', fabricSupplierCode: 'M2402-17' }, warehouse_id: 'kl' },
@@ -74,8 +67,6 @@ describe('computeSoDrift', () => {
     expect(drift?.specSo).not.toContain('M2402-17');
   });
 
-  // The exact shape that showed on PO-2608-026's hand-added line: SO carries the
-  // full fabric label, the PO line only the bare code.
   test('a spec change is flagged with the item unchanged', () => {
     const drift = computeSoDrift(
       { item_code: 'X', item_group: 'sofa', variants: { fabricCode: 'EZ-001' }, warehouse_id: 'kl' },

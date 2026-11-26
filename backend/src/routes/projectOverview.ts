@@ -142,12 +142,6 @@ async function buildProjectOverview(c: Context<{ Bindings: Env; Variables: Varia
   ).bind(recent).all<NoteRow & { project_id: number }>();
   const notesOf = new Map<number, NoteRow[]>();
   for (const n of noteRows.results) notesOf.set(Number(n.project_id), [...(notesOf.get(Number(n.project_id)) ?? []), { ...n, id: Number(n.id) }]);
-  /* Per-project attendee emails — the per-event side of the save gate (owner
-     2026-10-30). Mirrors loadAttendeeEmails in project-sales-bills.ts: pull the
-     email of each attendee's user account for every recent event this company
-     owns, in one scan. Without this an attendee's chat posts fall out of
-     collectReport and the Daily column reads "No chat report" even when the
-     chat is full of bills. */
   const attendeeRows = await c.env.DB.prepare(
     `SELECT psa.project_id, LOWER(TRIM(u.email)) AS email
        FROM project_sales_attendees psa
@@ -323,7 +317,6 @@ projectOverview.get("/tasks", async (c) => {
   ).bind(since).all<{ title: string; role_label: string | null; status: string; review_status: string | null; due_date: string | null; project_id: number; name: string; brand: string | null; start_date: string | null; end_date: string | null; setup_crew: string | null; setup_start_at: string | null }>();
   const day = (v: string | null) => (v ? String(v).slice(0, 10) : null);
   const diff = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
-  /* The checklist's own "complete": done, n/a, or approved (frontend checklistDone.ts). */
   const complete = (r: { status: string; review_status: string | null }) => r.status === "done" || r.status === "na" || r.review_status === "approved";
   const byProject = new Map<number, typeof rows.results>();
   for (const r of rows.results) byProject.set(r.project_id, [...(byProject.get(r.project_id) ?? []), r]);

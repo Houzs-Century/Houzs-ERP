@@ -9,9 +9,6 @@ import {
 import { DialogProvider } from "../hooks/useDialog";
 import { api } from "../api/client";
 
-/* Team-published layouts (is_shared, not a code seed): a layout manager shares a
-   personal layout under its own name, after which EVERY member sees it as a
-   pickable row, and the manager can update it for everyone or stop sharing it. */
 
 vi.mock("../api/client", () => ({
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), del: vi.fn() },
@@ -130,8 +127,6 @@ describe("DataTable team-published layouts", () => {
     );
     await openLayoutMenu("Overdue View");
     fireEvent.click(await screen.findByText(/Stop sharing/i));
-    // The menu item and the confirm button share the label; the dialog's button
-    // is portalled last, so confirm via the final match.
     const confirm = await screen.findAllByRole("button", { name: /Stop sharing/i });
     fireEvent.click(confirm[confirm.length - 1]!);
     await waitFor(() =>

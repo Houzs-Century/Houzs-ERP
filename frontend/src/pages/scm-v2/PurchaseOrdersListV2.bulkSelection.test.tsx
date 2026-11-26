@@ -1,7 +1,3 @@
-/* Sister review G14: a bulk action acts on the ticked rows the operator can
- * SEE. A tick left on a row that a later result no longer shows used to ride
- * into "Supplier date (N)": the dialog listed the visible POs and the server
- * wrote all N. A new search starts with no ticks. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -177,7 +173,6 @@ describe("Purchase Order list: bulk Supplier date acts on visible ticks only", (
     tickRow(1);
     await screen.findByRole("button", { name: /Supplier date \(2\)/ });
 
-    // The page now shows a different result; the earlier ticks are hidden.
     h.rows = [C];
     view.rerender(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -202,7 +197,6 @@ describe("Purchase Order list: bulk Supplier date acts on visible ticks only", (
 
     fireEvent.change(screen.getAllByPlaceholderText("Search PO no, notes or item code…")[0]!, { target: { value: "HC-PO-0000" } });
 
-    // Past the 300 ms search debounce, the result has settled and the rows are back.
     await new Promise((r) => setTimeout(r, 700));
     await waitFor(() => expect(screen.getAllByRole("checkbox", { name: "Select row" }).length).toBe(2));
     expect(screen.queryByRole("button", { name: /Supplier date/ })).toBeNull();

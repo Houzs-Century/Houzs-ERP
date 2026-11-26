@@ -29,9 +29,6 @@ export type EditableProject = {
   end_date: string | null;
 };
 
-/** ISO-or-timestamp -> the `YYYY-MM-DD` DateField wants. Stored start/end dates
- *  are dates, but some legacy rows carry a `T00:00` tail; slice it off so the
- *  field shows the day and round-trips it unchanged. */
 function dayOnly(v: string | null | undefined): string {
   return (v ?? "").slice(0, 10);
 }
@@ -47,7 +44,6 @@ export function EditProjectSheet({
    *  and never sends them in the patch, so the rest of the fields still save. */
   hideNameOrganizer?: boolean;
   onClose: () => void;
-  /** Resolves true when the patch saved, so the sheet can close itself. */
   onSave: (patch: Record<string, unknown>) => Promise<boolean>;
 }) {
   const [name, setName] = useState(project.name);
@@ -58,22 +54,16 @@ export function EditProjectSheet({
   const [endDate, setEndDate] = useState(dayOnly(project.end_date));
   const [saving, setSaving] = useState(false);
 
-  // The name field is hidden (and unvalidated) when name+organizer are masked.
   const nameBlank = !hideNameOrganizer && !name.trim();
-  // Same rule the backend enforces (end_date >= start_date) — caught here so the
-  // save button explains it rather than the PATCH coming back 400.
   const dateInvalid = !!(startDate && endDate && endDate < startDate);
 
   const submit = async () => {
     if (nameBlank || dateInvalid || saving || busy) return;
-    // Only changed fields go in the patch. A field cleared to blank sends null;
-    // the name can never be blanked (guarded above).
     const patch: Record<string, unknown> = {};
     const put = (key: string, next: string, cur: string | null | undefined) => {
       const t = next.trim();
       if (t !== (cur ?? "")) patch[key] = t || null;
     };
-    // name + organizer are never sent when masked — they are not on screen.
     if (!hideNameOrganizer) {
       if (name.trim() !== project.name) patch.name = name.trim();
       put("organizer", organizer, project.organizer);

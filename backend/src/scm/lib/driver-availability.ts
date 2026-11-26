@@ -1,20 +1,3 @@
-// ---------------------------------------------------------------------------
-// driver-availability.ts — Fleet Module A3: the driver-LEAVE half of the two
-// A3 constraints. It is to drivers what fleet-availability.ts is to lorries — a
-// thin DB loader over a PURE, unit-tested core, folding a driver's leave into
-// the A2 assignment flow so the assigner never auto-crews a driver who is on
-// leave that day.
-//
-// There is NO structured HR leave/attendance source in this ERP (the HR area is
-// commission/payout only), so A3 owns the minimal scm.driver_leave table (mig
-// 0206): one row per absence, a driver unavailable on every date in
-// [start_date, end_date] inclusive. This module loads those rows and exposes:
-//   - a PURE predicate (isDriverOnLeave) the assigner uses per group-date, and
-//   - a loader (loadDriverLeave) that returns the ranges + a display list of the
-//     drivers excluded across a planning window (for excludedDrivers[]).
-//
-// It writes NOTHING.
-// ---------------------------------------------------------------------------
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function iso(v: unknown): string | null {
@@ -133,7 +116,6 @@ export async function loadDriverLeave(
   const EMPTY = { ranges: [], excludedDrivers: [], helperRanges: [], excludedHelpers: [] };
   let leaveRows: Row[] = [];
   try {
-    // WS2: rows now carry EITHER driver_id OR helper_id (mig 0208 XOR).
     const { data } = await sb.from('driver_leave')
       .select('driver_id, helper_id, start_date, end_date, reason')
       .lte('start_date', to)
@@ -157,15 +139,13 @@ export async function loadDriverLeave(
     else if (helperId) helperRanges.push({ helperId, from: f, to: t, reason });
   }
 
-  // Resolve names for both display lists. Best-effort — an unresolved name still
-  // reports the exclusion (id-less rows are skipped above).
   const resolveNames = async (table: string, ids: string[]): Promise<Map<string, string>> => {
     const m = new Map<string, string>();
     if (ids.length === 0) return m;
     try {
       const { data } = await sb.from(table).select('id, name').in('id', ids);
       for (const d of (data ?? []) as Row[]) m.set(String(d.id), String(d.name ?? ''));
-    } catch { /* names are decoration */ }
+    } catch { }
     return m;
   };
   const driverNames = await resolveNames('drivers', [...new Set(ranges.map((r) => r.driverId))]);

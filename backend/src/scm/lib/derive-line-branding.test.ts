@@ -117,9 +117,6 @@ describe('header branding is a brand, not a category word (BUG-115, HC-0094)', (
   });
 });
 
-/* restampHeaderBranding — the re-derive every line add / edit / delete ends in
-   (free-gift-reconcile). HC-SO-2609-336's shape: header BEDFRAME, the only live
-   line a Dunlopillo mattress. */
 describe('restampHeaderBranding', () => {
   type Head = { branding: string | null; linked_ac_docno: string | null; project_id: number | null; fair_match: string | null; venue?: string | null; so_date?: string | null };
   type Fair = { id: number; venue: string; organizer: string | null; brand: string; startdate: string; enddate: string | null; status: string | null };
@@ -159,7 +156,6 @@ describe('restampHeaderBranding', () => {
       get: (k: string) => ({ companyId: 1, companyCode: 'HOUZS' } as Record<string, unknown>)[k],
       env: { DB: { prepare: (sql: string) => ({
         all: () => Promise.resolve({ results: HOUZS_BRANDS.map((name) => ({ name })) }),
-        /* The fair reads: by id, by exact event, or by venue (the window is not modelled). */
         bind: (...v: unknown[]) => ({ all: () => Promise.resolve({ results: fairs.filter((f) =>
           sql.includes('p.id = ?') ? f.id === v[0]
             : sql.includes('p.start_date = ?') ? f.venue === v[0] && (f.organizer ?? '') === v[1] && f.startdate === v[2] && (f.enddate ?? '') === (v[3] ?? '')
@@ -237,6 +233,6 @@ describe('an approved amendment re-derives the header brand and its fair', () =>
     const body = soRevision.slice(soRevision.indexOf('export async function applySoAmendment('));
     const call = body.indexOf('await restampHeaderBranding(sb, docNo, c)');
     expect(call).toBeGreaterThan(body.indexOf('await rederiveDeliveryFee(sb, docNo, c)'));
-    expect(call).toBeLessThan(body.indexOf('// (5) Bump the SO'));
+    expect(call).toBeLessThan(body.indexOf('let bump = sb'));
   });
 });

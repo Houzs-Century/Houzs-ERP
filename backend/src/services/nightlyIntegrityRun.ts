@@ -1,14 +1,3 @@
-// Nightly integrity check — the reads and the alert. Runs from the 00:05 MYT
-// cron slot (index.ts, job "integrity-nightly"). The rules are in
-// nightlyIntegrity.ts; the mismatch judgement is the shared core in
-// scripts/lib/half-done-documents.mjs (also behind the on-demand audit).
-//
-// SELECTs only, every one names company_id. Activity window: the last two
-// days — a GRN created or posted, a DO created or changed (it ships days after
-// it is created, and the night it ships is the night to hear about it), a PO
-// line created or received against, a rebank or a money document created.
-// Logs carry counts per class only; the admin notice carries document numbers
-// and item codes, never an amount.
 
 import { sql, type SQL } from "drizzle-orm";
 import type { Env } from "../types";
@@ -60,8 +49,6 @@ async function grnInMissing(db: DB, co: number, cutoff: string, svc: Set<string>
   return compareDocItems([...docs], f.lines, f.movements).filter((r) => isNewFinding(r.createdAt, cutoffMs));
 }
 
-/* Net OUT of a DO, as the audit counts it: OUT minus its own IN corrections
-   minus the ADJUSTMENT a cancel writes (fn_reverse_do_out). */
 function doMovements(db: DB, co: number, statuses: readonly string[], cutoff: string) {
   return db.execute<DocMovement & Record<string, unknown>>(sql`
     SELECT m.source_doc_id::text AS "docId", m.item_code AS "itemCode",
@@ -103,8 +90,6 @@ async function doCancelNotReversed(db: DB, co: number, cutoff: string, svc: Set<
 }
 
 async function poReceivedMismatch(db: DB, co: number, cutoff: string, svc: Set<string>, cutoffMs: number) {
-  /* A PO line is in tonight's scope when it was created, or received against,
-     in the window; activityAt is the later of the two. */
   const poLines = await db.execute<{
     poItemId: string; docNo: string; lineNo: number | null; itemCode: string; itemGroup: string | null;
     receivedQty: number | string | null; createdAt: string; activityAt: string;
@@ -152,7 +137,6 @@ async function rebankNoEntry(db: DB, co: number, cutoff: string, cutoffMs: numbe
 }
 
 async function lotsVsMovements(db: DB, co: number, cutoffMs: number, svc: Set<string>) {
-  /* Whole ledger, then only buckets born in the window are kept (rules file). */
   const rows = await db.execute<NightlyLotRow & Record<string, unknown>>(sql`
     WITH mv AS (
       SELECT item_code, warehouse_id, COALESCE(variant_key, '') AS vk,
@@ -175,8 +159,6 @@ async function lotsVsMovements(db: DB, co: number, cutoffMs: number, svc: Set<st
   return newLotBucketFindings(co, [...rows], cutoffMs, svc);
 }
 
-/* Same sources and fingerprints as the audit's class 7. Amounts and names go
-   INTO md5() inside Postgres and never come out. */
 function dupSources(co: number, cutoff: string): Array<[string, SQL]> {
   const since = sql`${cutoff}::timestamptz`;
   return [

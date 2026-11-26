@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// DebtorBillDoc — /scm/ar-invoices/bills/:id, an other debtor's bill (or debit
-// note) as a page (the owner's Claude Design, batch 5 §8; it was a pop-out
-// over AR invoices). Who owes it, its lines, what was received and is still
-// owed, its journal — and its steps: Print, Copy and Edit (the bill form in
-// place of the page, `?form=copy|edit`, so reload and Back work) and Cancel
-// (refused once money is received on it). Edit re-posts and Cancel reverses
-// through the same routes as before; nothing posts differently. While money
-// is still owed its Receipts section offers New receipt (batch 5 step 6,
-// `?form=receipt`): Debtor maintenance's receipt form, this bill ticked for
-// what it still owes — saved as a Draft or prepared, posted at approval.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
@@ -51,7 +39,6 @@ const fromBill = billValuesOf;
 type BillReceipt = NonNullable<ArBillDetail['receipts']>[number];
 type BillNote = NonNullable<ArBillDetail['creditNotes']>[number];
 
-/* What came in on the bill (batch 5 §8.3 c8): each receipt with its stage and the amount on this bill. */
 const RECEIPT_COLUMNS: Column<BillReceipt>[] = [
   { key: 'receipt_no', label: 'Receipt', getValue: (r) => r.number, render: (r) => <FinanceDocLink to={moneyInDocHref('debtorReceipt', r.id)}>{r.number}</FinanceDocLink> },
   { key: 'date', label: 'Date', render: (r) => fmtDate(r.date), getValue: (r) => r.date ?? '' },
@@ -61,7 +48,6 @@ const RECEIPT_COLUMNS: Column<BillReceipt>[] = [
   },
   { key: 'amount', label: 'On this bill', align: 'right', render: (r) => fmtSen(r.amountSen), getValue: (r) => r.amountSen },
 ];
-/* The other-debtor credit notes allocated to it, and what each actually took off. */
 const NOTE_COLUMNS: Column<BillNote>[] = [
   { key: 'note', label: 'Note', getValue: (n) => n.number, render: (n) => <FinanceDocLink to={moneyInDocHref('note', n.id)}>{n.number}</FinanceDocLink> },
   { key: 'date', label: 'Date', render: (n) => fmtDate(n.date), getValue: (n) => n.date ?? '' },
@@ -70,7 +56,6 @@ const NOTE_COLUMNS: Column<BillNote>[] = [
   { key: 'applied_amount', label: 'Knocked off', align: 'right', render: (n) => fmtSen(n.appliedSen), getValue: (n) => n.appliedSen },
 ];
 
-/** Money already received is why a bill can't be cancelled (the server's rule, in the redesign's words). */
 const RECEIVED_REFUSAL = 'This bill has money received on it, so it can’t be cancelled.';
 
 export const DebtorBillDoc = () => {
@@ -86,7 +71,6 @@ export const DebtorBillDoc = () => {
   const accountsQ = useAccounts();
   const debtorsQ = useOtherDebtors();
   const createBill = useCreateDebtorBill();
-  /* The copy form's key: a saved copy opens the new bill, so the next copy gets a fresh key. */
   const copyKey = useIdempotencyKeyFor(`copy:${id}`);
   const updateBill = useUpdateDebtorBill();
   const cancelBill = useCancelDebtorBill();
@@ -147,12 +131,10 @@ export const DebtorBillDoc = () => {
     }
   };
 
-  /* The bill form in place of the page (Invoices' own form): an edit keeps the debtor, a copy may bill another. */
   const formProps = {
     accounts: lineAccounts, accountName, debtors: debtorOptions, debtorId: debtor?.id ?? '',
     controlCode: rolesQ.data?.roles.AR_OTHER ?? '305-0000', onSubmit: submit, onCancel: () => setForm(null),
   };
-  /* New receipt: the debtor's receipt form, this bill ticked for what it still owes. */
   if (form === 'receipt' && canCreate && !cancelled && outstanding > 0 && debtor) {
     return (
       <DebtorReceiptFormPage id={null} debtorId={debtor.id} alloc={{ [bill.id]: outstanding }} backLabel={bill.bill_number}

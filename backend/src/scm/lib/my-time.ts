@@ -1,14 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────
-// my-time.ts — Malaysia (Asia/Kuala_Lumpur, UTC+8, no DST) calendar-period
-// → UTC-instant bounds, shared by GET /pos/sales-stats and
-// GET /mfg-sales-orders/mine so their period math can never drift.
-//
-// Workers run in UTC. "This month in MY" means the window from the 1st of the
-// MY month at MY-midnight to the 1st of the next MY month — expressed as UTC
-// instants by shifting the MY wall-clock back 8 hours. A date range from the
-// POS calendar is treated the same way: the `to` day is INCLUSIVE, so its
-// exclusive upper bound is the MY-midnight of the following day.
-// ─────────────────────────────────────────────────────────────────────────
 
 import { fmtDate } from '../shared/format';
 
@@ -49,15 +38,11 @@ export function mytDateOf(instant: string | number | Date): string {
 }
 
 export interface PeriodBounds {
-  /** Inclusive lower bound as a UTC ISO instant, or null = open (no lower bound). */
   startUtc: string | null;
-  /** Exclusive upper bound as a UTC ISO instant, or null = open (no upper bound). */
   endUtc: string | null;
-  /** Human label for the KPI cards, e.g. "June 2026" or "1 Jun – 15 Jun 2026". */
   label: string;
 }
 
-/** The UTC instant of MY-midnight on the given MY calendar day. */
 function myMidnightUtc(year: number, month0: number, day: number): Date {
   return new Date(Date.UTC(year, month0, day, 0, 0, 0) - MY_OFFSET_MS);
 }
@@ -88,8 +73,6 @@ export function monthBoundsMy(year: number, month0: number): PeriodBounds {
   };
 }
 
-/* Was `{ day: 'numeric', month: 'short' }` — "16 Aug 2026", a month NAME in a
-   filter label sitting next to DD/MM/YYYY everywhere else on the same screen. */
 const fmtDay = fmtDate;
 
 /**
@@ -105,7 +88,6 @@ export function rangeBoundsMy(
   const to = toYmd ? parseYmd(toYmd) : null;
 
   const startUtc = from ? myMidnightUtc(from.y, from.m0, from.d) : null;
-  // `to` is inclusive → exclusive bound is the next MY day's midnight.
   const endUtc = to ? myMidnightUtc(to.y, to.m0, to.d + 1) : null;
 
   let label: string;

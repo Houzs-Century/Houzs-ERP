@@ -10,7 +10,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Env, Variables } from '../env';
 import { fakeSb } from '../lib/fake-postgrest';
 
-// The router runs supabaseAuth first; the bridge cannot run here.
 vi.mock('../middleware/auth', () => ({ supabaseAuth: async (_c: unknown, next: () => Promise<void>) => next() }));
 import { specialAddons } from './special-addons';
 

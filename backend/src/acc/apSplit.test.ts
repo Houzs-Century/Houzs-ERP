@@ -12,7 +12,7 @@ describe('apControlRole — one home for the 405 prefix', () => {
     expect(apControlRole('405-Z002')).toBe('AP_OTHER');
     expect(apControlRole('405-0000')).toBe('AP_OTHER');
     expect(apControlRole('400-T005')).toBe('AP');
-    expect(apControlRole('4050')).toBe('AP');       // no dash — not the series
+    expect(apControlRole('4050')).toBe('AP');
     expect(apControlRole(null)).toBe('AP');
     expect(apControlRole(undefined)).toBe('AP');
     expect(apControlRole('')).toBe('AP');

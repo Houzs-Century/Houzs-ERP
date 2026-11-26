@@ -1,16 +1,3 @@
-/* A Special Order note that only repeats the line's colour prints once.
- *
- * 2026-09-15 a data run (recategorise-fabric-accessory.mjs) wrote the colour each
- * Sofa Accessory line already named in its Special Order text into
- * variants.fabricCode. The composer printed both: HC-SO-013503's LONG PILLOW read
- * "COVE-13 / SPECIAL: Col : cove 13" and HC-SO-2609-072's SQUARE PILLOW
- * "COVE-11 / SPECIAL: COVE-11", on every PDF, screen and AutoCount Description 2
- * that composes from variants. The variants below are those lines' own, read
- * from production (run 34965615433).
- *
- * Rule: the note is dropped only when it says NOTHING the fabric segment does not
- * already say. A note with any other word (a colour name, a quantity, a code that
- * disagrees) still prints whole, so the supplier never loses an instruction. */
 import { describe, expect, it } from 'vitest';
 import { buildVariantSummary } from './variant-summary';
 import { composeDescription2, type ErpLine } from '../../services/autocount-writeback';

@@ -46,8 +46,6 @@ describe('approvalCodeOrPart', () => {
       .toBe('doc_no.in.("2990-SO-2608-001","2990-SO-2607-019")');
   });
 
-  /* An empty in-list is a PostgREST syntax error, and a term admitting nothing
-     must not ride the `.or()` at all. */
   it('is null when no payment matched, so nothing is sent', () => {
     expect(approvalCodeOrPart([])).toBeNull();
     expect(approvalCodeOrPart(['', '  '])).toBeNull();

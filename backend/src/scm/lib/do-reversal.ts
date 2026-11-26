@@ -1,19 +1,3 @@
-// DO cancel-path inventory reversal — the pure bucket aggregation + add-back
-// row builder used by reverseInventoryForDo (delivery-orders-mfg.ts).
-//
-// The AUTHORITATIVE reversal for a cancelled DO now lives in the SQL functions
-// scm.fn_reverse_do_out / scm.fn_reverse_dropship_do_out (migration 0088 +
-// the R4 generalization): they restore the DO's ORIGINAL lots at their ORIGINAL
-// per-lot cost, delete the DO's inventory_lot_consumptions rows (so a cancelled
-// sale's COGS leaves the ledger), and write a balance-only add-back. This module
-// is the ROUTE-SIDE LEGACY FALLBACK, used only when that SQL fn is absent
-// (pre-migration DB) or errors — it writes a positive ADJUSTMENT (plain bucket)
-// or a batch-restoring IN (sofa bucket) at the average consumed cost, so a
-// cancel NEVER leaves stock permanently deducted even on an un-migrated DB.
-//
-// Kept pure (no DB handle) so the bucketing + which-buckets-to-write decision is
-// unit-testable without a live Postgres — the SQL fn itself is only exercisable
-// against a real DB (staging).
 
 export interface DoReversalMovement {
   movement_type: string;
@@ -30,9 +14,7 @@ export interface DoReversalContext {
   deliveryOrderId: string;
   doNo: string;
   performedBy: string;
-  /** Drop-ship BATCHED buckets already reversed inside fn_reverse_dropship_do_out. */
   dropshipBatchedHandled: boolean;
-  /** Non-drop-ship: ALL buckets already reversed inside fn_reverse_do_out (R4). */
   nonDropshipHandled: boolean;
 }
 
@@ -96,10 +78,7 @@ export function buildDoReversalRows(
 
   return [...byBucket.values()]
     .filter((b) => b.net_out > 0)
-    // Non-drop-ship: fn_reverse_do_out reversed every bucket — nothing left.
     .filter(() => !ctx.nonDropshipHandled)
-    // Drop-ship: fn_reverse_dropship_do_out reversed the BATCHED buckets — only
-    // the plain (unbatched) buckets still need route-side rows.
     .filter((b) => !(ctx.dropshipBatchedHandled && b.batch_no))
     .map((b) => {
       const unit_cost_sen = b.out_qty > 0 ? Math.round(b.out_total_cost / b.out_qty) : 0;
@@ -108,7 +87,7 @@ export function buildDoReversalRows(
         item_code: b.item_code,
         variant_key: b.variant_key,
         product_name: b.product_name,
-        qty: b.net_out, // positive — adds back the stock the DO shipped out
+        qty: b.net_out,
         unit_cost_sen,
         source_doc_type: 'ADJUSTMENT' as const,
         source_doc_id: ctx.deliveryOrderId,

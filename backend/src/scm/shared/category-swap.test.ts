@@ -2,7 +2,6 @@ import { describe, expect, test } from 'vitest';
 import { categorySwapAllowed } from './category-swap';
 import { isSingleSkuCategory, mfgCategoryLabel, parseMfgCategory, activeProductCategories, type ProductCategory } from './product-categories';
 
-/* A registry as scm.acc_item_groups hands it over: one switched off, one added at runtime. */
 const LIST: ProductCategory[] = [
   { code: 'SOFA', name: 'Sofa', isActive: true },
   { code: 'ACCESSORY', name: 'Accessory', isActive: true },

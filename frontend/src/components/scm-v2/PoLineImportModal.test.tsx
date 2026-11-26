@@ -38,7 +38,6 @@ const preview: PoLineImportPreview = {
 };
 
 afterEach(cleanup);
-/* A block body: a hook that RETURNS the mock hands vitest a teardown to call. */
 beforeEach(() => { h.authed.mockReset(); });
 
 describe("PoLineImportPreviewView", () => {
@@ -88,7 +87,6 @@ const xlsxFile = (rows: unknown[][]) => {
   utils.book_append_sheet(wb, utils.aoa_to_sheet(rows), "PO lines");
   const bytes = writeXLSX(wb, { type: "array" }) as ArrayBuffer;
   const file = new File([bytes], "po-lines.xlsx");
-  /* jsdom's File has no arrayBuffer(); the browser's does. */
   Object.defineProperty(file, "arrayBuffer", { value: async () => bytes });
   return file;
 };

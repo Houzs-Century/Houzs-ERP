@@ -1,7 +1,3 @@
-/* BUG-101 (Sim, 2026-10-10): bringing a Delivery Date forward on an order that
- * already has a Purchase Order needs the Purchaser AND Logistic. The Logistic
- * amendment shows a Purchaser OK step; Logistic's approve waits for it.
- */
 import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";

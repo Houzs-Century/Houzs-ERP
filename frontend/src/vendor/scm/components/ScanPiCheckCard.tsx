@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// One scanned supplier invoice in the check step, the twin of ScanGrnCheckCard:
-// the head row is the supplier, invoice no and date; rows split GRN, SKU and
-// description, and bill a Goods Receipt line. The draft bills the supplier's
-// printed price; one that differs from the PO shows in red for the operator.
-// ----------------------------------------------------------------------------
 import { useState } from 'react';
 import { ChevronRight, FileText, Loader2, Star, X } from 'lucide-react';
 import { DateField } from './DateField';

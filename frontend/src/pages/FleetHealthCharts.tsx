@@ -13,7 +13,6 @@ const STATUS_COLOR: Record<string, string> = {
 
 export function FleetHealthCharts({ vehicles, kpis, onOpen }: {
   vehicles: VehicleRow[];
-  /** Opens a lorry's record from the attention chart. */
   onOpen: (id: string) => void;
   kpis: { expiredDocs?: number; expiring30?: number; expiring60?: number; expiring90?: number } | null;
 }) {

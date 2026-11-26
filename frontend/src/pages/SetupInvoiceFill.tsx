@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// Setup Invoice (Roadshow PMS Agent — Job E). Upload a scanned setup/booth
-// invoice; it's OCR'd (Claude vision) for the vendor + grand total + line items,
-// then you pick the project and apply — writing a `setup` cost line to that
-// project's P&L (whole RM). Vendor + amount are editable before you apply in case
-// the scan needs a nudge.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from "react";
 import { api } from "../api/client";

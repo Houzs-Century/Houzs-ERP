@@ -1,6 +1,3 @@
-/* What the aging screen works out from its report (batch 6 step 6): days
-   overdue and the design's buckets, the By invoice lines, the tiles' counts
-   and what a tile picks. */
 
 import { describe, expect, test } from 'vitest';
 import type { AgingRow } from '../../../vendor/scm/lib/aging-queries';

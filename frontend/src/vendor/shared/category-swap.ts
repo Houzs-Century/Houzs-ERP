@@ -10,7 +10,6 @@
    SKU that belongs to a model moves only with its model. */
 import { isMfgProductCategory, type ProductCategory } from './product-categories';
 
-/* `list` is the registry (scm.acc_item_groups). A switched-off category is not a target. */
 export function categorySwapAllowed(list: readonly ProductCategory[], from: string | null | undefined, to: string | null | undefined): boolean {
   const a = String(from ?? '').toUpperCase();
   const b = String(to ?? '').toUpperCase();

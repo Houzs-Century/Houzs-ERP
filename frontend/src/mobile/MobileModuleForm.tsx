@@ -7,28 +7,6 @@ import { PostcodeCascadeField } from "../vendor/scm/components/PostcodeCascadeFi
 import { PickListField } from "../vendor/scm/components/PickListField";
 import { PAYMENT_TERMS, PAYMENT_TERMS_CUSTOM, listEntryOf } from "../vendor/shared/pick-lists";
 
-/* ---------------------------------------------------------------------------
- * MobileModuleForm — ONE generic, config-driven mobile CREATE / EDIT form that
- * backs the simple SCM + core master modules (Suppliers, Drivers, Fleet,
- * Warehouse, Departments, Positions, Members). It is the write counterpart to
- * MobileModuleList / MobileModuleDetail: the caller passes a `FormSchema`
- * (built from the real backend route's accepted body — see the FORM_SCHEMAS
- * map in MobileModuleList) and a mode, and this renders the design's card/field
- * idiom (1:1 with MobileNewSO's `.mnso-i` look + sticky footer Save button)
- * under the .hz-m scope, wired to the real POST (create) / PATCH (update).
- *
- * A field's value is coerced on save to what the route expects:
- *   • money   → integer minor-units (× `moneyScale`, default 100 = sen/centi;
- *               products use scale 1 because their price columns are whole-RM
- *               integers, not sen).
- *   • number  → Number(value) or omitted when blank.
- *   • select  → the chosen option value (or a runtime-loaded option's value).
- *   • text / tel / email / textarea → trimmed string (blank → null on optional).
- *
- * SCM modules go through `authedFetch` (the /api/scm mount); core modules go
- * through `api` (the /api mount). Errors surface inline; onSaved(id) fires with
- * the created / edited record id on success. English only, no emoji.
- * ------------------------------------------------------------------------- */
 
 export type FormFieldType =
   | "text"
@@ -38,11 +16,7 @@ export type FormFieldType =
   | "select"
   | "money"
   | "textarea"
-  /* The Sales Order postcode picker (my_localities): picking one also fills the
-     form's "state" and "city" fields when the schema has them. */
   | "postcode"
-  /* One of PICK_LISTS with its free-text way out, the desktop's
-     PickListField: a stored value off the list shows in the typed box. */
   | "pick";
 
 /** The fixed lists a "pick" field offers (vendor/shared/pick-lists), as the desktop forms do. */
@@ -55,12 +29,9 @@ export type PickListName = keyof typeof PICK_LISTS;
  *  records (roles / departments / positions) that can't be a static list. */
 export type OptionsSource = {
   base: "scm" | "core";
-  /** Endpoint returning `{ [listKey]: Array<record> }` (or a bare array). */
   path: string;
   listKey?: string;
-  /** Accessor for the option value (usually the id). */
   value: (row: any) => string | number;
-  /** Accessor for the human label. */
   label: (row: any) => string;
 };
 
@@ -70,17 +41,11 @@ export type FormField = {
   type: FormFieldType;
   required?: boolean;
   options?: { value: string; label: string }[];
-  /** Load select options at runtime from a real endpoint (roles / depts …). */
   optionsSource?: OptionsSource;
   placeholder?: string;
-  /** For money fields: minor-unit multiplier. 100 = sen/centi (default), 1 =
-   *  whole-ringgit integer columns (products). */
   moneyScale?: number;
-  /** Numeric fields: send as integer (Math.round) rather than a float. */
   integer?: boolean;
-  /** Optional helper line under the field. */
   hint?: string;
-  /** For "pick" fields: which of PICK_LISTS. */
   pick?: PickListName;
 };
 
@@ -88,24 +53,15 @@ export type FormSchema = {
   title: string;
   eyebrow?: string;
   base: "scm" | "core";
-  /** POST path (relative to the base mount), e.g. "/suppliers". */
   createPath: string;
-  /** PATCH path builder, e.g. (id) => `/suppliers/${id}`. Omit when the module
-   *  supports create only (e.g. Warehouse racks have no per-row edit route). */
   updatePath?: (id: string) => string;
-  /** Key on the created / row object holding the id used for edit + onSaved. */
   idKey: string;
   fields: FormField[];
-  /** Optional read of the create-response id (defaults to resp[idKey] or a
-   *  nested resp[wrapperKey][idKey]). */
   responseIdKeys?: string[];
 };
 
-/* Parse a "RM" money string ("1,450.00") to a float, then to minor units. */
 const num = (s: string) => parseFloat(String(s).replace(/,/g, "")) || 0;
 
-/* Pull an id out of a create response that may wrap the record
- * ({ supplier: {...} }, { driver: {...} }) or return it flat ({ id }). */
 function readId(resp: any, schema: FormSchema): string {
   if (resp == null || typeof resp !== "object") return "";
   const keys = schema.responseIdKeys ?? [schema.idKey, "id"];
@@ -113,7 +69,6 @@ function readId(resp: any, schema: FormSchema): string {
     const v = resp[k];
     if (v != null && typeof v !== "object") return String(v);
   }
-  // Wrapped record — scan one level of nested objects for the id key.
   for (const v of Object.values(resp)) {
     if (v && typeof v === "object") {
       for (const k of keys) {
@@ -125,21 +80,15 @@ function readId(resp: any, schema: FormSchema): string {
   return "";
 }
 
-/** Read a value that may arrive camelCase (PostgREST driver) or snake_case. */
 function pickInitial(row: any, key: string): unknown {
   if (!row || typeof row !== "object") return undefined;
   if (row[key] !== undefined) return row[key];
-  // snake_case fallback for a camelCase field key (leadTimeDays → lead_time_days)
   const snake = key.replace(/[A-Z]/g, (m) => "_" + m.toLowerCase());
   if (row[snake] !== undefined) return row[snake];
   return undefined;
 }
 
-/** Seed a field's string form-value from an existing row (edit mode). Money
- *  columns arrive as minor units → shown as a plain decimal. */
 function seedValue(field: FormField, row: any): string {
-  // Money columns store minor units; the form key is the logical name (e.g.
-  // creditLimitSen). Read the raw column then divide back to a decimal.
   const raw = pickInitial(row, field.key);
   if (raw == null || raw === "") return "";
   if (field.type === "money") {
@@ -149,8 +98,6 @@ function seedValue(field: FormField, row: any): string {
     return (n / scale).toFixed(2);
   }
   const value = typeof raw === "boolean" ? (raw ? "true" : "false") : String(raw);
-  // A pick list never blanks a value: one on the list in another spelling opens
-  // as that entry (Save sends what the screen shows), any other as typed.
   if (field.type === "pick") return listEntryOf(field.pick ? PICK_LISTS[field.pick].list : [], value) ?? value;
   // A select shows its blank entry for a value it has no option for, so seeding
   // that value would make Save send what the screen never showed, e.g. an
@@ -189,8 +136,6 @@ export function MobileModuleForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Runtime-loaded select options (roles / departments / positions). Keyed by
-  // field.key. Loaded once on mount for any field with an optionsSource.
   const [remoteOptions, setRemoteOptions] = useState<
     Record<string, { value: string; label: string }[]>
   >({});
@@ -215,15 +160,12 @@ export function MobileModuleForm({
           }));
           setRemoteOptions((prev) => ({ ...prev, [f.key]: opts }));
         } catch {
-          // Leave the select empty on load failure — the operator sees no
-          // options and the required-field guard blocks a bad save.
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-    // schema is stable for this screen's lifetime (remounted on navigation).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -242,11 +184,8 @@ export function MobileModuleForm({
     const body: Record<string, unknown> = {};
     for (const f of schema.fields) {
       const raw = String(values[f.key] ?? "").trim();
-      // On edit, an untouched-empty optional field is left out of the PATCH so
-      // we never null a column the operator didn't intend to clear. On create,
-      // an empty optional is sent as null (the routes coalesce ?? null).
       if (raw === "") {
-        if (f.required) continue; // guarded above; skip defensively
+        if (f.required) continue;
         if (!isEdit) body[f.key] = null;
         continue;
       }
@@ -258,10 +197,6 @@ export function MobileModuleForm({
         if (!Number.isFinite(n)) continue;
         body[f.key] = f.integer ? Math.round(n) : n;
       } else if (f.type === "select") {
-        // Boolean selects ("true"/"false") → real booleans so the routes'
-        // Boolean(x) / x === false checks behave (a raw "false" string is
-        // truthy). Numeric select values (role_id / department_id) → numbers so
-        // the core routes' parseInt / typeof-number checks accept them.
         if (raw === "true" || raw === "false") body[f.key] = raw === "true";
         else if (/^\d+$/.test(raw)) body[f.key] = Number(raw);
         else body[f.key] = raw;
@@ -310,7 +245,6 @@ export function MobileModuleForm({
               });
         id = readId(resp, schema);
       }
-      // Refresh the list this record belongs to.
       await qc.invalidateQueries({ queryKey: ["mobile-module"] });
       if (onSaved) onSaved(id);
       else onBack();
@@ -440,7 +374,6 @@ export function MobileModuleForm({
   );
 }
 
-/** Pick the array out of a keyed response, or return it if already an array. */
 function pickList(data: unknown, listKey?: string): any[] {
   if (Array.isArray(data)) return data;
   if (!data || typeof data !== "object") return [];

@@ -56,9 +56,6 @@ export function usePoCancelAction() {
       void serviceNotify({ title: `PO ${poNumber} cancelled`, body: "Its sales-order lines are released back to the picker." });
       return true;
     } catch (err) {
-      /* A refusal that reaches nobody is worse than a crash (CLAUDE.md). The
-         server's own words carry the reason — a GRN on the PO, a drop-ship
-         delivery already shipped, or a reason too short. */
       void serviceNotify({
         title: "Could not cancel this PO",
         body: err instanceof Error ? err.message : "Something went wrong with this purchase order.",

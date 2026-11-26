@@ -3,7 +3,7 @@
 import { expect, test } from "vitest";
 import { fetchAllPages, toCSV } from "./csv";
 
-const TOTAL = 451; // more than two 200-row pages
+const TOTAL = 451;
 
 const fakeList = (filter: string) => {
   const calls: number[] = [];
@@ -22,7 +22,7 @@ test("exported row count equals the filtered total", async () => {
   expect(new Set(rows.map((r) => r.id)).size).toBe(TOTAL);
   expect(calls).toEqual([1, 2, 3]);
   const csv = toCSV(rows, [{ key: "id", label: "ID", getValue: (r) => r.id }]);
-  expect(csv.split("\r\n")).toHaveLength(TOTAL + 1); // header + rows
+  expect(csv.split("\r\n")).toHaveLength(TOTAL + 1);
 });
 
 test("stops on an empty page even if total is stale", async () => {

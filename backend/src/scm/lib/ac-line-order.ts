@@ -42,7 +42,6 @@
    the right row.
    -------------------------------------------------------------------------- */
 
-/** Minimal shape of the PostgREST builder this applies to. */
 type Orderable<T> = { order(col: string, opts: { ascending: boolean }): T };
 
 /** Apply the canonical AutoCount line order. Every read whose rows become an

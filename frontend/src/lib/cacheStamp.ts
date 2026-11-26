@@ -1,8 +1,3 @@
-// The overviews (Procurement, Logistic, Project, and the home page that reads
-// them) are served from a copy kept up to two hours (backend scm/lib/kv-swr.ts),
-// and they used to say "as of today" over it. The server now puts the copy's
-// own time in the body as `cachedAt`; this says it out loud and lets the viewer
-// ask for figures computed now (`?fresh=1`).
 import { useCallback, useState } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { serviceNotify } from "../vendor/scm/lib/dialog-service";
@@ -16,7 +11,6 @@ export function cacheStampLabel(cachedAt: string | null | undefined): string | n
   if (!cachedAt) return null;
   const t = Date.parse(cachedAt);
   if (Number.isNaN(t)) return null;
-  /* The time half of THE date+time format (Malaysia time) — the copy is always today's. */
   return `Updated ${fmtDateTime(cachedAt).slice(-5)}`;
 }
 

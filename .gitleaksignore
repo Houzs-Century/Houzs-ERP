@@ -38,3 +38,9 @@ dd30f1223a2a7a167d60ffb34d29e378ef761937:frontend/src/pages/scm/maintenance/Fabr
 e535ec8879f3f3bf2bea07d2ded4e20420a19fb6:frontend/src/mobile/mobileProfilePhoto.test.tsx:generic-api-key:116
 e535ec8879f3f3bf2bea07d2ded4e20420a19fb6:frontend/src/mobile/mobileProfilePhoto.test.tsx:generic-api-key:138
 ede25f8139208d18f60e370a9b2c14530bdb034b:backend/tests/totp.test.ts:generic-api-key:18
+# PR #6050 (comment deletion): its branch commit efe17f8be dropped the trailing
+# gitleaks:allow on these three non-secret lines. The markers are back, so the
+# squash commit is clean; these pins only cover the PR-range scan of the branch.
+efe17f8be92f12341e3443685ef0ea73b86f8f04:frontend/src/lib/returnScroll.ts:generic-api-key:73
+efe17f8be92f12341e3443685ef0ea73b86f8f04:frontend/src/lib/browserStorageRegistry.ts:generic-api-key:72
+efe17f8be92f12341e3443685ef0ea73b86f8f04:frontend/src/pages/ContractorCalendar.test.tsx:generic-api-key:7

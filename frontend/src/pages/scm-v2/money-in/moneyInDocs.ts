@@ -1,21 +1,14 @@
-// ----------------------------------------------------------------------------
-// moneyInDocs — where a Money-in document opens, and the list it belongs to
-// (the owner's Claude Design, batch 5 §1 and §8). ONE home: every number on a
-// Money-in page links through moneyInDocHref, so when a list folds into
-// another (Official receipts into Receipts, Deposit invoices into Invoices)
-// the links and the documents' Back move at once.
-// ----------------------------------------------------------------------------
 
 /** The Money-in documents that have a page of their own (§8.3). */
 export type MoneyInDocKind =
-  | 'official'        // an official receipt — one per customer payment
-  | 'sundry'          // a sundry-income (general) receipt
-  | 'debtorReceipt'   // an other debtor's receipt (ODR)
-  | 'salesInvoice'    // a sales invoice, read from Sales
-  | 'depositInvoice'  // a deposit invoice
-  | 'debtorBill'      // an other debtor's bill or debit note
-  | 'note'            // a customer or other-debtor credit / debit note
-  | 'debtor';         // an other debtor in the registry
+  | 'official'
+  | 'sundry'
+  | 'debtorReceipt'
+  | 'salesInvoice'
+  | 'depositInvoice'
+  | 'debtorBill'
+  | 'note'
+  | 'debtor';
 
 /** The document's page. */
 export const moneyInDocHref = (kind: MoneyInDocKind, id: string | number): string => {

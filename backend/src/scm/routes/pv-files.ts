@@ -46,7 +46,6 @@ export const PV_FILES: DocFilesSpec = {
     if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
     if (!data) return { resp: c.json({ error: 'not_found' }, 404) };
     const pv = data as Row;
-    /* Evidence locks with the journal: once approved (posted included), the files stay. */
     return {
       doc: {
         id: String(pv.id), closed: pv.status === 'CANCELLED', locked: !!pv.approved_at || pv.status === 'POSTED',
@@ -132,9 +131,6 @@ export const printPvBundleHandler = async (c: any): Promise<Response> => {
     if ('error' in own) return fail(c.json({ error: 'load_failed', reason: own.error }, 500));
     const refs: DocAttachmentRef[] = [...own.refs];
 
-    /* The bills this voucher PAYS: every AP invoice it allocates to lends its
-       own stored files, allocation order. A purchase-invoice allocation adds
-       nothing — PIs keep no files here. */
     const { data: allocRows, error: allocErr } = await scopeToCompany(
       sb.from('pv_allocations').select('ap_invoice_id, created_at').eq('pv_id', (pv as Row).id), c,
     ).order('created_at');

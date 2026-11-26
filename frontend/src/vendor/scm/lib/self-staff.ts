@@ -27,7 +27,6 @@ export interface SelfStaffCandidate {
   id: string;
   name?: string | null;
   email?: string | null;
-  /** The Houzs auth user this staff row belongs to (scm.staff.user_id). */
   userId?: number | null;
 }
 

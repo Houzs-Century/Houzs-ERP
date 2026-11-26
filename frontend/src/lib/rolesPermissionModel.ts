@@ -1,21 +1,8 @@
-// Pure model behind the Roles & Permissions matrix.
-//
-// The redesign's prototype assumed a tidy `module -> resource -> {read, write,
-// manage, approve}` grid. Production is a FLAT catalogue of `{ key, resource,
-// verb }` (verbs read/create/write/manage/approve), and a role's grants are a
-// flat `string[]` of those keys. This module adapts the flat catalogue into the
-// grid the UI draws, and holds the staging/diff/guard logic. It is deliberately
-// React-free and pure so the behaviour (especially the system-role write
-// guards) is unit-tested.
 
 import type { PermissionDef } from "../types";
 
 export type Verb = "read" | "create" | "write" | "manage" | "approve";
 
-// Fixed column order. Every module shows all columns; a (row, verb) with no real
-// permission key renders N/A, which is how the grid "degrades where reality
-// doesn't fit". `approve` is a real backend verb (scm.so_cancel.approve_l1/l2,
-// announcements.approve) — kept last so it never shifts the CRUD columns.
 export const VERBS: readonly Verb[] = ["read", "create", "write", "manage", "approve"];
 
 export const VERB_LABEL: Record<Verb, string> = {
@@ -28,15 +15,10 @@ export const VERB_LABEL: Record<Verb, string> = {
 
 /** One matrix row: a sub-resource "stem" and the real key sitting under each verb. */
 export interface PermRow {
-  /** Grouping key within the module (key minus its trailing `.verb`). */
   stem: string;
-  /** Human row label. */
   label: string;
-  /** Mono sub-line under the label (the stem, or the key for single-key rows). */
   sub: string;
-  /** verb -> the real permission key that grants it (absent verbs render N/A). */
   keyByVerb: Partial<Record<Verb, string>>;
-  /** Every real key in this row (for counts + search). */
   keys: string[];
 }
 
@@ -45,7 +27,6 @@ export interface PermModule {
   id: string;
   label: string;
   rows: PermRow[];
-  /** Every real key in the module (for the pill count badge). */
   keys: string[];
 }
 
@@ -78,7 +59,7 @@ export function buildModules(permissions: PermissionDef[]): PermModule[] {
   const order: string[] = [];
   const byResource = new Map<string, PermissionDef[]>();
   for (const p of permissions) {
-    if (p.key === "*") continue; // the wildcard is not a grid cell
+    if (p.key === "*") continue;
     if (!byResource.has(p.resource)) {
       byResource.set(p.resource, []);
       order.push(p.resource);
@@ -99,7 +80,6 @@ export function buildModules(permissions: PermissionDef[]): PermModule[] {
         rowOrder.push(stem);
       }
       const row = rowByStem.get(stem)!;
-      // First key wins a verb slot; a genuine collision keeps both in `keys`.
       if (!row.keyByVerb[verb]) row.keyByVerb[verb] = p.key;
       row.keys.push(p.key);
     }
@@ -107,12 +87,10 @@ export function buildModules(permissions: PermissionDef[]): PermModule[] {
     const rows = rowOrder.map((stem) => {
       const row = rowByStem.get(stem)!;
       if (row.keys.length === 1) {
-        // A one-off grant (e.g. projects.chat): use the catalogue's own label.
         const def = perms.find((p) => p.key === row.keys[0])!;
         row.label = def.label;
         row.sub = def.key;
       } else {
-        // A CRUD-shaped sub-resource: name it after the shared stem.
         row.label = humanize(stem);
         row.sub = stem;
       }

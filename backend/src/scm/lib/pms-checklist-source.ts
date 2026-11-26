@@ -22,8 +22,6 @@ export const isPayableSection = (name: unknown): boolean =>
 
 export type ChecklistSource = { id: number; projectId: number; title: string; section: string | null; status: string | null };
 
-/* Lower-case aliases, read both ways: the pg driver and the D1 mirror disagree
-   on result-column casing (lib/event-tags.ts). */
 const pick = (r: Record<string, unknown>, ...keys: string[]): unknown => {
   for (const k of keys) if (r[k] != null) return r[k];
   return null;

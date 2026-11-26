@@ -1,8 +1,3 @@
-// ----------------------------------------------------------------------------
-// departmentPnlParts — the Department P&L's small shared pieces (DepartmentPnl.tsx,
-// DepartmentPnlUnits.tsx): money as a tile prints it, months as words, a rate as a
-// percent, the basis in words, the Total-then-months columns.
-// ----------------------------------------------------------------------------
 
 import { monthEnd } from '../../lib/dateRangePresets';
 import type { DeptBasis } from '../../vendor/scm/lib/department-queries';

@@ -30,24 +30,16 @@
 export interface BookFingerprint {
   DocNo: string;
   Lines: number;
-  /** The ordered ItemCodes, joined by `|`, in AutoCount's own `Seq` order. */
   Codes: string;
 }
 
 export type SweepVerdict =
-  /** The book's lines are the ERP's lines, in the ERP's order. Nothing to do. */
   | 'match'
-  /** Same lines, different ORDER. A rebuild re-lays them. */
   | 'order'
-  /** The book holds a line the ERP does not — the deleted-line case. */
   | 'extra_in_book'
-  /** The ERP holds a line the book does not — an add that never landed. */
   | 'missing_in_book'
-  /** Both, so neither single word would be true. */
   | 'different'
-  /** The ERP says it is linked to a document the book does not have. */
   | 'not_in_book'
-  /** The ERP's own lines could not be composed, so there is nothing to compare. */
   | 'cannot_compose';
 
 /** The verdicts that mean a document needs doing something about. */
@@ -89,8 +81,6 @@ export function compareLineOrder(
   book: readonly string[] | null,
   erp: readonly string[] | null,
 ): SweepVerdict {
-  /* Checked BEFORE `not_in_book`: if we cannot say what the ERP would send, we
-     cannot say the book is missing it either. */
   if (erp === null) return 'cannot_compose';
   if (book === null) return 'not_in_book';
   if (book.length === erp.length && book.every((c, i) => c === erp[i])) return 'match';
@@ -112,7 +102,6 @@ export interface SweepRow {
 export interface SweepSummary {
   total: number;
   byVerdict: Record<SweepVerdict, number>;
-  /** The documents needing action, worst first, capped by the caller. */
   failing: SweepRow[];
 }
 
@@ -121,10 +110,6 @@ const ALL_VERDICTS: readonly SweepVerdict[] = [
   'not_in_book', 'cannot_compose',
 ];
 
-/* Worst first, so a truncated list still shows the documents that matter most.
-   `extra_in_book` leads because it is a WRONG line in a licensed account book —
-   the shape the owner has now found three times — while `order` is confusing
-   but carries no wrong value. */
 const SEVERITY: readonly SweepVerdict[] = [
   'extra_in_book', 'different', 'missing_in_book', 'not_in_book', 'order',
   'cannot_compose', 'match',

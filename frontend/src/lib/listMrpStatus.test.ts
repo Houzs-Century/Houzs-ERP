@@ -2,8 +2,6 @@ import { fmtTime } from "../vendor/shared/format";
 import { describe, expect, it } from "vitest";
 import { combineListMrpMeta, listMrpLabel, withListMrpRefresh, type ListMrpMeta } from "./listMrpStatus";
 
-/* The lists read the 15-min stored MRP plan and say how old it is (owner
-   2026-11-10). A page fetches in chunks; these pin the one line it shows. */
 
 const snap = (asOf: string): ListMrpMeta => ({ asOf, source: "snapshot", fallback: null, failed: false });
 
@@ -34,7 +32,7 @@ describe("listMrpLabel", () => {
   const at = (iso: string) => fmtTime(iso);
 
   it("a fresh snapshot or a refresh reads 'MRP as of hh:mm'", () => {
-    expect(at("2026-11-10T06:05:00.000Z")).toBe("14:05"); // Malaysian time, whatever the device zone
+    expect(at("2026-11-10T06:05:00.000Z")).toBe("14:05");
     expect(listMrpLabel(snap("2026-11-10T06:05:00.000Z"))).toEqual({ text: `MRP as of ${at("2026-11-10T06:05:00.000Z")}`, warn: false });
     expect(listMrpLabel({ asOf: "2026-11-10T06:05:00.000Z", source: "live", fallback: "refresh", failed: false }).warn).toBe(false);
   });

@@ -1,9 +1,5 @@
 import { api } from "../api/client";
 
-/* Crew PIN sign-in — the admin side, shared by the desktop member profile
- * (pages/team/FieldPinCard.tsx) and the phone member screen
- * (mobile/MobileFieldPin.tsx). The server (routes/fieldPinAdmin.ts) decides who
- * may hold a PIN; the screens only show its answer. */
 
 export type FieldPinStatus = {
   eligible: boolean;

@@ -16,15 +16,7 @@ import {
   requestIdFromResponse,
 } from "../lib/requestCorrelation";
 
-/**
- * Public reset-password screen — lives at /reset/:token. Bypasses the
- * authenticated app shell (main.tsx routes /reset/* here unprompted).
- * Fetches the token's metadata (email) to show "Reset for alice@…",
- * then submits a new password. On success, bounces back to /login.
- */
 
-// PROD default is same-origin (Pages Function proxies /api/* to the Worker) —
-// reset links open on phones where *.workers.dev can be carrier-blocked.
 const baseUrl =
   (import.meta.env.VITE_API_URL as string) ||
   (import.meta.env.PROD ? "" : "https://autocount-sync-api.houzs-erp.workers.dev");
@@ -47,8 +39,6 @@ export async function resetPasswordResponseError(
     );
     if (typeof body.error === "string" && body.error.trim()) message = body.error;
   } catch {
-    // Non-JSON/undecodable error response: retain the friendly fallback. The
-    // correlated error returned below still carries this response's id.
   }
   return correlateError(new ResetPasswordDisplayError(message), requestIdFromResponse(response));
 }
@@ -101,7 +91,6 @@ export function ResetPassword() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Verify the token up front so bad/expired links fail fast.
   useEffect(() => {
     if (!token) {
       setState({ kind: "error", message: "Missing token." });
@@ -167,8 +156,6 @@ export function ResetPassword() {
       }
       setState({ kind: "done" });
     } catch (e: any) {
-      // A thrown Error above already carries a plain sentence; a bare network
-      // failure (TypeError "Failed to fetch") must not leak — show plain words.
       setSubmitError(
         e?.name === "TypeError"
           ? "We couldn't reach the server. Please check your connection and try again."

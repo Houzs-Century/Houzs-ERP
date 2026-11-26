@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// WarehouseFloorPlan — the "Rack Overview" tab, re-laid out as a top-view floor
-// plan (design handoff, 2026-09-10). Replaces the old flat card grid: two banks
-// of rack columns (the physical "L" row and "R" row) with one aisle between
-// them, dock at the north end, loading bay at the south. Filters HIGHLIGHT the
-// matching slots and DIM the rest (never hide); a slot click opens the detail
-// drawer, and cmd/ctrl-click multi-selects and swaps the toolbar for a batch
-// bar. Below 1180px it offers a Floor plan / List switch (owned by the parent).
-//
-// All grouping / sorting / filtering lives in the ONE tested logic layer
-// (vendor/scm/lib/warehouse-floorplan.ts) — this file is presentation only.
-// Colour literals are the design-system Ink & Petrol tokens (README token
-// table); Tailwind semantic classes are used wherever a token maps to one.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type CSSProperties } from 'react';
 import {
@@ -36,9 +22,6 @@ import {
 } from '../../vendor/scm/lib/warehouse-floorplan';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 
-/* Slot-state palette — every value is an Ink & Petrol token from the README
-   handoff table. Drives the cell fill / border / level pill / tick / badge for
-   each status, plus the legend swatch. */
 type StatePal = {
   bg: string; border: string; fg: string; levelBg: string; levelFg: string;
   tick: string; tickBd: string; label: string; badgeBg: string; badgeFg: string;
@@ -49,8 +32,6 @@ const PAL: Record<SlotStatus, StatePal> = {
   empty: { bg: '#ffffff', border: 'var(--hz-c-border-subtle)', fg: '#414539', levelBg: '#f4f6f3', levelFg: '#414539', tick: '#ffffff', tickBd: '#d3d8cf', label: 'Empty', badgeBg: '#f4f6f3', badgeFg: '#414539', swatch: '#ffffff', swatchBd: '#d3d8cf' },
   reserved: { bg: '#f6efd9', border: 'var(--hz-c-border)', fg: '#6e4d12', levelBg: '#6e4d12', levelFg: '#ffffff', tick: '#b76b00', tickBd: '#6e4d12', label: 'Reserved', badgeBg: '#f6efd9', badgeFg: '#6e4d12', swatch: '#b76b00', swatchBd: '#6e4d12' },
 };
-/* Legend / chip order, derived from PAL's key order so the status vocabulary
-   lives in ONE place (occupied, empty, reserved). */
 const LEGEND_ORDER = Object.keys(PAL) as SlotStatus[];
 
 const detailLine = (s: Slot): string => {
@@ -68,7 +49,6 @@ export function WarehouseFloorPlan({
   view: 'plan' | 'list';
   onEditRack: (r: Rack) => void;
   onStockInHere: (rackId: string) => void;
-  /** Reprint the stickers of these rack labels (one damaged sticker, or a few). */
   onPrintLabels: (labels: string[]) => void;
 }) {
   const [filters, setFilters] = useState<FloorFilters>({ q: '', product: '', customer: '', from: '', to: '', status: '' });
@@ -116,10 +96,6 @@ export function WarehouseFloorPlan({
     }
   };
 
-  // A rack lives in a zone, so a zone change writes EVERY level sharing the rack
-  // column (both L10.1 and L10.2), never a lone slot row — otherwise the two
-  // levels could resolve to different zones and the column would split. `null`
-  // clears the override back to the rack-number default.
   const assignZone = async (rackKeys: Set<string>, zone: string | null) => {
     try {
       const targets = slots.filter((s) => rackKeys.has(s.rackKey));
@@ -233,7 +209,6 @@ export function WarehouseFloorPlan({
   );
 }
 
-/* ── Toolbar (no selection) ─────────────────────────────────────────────── */
 function Toolbar({
   filters, setFilter, onReset, products, customers, counts, total, hitCount, filtering,
 }: {
@@ -303,7 +278,6 @@ function Toolbar({
   );
 }
 
-/* ── Batch bar (≥1 selected) ────────────────────────────────────────────── */
 function BatchBar({
   count, onReserve, onRelease, onSetZone, onExport, onPrintLabels, busy, onClear,
 }: {
@@ -343,7 +317,6 @@ function BatchBar({
   );
 }
 
-/* ── Floor plan ─────────────────────────────────────────────────────────── */
 const HATCH = 'repeating-linear-gradient(135deg,#f7f8f6,#f7f8f6 8px,#eceeea 8px,#eceeea 16px)';
 
 function FloorPlan({
@@ -367,7 +340,6 @@ function FloorPlan({
       </div>
 
       <div className="flex min-w-max items-stretch gap-3">
-        {/* Loading bay — left end (L1 / R1, goods out) */}
         <div className="flex w-11 flex-none flex-col items-center justify-center gap-2 rounded-md border border-border bg-accent-soft py-3">
           <ArrowLeftRight size={13} className="text-accent" strokeWidth={2} />
           <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-accent" style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>Loading bay · goods out</span>
@@ -430,7 +402,6 @@ function FloorPlan({
         ))}
         </div>
 
-        {/* Main entrance / dock — right end (L21 / R17, goods in) */}
         <div className="flex w-11 flex-none flex-col items-center justify-center gap-2 rounded-md bg-primary-ink py-3">
           <Truck size={13} className="text-white" strokeWidth={2} />
           <span className="font-mono text-[10px] font-bold uppercase tracking-[0.18em] text-white" style={{ writingMode: 'vertical-rl' }}>Main entrance / dock · goods in</span>
@@ -490,7 +461,6 @@ function SlotCell({
   );
 }
 
-/* ── List view (< 1180px) ───────────────────────────────────────────────── */
 function ListView({
   zones, filtering, hits, pickedSet, onClickSlot,
 }: {
@@ -540,7 +510,6 @@ function ListView({
   );
 }
 
-/* ── Hover preview ──────────────────────────────────────────────────────── */
 function HoverCard({ hover }: { hover: { slot: Slot; x: number; y: number } }) {
   const s = hover.slot;
   const p = PAL[s.status];
@@ -566,7 +535,6 @@ function HoverCard({ hover }: { hover: { slot: Slot; x: number; y: number } }) {
   );
 }
 
-/* ── Detail drawer body ─────────────────────────────────────────────────── */
 const MOVE_TAG: Record<RackMovementType, { label: string; bg: string; fg: string }> = {
   STOCK_IN: { label: 'IN', bg: '#e1efed', fg: '#0c3f39' },
   STOCK_OUT: { label: 'OUT', bg: '#f6efd9', fg: '#6e4d12' },

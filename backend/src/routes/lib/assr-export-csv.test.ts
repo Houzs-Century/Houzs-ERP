@@ -30,7 +30,7 @@ describe("Service Cases CSV — the supplier cost column follows the purchase-co
     expect(cols).toHaveLength(23);
     const line = csv.split("\r\n")[1]!;
     expect(line).not.toContain("1234");
-    expect(line.split(",")[cols.indexOf("PO No") + 1]).toBe("PO-9"); // +1: the quoted customer name holds a comma
+    expect(line.split(",")[cols.indexOf("PO No") + 1]).toBe("PO-9");
   });
 
   test("who sees the cost: directors and Purchasing yes, a service-case-only user no", () => {

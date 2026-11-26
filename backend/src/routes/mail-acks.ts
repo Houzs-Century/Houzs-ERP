@@ -1,7 +1,3 @@
-// Mail Center acknowledgements, the recipient's side (DEV-03 / PRD T-011 P2).
-// Mounted at /api/mail-center next to the main router. Both routes act only on
-// the caller's own ack rows, so they need no mailbox scope: a person can
-// acknowledge a mail even when its thread sits in a mailbox they cannot open.
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { acknowledge, owedAcks } from "../lib/mail-acks";

@@ -1,8 +1,3 @@
-// Fleet Module C hooks — delivery RATE CARDS + the pure cost calculator + the
-// 3PL charge reconciliation (migration 0207 / route delivery-rate-cards.ts).
-//
-// The API emits camelCase already (the route shapes rows out); everything goes
-// through authedFetch -> /api/scm/delivery-rate-cards.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -49,17 +44,10 @@ export type RateRule = {
   zone: string | null;
   amountSen: number;
   params: Record<string, unknown> | null;
-  /** An outstation price's jobs (its default, Delivery order, when it names
-   *  none); null for every other price. */
   appliesTo?: string[] | null;
-  /** A Per DO charge's name ("SST", "Permit") and its share of the goods value
-   *  in basis points (100 = 1%); null for every other price. */
   label?: string | null;
   bps?: number | null;
   sortOrder: number;
-  /** Set when the price belongs to one AREA of the card (its own towns), absent
-   *  or null for the card's own price. Area prices are shown with their area,
-   *  never among the card's tiers. */
   areaId?: string | null;
 };
 
@@ -76,7 +64,6 @@ export type RateArea = {
 
 export type RateCardMeta = {
   carriers: { id: string; plate: string; type: string | null; isInternal: boolean }[];
-  /** The 3PL companies; `supplier` is the supplier each bills as (null = not linked). */
   companies: { id: string; name: string; supplier?: { code: string | null; name: string } | null }[];
   ruleTypes: RateRuleType[];
   zones: string[];
@@ -96,11 +83,8 @@ export type DeliveryFacts = {
   itemCount?: number | null;
   sofaCompartments?: number[] | null;
   destinationZone?: string | null;
-  /** The area to price in (Price check names it); otherwise the address decides. */
   areaId?: string | null;
-  /** The job being priced; absent = Delivery order. */
   jobType?: string | null;
-  /** A Per DO charge prices this goods value (sen) and this many DOs. */
   goodsValueSen?: number | null;
   dropCount?: number | null;
   disposeCount?: number | null;
@@ -136,7 +120,6 @@ export type ReconcileRow = {
 
 const CARDS_KEY = ['delivery-rate-cards'] as const;
 
-// ── Cards ────────────────────────────────────────────────────────────────────
 export function useRateCards() {
   return useQuery({
     queryKey: CARDS_KEY,
@@ -163,14 +146,10 @@ export function useRateCardMeta() {
 }
 
 export type NewRateCard = {
-  /** Optional when carrierCompanyId is set — the server names the card after the
-   *  carrier company, so the two can never disagree (mig 0237: one card each). */
   name?: string;
   carrierLorryId?: string | null;
   carrierCompanyId?: string | null;
   carrierLabel?: string | null;
-  /* No isOwnFleet — it is derived from carrierCompanyId server-side and the
-     route ignores it (mig 0246). Own fleet IS "no carrier". */
   basis?: RateBasis;
   aggregation?: RateAggregation;
   minChargeSen?: number | null;
@@ -208,7 +187,6 @@ export function useDeleteRateCard() {
   });
 }
 
-// ── Rules ────────────────────────────────────────────────────────────────────
 export type NewRateRule = {
   ruleType: RateRuleType;
   tierPosition?: number | null;
@@ -217,11 +195,8 @@ export type NewRateRule = {
   zone?: string | null;
   amountSen: number;
   sortOrder?: number;
-  /** The area this price is for; absent or null = the card's own price. */
   areaId?: string | null;
-  /** Outstation only: the jobs it adds to; null = back to Delivery order. */
   appliesTo?: string[] | null;
-  /** Per DO charge only: its name and its share of the goods value (basis points). */
   label?: string | null;
   bps?: number | null;
 };
@@ -230,7 +205,6 @@ export function useCreateRateRule(cardId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: NewRateRule) => authedFetch<{ rule: RateRule }>(`/delivery-rate-cards/${cardId}/rules`, { method: 'POST', body: JSON.stringify(body) }),
-    /* The carrier list shows each card's rule count, so it refreshes too. */
     onSuccess: () => Promise.all([
       qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
       qc.invalidateQueries({ queryKey: CARDS_KEY }),
@@ -243,7 +217,6 @@ export function useUpdateRateRule(cardId: string) {
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<NewRateRule> & { id: string }) =>
       authedFetch<{ rule: RateRule }>(`/delivery-rate-cards/${cardId}/rules/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-    /* The carrier list shows each card's rule count, so it refreshes too. */
     onSuccess: () => Promise.all([
       qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
       qc.invalidateQueries({ queryKey: CARDS_KEY }),
@@ -256,7 +229,6 @@ export function useDeleteRateRule(cardId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => authedFetch<{ ok: true }>(`/delivery-rate-cards/${cardId}/rules/${id}`, { method: 'DELETE' }),
-    /* The carrier list shows each card's rule count, so it refreshes too. */
     onSuccess: () => Promise.all([
       qc.invalidateQueries({ queryKey: ['delivery-rate-card', cardId] }),
       qc.invalidateQueries({ queryKey: CARDS_KEY }),
@@ -264,7 +236,6 @@ export function useDeleteRateRule(cardId: string) {
   });
 }
 
-// ── Areas (mig 20261111T1000) ────────────────────────────────────────────────
 export type NewRateArea = { name: string; towns: string[]; sortOrder?: number };
 
 const refreshCard = (qc: ReturnType<typeof useQueryClient>, cardId: string) => Promise.all([
@@ -285,7 +256,6 @@ export function useDeleteRateArea(cardId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => authedFetch<{ ok: true }>(`/delivery-rate-cards/areas/${id}`, { method: 'DELETE' }),
-    /* Its prices go with it, so the carrier list's rule count changes too. */
     onSuccess: () => refreshCard(qc, cardId),
   });
 }
@@ -309,7 +279,6 @@ export function useAddAreaWithPrices(cardId: string) {
   });
 }
 
-// ── Compute (the pure calculator against a stored card) ──────────────────────
 export function useComputeCost(cardId: string) {
   return useMutation({
     mutationFn: (facts: DeliveryFacts) =>
@@ -320,7 +289,6 @@ export function useComputeCost(cardId: string) {
   });
 }
 
-// ── Reconciliation ───────────────────────────────────────────────────────────
 export function useReconcile(opts: { from?: string; to?: string }) {
   const { from, to } = opts;
   return useQuery({
@@ -336,22 +304,18 @@ export function useReconcile(opts: { from?: string; to?: string }) {
   });
 }
 
-// ── Own fleet: our own lorries priced like a 3PL ─────────────────────────────
 /** One lorry's day (a trip), priced once by the own fleet card. */
 export type OwnFleetRun = {
   key: string;
   runDate: string;
   lorryId: string | null;
   plate: string;
-  /** Its Delivery Planning trips that day; none when Last Mile alone put orders on it. */
   tripNos: string[];
   dos: { doId: string; doNumber: string | null; companyCode: string | null }[];
   setCount: number;
   zones: string[];
-  /** Its other jobs, by job (SUPPLIER_PICKUP, TRANSFER, ...). */
   jobs: Partial<Record<string, number>>;
   cardName: string | null;
-  /** The card's price for the trip; null = no own fleet card prices this lorry. */
   costSen: number | null;
   otherJobsSen: number | null;
   lines: { label: string; amountSen: number }[];
@@ -377,7 +341,6 @@ export type OwnFleetMonth = {
 export type OwnFleetCosts = {
   from: string;
   to: string;
-  /** The own fleet card for the whole fleet; null = none, or more than one active. */
   card: { id: string; name: string } | null;
   severalCards: { id: string; name: string }[];
   lorryCards: { id: string; name: string; lorryId: string | null }[];
@@ -385,8 +348,6 @@ export type OwnFleetCosts = {
   months: OwnFleetMonth[];
 };
 
-/* Under CARDS_KEY, so every card, price and area change (each invalidates it)
-   re-prices the trips: an edited price shows on the Own fleet tab at once. */
 export function useOwnFleetCosts(range: { from: string; to: string }) {
   const { from, to } = range;
   return useQuery({

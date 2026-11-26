@@ -3,17 +3,6 @@ import { PROJECT_STATUS_OPTIONS } from "../../vendor/scm/lib/pms-project-status"
 import { cn } from "../../lib/utils";
 import type { ProjectStatus } from "./types";
 
-// Project status palette — drives the calendar tint, the spec strip
-// pill, and the header dropdown.
-// Premium earth-tone status palette — pine / brass / clay — tuned for the
-// cream canvas + Nature Black brand. Replaces the generic primary
-// blue/amber/red. `hex` drives the calendar bar tint+rail and legend dots;
-// `chip`/`ring` are the matching pill tints used by the list view + the
-// status dropdown.
-// WHICH statuses exist and what they are CALLED live in pms-project-status.ts,
-// shared with mobile. Only the palette is desktop's — mobile styles inline, so
-// the value->label contract is the part that must not drift (the same split
-// pms-status.ts uses for stages).
 const STATUS_TINT: Record<ProjectStatus, { hex: string; chip: string; ring: string }> = {
   confirmed: { hex: "#3f6b53", chip: "bg-[color:var(--hz-dk-surface-2,#e8efe9)] text-[#2f5341]", ring: "ring-[#3f6b53]/30" },
   pending:   { hex: "#c2740f", chip: "bg-[color:var(--hz-dk-warning-bg,#f7e8d2)] text-[#8a4e0e]", ring: "ring-[#c2740f]/30" },
@@ -21,8 +10,6 @@ const STATUS_TINT: Record<ProjectStatus, { hex: string; chip: string; ring: stri
 };
 export const STATUS_OPTIONS = PROJECT_STATUS_OPTIONS.map((o) => ({ ...o, ...STATUS_TINT[o.value] }));
 
-// Partial on purpose: a row can carry a status outside the union, and every
-// lookup's `?? STATUS_BY_VALUE.pending` is what renders it instead of crashing.
 export const STATUS_BY_VALUE: Partial<Record<ProjectStatus, typeof STATUS_OPTIONS[number]>> &
   Record<"pending", typeof STATUS_OPTIONS[number]> = STATUS_OPTIONS.reduce(
   (acc, s) => ({ ...acc, [s.value]: s }),
@@ -31,10 +18,6 @@ export const STATUS_BY_VALUE: Partial<Record<ProjectStatus, typeof STATUS_OPTION
 
 export function statusBarStyle(status: ProjectStatus | null | undefined): React.CSSProperties {
   const opt = STATUS_BY_VALUE[status ?? "pending"] ?? STATUS_BY_VALUE.pending;
-  // Colour is driven by the `.cal-bar` class off this `--bar` custom
-  // property: a soft tint + status rail + ink text at rest, deepening to
-  // the solid status fill on hover. Keeps the month grid calm/scannable
-  // while preserving the bold colour on the bar you're pointing at.
   return { ["--bar" as string]: opt.hex } as React.CSSProperties;
 }
 

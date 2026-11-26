@@ -52,10 +52,6 @@ describe('DateField typing', () => {
   });
 });
 
-/* ONE CHARACTER AT A TIME — the shape whole-string tests could not see.
-   Every case here fires a change event per keystroke, the way a keyboard does,
-   so an unpadded month/day whose separators are the operator's own (`2026/9/7`)
-   is exercised rather than the padded form that re-lands on the mask's slots. */
 describe('DateField typed one keystroke at a time', () => {
   const typeOut = (box: HTMLInputElement, text: string) => {
     for (const ch of text) fireEvent.change(box, { target: { value: box.value + ch } });

@@ -26,7 +26,6 @@ const sentRow = { company_id: 1, doc_type: 'SO' as const, doc_no: SO_DOC, doc_id
 const rows = (sb: { tables: Record<string, Row[]> }) => sb.tables.autocount_outbox;
 const byId = (sb: { tables: Record<string, Row[]> }, id: string) => rows(sb).find((r) => r.id === id);
 
-/* Typed casts at the one seam where the fake meets the real signatures. */
 const asSb = (sb: unknown) => sb as Parameters<typeof resendHeldEdits>[0];
 const asOutboxSb = (sb: unknown) => sb as Parameters<typeof enqueueEdit>[0];
 const asEnv = (env: unknown) => env as Parameters<typeof dispatchOne>[0];
@@ -171,8 +170,6 @@ describe('through the drain: the HC-SO-011153 sequence end to end', () => {
     supplier_material_bindings: [],
   });
 
-  /* The office host: it answers an edit with every line the document now holds,
-     giving the line it appended a new key, the way AcSyncService's /edit does. */
   const host = vi.fn(async (url: string, init?: RequestInit) => {
     const payload = JSON.parse(String(init?.body ?? '{}')) as { Lines?: Array<Record<string, unknown>> };
     if (!String(url).endsWith('/edit')) {
@@ -188,18 +185,14 @@ describe('through the drain: the HC-SO-011153 sequence end to end', () => {
   test('the save refused a second after the line was added goes out keyed, with no second copy of the line', async () => {
     const sb = world();
 
-    /* 06:14:34 — the save that added line 9 queues an edit declaring it new. */
     expect(await enqueueEdit(asOutboxSb(sb), { companyId: 1, docType: 'SO', docNo: SO_DOC, newLineIds: ['row-9'] })).toBe(true);
-    /* 06:14:35 — the next save, composed while line 9 is still keyless, is refused. */
     expect(await enqueueEdit(asOutboxSb(sb), { companyId: 1, docType: 'SO', docNo: SO_DOC })).toBe(false);
     const refused = rows(sb).find((r) => r.status === 'skipped')!;
     expect(String(refused.last_error)).toMatch(/^refused, nothing sent \(KeylessLineError\)/);
     const added = rows(sb).find((r) => r.status === 'pending')!;
-    /* The fake stamps no created_at; give the two rows the order they had. */
     added.created_at = '2026-09-15T06:14:34.000Z';
     refused.created_at = '2026-09-15T06:14:35.000Z';
 
-    /* 06:15:13 — the first edit drains. */
     expect(await dispatchOne(asEnv(env), asOutboxSb(sb), added as unknown as AcOutboxRow, asFetch(host))).toBe('sent');
 
     expect(sb.tables.mfg_sales_order_items.find((r) => r.id === 'row-9')!.linked_ac_dtlkey).toBe(931773);

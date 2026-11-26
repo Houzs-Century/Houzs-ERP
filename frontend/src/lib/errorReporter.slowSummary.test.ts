@@ -1,7 +1,3 @@
-// Production, 7 days: 57,484 of 60,644 client-error occurrences (95%) were
-// "[slow ...]" notes, each one riding a POST to /api/client-errors — the
-// route was the 3rd-heaviest by Worker time. Slow requests are now counted
-// locally and leave as one summary batch per 10 minutes. These pin that.
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const sent = vi.hoisted(() => ({ bodies: [] as Array<{ events: Array<Record<string, unknown>> }> }));
@@ -59,7 +55,6 @@ describe("slow request notes are a 10-minute summary", () => {
   test("a summary carries at most 10 signatures and never exceeds the server's count cap", async () => {
     const r = await freshReporter();
     for (let i = 0; i < 1500; i++) r.reportSlowRequest("GET", "/api/auth/me", 900);
-    // 60 more distinct endpoints: only 49 more are tracked, only 9 more are sent.
     for (let e = 0; e < 60; e++) r.reportSlowRequest("GET", `/api/endpoint-${String.fromCharCode(97 + (e % 26))}${e}`, 900);
     vi.advanceTimersByTime(10 * 60_000);
     const events = sent.bodies[0].events;

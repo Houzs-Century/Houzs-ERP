@@ -1,24 +1,3 @@
-// UnbilledDeliveriesV2 — goods that left the warehouse and were never charged
-// for, aged. Read-only; no writes, no drawer. In the owner's Claude Design
-// redesign (Finance › Money in › Not yet billed, batch 5): four cards, age
-// chips with their counts, then the deliveries as a table or as cards.
-//
-// Route: /scm/unbilled-deliveries. Reads GET /api/scm/unbilled-deliveries —
-// see the header note in backend/src/scm/routes/unbilled-deliveries.ts for why
-// this is line-level and why the Outstanding page's DO list (a header-status
-// flag with no money column) cannot answer this question.
-//
-// THE AGE IS THE POINT. Steady-state un-invoiced runs 1–3%/month, but the
-// CURRENT month legitimately runs ~2/3 un-invoiced — that is billing lag, not
-// leakage, and a report that opens on it is a report nobody reads twice. So the
-// default chip is "Aged 31+", NOT "All": the page opens past the noise. The
-// endpoint stays honest (it returns every age; `minAgeDays` is its param) and
-// the opinion about where to look lives here, in the view.
-//
-// The query is declared inline (useQuery + authedFetch — the Categories.tsx /
-// ConsignmentOrders.tsx idiom) rather than as a vendor/scm/lib/*-queries slice:
-// this report is Houzs-native, not vendored from 2990, so it adds nothing to the
-// vendored tree.
 
 import { useMemo, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -37,7 +16,6 @@ import { Chips, DocLink, FigureCard, Segments, StatusTag } from "./money-in/Mone
 import { unbilledAgeTone } from "./money-in/moneyInStatus";
 import s from "./MoneyIn.module.css";
 
-// ─── Types — mirrors the endpoint's Row / buckets / totals ──────────────────
 
 type UnbilledRow = {
   delivery_order_id: string;
@@ -78,10 +56,6 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const ageTag = (days: number) => ({ text: `${days.toLocaleString("en-MY")} days`, tone: unbilledAgeTone(days) });
 const deliveriesWord = (n: number): string => (n === 1 ? "1 delivery" : `${n.toLocaleString("en-MY")} deliveries`);
 
-/* Ageing THRESHOLDS, not the endpoint's disjoint buckets. The owner's question
-   is "how far back does this go" ("111 DOs older than 12 months"), so the chips
-   are cumulative severity steps he can think in, and each row still carries its
-   exact age tag. `minAge` is INCLUSIVE. */
 type AgeTab = "all" | "aged" | "over90" | "over365";
 const AGE_TABS: Array<{ value: AgeTab; label: string; minAge: number }> = [
   { value: "all",     label: "All ages",       minAge: 0 },
@@ -161,12 +135,6 @@ export function UnbilledDeliveriesV2() {
   const view = (params.get("view") ?? "table") as "table" | "cards";
   const search = params.get("q") ?? "";
 
-  /* Fetch EVERY age once (minAgeDays defaults to 0 server-side) and threshold on
-     the client. The chips then need no refetch, and the "All ages" count stays
-     honest — the current-month lag is present in the data, just not on screen by
-     default. The list is a tail of stale documents, so 30s staleTime + the
-     shared 1-retry idiom (vendor/scm/lib/outstanding-queries baseQuery) is
-     plenty; nothing here is real-time. */
   const { data, isLoading, error } = useQuery({
     queryKey: ["unbilled-deliveries"],
     queryFn: () => authedFetch<UnbilledResponse>("/unbilled-deliveries"),
@@ -177,8 +145,6 @@ export function UnbilledDeliveriesV2() {
 
   const allRows = useMemo<UnbilledRow[]>(() => data?.rows ?? [], [data]);
 
-  /* The search first, then the age: each chip then counts what it would show
-     under the search typed (the design's counts). */
   const searched = useMemo(() => {
     if (!search.trim()) return allRows;
     return allRows.filter((r) =>
@@ -191,10 +157,6 @@ export function UnbilledDeliveriesV2() {
     return min <= 0 ? searched : searched.filter((r) => r.age_days >= min);
   }, [searched, age]);
 
-  /* The cards follow the ROWS ON SCREEN, so the headline can never disagree
-     with the list under it — except "Over 12 months", which is deliberately
-     absolute (it is THE number, and it should not move when he filters; owner
-     spec A3 keeps it so). */
   const stats = useMemo(() => {
     const oldestRow = filtered.reduce<UnbilledRow | null>((m, r) => (m == null || r.age_days > m.age_days ? r : m), null);
     const partly = filtered.filter((r) => r.partly_invoiced);
@@ -238,8 +200,6 @@ export function UnbilledDeliveriesV2() {
     await queryClient.invalidateQueries({ queryKey: ["unbilled-deliveries"] });
   };
 
-  // Every row is a document he can open and act on — the DO detail is where the
-  // "convert to invoice" path starts.
   const goDetail = (r: UnbilledRow) => navigate(`/scm/delivery-orders/${r.delivery_order_id}`);
 
   const moneyColumn = (key: "unbilled_sen" | "delivered_sen" | "invoiced_sen", label: string, muted: boolean): Column<UnbilledRow> => ({
@@ -254,8 +214,6 @@ export function UnbilledDeliveriesV2() {
     render: (r) => (key === "unbilled_sen" ? (
       <div className="flex flex-col items-end gap-1">
         <span className={s.strong}>{fmtSen(r.unbilled_sen)}</span>
-        {/* The expensive case, and the one a header-status report cannot see:
-            part of this DO was billed and the rest was quietly left behind. */}
         {r.partly_invoiced && <StatusTag tag={{ text: `${r.lines_pending} of ${r.lines_total} lines`, tone: "warn" }} />}
       </div>
     ) : (
@@ -283,7 +241,6 @@ export function UnbilledDeliveriesV2() {
       key: "age_days",
       label: "Age",
       width: "100px",
-      // Sort + CSV export on the NUMBER, so "Over 12 months" never sorts as text.
       getValue: (r) => r.age_days,
       render: (r) => <StatusTag tag={ageTag(r.age_days)} />,
     },
@@ -335,18 +292,12 @@ export function UnbilledDeliveriesV2() {
       key: "status",
       label: "DO Status",
       width: "100px",
-      /* Off by default, as before the redesign (Columns turns it on): with it
-         the design's columns overflow a laptop screen and squeeze the ages. */
       defaultHidden: true,
       getValue: (r) => statusLabel("do", r.status),
       render: (r) => <span className={s.muted}>{statusLabel("do", r.status)}</span>,
     },
   ];
 
-  /* Every card below is a reduce over `filtered`, which is [] until the query
-     lands and stays [] when it fails. On this page that renders as "Not billed
-     RM 0.00" — read on a finance screen as "nobody is owed anything", which is
-     the opposite of what an unloaded list means. Unknown until it is known. */
   const statsPending = isLoading || Boolean(error);
   const pendingSub = error ? "Could not read" : "Loading…";
   const subOf = (text: string) => (statsPending ? pendingSub : text);
@@ -370,7 +321,6 @@ export function UnbilledDeliveriesV2() {
 
         <div className={`${s.cardsWrap} hidden md:block`}>
           <div className={s.cards}>
-            {/* THE headline — absolute, not filter-scoped (see stats memo). */}
             <FigureCard
               icon={<Clock {...ICON} />}
               label="Over 12 months"

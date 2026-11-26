@@ -1,9 +1,3 @@
-/**
- * PC Receive shows its own number on the page and on the Print PDF (DEV-57).
- * The record carries receive_number; the page read grn_number, which the
- * endpoint never returns, so the title read "undefined — ..." and the PDF had
- * no number (reported on 2990-PCR-2610-001).
- */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -28,8 +22,6 @@ const PCR = {
   currency: 'MYR',
   total_sen: 0,
 };
-/* Stable references: the page's effects key on these, so a fresh object per
-   render loops them. */
 const DETAIL = { data: { grn: PCR, items: [] }, isPending: false, isError: false };
 const SUPPLIER_DETAIL = { data: { supplier: null, bindings: [] } };
 const EMPTY = { data: [] };

@@ -7,21 +7,15 @@
 export interface OvProject {
   id: number; code: string; name: string; brand: string | null; organizer: string | null; venue: string | null;
   state: string | null; stage: string | null; startDate: string | null; endDate: string | null; eventType: string | null;
-  /** Booth area in square metres; null when not keyed. */
   sizeSqm: number | null;
   keyed: {
     income: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number;
     /** The same lines as fine as the Financial Snapshot (owner 2026-10-19). */
     cogsMattSofa: number; cogsBedframe: number; cogsAccessories: number; transportFee: number; transportSetup: number;
   };
-  /** costSplit: the orders' line cost by product group, only for an event with no COGS keyed. */
   salesOrders: { sen: number; costSen: number; count: number; costSplit: { mattSofa: number; bedframe: number; accessories: number } };
-  /** The event's chat sales report against its Sales Orders; null = no report saved. */
   chatReport: { bills: number; billsSen: number; opened: number; openedSen: number; otherEvent: number } | null;
-  /** The event page's P&L (backend services/eventPnl.ts), By Sales Orders when an
-   *  order was opened, in RM; null when the server could not build it. */
   pnl: OvPnl | null;
-  /** The orders' total (drafts in) and what the payment ledger says was paid, in sen. */
   collection: { totalSen: number; paidSen: number };
 }
 
@@ -40,7 +34,6 @@ export interface LayerSplit { actual: number; forecast: number; last_event: numb
 export type OvLineSource = "actual" | "forecast" | "last_event";
 export interface OvLayers {
   estimated: boolean;
-  /** Each snapshot line's layer (backend routes/projectOverview.ts). */
   sources?: Partial<Record<string, OvLineSource>>;
   split: { sales: LayerSplit; cost: LayerSplit; net: LayerSplit };
   lastEvent: { id: number; code: string } | null;
@@ -54,16 +47,13 @@ export type SalesSource = "keyed" | "sales_orders" | "none";
 export interface Figures {
   sales: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number;
   otherCost: number; gp: number; np: number; salesSource: SalesSource; cogsFromSalesOrders: boolean;
-  /** The orders' service charges, beside Sales. */
   serviceRevenue: number;
   cogsLines: { mattSofa: number; bedframe: number; accessories: number; other: number };
   transportFee: number; transportSetup: number;
-  /** Sales, cost and net profit by layer: Actual / Forecast / Last event. */
   split: { sales: LayerSplit; cost: LayerSplit; net: LayerSplit };
   estimated: boolean;
 }
 
-/** All actual: the split of a project the server sent no layers for. */
 const actualSplit = (sales: number, cost: number, np: number) => ({
   sales: { ...zeroSplit(), actual: sales }, cost: { ...zeroSplit(), actual: cost }, net: { ...zeroSplit(), actual: np },
 });
@@ -105,11 +95,8 @@ export function figuresOf(p: OvProject): Figures {
 
 export interface Totals {
   projects: number; sales: number; cogs: number; rental: number; commission: number; setup: number; transport: number; merchandise: number; other: number; otherCost: number; gp: number; np: number; fromSalesOrders: number; noSales: number;
-  /** COGS split as keyed, or for an event with none keyed, its Sales Orders' cost by product group;
-   *  cogsFromSo = the part of that cost no line accounts for (order total above its lines). */
   cogsMattSofa: number; cogsBedframe: number; cogsAccessories: number; cogsFromSo: number; transportFee: number; transportSetup: number;
   serviceRevenue: number;
-  /** Sales, cost and net profit by layer, and how many projects hold an estimate. */
   split: { sales: LayerSplit; cost: LayerSplit; net: LayerSplit };
   estimated: number;
 }
@@ -187,7 +174,6 @@ export function drillOf(ps: OvProject[], drill: Drill, today: string) {
       buckets.push({ key: `${drill.year}-Q${q}`, label: `Q${q} ${drill.year}`, from: `${drill.year}-${pad(m1)}-01`, to: `${drill.year}-${pad(m1 + 2)}-${pad(last(drill.year, m1 + 2))}`, next: { level: "months", year: drill.year, quarter: q } });
     }
   } else if (drill.level === "months" || drill.level === "yearMonths") {
-    /* A quarter's three months, or all twelve months of a year (the opening view). */
     const first = drill.level === "months" ? (drill.quarter - 1) * 3 + 1 : 1;
     for (let i = 0; i < (drill.level === "months" ? 3 : 12); i++) {
       const mm = first + i; const key = `${drill.year}-${pad(mm)}`;
@@ -227,11 +213,7 @@ export function heldVsComing(ps: OvProject[], today: string): { held: Totals; co
   return { held: totalsOf(held), coming: totalsOf(coming) };
 }
 
-/** The table column a snapshot line feeds: the three COGS lines are one column,
- *  the two transport lines another, every other line its own (the line names
- *  live in forecastLayers.ts). */
 const columnOfLine = (line: string): string => (line.startsWith("cogs_") ? "cogs" : line.startsWith("transport") ? "transport" : line);
-/** The money columns of the project table, in its order. */
 const MONEY_COLUMNS = ["sales", "cogs", "rental", "setup", "transport", "commission", "merchandise", "others"];
 
 /** The table columns of a project that hold a forecast (typed or the last event's),

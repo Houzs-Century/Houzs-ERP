@@ -5,8 +5,6 @@ const R1: ReturnLineIn = { id: 'r1', do_item_id: 'd1', item_code: 'BED-Q', descr
 const R2: ReturnLineIn = { id: 'r2', do_item_id: 'd2', item_code: 'PIL', description: 'Pillow', qty_returned: 1 };
 const R3: ReturnLineIn = { id: 'r3', do_item_id: 'd3', item_code: 'FOC', description: 'Never invoiced', qty_returned: 1 };
 
-/* d1 billed 4 units for 3,600.00 after a RM400 whole-line discount: 900.00 each,
-   not the list price on the return line. d2 billed on a second invoice. */
 const SI: InvoiceLineIn[] = [
   { sales_invoice_id: 'si-a', do_item_id: 'd1', qty: 4, line_total_sen: 360000 },
   { sales_invoice_id: 'si-a', do_item_id: 'd2', qty: 1, line_total_sen: 5000 },
@@ -82,8 +80,6 @@ describe('checkReturnLines', () => {
   });
 });
 
-/* A minimal PostgREST double: the two reads creditNoteHold makes, each asserting
-   the company predicate is on the query. */
 function fakeSb(tables: Record<string, Array<Record<string, unknown>>>, fail: string | null = null) {
   return {
     from(table: string) {

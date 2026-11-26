@@ -32,7 +32,6 @@ export type BackdateNotifyEvent = "raised" | "approved" | "rejected";
 
 export type BackdateNotifyOpts = {
   docNo: string;
-  /** Already formatted, e.g. "RM 1,250.00". */
   amount: string;
   slipDate: string;
   reason?: string | null;

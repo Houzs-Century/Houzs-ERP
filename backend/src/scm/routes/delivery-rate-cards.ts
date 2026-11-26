@@ -1,36 +1,3 @@
-// ----------------------------------------------------------------------------
-// /delivery-rate-cards — Fleet Module C: 3PL / own-fleet delivery RATE CARDS,
-// the pure cost CALCULATOR, and the 3PL charge RECONCILIATION view.
-//
-// FIVE surfaces, one router:
-//   1. CRUD over scm.delivery_rate_cards + scm.delivery_rate_rules (mig 0207) —
-//      the owner builds a card per carrier: charging basis (item/set), aggregation
-//      (drop/customer), positional tiers, cap+overage, sofa compartment brackets,
-//      outstation zone surcharges, dispose/setup/dismantle, and the service /
-//      pickup / inspection / transfer order-type charges. Own-fleet gets a card
-//      too (is_own_fleet) so a 3PL drop and an own-fleet drop compare per drop.
-//   2. POST /:id/compute — run the PURE computeDeliveryCost (delivery-rate-card.ts)
-//      against a card for a set of delivery facts. Returns the itemised breakdown.
-//      Writes nothing — the admin "cost calculator" test panel and the
-//      reconciliation both use it.
-//   3. GET /reconcile — the 3PL charge reconciliation. Lists OUTSOURCE trips that
-//      carry a captured billed cost (scm.trips.three_pl_cost_sen, set in A3),
-//      matches each to its carrier's rate card, derives the drop's facts from the
-//      trip's stops (set count + destination zone), computes the EXPECTED cost,
-//      and flags the delta (billed - expected). COST verification, not billing.
-//   4. GET /meta — the carriers (lorries) + known zones the editor selects from.
-//   5. GET /own-fleet — our own lorries priced like a 3PL: each lorry's day is
-//      one trip, priced once by the company's own fleet card, beside the 3PL
-//      bills of the same days (lib/own-fleet-runs.ts, lib/own-fleet-load.ts).
-//
-// COGS ATTRIBUTION SEAM. The computed/reconciled delivery cost is an ATTACHED
-// cost surfaced read-only here (and available to the DO/trip margin surface); it
-// does NOT touch the FIFO lot / consumption money-path triggers. See the module
-// doc for the documented COGS-rollup seam left for owner review.
-//
-// Mounted at '/delivery-rate-cards' in scm/index.ts behind
-// scmAreaGuard('scm.transportation.drivers') — same area as the rest of TMS.
-// ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -73,17 +40,9 @@ import { loadOwnFleet, type OwnFleetRead } from '../lib/own-fleet-load';
 export const deliveryRateCards = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryRateCards.use('*', supabaseAuth);
 
-// The Module C tables (mig 0207) are not in the generated Supabase types yet —
-// the schema types regenerate after the migration merges. Until then the query
-// builder widens select() on these two tables to GenericStringError; rc() is the
-// narrow, table-local `any` bridge so the row shaping (cardOut/ruleOut) stays the
-// single source of the wire shape. Existing typed tables are untouched.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const rc = (sb: unknown): any => sb;
 
-/* The ONE list (rate-rule-taxonomy.ts, which audit:job-types holds to the
-   rule_type CHECK). A local copy here lacked SUPPLIER_PICKUP after mig 0243
-   added it, so the editor offered a rule this route refused with 400. */
 const RULE_TYPES: readonly RateRuleType[] = RATE_RULE_TYPES;
 const RULE_TYPE_SET = new Set<string>(RULE_TYPES);
 
@@ -94,7 +53,6 @@ const RULE_COLS =
   'id, card_id, rule_type, tier_position, bracket_min, bracket_max, zone, area_id, amount_sen, params, sort_order';
 /* A card's priced areas (mig 20261111T1000; owner 2026-11-11 on the 3PL quotations). */
 const AREA_COLS = 'id, card_id, name, towns, sort_order';
-/* Town surcharges stay the card's own: an area prices the ladder and the charges. */
 const CARD_ONLY_TYPES: ReadonlySet<string> = new Set(['OUTSTATION', 'OUTSTATION_TRIP']);
 
 type Row = Record<string, unknown>;
@@ -114,10 +72,6 @@ export function cardOut(r: Row) {
     carrierLabel: s(r.carrier_label),
     isOwnFleet: r.is_own_fleet === true,
     basis: (String(r.basis ?? 'SET') === 'ITEM' ? 'ITEM' : 'SET') as 'ITEM' | 'SET',
-    /* Anything unrecognised reads as UNIT — the computation that has always
-       run — so a value a later migration adds prices the way it did rather
-       than silently becoming free. Never collapse to DROP: that would now
-       change the count, not just the label. */
     aggregation: (AGGREGATION_UNITS.has(String(r.aggregation ?? '')) ? String(r.aggregation) : 'UNIT') as AggregationUnit,
     minChargeSen: n(r.min_charge_sen),
     capSen: n(r.cap_sen),
@@ -141,10 +95,7 @@ export function ruleOut(r: Row) {
     areaId: s(r.area_id),
     amountSen: Number(r.amount_sen ?? 0),
     params: (r.params ?? null) as Record<string, unknown> | null,
-    /* The jobs an outstation surcharge adds to (params.appliesTo, its default
-       when unset); null for every other rule. */
     appliesTo: CARD_ONLY_TYPES.has(String(r.rule_type)) ? appliesToOf(r.params) : null,
-    /* A Per DO charge's name and share of the goods value (do-charge.ts); null for every other rule. */
     ...doChargeOf(String(r.rule_type), r.params),
     sortOrder: Number(r.sort_order ?? 0),
   };
@@ -164,7 +115,6 @@ export function areaOut(r: Row) {
 export const townsOf = (towns: readonly string[]): string[] =>
   [...new Set(towns.map((t) => t.toUpperCase().replace(/\s+/g, ' ').trim()).filter((t) => t !== ''))];
 
-/** A card's stored rules -> the pure calculator's RateRuleSpec[]. */
 function toRuleSpecs(rules: ReturnType<typeof ruleOut>[]): RateRuleSpec[] {
   return rules.map((r) => ({
     ruleType: r.ruleType,
@@ -205,7 +155,6 @@ export function priceCheckStop(destination: string | null | undefined, places: r
   return { zone, addressText: name };
 }
 
-/** The areas of these cards, scoped to the request's company. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadAreas(c: any, cardIds: string[]): Promise<{ ok: true; areas: ReturnType<typeof areaOut>[] } | { ok: false; reason: string }> {
   if (cardIds.length === 0) return { ok: true, areas: [] };
@@ -217,7 +166,6 @@ async function loadAreas(c: any, cardIds: string[]): Promise<{ ok: true; areas: 
   return { ok: true, areas: (data ?? []).map(areaOut) };
 }
 
-// ── GET /meta — carriers (lorries) + known zones for the editor selects. ─────
 deliveryRateCards.get('/meta', async (c) => {
   const sb = c.get('supabase');
   const { data } = await paginateAll<Row>((lo, hi) =>
@@ -229,7 +177,6 @@ deliveryRateCards.get('/meta', async (c) => {
     type: s(r.type),
     isInternal: r.is_internal !== false,
   }));
-  // WS4b: 3PL companies — a card is now priced per company (its lorries inherit).
   const { data: coData, error: coErr } = await paginateAll<Row>((lo, hi) =>
     scopeToCompany(sb.from('threepl_companies').select('id, name, is_active, supplier_id'), c)
       .eq('is_active', true).order('name', { ascending: true }).range(lo, hi),
@@ -252,7 +199,6 @@ deliveryRateCards.get('/meta', async (c) => {
   return c.json({ carriers, companies, ruleTypes: RULE_TYPES, zones: [...ZONE_SET] });
 });
 
-// ── GET / — list the company's rate cards (each with its rule count). ────────
 deliveryRateCards.get('/', async (c) => {
   const sb = c.get('supabase');
   const { data, error } = await paginateAll<Row>((lo, hi) =>
@@ -261,7 +207,6 @@ deliveryRateCards.get('/', async (c) => {
   );
   if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
   const cards = (data ?? []).map(cardOut);
-  // Rule counts per card (one query).
   const ids = cards.map((x) => x.id);
   const countById = new Map<string, number>();
   if (ids.length > 0) {
@@ -282,9 +227,6 @@ const cardCreateSchema = z.object({
   carrierLorryId: z.string().uuid().nullable().optional(),
   carrierCompanyId: z.string().uuid().nullable().optional(),
   carrierLabel: z.string().trim().max(120).nullable().optional(),
-  /* NO isOwnFleet. It is DERIVED from carrierCompanyId — see below. A card that
-     names a carrier is that carrier's price list; a card that names none is our
-     own cost structure. Accepting the two independently let them contradict. */
   basis: z.enum(['ITEM', 'SET']).optional(),
   aggregation: z.enum(['UNIT', 'DROP', 'CUSTOMER', 'TRIP']).optional(),
   minChargeSen: z.number().int().min(0).nullable().optional(),
@@ -294,7 +236,6 @@ const cardCreateSchema = z.object({
   notes: z.string().trim().max(1000).nullable().optional(),
 });
 
-// ── POST / — create a card. ──────────────────────────────────────────────────
 deliveryRateCards.post('/', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -340,14 +281,6 @@ deliveryRateCards.post('/', async (c) => {
         ? { error: 'duplicate_carrier', reason: 'That 3PL company already has a rate card. Open it to edit the rates.' }
         : { error: 'duplicate_name', reason: 'A card with that name already exists.' }, 409);
     }
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
@@ -356,7 +289,6 @@ deliveryRateCards.post('/', async (c) => {
 
 const cardPatchSchema = cardCreateSchema.partial();
 
-// ── PATCH /:id — edit a card. STRICT company scope. ──────────────────────────
 deliveryRateCards.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -371,9 +303,6 @@ deliveryRateCards.patch('/:id', async (c) => {
   if (p.carrierLorryId !== undefined) updates.carrier_lorry_id = p.carrierLorryId;
   const sb = c.get('supabase');
   if (p.carrierCompanyId !== undefined) {
-    /* Moving a card to a carrier (a card whose company was deleted is
-       reassigned this way): the carrier must be this company's, and the card
-       takes its name, as on create. */
     if (p.carrierCompanyId) {
       const { data: carrier, error: cErr } = await scopeToCompanyId(
         sb.from('threepl_companies').select('id, name'), co.companyId,
@@ -383,8 +312,6 @@ deliveryRateCards.patch('/:id', async (c) => {
       if (p.name === undefined) updates.name = String((carrier as Record<string, unknown>).name ?? '');
     }
     updates.carrier_company_id = p.carrierCompanyId;
-    // Moved together, always. Writing the carrier without the flag is what let a
-    // card read "MSJ TRANSPORT" and "Own-fleet card" at the same time.
     updates.is_own_fleet = p.carrierCompanyId === null;
   }
   if (p.carrierLabel !== undefined) updates.carrier_label = p.carrierLabel;
@@ -413,7 +340,6 @@ deliveryRateCards.patch('/:id', async (c) => {
   return c.json({ card: cardOut(data as Row) });
 });
 
-// ── DELETE /:id — remove a card (its rules cascade). ─────────────────────────
 deliveryRateCards.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -428,22 +354,16 @@ deliveryRateCards.delete('/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Rule CRUD ────────────────────────────────────────────────────────────────
 const ruleCreateSchema = z.object({
   ruleType: z.enum(RULE_TYPES as [RateRuleType, ...RateRuleType[]]),
   tierPosition: z.number().int().min(1).nullable().optional(),
   bracketMin: z.number().int().min(0).nullable().optional(),
   bracketMax: z.number().int().min(0).nullable().optional(),
   zone: z.string().trim().max(40).nullable().optional(),
-  /* The area this rule prices in; null = the card's own rule. */
   areaId: z.string().trim().min(1).max(64).nullable().optional(),
   amountSen: z.number().int().min(0),
   params: z.record(z.string(), z.unknown()).nullable().optional(),
-  /* OUTSTATION / OUTSTATION_TRIP: the jobs the surcharge adds to, kept in
-     params.appliesTo; null = back to the default (delivery orders). */
   appliesTo: z.array(z.enum(BILLABLE_JOB_TYPES as unknown as [BillableJobType, ...BillableJobType[]])).min(1).nullable().optional(),
-  /* DO_CHARGE: its name and its share of the goods value in basis points
-     (100 = 1%), kept in params as { label, bps } (do-charge.ts). */
   label: z.string().trim().max(40).nullable().optional(),
   bps: z.number().int().min(0).max(10_000).nullable().optional(),
   sortOrder: z.number().int().optional(),
@@ -459,7 +379,6 @@ const APPLIES_TO_ONLY_SURCHARGE = {
   reason: 'Applies to is a setting of an outstation price. Every other price already names its job.',
 } as const;
 
-/** params with appliesTo set (a list) or removed (null). */
 function withAppliesTo(params: Record<string, unknown> | null, appliesTo: BillableJobType[] | null): Record<string, unknown> | null {
   const { appliesTo: _old, ...rest } = params ?? {};
   if (appliesTo) return { ...rest, appliesTo: BILLABLE_JOB_TYPES.filter((t) => appliesTo.includes(t)) };
@@ -472,8 +391,6 @@ async function loadCardForWrite(c: any, id: string, companyId: number) {
   return !!data;
 }
 
-/** Why a rule cannot name this area, or null: the area must be this card's,
-    and a town surcharge stays the card's own. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function areaRefusal(c: any, cardId: string, companyId: number, areaId: string | null | undefined, ruleType: string | null) {
   if (!areaId) return null;
@@ -488,7 +405,6 @@ async function areaRefusal(c: any, cardId: string, companyId: number, areaId: st
   return null;
 }
 
-// POST /:id/rules — add a rule to a card.
 deliveryRateCards.post('/:id/rules', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -507,7 +423,6 @@ deliveryRateCards.post('/:id/rules', async (c) => {
   if (!(await loadCardForWrite(c, id, co.companyId))) return c.json(NOT_THIS_COMPANY, 404);
   const noArea = await areaRefusal(c, id, co.companyId, p.areaId, p.ruleType);
   if (noArea) return c.json(noArea.body, noArea.status);
-  /* A town price names a zone or a town with a zone (Delivery Zones). */
   if (CARD_ONLY_TYPES.has(p.ruleType) && p.zone) {
     const unplaced = await placeRefusal(c, [p.zone]);
     if (unplaced) return c.json(unplaced.body, unplaced.status);
@@ -537,7 +452,6 @@ deliveryRateCards.post('/:id/rules', async (c) => {
 
 const rulePatchSchema = ruleCreateSchema.partial();
 
-// PATCH /:id/rules/:ruleId — edit a rule.
 deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
   const id = c.req.param('id');
   const ruleId = c.req.param('ruleId');
@@ -559,7 +473,6 @@ deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
     if (unplaced) return c.json(unplaced.body, unplaced.status);
   }
   if (p.areaId !== undefined) {
-    /* The rule's type decides whether an area may hold it: the new type when it changes, else the stored one. */
     let ruleType: string | null = p.ruleType ?? null;
     if (!ruleType && p.areaId) {
       const { data: held, error: heldErr } = await scopeToCompanyId(
@@ -572,7 +485,6 @@ deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
     if (noArea) return c.json(noArea.body, noArea.status);
     updates.area_id = p.areaId;
   } else if (p.ruleType !== undefined && CARD_ONLY_TYPES.has(p.ruleType)) {
-    /* Turning an area's rule into a town surcharge would leave a surcharge inside an area. */
     const { data: held, error: heldErr } = await scopeToCompanyId(
       rc(c.get('supabase')).from('delivery_rate_rules').select('area_id').eq('id', ruleId).eq('card_id', id), co.companyId,
     ).maybeSingle();
@@ -584,7 +496,6 @@ deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
   if (p.amountSen !== undefined) updates.amount_sen = p.amountSen;
   if (p.params !== undefined) updates.params = p.params;
   if (p.appliesTo !== undefined) {
-    /* Merged into the stored params, and only on an outstation price. */
     const { data: held, error: heldErr } = await scopeToCompanyId(
       rc(c.get('supabase')).from('delivery_rate_rules').select('rule_type, params').eq('id', ruleId).eq('card_id', id), co.companyId,
     ).maybeSingle();
@@ -595,8 +506,6 @@ deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
     updates.params = withAppliesTo(base, p.appliesTo);
   }
   if (p.label !== undefined || p.bps !== undefined || p.amountSen !== undefined) {
-    /* A Per DO charge keeps a name and an amount or a share: read what it holds,
-       apply the change, and check what it would become. */
     const { data: held, error: heldErr } = await scopeToCompanyId(
       rc(c.get('supabase')).from('delivery_rate_rules').select('rule_type, params, amount_sen').eq('id', ruleId).eq('card_id', id), co.companyId,
     ).maybeSingle();
@@ -631,7 +540,6 @@ deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
   return c.json({ rule: ruleOut(data as Row) });
 });
 
-// DELETE /:id/rules/:ruleId — remove a rule.
 deliveryRateCards.delete('/:id/rules/:ruleId', async (c) => {
   const id = c.req.param('id');
   const ruleId = c.req.param('ruleId');
@@ -649,9 +557,6 @@ deliveryRateCards.delete('/:id/rules/:ruleId', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Areas (mig 20261111T1000) ────────────────────────────────────────────────
-// A card's priced areas: a name and its towns. Rules name an area to price
-// deliveries there (see the rule routes above and scm/lib/delivery-rate-card.ts).
 const areaSchema = z.object({
   name: z.string().trim().min(1).max(80),
   towns: z.array(z.string().trim().max(40)).max(80),
@@ -663,7 +568,6 @@ const areaWriteFailed = (error: { code?: string; message?: string }) => (error.c
   ? { status: 409 as const, body: { error: 'duplicate_area', reason: 'This card already has an area with that name.' } }
   : { status: 500 as const, body: { error: 'save_failed', reason: error.message ?? 'unknown' } });
 
-// POST /:id/areas — add an area to a card.
 deliveryRateCards.post('/:id/areas', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -686,7 +590,6 @@ deliveryRateCards.post('/:id/areas', async (c) => {
   return c.json({ area: areaOut(data as Row) }, 201);
 });
 
-// PATCH /areas/:areaId — rename an area, change its towns or its place.
 deliveryRateCards.patch('/areas/:areaId', async (c) => {
   const areaId = c.req.param('areaId');
   const co = requireActiveCompanyId(c);
@@ -714,14 +617,11 @@ deliveryRateCards.patch('/areas/:areaId', async (c) => {
   return c.json({ area: areaOut(data as Row) });
 });
 
-// DELETE /areas/:areaId — remove an area and the prices it carried.
 deliveryRateCards.delete('/areas/:areaId', async (c) => {
   const areaId = c.req.param('areaId');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
-  /* Its rules go with it — the foreign key cascades; deleting them first says so
-     here too, and leaves nothing behind should the area be gone already. */
   const { error: rErr } = await scopeToCompanyId(rc(sb).from('delivery_rate_rules').delete().eq('area_id', areaId), co.companyId);
   if (rErr) return c.json({ error: 'delete_failed', reason: rErr.message }, 500);
   const { data: deleted, error } = await scopeToCompanyId(
@@ -732,17 +632,13 @@ deliveryRateCards.delete('/areas/:areaId', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── POST /:id/compute — run the pure calculator against a card for given facts.
 const factsSchema = z.object({
   setCount: z.number().int().min(0).nullable().optional(),
   itemCount: z.number().int().min(0).nullable().optional(),
   sofaCompartments: z.array(z.number().int().min(0)).nullable().optional(),
   destinationZone: z.string().trim().max(40).nullable().optional(),
-  /* The Price check names the area to price in. */
   areaId: z.string().trim().min(1).max(64).nullable().optional(),
-  /* The job being priced (Delivery order when absent): an outstation price adds only to the jobs it applies to. */
   jobType: z.enum(BILLABLE_JOB_TYPES as unknown as [BillableJobType, ...BillableJobType[]]).nullable().optional(),
-  /* A Per DO charge's share is of this goods value; the Price check prices one DO. */
   goodsValueSen: z.number().int().min(0).nullable().optional(),
   dropCount: z.number().int().min(0).nullable().optional(),
   disposeCount: z.number().int().min(0).nullable().optional(),
@@ -774,30 +670,12 @@ deliveryRateCards.post('/:id/compute', async (c) => {
   if (!places.ok) return c.json({ error: 'fetch_failed', reason: places.reason }, 500);
   const cardO = cardOut(card as Row);
   const spec = toCardSpec(cardO, (rules ?? []).map(ruleOut), areas.areas, places.places);
-  /* The destination it names is one stop, read in its zone (a town in its place's). */
   const stop = priceCheckStop(parsed.data.destinationZone, places.places);
   const facts: DeliveryFacts = { ...parsed.data, ...(stop ? { stops: [{ ...stop, jobType: parsed.data.jobType ?? null }] } : {}) };
-  /* perTrip: the calculator on the Rate Cards page could NEVER show an
-     OUTSTATION_TRIP line — the rules editor let you create one and this
-     endpoint never applied it, so the figure on screen silently disagreed
-     with what the reconciliation would bill. It prices a trip, like the
-     reconcile does. */
   const breakdown = computeDeliveryCost(spec, facts, { perTrip: true });
   return c.json({ card: cardO, facts: parsed.data, breakdown });
 });
 
-// ── GET /reconcile — 3PL charge reconciliation. ──────────────────────────────
-// Lists OUTSOURCE trips that carry a captured billed cost and, where a carrier
-// rate card exists, computes the EXPECTED cost from the trip's derived facts and
-// flags the delta. COST verification only — writes nothing, touches no money-path.
-//
-// Facts derived from the trip's stops: the charging-unit count (sets from the
-// stops' SO lines) and the destination zone (the stops' SO postcodes -> the A1
-// classifier). Occurrence charges (setup/dismantle/dispose/service...) and sofa
-// compartments are NOT reliably in the trip data model, so they default to 0 and
-// the response flags factsComplete=false — the dispatcher refines them in the
-// calculator. The set-tier + outstation portion (the bulk of a 3PL charge) is
-// derived and compared automatically.
 const SET_CATEGORIES = (raw: string): SetLine['category'] => {
   const g = (raw ?? '').trim().toUpperCase();
   if (g.includes('BEDFRAME')) return 'BEDFRAME';
@@ -810,9 +688,6 @@ deliveryRateCards.get('/reconcile', async (c) => {
   const sb = c.get('supabase');
   const from = c.req.query('from');
   const to = c.req.query('to');
-  /* The company's own zone map (Delivery Zones), as the planning reads it; the
-     in-code default only while the company has no rules. It read the default
-     alone, so a zone the owner added never reached the 3PL check. */
   const { data: mapRows, error: mapErr } = await paginateAll<MapRow>((lo, hi) =>
     scopeToCompany(sb.from('delivery_zone_postcodes').select(MAP_COLS), c).order('id').range(lo, hi),
   );
@@ -821,7 +696,6 @@ deliveryRateCards.get('/reconcile', async (c) => {
   const places = await loadPlaces(c);
   if (!places.ok) return c.json({ error: 'load_failed', reason: places.reason }, 500);
 
-  // 1) OUTSOURCE trips carrying a captured billed cost, in the date window.
   const { data: tripData, error: tripErr } = await paginateAll<Row>((lo, hi) => {
     let q = sb.from('trips')
       .select('company_id, id, trip_no, trip_date, lorry_id, warehouse_id, is_outsourced, three_pl_cost_sen, status')
@@ -836,16 +710,12 @@ deliveryRateCards.get('/reconcile', async (c) => {
   const trips = (tripData ?? []);
   if (trips.length === 0) return c.json({ rows: [] });
 
-  // 2) Rate cards for carrier match (by carrier_lorry_id).
   const { data: cardRows } = await paginateAll<Row>((lo, hi) =>
     scopeToCompany(rc(sb).from('delivery_rate_cards').select(CARD_COLS), c).eq('is_active', true).range(lo, hi),
   );
   const cards = (cardRows ?? []).map(cardOut);
   const cardByLorry = new Map<string, ReturnType<typeof cardOut>>();
   for (const cd of cards) if (cd.carrierLorryId) cardByLorry.set(cd.carrierLorryId, cd);
-  // WS4b: a card priced per 3PL COMPANY applies to every lorry under it. Resolve
-  // each trip's lorry -> its threepl_company_id, and match company cards first
-  // (fall back to a per-lorry card for own-fleet / legacy cards).
   const cardByCompany = new Map<string, ReturnType<typeof cardOut>>();
   for (const cd of cards) if (cd.carrierCompanyId) cardByCompany.set(cd.carrierCompanyId, cd);
   const lorryIds = [...new Set(trips.map((t) => s(t.lorry_id)).filter((x): x is string => !!x))];
@@ -870,13 +740,11 @@ deliveryRateCards.get('/reconcile', async (c) => {
   const cardAreas = await loadAreas(c, cards.map((x) => x.id));
   if (!cardAreas.ok) return c.json({ error: 'load_failed', reason: cardAreas.reason }, 500);
 
-  // 3) Stops -> SO doc numbers per trip, then SO lines for set/zone derivation.
   const tripIds = trips.map((t) => String(t.id));
   const { data: stopData } = await sb.from('trip_stops')
     .select('trip_id, stop_type, do_id, so_id, assr_case_id, address').in('trip_id', tripIds);
   const doIdsByTrip = new Map<string, string[]>();
   const allDoIds = new Set<string>();
-  /* Every stop, for the jobs that are not delivery orders (trip-stop-jobs.ts). */
   const jobStopsByTrip = new Map<string, TripStopRow[]>();
   for (const st of (stopData ?? []) as Row[]) {
     const jobRows = jobStopsByTrip.get(String(st.trip_id)) ?? [];
@@ -891,7 +759,6 @@ deliveryRateCards.get('/reconcile', async (c) => {
     arr.push(doId);
     doIdsByTrip.set(tripId, arr);
   }
-  // DO -> SO doc no.
   const soDocByDoId = new Map<string, string>();
   if (allDoIds.size > 0) {
     const { data: doRows } = await sb.from('delivery_orders').select('id, so_doc_no').in('id', [...allDoIds]);
@@ -900,11 +767,9 @@ deliveryRateCards.get('/reconcile', async (c) => {
       if (idv && soDoc) soDocByDoId.set(idv, soDoc);
     }
   }
-  /* Each DO's own goods value, for a card's Per DO charge (do-goods.ts). */
   const doGoods = await loadDoGoods((q) => scopeToAllowedCompanies(q, c), sb, [...allDoIds]);
   if (!doGoods.ok) return c.json({ error: 'load_failed', reason: doGoods.reason }, 500);
   const allSoDocs = new Set<string>([...soDocByDoId.values()]);
-  // SO lines (for set count) + SO header (for postcode -> zone).
   const linesBySo = new Map<string, SetLine[]>();
   const zoneBySo = new Map<string, string | null>();
   const customerKeyBySo = new Map<string, string>();
@@ -934,13 +799,11 @@ deliveryRateCards.get('/reconcile', async (c) => {
       const where = [s(so.address1), s(so.address2), s(so.postcode)]
         .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toUpperCase();
       customerKeyBySo.set(doc, `${who}@@${where}`);
-      /* The words a town surcharge or an area is found by: the whole address and its city. */
       addressBySo.set(doc, [s(so.address1), s(so.address2), s(so.address3), s(so.address4), s(so.city), s(so.postcode)]
         .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toUpperCase());
     }
   }
 
-  // 4) Per-trip: match card, derive facts, compute expected, flag delta.
   const codes = companyCodeMap(c);
   const rows = trips.map((t) => {
     const tripId = String(t.id);
@@ -949,12 +812,6 @@ deliveryRateCards.get('/reconcile', async (c) => {
     const card = (companyId ? cardByCompany.get(companyId) : null) ?? (lorryId ? cardByLorry.get(lorryId) : null) ?? null;
     const billedSen = Number(t.three_pl_cost_sen ?? 0);
     const soDocs = [...new Set((doIdsByTrip.get(tripId) ?? []).map((d) => soDocByDoId.get(d)).filter((v): v is string => !!v))];
-    /* Aggregate the trip's sets across its drops, and collect EVERY zone it
-       touches. It used to take whichever zone came first out of the query —
-       not the first stop on the route, just the first row — so a
-       Melaka->Johor trip could be charged Melaka's rate, and a re-run could
-       answer differently. The calculator now picks the farthest of them
-       (farthestZone), once, per the owner's rule. */
     let setCount = 0;
     const zones: string[] = [];
     for (const doc of soDocs) {
@@ -964,26 +821,16 @@ deliveryRateCards.get('/reconcile', async (c) => {
       if (z && !zones.includes(z)) zones.push(z);
     }
     const destinationZone: string | null = zones[0] ?? null;
-    /* Distinct doorsteps on this trip — what a per-CUSTOMER card charges once
-       for. Two drops to the same buyer at the same address collapse to one. */
     const customerCount = new Set(soDocs.map((d) => customerKeyBySo.get(d) ?? d)).size;
     const dropCount = soDocs.length;
-    /* The trip's goods value: its DOs' own goods. */
     const goodsValueSen = [...new Set(doIdsByTrip.get(tripId) ?? [])].reduce((sum, doId) => sum + (doGoods.goods.get(doId) ?? 0), 0);
     let expectedSen: number | null = null;
     let breakdown: ReturnType<typeof computeDeliveryCost> | null = null;
     if (card) {
       const spec = toCardSpec(card, rulesByCard.get(card.id) ?? [], cardAreas.areas, places.places);
-      /* Each drop's address with its postcode zone: a town counts only inside
-         its own zone (Delivery Zones places), so Jalan Ipoh in KL is not Ipoh. */
       const doStops: DeliveryStop[] = soDocs.map((d) => ({ zone: zoneBySo.get(d) ?? null, addressText: addressBySo.get(d) ?? '', jobType: 'DELIVERY' }));
-      /* The trip's other jobs: each one occurrence of its rule, and an address
-         an outstation price reaches only if it applies to that job. */
       const jobs = jobStopFacts(jobStopsByTrip.get(tripId) ?? [], (address) => zoneForAddress({ postcode: null, address1: address, address2: null }, zoneMapRules).zone);
       const stops: DeliveryStop[] = [...doStops, ...jobs.stops];
-      /* perTrip: the FIXED per-trip outstation fee is now emitted INSIDE the
-         calculator, before the min/cap/rounding envelope. It used to be added
-         here afterwards, which let a capped card bill above its own cap. */
       breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, goodsValueSen, destinationZone, destinationZones: zones, addressText: soDocs.map((d) => addressBySo.get(d) ?? '').join(' | '), stops, ...jobs.counts }, { perTrip: true });
       expectedSen = breakdown.totalSen;
     }
@@ -1004,7 +851,6 @@ deliveryRateCards.get('/reconcile', async (c) => {
       expectedSen,
       deltaSen,
       flagged: deltaSen != null && deltaSen !== 0,
-      // Occurrence charges + sofa compartments are not derivable from trip data.
       factsComplete: false,
       breakdown,
     };
@@ -1033,8 +879,6 @@ deliveryRateCards.get('/own-fleet', async (c) => {
   const places = await loadPlaces(c);
   if (!places.ok) return c.json({ error: 'load_failed', reason: places.reason }, 500);
 
-  /* This company's active cards: its own fleet card prices our lorries, each
-     carrier's card the 3PL bills beside them. */
   const { data: cardRows, error: cardErr } = await paginateAll<Row>((lo, hi) =>
     scopeToCompany(rc(sb).from('delivery_rate_cards').select(CARD_COLS), c).eq('is_active', true).order('created_at').range(lo, hi),
   );
@@ -1069,7 +913,6 @@ deliveryRateCards.get('/own-fleet', async (c) => {
     },
     (address) => zoneForAddress({ postcode: null, address1: address, address2: null }, zoneMapRules).zone,
   );
-  /* A DO two carriers billed is priced by each one's card; one with no card leaves it unpriced. */
   const threePl: ThreePlDo[] = read.threePl.map((b) => {
     let expected: number | null = 0;
     for (const ch of b.charges) {
@@ -1106,9 +949,6 @@ deliveryRateCards.get('/own-fleet', async (c) => {
   });
 });
 
-// ── GET /:id — a card + its rules. ───────────────────────────────────────────
-// Registered LAST: '/:id' is a single segment that would otherwise swallow the
-// static '/meta', '/reconcile' and '/own-fleet' routes (repo convention, mirrors trips '/day').
 deliveryRateCards.get('/:id', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');

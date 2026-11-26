@@ -37,7 +37,6 @@ describe("classifyScan", () => {
     expect(classifyScan(row({ error: "Payment receipt saved, please check" })).outcome).toBe("clean");
     expect(classifyScan(row({ so_missing: true })).outcome).toBe("discarded");
     expect(classifyScan(row({ sample_status: "EXTRACTED" })).outcome).toBe("awaiting");
-    // GR / PI: a document = imported, never "clean" (GR ACCEPTED means posted).
     expect(classifyScan(row({ document_type: "GR", doc_no: "GRN-1" })).outcome).toBe("imported");
     expect(classifyScan(row({ document_type: "PI", doc_no: "PI-1", sample_status: "EXTRACTED" })).outcome).toBe("imported");
   });
@@ -126,14 +125,12 @@ describe("buildOcrReport", () => {
       row({ id: "clean", has_baseline: true, extracted: slip("A") }),
       row({ id: "fixed", has_baseline: true, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("B") }),
       row({ id: "qty", has_baseline: true, sample_status: "CONFIRMED", extracted: slip("A"), corrected: slip("A", 2) }),
-      // No baseline (even if scanned after the snapshot shipped): its "phone fix" is the pipeline's reformat.
       row({ id: "old", created_at: "2026-11-17T19:44:00.000Z", extracted: slip("A"), sample_status: "CONFIRMED", corrected: slip("A", 1, { phones: ["+60123"] }) }),
       row({ id: "oldClean", extracted: slip("A") }),
     ];
     const r = buildOcrReport("2026-11", "m", rows);
     const so = r.docTypes[0];
     expect(so).toMatchObject({ clean: 2, corrected: 3, accuracy: { clean: 1, reviewed: 3 } });
-    // 4 fields each (name, phone, code, qty); 1 change on "fixed", 1 on "qty".
     expect(so.fieldAccuracy).toEqual({ correct: 10, total: 12, scans: 3 });
     expect(r.fieldMisses).toEqual({ reviewed: 3, fields: [{ field: "Product code", count: 1 }, { field: "Qty", count: 1 }] });
     expect(r.problems.map((p) => [p.id, p.fieldAccuracy])).toEqual([

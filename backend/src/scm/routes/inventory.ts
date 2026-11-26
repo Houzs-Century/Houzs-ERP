@@ -1,30 +1,3 @@
-// ----------------------------------------------------------------------------
-// /inventory — trading-company stock model w/ FIFO COGS (PR #37).
-//
-// Two warehouses (KL + 2990 PJ) by default — CRUD via /inventory/warehouses.
-// Balance = SUM(movements) via the inventory_balances VIEW.
-// COGS = FIFO consumption of lots, maintained by trg_inventory_movement_fifo.
-//
-// Endpoints:
-//   GET   /inventory/warehouses               — list
-//   POST  /inventory/warehouses               — create
-//   PATCH /inventory/warehouses/:id           — update / toggle active
-//   GET   /inventory                          — balance per (warehouse, product)
-//                                                ?category=BEDFRAME&warehouseId&search
-//                                                ?showAll=true → LEFT JOIN every SKU
-//   GET   /inventory/movements                — ledger (filtered)
-//   GET   /inventory/lots/:itemCode        — FIFO lots for one product
-//   GET   /inventory/batches                  — open lots grouped by (warehouse, batch)
-//                                                ?warehouseId&itemCode (Stage 2 sofa batch view)
-//   GET   /inventory/cogs                     — COGS stream (consumption flat list)
-//   GET   /inventory/value                    — inventory valuation (qty × cost)
-//   GET   /inventory/reservations             — open lots + the READY SO demand
-//                                                claiming them (reserved vs free)
-//
-// The manual stock ADJUSTMENT write (POST /inventory/adjustments) lives in its
-// own router (routes/inventory-adjustments.ts) so it can be gated on the
-// separate `scm.warehouse.adjustments` permission — see that file + scm/index.ts.
-// ----------------------------------------------------------------------------
 
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -71,27 +44,12 @@ import { masterPostcodeError } from '../shared/master-postcode-rule';
 
    Quantity, location, batch and movement history stay visible to everyone with
    the area — only cost, value, margin and supplier pricing are withheld. */
-/* Per-document subset, declared the way this rule's own message asks for
-   rather than by re-declaring the shared vocabulary. Checked against
-   scm/lib/finance-keys.ts on 2026-08-15: SEVEN of these eight columns appear
-   in NO canonical list — unit_cost_sen, total_cost_sen, value_sen, cost_sen,
-   avg_cost_sen, margin_sen, main_supplier_price_sen. They are STOCK
-   VALUATION columns and `_sen`-denominated, while the document vocabulary
-   (SO_FINANCE_KEYS / SO_ITEM_FINANCE_KEYS) is `_sen`. Different table,
-   different denomination — folding them into the shared list would make it
-   wrong for the documents that list exists for.
-
-   The ONE overlap is `unit_cost_sen`, which IS in SO_ITEM_FINANCE_KEYS.
-   Kept here deliberately: this route emits it on inventory rows too, and a
-   subset that silently omitted it would leak a cost the SO path strips.
-   If this list ever loses its `_sen` columns, delete it and import instead. */
 const INVENTORY_FINANCE_KEYS = [
   'unit_cost_sen', 'total_cost_sen', 'value_sen', 'cost_sen', 'avg_cost_sen',
   // eslint-disable-next-line no-restricted-syntax -- per-document subset; see the note above the declaration
   'main_supplier_price_sen', 'margin_sen', 'unit_cost_sen',
 ] as const;
 
-/** Drop the finance columns from a row set. Caller decides WHETHER. */
 function stripInventoryFinance<T extends Record<string, unknown>>(rows: T[]): T[] {
   return rows.map((r) => {
     const out = { ...r } as Record<string, unknown>;
@@ -134,7 +92,6 @@ async function loadNonSellingWarehouseIds(
   return ids;
 }
 
-/* ── Warehouses CRUD ─────────────────────────────────────────────────── */
 inventory.get('/warehouses', async (c) => {
   const sb = c.get('supabase');
   const includeInactive = c.req.query('includeInactive') === 'true';
@@ -157,20 +114,9 @@ inventory.post('/warehouses', async (c) => {
   if (!code) return c.json({ error: 'code_required' }, 400);
   if (!name) return c.json({ error: 'name_required' }, 400);
 
-  /* Company is REQUIRED here, not best-effort. `company_id: activeCompanyId(c)`
-     sent `undefined` when unresolved, supabase-js dropped the key, and mig 0091's
-     `DEFAULT <HOUZS id>` then stamped the row HOUZS — so a 2990 warehouse could
-     be silently filed under Houzs instead of failing. Resolve or refuse. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  /* TYPE (mig 0171) — 5-bucket enum on scm.warehouses. Default 'warehouse'
-     when unspecified so existing callers that don't know about the field still
-     land a valid row. `isShowroom=true` is treated as an implicit type upgrade
-     to 'showroom' so the two boolean callers (WarehouseFormDrawer with its old
-     checkbox path, plus any programmatic seeder) stay coherent — the invariant
-     `is_showroom = (type = 'showroom')` is what the venue-binding resolver
-     (mig 0148) reads. */
   const rawType = typeof body.type === 'string' ? body.type.trim().toLowerCase() : '';
   const ALLOWED_TYPES = ['warehouse', 'showroom', 'display', 'service', 'others'] as const;
   const wantType: (typeof ALLOWED_TYPES)[number] | null =
@@ -179,11 +125,6 @@ inventory.post('/warehouses', async (c) => {
     wantType ?? (body.isShowroom === true ? 'showroom' : 'warehouse');
   const finalIsShowroom = finalType === 'showroom' || body.isShowroom === true;
 
-  /* Mig 0180 — structured address (country / state / postcode / city).
-     `state` is canonicalized at ingress so 'PENANG' / 'Kl' land as the
-     canonical my_localities spelling; foreign state names (Guangdong etc.)
-     round-trip unchanged. postcode/city/country are plain strings —
-     validation lives in the frontend cascade off my_localities. */
   const country = typeof body.country === 'string' && body.country.trim()
     ? body.country.trim() : null;
   const state = canonicalizeMyState((body.state as string | null | undefined) ?? null);
@@ -196,20 +137,12 @@ inventory.post('/warehouses', async (c) => {
   if (pcErr) return c.json({ error: 'postcode_required', message: pcErr }, 400);
 
   const { data, error } = await sb.from('warehouses').insert({
-    company_id: co.companyId, // multi-company: stamp the active company (mig 0086)
+    company_id: co.companyId,
     code, name,
     location: (body.location as string) ?? null,
     country, state, postcode, city,
     is_active: body.isActive === false ? false : true,
     is_default: body.isDefault === true,
-    /* SHOWROOM (migration 0148) — "Mark as Showroom" makes this warehouse a
-       venue source: it appears in the Sales Maintenance venue list, and any
-       salesperson parked under it on the Members page attributes their orders
-       to venue_name. venue_name is NOT derived from `name`: a warehouse is
-       named for stock ("KL-WH-02"), a venue for the report ("Kuala Lumpur
-       Showroom"), and auto-deriving would put a stock code into exhibition
-       P&L. A flagged showroom with no venue_name simply resolves to nothing.
-       Mig 0171 keeps is_showroom = (type = 'showroom'). */
     is_showroom: finalIsShowroom,
     venue_name: typeof body.venueName === 'string' && body.venueName.trim()
       ? body.venueName.trim() : null,
@@ -221,13 +154,6 @@ inventory.post('/warehouses', async (c) => {
     if (error.code === '23505') return c.json({ error: 'duplicate_code' }, 409);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
-  /* Audit 2026-06-20 — enforce a SINGLE default warehouse: clear is_default on
-     every other row when this one is set default. Two defaults make
-     defaultWarehouseId() (maybeSingle) error → null, breaking the warehouse
-     fallback on GRN/DO/return/consignment posts.
-     LEAK FIX: scoped to this company. Unscoped, "single default" was enforced
-     GLOBALLY, so creating a default warehouse in one company cleared the
-     other's. */
   if (body.isDefault === true) {
     await scopeToCompanyId(
       sb.from('warehouses').update({ is_default: false })
@@ -238,21 +164,6 @@ inventory.post('/warehouses', async (c) => {
   return c.json({ warehouse: data }, 201);
 });
 
-/* PATCH /warehouses/:id — update a warehouse, incl. promoting it to default.
- *
- * LEAK FIX (audit item 2), and this one was not hypothetical and needed no
- * id-guessing: it fired on a normal click. The single-default enforcement below
- * ran `UPDATE warehouses SET is_default = false WHERE is_default = true AND id
- * <> $1` with NO company predicate, so setting your own default DEMOTED THE
- * OTHER COMPANY'S DEFAULT. The other company then had no default warehouse, and
- * defaultWarehouseId() (a maybeSingle) started returning null — which is the
- * fallback GRN / DO / return / consignment posts rely on.
- *
- * Scoping the demote alone is not enough: if A could still PATCH B's warehouse
- * by id, A would promote B's row and the now-scoped demote would clear A's own
- * default — strictly worse. So the target row is scoped too.
- *
- * Exported for the route test (see postJournalEntryHandler for why). */
 export const patchWarehouseHandler = async (c: any) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
@@ -262,8 +173,6 @@ export const patchWarehouseHandler = async (c: any) => {
   if (typeof body.code === 'string')      updates.code = body.code.trim().toUpperCase();
   if (typeof body.name === 'string')      updates.name = body.name.trim();
   if (typeof body.location === 'string')  updates.location = body.location;
-  /* Mig 0180 — structured address (country / state / postcode / city).
-     State is canonicalized on the way in. */
   if (body.country !== undefined) {
     const cn = typeof body.country === 'string' ? body.country.trim() : '';
     updates.country = cn || null;
@@ -273,7 +182,6 @@ export const patchWarehouseHandler = async (c: any) => {
   }
   if (body.postcode !== undefined) {
     const p = typeof body.postcode === 'string' ? body.postcode.trim() : '';
-    /* Clearing the postcode is refused; a save that leaves it alone is not. */
     const pcErr = masterPostcodeError(typeof body.country === 'string' ? body.country : null, p);
     if (pcErr) return c.json({ error: 'postcode_required', message: pcErr }, 400);
     updates.postcode = p || null;
@@ -284,18 +192,6 @@ export const patchWarehouseHandler = async (c: any) => {
   }
   if (typeof body.isActive === 'boolean') updates.is_active = body.isActive;
   if (typeof body.isDefault === 'boolean') updates.is_default = body.isDefault;
-  /* SHOWROOM (migration 0148) + TYPE (mig 0171). Un-flagging is deliberately
-     NOT cascaded to the staff parked under this warehouse: the resolver
-     re-checks is_showroom at resolve time, so clearing the flag stops it
-     supplying venues immediately while the parkings stay visible on the
-     Members page for whoever has to re-home those people. A silent mass-unpark
-     would lose that information.
-
-     The `type` and `isShowroom` fields must move together (invariant:
-     is_showroom = (type = 'showroom')). If the caller sends either, derive the
-     other so the row stays coherent — a caller sending only isShowroom=true
-     upgrades type to 'showroom', a caller sending type='warehouse' clears
-     is_showroom. */
   const ALLOWED_TYPES = ['warehouse', 'showroom', 'display', 'service', 'others'] as const;
   const rawType = typeof body.type === 'string' ? body.type.trim().toLowerCase() : null;
   const typedType = rawType && (ALLOWED_TYPES as readonly string[]).includes(rawType)
@@ -328,11 +224,7 @@ export const patchWarehouseHandler = async (c: any) => {
     co.companyId,
   ).select('id, code, name, location, country, state, postcode, city, is_active, is_default, is_showroom, venue_name, type, stock_bucket').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-  // No row matched id + company: not this company's warehouse, or gone.
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
-  /* Audit 2026-06-20 — single-default enforcement (see POST): promoting this
-     warehouse to default demotes every other one IN THIS COMPANY. The company
-     predicate is the whole fix — see the header comment. */
   if (updates.is_default === true) {
     await scopeToCompanyId(
       sb.from('warehouses').update({ is_default: false })
@@ -345,18 +237,6 @@ export const patchWarehouseHandler = async (c: any) => {
 
 inventory.patch('/warehouses/:id', patchWarehouseHandler);
 
-/* Task #121 — Hard DELETE of a warehouse. Used by the inline Warehouses
-   table on /mfg-sales-orders/maintenance so a coordinator can drop a
-   row they just typed by mistake. Postgres FKs from inventory_movements
-   / lots / cogs reject the delete when there's referenced history;
-   commander should toggle is_active=false via PATCH in that case. We
-   surface the FK error so the UI can hint at deactivate instead.
-
-   Scoped to the active company alongside the PATCH above. Not one of the two
-   items this pass was sequenced for, but it is the same blind-id defect on the
-   same table three lines away — company A could DELETE company B's warehouse —
-   and scoping a delete can only ever refuse a cross-company write, never hide a
-   company's own rows from itself. */
 inventory.delete('/warehouses/:id', async (c) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
@@ -367,23 +247,12 @@ inventory.delete('/warehouses/:id', async (c) => {
     co.companyId,
   );
   if (error) {
-    // 23503 = foreign_key_violation — there are movements/lots/etc. tied
-    // to this warehouse. Bubble up so the client can show a friendlier
-    // "deactivate instead" path.
     if (error.code === '23503') return c.json({ error: 'in_use', reason: error.message }, 409);
     return c.json({ error: 'delete_failed', reason: error.message }, 500);
   }
   return c.json({ ok: true });
 });
 
-/* ── Balances ─────────────────────────────────────────────────────────── */
-// When showAll=true, returns one row per (warehouse × SKU) including
-// zero-balance rows — the UI uses this for the "all SKUs" view.
-// When showAll=false (default), returns only rows with movements.
-//
-// Exported for the route test (see patchWarehouseHandler / productPickerCompanyScope
-// for why the handler is lifted out — the supabaseAuth bridge can't run in the
-// harness). The test pins that showAll is company-scoped in BOTH directions.
 export const listInventoryHandler = async (c: any) => {
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
@@ -392,34 +261,17 @@ export const listInventoryHandler = async (c: any) => {
   const showAll = c.req.query('showAll') === 'true';
 
   const tableName = showAll ? 'v_inventory_all_skus' : 'inventory_balances';
-  // showAll = catalog rollup (one row per SKU incl. zero, item_code level).
-  // default = live balances, now one row per (warehouse, item_code,
-  // variant_key) so the UI can break a SKU into its attribute-composition rows.
   const cols = showAll
     ? 'warehouse_id, warehouse_code, warehouse_name, item_code, product_name, category, size_label, qty, last_movement_at, value_sen, main_supplier_code, main_supplier_name'
     : 'warehouse_id, item_code, variant_key, product_name, qty, last_movement_at';
 
-  // PostgREST's default 1000-row cap silently truncates stock balances —
-  // partial stock reads like MISSING stock (showAll returns 17,115 rows live).
-  // Page through with .range() so the full set comes back. Any ?warehouseId/
-  // ?search/?category filter only narrows the set, so filtered views stay correct.
   const s = search ? escapeForOr(search) : '';
   const { data, error } = await paginateAll((from, to) => {
     let q = sb.from(tableName).select(cols);
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
     if (s) q = q.or(`item_code.ilike.%${s}%,product_name.ilike.%${s}%`);
     if (showAll && category && category !== 'all') q = q.eq('category', category);
-    // multi-company: BOTH reads are per-company now. inventory_balances has
-    // carried company_id since mig 0084; the showAll SKU rollup
-    // (v_inventory_all_skus) gained company_id in mig 0154, which also stopped
-    // its product-by-warehouse cross join from pairing the two companies. Scope
-    // EVERY read so showAll can no longer leak the other company's catalogue,
-    // warehouses, on-hand qty, valuation or main supplier. scopeToCompany still
-    // degrades to no predicate when the active company is unresolved
-    // (pre-migration / cold-start), so single-company Houzs is unchanged.
     q = scopeToCompany(q, c);
-    // Total order: item_code alone repeats per warehouse (and per variant), so a
-    // 1000-row window could repeat or skip rows at a page edge.
     q = q.order('item_code').order('warehouse_id');
     if (!showAll) q = q.order('variant_key');
     return q.order('company_id').range(from, to);
@@ -431,15 +283,6 @@ export const listInventoryHandler = async (c: any) => {
     return c.json({ error: 'load_failed', reason: error.message }, 500);
   }
 
-  /* Show active warehouses PLUS consignment/showroom warehouses (those are kept
-     is_active=false so they stay out of the normal GRN/DO pickers) — so consigned
-     stock sitting at a showroom is visible in Inventory. (2026-06-05) */
-  /* SCOPED like every other read in this handler. This one was missed: the
-     balances above are scoped, but the warehouse master was not, so the response
-     carried the OTHER company's warehouse codes, names and — the part that
-     mattered — their warehouse UUIDs. Those ids are what POST /stock-transfers
-     takes from a request body, so this read was the practical enabler for a
-     cross-company stock movement. Same helper as GET /warehouses (:127). */
   const { data: whs } = await scopeToCompany(sb.from('warehouses')
     .select('id, code, name, is_consignment')
     .or('is_active.eq.true,is_consignment.eq.true'), c);
@@ -447,15 +290,8 @@ export const listInventoryHandler = async (c: any) => {
 };
 
 inventory.get('/', listInventoryHandler);
-/* The as-of-date photograph (GL redesign item 5) — handler in
-   inventory-valuation.ts, replay shared with the month-end close. */
 inventory.get('/valuation', inventoryValuationHandler);
 
-/* ── Product totals (AutoCount-style list view) — PR #38 ─────────────────
-   One row per item_code with summed qty across all warehouses + main
-   supplier. Double-click a row in the UI to drill into per-warehouse
-   breakdown via GET /inventory?showAll=true&search=...
-   Exported for the route test, same reason as listInventoryHandler above. */
 export const productTotalsHandler = async (
   c: Context<{ Bindings: Env; Variables: Variables }>,
 ) => {
@@ -469,15 +305,10 @@ export const productTotalsHandler = async (
   const warehouseIds = (c.req.query('warehouseIds') ?? c.req.query('warehouseId') ?? '').split(',').filter(Boolean);
   const scopedToWarehouses = warehouseIds.length > 0;
 
-  // PostgREST's default 1000-row cap silently truncates product totals — page
-  // through with .range() so the full catalogue comes back. Any ?search/?category
-  // filter only narrows the set, so filtered views stay correct.
   const s = search ? escapeForOr(search) : '';
   const { data, error } = await paginateAll((from, to) => {
     let q = sb.from('v_inventory_product_totals').select('*');
-    q = scopeToCompany(q, c); // multi-company: isolate product totals to the active company (view exposes company_id, mig 0106)
-    // Barcode is searchable too (cash & carry items carry the AutoCount barcode,
-    // exposed on the view by mig 20261104T1000) — scan or type it to find the SKU.
+    q = scopeToCompany(q, c);
     if (s) q = q.or(`item_code.ilike.%${s}%,product_name.ilike.%${s}%,barcode.ilike.%${s}%`);
     if (category && category !== 'all') q = q.eq('category', category);
     return q.order('item_code').order('company_id').range(from, to);
@@ -505,19 +336,6 @@ export const productTotalsHandler = async (
      unchanged. */
   const products = (data ?? []) as Array<Record<string, unknown>>;
   const codes = products.map((p) => String(p.item_code));
-  /* GET /products. DELIBERATELY NOT shared/so-terminal-states.ts, which carries
-     SIX. This four-status set omits DRAFT and SHIPPED, so a draft or shipped
-     order still counts as open demand HERE while MRP and the allocator treat it
-     as done — it drives committed_scheduled / available / surplus on the
-     Inventory page.
-
-     Three different answers to "is this order still open" survive this repo:
-     FOUR here, FIVE in GET /reservations below (:1424 — it has SHIPPED), SIX in
-     the shared file. Measured 2026-08-13 while collapsing that six-status set's
-     fourteen copies, and left standing on purpose: each spelling moves a number
-     staff act on, so choosing one is a business decision, not a side effect of a
-     de-duplication. Do not "helpfully" merge them without it.
-     See BUG-HISTORY 2026-08-13. */
   const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED']);
   const PO_LIVE = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED']);
   const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
@@ -528,13 +346,13 @@ export const productTotalsHandler = async (
   };
   const d30 = plus(30);
 
-  const committedScheduled = new Map<string, number>(); // demand WITH a delivery date
-  const unscheduled = new Map<string, number>();         // demand with NO delivery date
+  const committedScheduled = new Map<string, number>();
+  const unscheduled = new Map<string, number>();
   /* The SO(s) behind Scheduled / Unscheduled, so a planner can see WHICH orders
      make up the figure without re-running AutoCount's SO detail listing (HC-0115). */
   type DemandSo = { doc_no: string; debtor_name: string | null; so_date: string | null; delivery_date: string | null; qty: number };
   const demandSos = new Map<string, DemandSo[]>();
-  const incoming = new Map<string, number>();            // PO qty arriving within 30d
+  const incoming = new Map<string, number>();
   type IncPo = { po_number: string; eta: string | null; qty: number };
   const incomingPos = new Map<string, IncPo[]>();
   const oldestLot = new Map<string, string>();
@@ -542,8 +360,6 @@ export const productTotalsHandler = async (
      only way to find WHERE a SKU sits was to pick each warehouse in turn. On-hand
      per warehouse, from the same open lots as the Stock + Consignment columns. */
   const lotsByWh = new Map<string, Map<string, { qty: number; held: number }>>();
-  // Warehouse-scoped Stock override (ask A) — only populated when a warehouse is
-  // chosen; otherwise the company-wide totals view figure stands.
   const whStock = new Map<string, number>();
   // OWNED value per item_code, summed from the open FIFO lots below (excluding
   // consignment-sourced lots). This OVERRIDES the value column in BOTH the
@@ -555,23 +371,14 @@ export const productTotalsHandler = async (
   // unit cost divides owned value by OWNED qty — not total_qty (which still
   // counts consignment units and would dilute the average) (owner 2026-07-25).
   const ownedQty = new Map<string, number>();
-  /* HELD (consignment-sourced) open-lot qty per item_code — the other half of
-     the lot ledger, read straight from the lots (see the split below). */
   const heldQty = new Map<string, number>();
   /* HELD (consignment) value — reported SEPARATELY, never inside inventory
      value. Owner, 2026-08-06: "分成两个 value：一个是 inventory value,一个是
      consignment value". */
   const heldValueSen = new Map<string, number>();
-  /* On-hand standing in a NON-SELLING warehouse (showroom / display / service),
-     per item_code. Feeds `sellable_surplus_qty` below so the list's Dead/Spare
-     badge stops calling a display piece idle. */
   const nonSellingQty = new Map<string, number>();
 
   if (codes.length > 0) {
-    // Warehouse-scoped Stock: the totals view is a cross-warehouse rollup, so a
-    // per-warehouse view must recompute on-hand qty (balances) for the chosen
-    // warehouse only. Value is (re)computed from the open lots below for BOTH
-    // scopes, so it no longer reads v_inventory_value (which counts consignment).
     if (scopedToWarehouses) {
       const { data: bal, error: balErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
         .from('inventory_balances').select('item_code, qty'), c)
@@ -585,11 +392,6 @@ export const productTotalsHandler = async (
       }
     }
 
-    /* Non-selling on-hand per SKU. Read from the balances rather than the lots so
-       it matches the Stock column's own arithmetic; scoped to the chosen
-       warehouse when there is one, so a showroom view reports all of its stock as
-       non-selling and a KL view reports none of it. Skipped entirely when the
-       company has no showroom/display/service warehouse — the common case. */
     const nonSellingIds = await loadNonSellingWarehouseIds(sb, c);
     const scopedNonSelling = scopedToWarehouses
       ? warehouseIds.filter((id) => nonSellingIds.has(id))
@@ -607,17 +409,6 @@ export const productTotalsHandler = async (
       }
     }
 
-    // chunkIn — codes can now exceed 1000 (un-truncated catalogue), so batch the
-    // .in() lists and page each batch (PostgREST default cap is 1000 rows).
-    /* Every paged read in this handler carries a TOTAL order (paginate-all.ts:
-       "apply all filters/ordering INSIDE the factory"). Unordered, the 1000-row
-       windows of one batch could repeat or skip rows: on prod 2026-10-23 the
-       demand read counted HC-SO-009362's bolster line twice (6 for 3) and left
-       READY_TO_SHIP lines such as HC-SO-007851 out — a wrong Available. */
-    // Scope demand to the active company — the stock figure (v_inventory_product_totals)
-    // and the open-lots query below are already company-scoped, so leaving demand
-    // un-scoped would subtract OTHER companies' claims on a shared SKU from THIS
-    // company's stock (mfg_sales_order_items carries company_id, mig 0083).
     /* HC-0002 (prod 2026-10-22: the netting below took 13.6 s, four serial
        uuid-chunked reads over thousands of open lines). The read now drops
        finished orders in the database — the same not.in filter on the !inner
@@ -632,7 +423,7 @@ export const productTotalsHandler = async (
         .select(`id, doc_no, item_code, qty, warehouse_id, line_delivery_date, cancelled, so:mfg_sales_orders!inner(status, customer_delivery_date, debtor_name, so_date)${embedNetting ? `, ${NETTING_EMBED}` : ''}`), c), 'item_code', batch)
         .eq('cancelled', false);
       if (embedNetting) dq = dq.not('so.status', 'in', SO_DONE_SQL);
-      if (scopedToWarehouses) dq = dq.in('warehouse_id', warehouseIds); // ask A — scope demand to these warehouses (mig 0118)
+      if (scopedToWarehouses) dq = dq.in('warehouse_id', warehouseIds);
       return dq.order('id').range(from, to);
     });
     let nettingEmbedded = true;
@@ -653,11 +444,6 @@ export const productTotalsHandler = async (
       .filter((r) => r.so != null && !SO_DONE.has(r.so.status) && r.qty > 0);
     const demandRows = openDemand.map((r) => ({ id: r.id, doc_no: r.doc_no, item_code: r.item_code, qty: r.qty, line_delivery_date: r.line_delivery_date, so: r.so }));
 
-    // Net-of-delivered per line — mirror so-stock-allocation: an open SO line's
-    // live claim is qty − Σ delivered + Σ returned, floored at 0. Summing gross
-    // qty double-counts the shipped units of a partially-delivered SO and drives
-    // available_qty wrongly negative. (Delivered lines net out here — this is the
-    // logic the PART 3 committed/delivered verification traces.)
     const { deliveredBySoItem, returnedBySoItem } = nettingEmbedded
       ? nettingFromEmbedded(openDemand)
       : await deliveredReturnedBySoItem(sb, demandRows.map((r) => r.id));
@@ -667,8 +453,6 @@ export const productTotalsHandler = async (
       const net = Math.max(0, r.qty - (deliveredBySoItem.get(r.id) ?? 0) + (returnedBySoItem.get(r.id) ?? 0));
       if (net <= 0) continue;
       const code = r.item_code;
-      // Owner split: a line with a delivery date (its own, else the SO's) is a
-      // scheduled commitment; a line with neither is future/uncertain demand.
       const dd = (r.line_delivery_date ?? so.customer_delivery_date)?.slice(0, 10);
       if (dd) committedScheduled.set(code, (committedScheduled.get(code) ?? 0) + net);
       else    unscheduled.set(code, (unscheduled.get(code) ?? 0) + net);
@@ -679,13 +463,6 @@ export const productTotalsHandler = async (
       demandSos.set(code, sos);
     }
 
-    // Incoming — open PO lines whose EFFECTIVE ETA (line revised date, else PO
-    // header revised date; mig 0180) lands within ~30 days. Company-scoped now
-    // (purchase_order_items carries company_id, mig 0083) — the previous
-    // unscoped read summed BOTH companies' POs into one SKU's incoming, a
-    // cross-company leak. Undated / >30-day PO lines are intentionally excluded
-    // from the near-term figure (the owner framed Incoming as "arriving within
-    // ~30 days").
     const { data: poItems, error: poErr } = await chunkIn(codes, (batch, from, to) => pgrestIn(scopeToCompany(sb
       .from('purchase_order_items')
       .select('item_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c), 'item_code', batch).order('id').range(from, to));
@@ -699,12 +476,12 @@ export const productTotalsHandler = async (
       const left = Number(r.qty ?? 0) - Number(r.received_qty ?? 0);
       if (left <= 0) continue;
       const poWh = r.warehouse_id ?? po.purchase_location_id ?? null;
-      if (scopedToWarehouses && !warehouseIds.includes(String(poWh))) continue; // ask A — scope incoming to these warehouses
+      if (scopedToWarehouses && !warehouseIds.includes(String(poWh))) continue;
       const rawEta = effectiveDelivery(r.delivery_date, r.supplier_delivery_date_2, r.supplier_delivery_date_3, r.supplier_delivery_date_4)
         ?? effectiveDelivery(po.expected_at, po.supplier_delivery_date_2, po.supplier_delivery_date_3, po.supplier_delivery_date_4)
         ?? null;
       const eta = rawEta ? rawEta.slice(0, 10) : null;
-      if (!eta || eta > d30) continue; // near-term window only
+      if (!eta || eta > d30) continue;
       incoming.set(r.item_code, (incoming.get(r.item_code) ?? 0) + left);
       const arr = incomingPos.get(r.item_code) ?? [];
       const existing = arr.find((x) => x.po_number === po.po_number);
@@ -720,11 +497,8 @@ export const productTotalsHandler = async (
     const { data: lots, error: lotsErr } = await chunkIn(codes, (batch, from, to) => {
       let lq = pgrestIn(scopeToCompany(sb
         .from('v_inventory_lots_open')
-        // source_doc_type/no classify each lot OWNED vs CONSIGNMENT; remaining_value_sen
-        // (= qty_remaining * unit_cost_sen) is the per-lot owned-value basis, identical
-        // to the drawer's buildStockBreakdown formula.
-        .select('item_code, warehouse_id, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
-      if (scopedToWarehouses) lq = lq.in('warehouse_id', warehouseIds); // ask A — oldest lot within these warehouses
+        .select('item_code, warehouse_id, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c), 'item_code', batch);
+      if (scopedToWarehouses) lq = lq.in('warehouse_id', warehouseIds);
       return lq.order('received_at').order('id').range(from, to);
     });
     if (lotsErr) {
@@ -757,10 +531,6 @@ export const productTotalsHandler = async (
           if (!cur || r.received_at < cur) oldestLot.set(r.item_code, r.received_at);
         }
       } else {
-        /* HELD read from the lots directly, not derived as (movement stock −
-           owned lots). The derived form mixed the two ledgers, so whenever they
-           disagreed the held figure absorbed the difference and reported a
-           consignment quantity that no document supports. */
         heldQty.set(r.item_code, (heldQty.get(r.item_code) ?? 0) + Number(r.qty_remaining ?? 0));
         heldValueSen.set(r.item_code, (heldValueSen.get(r.item_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
       }
@@ -849,11 +619,7 @@ export const productTotalsHandler = async (
     const lotOwned = Math.round(ownedQty.get(code) ?? 0);
     const lotHeld = Math.round(heldQty.get(code) ?? 0);
     const stock = lotOwned + lotHeld;
-    // The movement rollup, kept for comparison only — never for arithmetic.
     const movementStock = scopedToWarehouses ? (whStock.get(code) ?? 0) : Number(p.total_qty ?? 0);
-    // OWNED value from the open lots (consignment excluded), for BOTH scopes —
-    // replaces the totals-view / v_inventory_value figures, which both counted
-    // consignment. Rounded once, mirroring the drawer's buildStockBreakdown.
     const value = Math.round(ownedValueSen.get(code) ?? 0);
     const committed = committedScheduled.get(code) ?? 0;
     const unsched = unscheduled.get(code) ?? 0;
@@ -868,11 +634,8 @@ export const productTotalsHandler = async (
     const pos = (incomingPos.get(code) ?? []).slice().sort((a, b) => byDateAsc(a.eta, b.eta));
     return {
       ...p,
-      // Stock / Value reflect the warehouse scope when one is chosen.
       total_qty:           stock,
       total_value_sen:     value,
-      // OWNED qty (consignment excluded) — the divisor for avg unit cost so the
-      // average isn't diluted by consignment units carried in total_qty.
       owned_qty:           lotOwned,
       /* HELD, NOT OWNED. total_qty carried consignment units with no way to say
          so, which is how 12 of the 14 pieces standing in PJ SHOWROOM read as the
@@ -884,24 +647,13 @@ export const productTotalsHandler = async (
          disagreement between them was silently reported as consignment stock. */
       held_qty:            lotHeld,
       held_value_sen:      Math.round(heldValueSen.get(code) ?? 0),
-      /* The movement rollup and whether it disagrees with the lots. Carried so
-         the screen can MARK a divergent row instead of quietly presenting one
-         ledger as the truth — the divergence is a real data fault
-         (docs/inventory-ledger-divergence-coe.md) and hiding it is how it
-         survived. Never used in any arithmetic. */
       movement_qty:        movementStock,
       ledger_mismatch:     movementStock !== stock,
       committed_scheduled: committed,
       unscheduled_qty:     unsched,
-      reserved_total:      committed + unsched, // whole open demand (continuity)
+      reserved_total:      committed + unsched,
       available_qty:       available,
       surplus_qty:         available - unsched,
-      /* Spare that is genuinely IDLE — the same figure with showroom / display /
-         service stock taken out. The Dead/Spare badge reads this one; the Spare
-         column keeps reading `surplus_qty`, which is still the true arithmetic
-         (Available − Unscheduled) and is what the column's tooltip explains.
-         Floored at 0: a SKU whose whole spare is standing in a showroom is not
-         "negatively idle", it simply is not a dead-stock candidate. */
       /* Held is already out of `available`, and the non-selling balance COUNTS
          those held units (they stand in the showroom), so subtract only the
          OWNED portion parked in non-selling warehouses — else held would be
@@ -917,9 +669,6 @@ export const productTotalsHandler = async (
       stock_by_warehouse:  stockByWarehouse(code),
     };
   });
-  // In a single-warehouse view, drop SKUs with no presence there (no stock, no
-  // incoming, no demand) so the list reflects that warehouse instead of the
-  // whole catalogue at qty 0.
   const out = scopedToWarehouses
     ? enriched.filter((r) => (r.total_qty as number) !== 0 || r.incoming_qty > 0 || r.reserved_total > 0)
     : enriched;
@@ -927,8 +676,6 @@ export const productTotalsHandler = async (
 };
 inventory.get('/products', productTotalsHandler);
 
-/* Earliest-first date comparator (NULLs last) — used to order a SKU's incoming
-   PO list by ETA in the balances enrichment above. */
 function byDateAsc(a: string | null, b: string | null): number {
   if (a === b) return 0;
   if (a == null) return 1;
@@ -936,10 +683,6 @@ function byDateAsc(a: string | null, b: string | null): number {
   return a < b ? -1 : 1;
 }
 
-/* ── Per (warehouse × variant) breakdown for one product (drilldown drawer) ─
-   Migration 0095. One row per warehouse + attribute composition, with qty
-   (from balances) + value (from open FIFO lots) + a readable variant label
-   resolved client-side. This is what powers the SKU → attribute-rows view. */
 inventory.get('/breakdown/:itemCode', async (c) => {
   const sb = c.get('supabase');
   const itemCode = c.req.param('itemCode');
@@ -962,10 +705,7 @@ inventory.get('/breakdown/:itemCode', async (c) => {
   // (= qty_remaining * unit_cost_sen). Bounded — single product, one query.
   const { data: lots } = await scopeToCompany(sb.from('v_inventory_lots_open')
     .select('warehouse_id, variant_key, remaining_value_sen, source_doc_type, source_doc_no')
-    .eq('item_code', itemCode), c); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
-  // The warehouse is_consignment flag still rides along for display grouping, but it
-  // NEVER gates value — value is owned-only by lot SOURCE (a PCR mis-posted into a
-  // normal warehouse would otherwise leak into owned value; BUG-HISTORY 2026-07-25).
+    .eq('item_code', itemCode), c);
   const { data: whs } = await sb.from('warehouses').select('id, code, name, is_consignment');
 
   const whMap = new Map((whs ?? []).map((w: { id: string; code: string; name: string; is_consignment: boolean | null }) => [w.id, w]));
@@ -1018,21 +758,14 @@ inventory.get('/movements', async (c) => {
   if (docType) q = q.eq('source_doc_type', docType);
   if (win.startUtc) q = q.gte('created_at', win.startUtc);
   if (win.endUtc) q = q.lt('created_at', win.endUtc);
-  q = scopeToCompany(q, c); // stock ledger is per-company — don't leak the other company's movements.
+  q = scopeToCompany(q, c);
 
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  /* Movement HISTORY stays visible to everyone with the area — what moved,
-     when, where, in what quantity, is warehouse work. Only the cost columns
-     (unit_cost_sen / total_cost_sen) are withheld. */
   const movements = (data ?? []) as Array<Record<string, unknown>>;
   return c.json({ movements: canViewScmFinance(c) ? movements : stripInventoryFinance(movements) });
 });
 
-/* ── FIFO lots drilldown for one product ─────────────────────────────── */
-// Exported for the route test, same reason as listInventoryHandler above: the
-// supabaseAuth bridge cannot run in the harness, so the test drives the handler
-// on a bare Hono app with a fake supabase.
 export const inventoryLotsHandler = async (
   c: Context<{ Bindings: Env; Variables: Variables }>,
 ) => {
@@ -1044,18 +777,9 @@ export const inventoryLotsHandler = async (
   const tbl = includeClosed ? 'inventory_lots' : 'v_inventory_lots_open';
   let q = sb.from(tbl).select('*').eq('item_code', itemCode);
   if (warehouseId) q = q.eq('warehouse_id', warehouseId);
-  q = scopeToCompany(q, c); // FIFO lots are per-company (both table + view carry company_id).
+  q = scopeToCompany(q, c);
   const { data, error } = await q.order('received_at', { ascending: true });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  /* Lot drilldown: qty, batch, received date and warehouse are operational and
-     stay; unit_cost_sen is not. */
-  /* Every lot says whether it is CONSIGNMENT — stock in our warehouse that the
-     supplier still owns. Classified by SOURCE, never by the warehouse flag (a PC
-     Receive mis-posted into a normal warehouse is still not ours), by the same
-     one classifier `/breakdown/:itemCode` skips on and `/reservations` stamps.
-     It was the only lot feed that did not say, so its one consumer — the desktop
-     Stock Card — valued the supplier's goods as ours while the per-warehouse
-     table directly underneath, fed by /breakdown, excluded them. */
   const lots = (data ?? []).map((l: Record<string, unknown>) => ({
     ...l,
     is_consignment: isConsignmentLotSource(
@@ -1066,21 +790,6 @@ export const inventoryLotsHandler = async (
 };
 inventory.get('/lots/:itemCode', inventoryLotsHandler);
 
-/* ── Batch availability (Stage 2 — Commander 2026-05-31) ──────────────────
-   Sofa is colour-matched and produced as a SET on ONE PO (one dye lot). Stage 1
-   tagged every inbound lot with batch_no = source PO number. This view groups
-   the OPEN lots (qty_remaining > 0) by (warehouse, batch) so the outbound side
-   can see each batch's surviving component SKUs at a glance — the raw material
-   Stage 3 uses to ship a whole set from ONE batch.
-
-   Shape: one row per (warehouse_id, batch_no) with its component SKUs:
-     { warehouseId, warehouseName, batchNo, supplierId, supplierName,
-       receivedAt (earliest), totalRemaining,
-       components: [{ itemCode, variantKey, productName, qtyRemaining,
-                      unitCostSen, receivedAt }] }
-   ?warehouseId filters; ?itemCode keeps only batches that still hold that SKU.
-   batch_no IS NULL lots (free GRN / un-batched stock) are excluded by design —
-   only produced-to-PO stock carries a batch. */
 inventory.get('/batches', async (c) => {
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
@@ -1090,7 +799,7 @@ inventory.get('/batches', async (c) => {
     .select('warehouse_id, batch_no, item_code, variant_key, product_name, qty_remaining, unit_cost_sen, received_at')
     .not('batch_no', 'is', null)
     .gt('qty_remaining', 0);
-  q = scopeToCompany(q, c); // multi-company: isolate batches to the active company (view exposes company_id, mig 0106)
+  q = scopeToCompany(q, c);
   if (warehouseId) q = q.eq('warehouse_id', warehouseId);
   const { data: lots, error } = await q.order('received_at', { ascending: true });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -1102,7 +811,6 @@ inventory.get('/batches', async (c) => {
   };
   const rows = (lots ?? []) as Lot[];
 
-  // Warehouse labels (small table) — canonical short CODE, name-first fallback.
   const { data: whs } = await sb.from('warehouses').select('id, code, name');
   const whName = new Map<string, string>();
   for (const w of (whs ?? []) as Array<{ id: string; code: string | null; name: string | null }>) {
@@ -1110,7 +818,6 @@ inventory.get('/batches', async (c) => {
     if (label) whName.set(w.id, label);
   }
 
-  // batch_no = PO number → resolve supplier for display.
   const batchNos = [...new Set(rows.map((r) => r.batch_no))];
   const supplierByPo = new Map<string, { id: string | null; name: string | null }>();
   if (batchNos.length > 0) {
@@ -1150,7 +857,6 @@ inventory.get('/batches', async (c) => {
       };
       byBatch.set(key, b);
     }
-    // Merge same (item_code, variant_key) lots within a batch into one component.
     const existing = b.components.find((c2) => c2.itemCode === r.item_code && (c2.variantKey ?? '') === (r.variant_key ?? ''));
     if (existing) {
       existing.qtyRemaining += r.qty_remaining;
@@ -1165,26 +871,20 @@ inventory.get('/batches', async (c) => {
       });
     }
     b.totalRemaining += r.qty_remaining;
-    // Keep the earliest received_at on the batch header.
     if (r.received_at && (!b.receivedAt || r.received_at < b.receivedAt)) b.receivedAt = r.received_at;
   }
 
   let batches = [...byBatch.values()];
   if (itemCode) batches = batches.filter((b) => b.components.some((c2) => c2.itemCode === itemCode));
-  // FIFO order — oldest batch first (matches outbound consumption preference).
   batches.sort((a, b) => (a.receivedAt ?? '').localeCompare(b.receivedAt ?? ''));
 
-  // Stamp fabric_supplier_code per component (variantKey-keyed) so the Batches
-  // tab renders the shared final fabric format too. Batched; fail-soft.
   const allComponents = batches.flatMap((b) => b.components as unknown as Array<Record<string, unknown>>);
   await enrichVariantKeyRowsWithFabricSupplierCode(sb, c, allComponents, 'variantKey');
 
   return c.json({ batches });
 });
 
-/* ── COGS stream ─────────────────────────────────────────────────────── */
 inventory.get('/cogs', async (c) => {
-  // Cost of goods sold — finance by definition.
   if (!canViewScmFinance(c)) {
     return c.json({ error: 'forbidden', message: "You don't have permission to see cost of goods sold." }, 403);
   }
@@ -1196,11 +896,9 @@ inventory.get('/cogs', async (c) => {
   const win = mytDayWindow(from, to);
   if (!win) return c.json({ error: 'invalid_date', message: 'Dates must be YYYY-MM-DD.' }, 400);
 
-  // PostgREST's 1000-row cap silently truncated the COGS export — page through
-  // so a long date range exports every consumption row, not just the first 1000.
   const { data, error } = await paginateAll((pFrom, pTo) => {
     let q = sb.from('v_cogs_entries').select('*');
-    q = scopeToCompany(q, c); // multi-company: isolate COGS stream to the active company (view exposes company_id, mig 0106)
+    q = scopeToCompany(q, c);
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
     if (itemCode) q = q.eq('item_code', itemCode);
     if (win.startUtc) q = q.gte('consumed_at', win.startUtc);
@@ -1211,33 +909,22 @@ inventory.get('/cogs', async (c) => {
   return c.json({ cogs: data ?? [] });
 });
 
-/* ── Inventory valuation (qty × cost) ────────────────────────────────── */
 inventory.get('/value', async (c) => {
-  // Pure valuation — nothing here is non-finance, so refuse rather than strip.
   if (!canViewScmFinance(c)) {
     return c.json({ error: 'forbidden', message: "You don't have permission to see inventory valuation." }, 403);
   }
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
-  // PostgREST's 1000-row cap silently truncated the valuation — page through so
-  // every SKU's qty × cost is summed, not just the first 1000. The optional
-  // warehouse filter stays inside the page query.
   const { data, error } = await paginateAll((from, to) => {
     let q = sb.from('v_inventory_value').select('*');
-    q = scopeToCompany(q, c); // multi-company: isolate valuation to the active company (view exposes company_id, mig 0106)
+    q = scopeToCompany(q, c);
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
-    // The view's GROUP BY key, so the order is total.
     return q.order('item_code').order('warehouse_id').order('variant_key').order('product_name').order('company_id').range(from, to);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ value: data ?? [] });
 });
 
-/* ── Inventory analytics / KPI board ─────────────────────────────────────
-   Pure read-only reporting computed from open lots + COGS stream. No new
-   tables. Returns: stock aging buckets, dead-stock (has stock but no sale in
-   the window), turnover + days-on-hand, and an ABC classification by trailing
-   sales value. ?days=90 (window), ?warehouseId optional. */
 inventory.get('/analytics', async (c) => {
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
@@ -1245,29 +932,22 @@ inventory.get('/analytics', async (c) => {
   const nowMs = Date.now();
   const cutoffIso = new Date(nowMs - days * 86_400_000).toISOString();
 
-  // Open lots → aging buckets + per-product on-hand value + names. Page through —
-  // a bare .limit(50_000) is still capped at PostgREST's 1000-row ceiling, so a
-  // warehouse with >1000 open lots would silently under-report on-hand value +
-  // aging. The optional warehouse filter stays inside the page query.
   const { data: lots, error: lotsErr } = await paginateAll((from, to) => {
     let lotsQ = sb.from('v_inventory_lots_open')
       // source_doc_type/no ride along so consignment-sourced lots can be excluded
       // from every VALUE figure below (owner rule, BUG-HISTORY 2026-07-25) — the
       // same classification the list value column and the Stock Breakdown drawer use.
       .select('item_code, product_name, qty_remaining, remaining_value_sen, received_at, warehouse_id, source_doc_type, source_doc_no');
-    lotsQ = scopeToCompany(lotsQ, c); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
+    lotsQ = scopeToCompany(lotsQ, c);
     if (warehouseId) lotsQ = lotsQ.eq('warehouse_id', warehouseId);
     return lotsQ.order('received_at').order('id').range(from, to);
   });
   if (lotsErr) return c.json({ error: 'load_failed', reason: lotsErr.message }, 500);
 
-  // Full COGS stream → trailing-window sales value per product + all-time last-sold
-  // date. Page through (same 1000-row cap as above) so turnover / dead-stock /
-  // ABC aren't computed off a truncated COGS window.
   const { data: cogs, error: cogsErr } = await paginateAll((from, to) => {
     let cogsQ = sb.from('v_cogs_entries')
       .select('item_code, total_cost_sen, consumed_at, warehouse_id');
-    cogsQ = scopeToCompany(cogsQ, c); // multi-company: isolate COGS stream to the active company (view exposes company_id, mig 0106)
+    cogsQ = scopeToCompany(cogsQ, c);
     if (warehouseId) cogsQ = cogsQ.eq('warehouse_id', warehouseId);
     return cogsQ.order('id').range(from, to);
   });
@@ -1288,7 +968,6 @@ inventory.get('/analytics', async (c) => {
      dead stock simply never read it. */
   const nonSellingWh = await loadNonSellingWarehouseIds(sb, c);
 
-  // Aging buckets (days since lot received).
   const BUCKETS = [
     { key: '0-30', label: '0–30 days', max: 30 },
     { key: '31-60', label: '31–60 days', max: 60 },
@@ -1297,10 +976,7 @@ inventory.get('/analytics', async (c) => {
     { key: '180+', label: '180+ days', max: Infinity },
   ];
   const aging = BUCKETS.map((b) => ({ key: b.key, label: b.label, qty: 0, valueSen: 0 }));
-  // Per-product current on-hand value + name.
   const prod = new Map<string, { name: string; qty: number; valueSen: number }>();
-  /* Same shape as `prod`, but only stock standing in a SELLING warehouse — the
-     population the dead-stock question is actually about. */
   const sellable = new Map<string, { name: string; qty: number; valueSen: number }>();
   let totalValueSen = 0;
   for (const l of lotRows) {
@@ -1321,11 +997,6 @@ inventory.get('/analytics', async (c) => {
     p.qty += qty; p.valueSen += val;
     prod.set(code, p);
 
-    /* Kept SEPARATE from `prod` on purpose. Owned display stock is still the
-       owner's money, so it stays in total value and in the aging buckets (his
-       decision, 2026-08-05) — it is only the DEAD-STOCK question it must not
-       answer. Excluding it from `prod` would have quietly shrunk the valuation
-       too, which is a different and unasked-for change. */
     if (!nonSellingWh.has(String(l.warehouse_id ?? ''))) {
       const s = sellable.get(code) ?? { name: String(l.product_name ?? code), qty: 0, valueSen: 0 };
       s.qty += qty; s.valueSen += val;
@@ -1333,7 +1004,6 @@ inventory.get('/analytics', async (c) => {
     }
   }
 
-  // Trailing-window COGS per product + all-time last-sold.
   const trailingCogs = new Map<string, number>();
   const lastSold = new Map<string, string>();
   let trailingCogsTotal = 0;
@@ -1349,14 +1019,10 @@ inventory.get('/analytics', async (c) => {
     }
   }
 
-  // Turnover + days-on-hand (current value as the average-inventory proxy).
   const annualizedCogs = trailingCogsTotal * (365 / days);
   const turns = totalValueSen > 0 ? annualizedCogs / totalValueSen : 0;
   const daysOnHand = trailingCogsTotal > 0 ? (totalValueSen * days) / trailingCogsTotal : null;
 
-  /* Dead stock — has SELLABLE on-hand value but no sale inside the window.
-     Reads `sellable`, not `prod`: a showroom/display/service unit is where it is
-     meant to be, so "never sold" says nothing about it. */
   const deadStock = [...sellable.entries()]
     .filter(([code]) => !(trailingCogs.get(code) ?? 0))
     .map(([code, p]) => ({
@@ -1365,7 +1031,6 @@ inventory.get('/analytics', async (c) => {
     }))
     .sort((a, b) => b.valueSen - a.valueSen);
 
-  // ABC — rank every product (stock or sales) by trailing sales value desc.
   const codes = new Set<string>([...prod.keys(), ...trailingCogs.keys()]);
   const ranked = [...codes]
     .map((code) => ({
@@ -1398,45 +1063,16 @@ inventory.get('/analytics', async (c) => {
   });
 });
 
-/* ── Ledger reconciliation sweep ─────────────────────────────────────────
-   Read-only integrity check. Inventory writes are best-effort (a failed
-   movement insert does NOT roll back the document), so a doc can be POSTED /
-   shipped while its stock movement silently never landed. This flags every
-   non-cancelled stock-moving document (GRN / DO / Purchase Return / Delivery
-   Return / Stock Transfer / Consignment Note / Consignment Return / PC Receive
-   / PC Return) that should have moved stock but has ZERO movement rows — the
-   operator can then re-post or investigate. Stock Take is intentionally
-   excluded (a zero-variance take legitimately writes no movements). The full
-   sweep lives in scm/lib/reconcile-ledger so System Health can reuse it. */
 inventory.get('/reconcile', async (c) => {
   const sb = c.get('supabase');
   try {
-    /* PER-COMPANY, and it has to be typed out. reconcile-ledger.ts documents
-       exactly two modes — "when a companyId is given (operator-facing
-       /reconcile, which is per-company)" and "when omitted (System Health's
-       cross-company integrity count)" — and tests/reconcileLedgerScope.test.ts
-       pins the per-company mode in both directions after company A's report
-       listed company B's PC-Return numbers. That fix was tested at the function
-       and never wired here: this call passed no company at all, so the
-       operator-facing report had been running in System Health's cross-company
-       mode. Found 2026-08-13 by audit:decision-params, when the parameter
-       stopped being omissible. */
     return c.json(await reconcileLedger(sb, activeCompanyId(c)));
   } catch (e: any) {
     return c.json({ error: 'load_failed', reason: e?.message ?? 'reconcile failed' }, 500);
   }
 });
 
-// Manual stock ADJUSTMENT write (POST /inventory/adjustments) moved to its own
-// router — routes/inventory-adjustments.ts — so it can be gated on the separate
-// `scm.warehouse.adjustments` permission instead of `scm.warehouse.inventory`.
-// See that file's header and scm/index.ts for the sub-mount ordering.
 
-/* ── Open stock buckets for one product (decrease-adjustment picker) ───────
-   Groups the OPEN lots (qty_remaining > 0) of one SKU by (variant_key, batch_no)
-   so a manual DECREASE adjustment can target the EXACT bucket it takes stock
-   from — never into a non-existent or wrong-attribute/-batch bucket. ?warehouseId
-   scopes to one warehouse. */
 inventory.get('/buckets/:itemCode', async (c) => {
   const sb = c.get('supabase');
   const itemCode = c.req.param('itemCode');
@@ -1445,7 +1081,7 @@ inventory.get('/buckets/:itemCode', async (c) => {
   let q = sb.from('v_inventory_lots_open')
     .select('warehouse_id, variant_key, batch_no, product_name, qty_remaining')
     .eq('item_code', itemCode);
-  q = scopeToCompany(q, c); // multi-company: isolate stock buckets to the active company (view exposes company_id, mig 0106)
+  q = scopeToCompany(q, c);
   if (warehouseId) q = q.eq('warehouse_id', warehouseId);
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -1504,11 +1140,6 @@ inventory.get('/reservations', async (c) => {
   const warehouseId = c.req.query('warehouseId');
   const itemCode = c.req.query('itemCode');
 
-  // 1. Open lots (company-scoped) — the stock actually sitting on the shelf.
-  //    source_doc_type / source_doc_no ride along so each lot can be classified
-  //    OWNED vs CONSIGNMENT by its SOURCE (isConsignmentLotSource) — never by the
-  //    warehouse flag, which leaks PCR stock mis-posted into a normal warehouse
-  //    into owned value (BUG-HISTORY 2026-07-25). `id` lets the client key a lot.
   const { data: lotRows, error: lotErr } = await paginateAll<{
     id: string; item_code: string; product_name: string | null; variant_key: string | null;
     warehouse_id: string; batch_no: string | null; qty_remaining: number | null;
@@ -1518,7 +1149,7 @@ inventory.get('/reservations', async (c) => {
     let q = sb.from('v_inventory_lots_open')
       .select('id, item_code, product_name, variant_key, warehouse_id, batch_no, qty_remaining, unit_cost_sen, received_at, source_doc_type, source_doc_no')
       .gt('qty_remaining', 0);
-    q = scopeToCompany(q, c); // open lots are per-company (view exposes company_id, mig 0106)
+    q = scopeToCompany(q, c);
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
     if (itemCode) q = q.eq('item_code', itemCode);
     return q.order('received_at', { ascending: true }).order('id').range(from, to);
@@ -1526,21 +1157,13 @@ inventory.get('/reservations', async (c) => {
   if (lotErr) return c.json({ error: 'load_failed', reason: lotErr.message }, 500);
   const lots = lotRows ?? [];
 
-  // 1b. Trace each GRN-sourced lot back to its ORIGINATING PURCHASE ORDER, for a
-  //     display-only "from PO" hint in the drawer's SOURCE cell. A GRN is created
-  //     from a PO; its header carries purchase_order_id (a batch-converted GRN
-  //     stamps the PRIMARY PO). Set-based, no N+1: collect the distinct GRN
-  //     doc-nos, resolve grn_number -> purchase_order_id, then id -> po_number.
-  //     Company-scoped (same gate as the lots above) and fully null-safe — a lot
-  //     from a non-GRN source, or a GRN with no resolvable PO, keeps its bare
-  //     source with no PO hint.
   const grnNos = [...new Set(
     lots
       .filter((l) => (l.source_doc_type ?? '').toUpperCase() === 'GRN')
       .map((l) => l.source_doc_no)
       .filter((n): n is string => !!n),
   )];
-  const grnToPoNo = new Map<string, string>(); // grn_number -> po_number
+  const grnToPoNo = new Map<string, string>();
   if (grnNos.length > 0) {
     const { data: grnRows } = await chunkIn<{ grn_number: string; purchase_order_id: string | null }>(
       grnNos,
@@ -1553,7 +1176,7 @@ inventory.get('/reservations', async (c) => {
         .map((g) => g.purchase_order_id)
         .filter((x): x is string => !!x),
     )];
-    const poNoById = new Map<string, string>(); // purchase_order id -> po_number
+    const poNoById = new Map<string, string>();
     if (poIds.length > 0) {
       const { data: poRows } = await chunkIn<{ id: string; po_number: string | null }>(
         poIds,
@@ -1571,16 +1194,6 @@ inventory.get('/reservations', async (c) => {
     }
   }
 
-  // 2. READY SO demand (company-scoped) — the lines the allocator flipped to
-  //    READY because stock exists for them. allocated_batch_no is forward-compat
-  //    (mig 0121): fall back to a batch-less select if the column is absent.
-  /* GET /reservations. FIVE statuses: this one HAS SHIPPED, so it differs from
-     shared/so-terminal-states.ts (SIX) by DRAFT alone — a draft order still
-     reserves stock here. GET /products above (:494) has FOUR, dropping SHIPPED
-     as well, so the two halves of this one file already disagree with each other.
-     Measured and left standing 2026-08-13 for the same reason as that one: each
-     spelling drives a number a human reads, so picking one is a business
-     decision. See BUG-HISTORY 2026-08-13. */
   const SO_DONE = new Set(['DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED', 'SHIPPED']);
   type SoJoin = {
     created_at: string | null; status: string | null;
@@ -1592,10 +1205,6 @@ inventory.get('/reservations', async (c) => {
     stock_qty_ready: number | null; allocated_batch_no?: string | null;
     so: SoJoin | SoJoin[] | null;
   };
-  // The reserving SO's delivery date (owner Q4): join the header dates and use the
-  // EFFECTIVE date amended_delivery_date ?? customer_delivery_date — the same
-  // convention delivery-planning uses (the original customer date is never
-  // overwritten; a reschedule writes amended_delivery_date, which then wins).
   const READY_SELECT = 'id, doc_no, item_code, item_group, variants, warehouse_id, stock_qty_ready, allocated_batch_no, so:mfg_sales_orders!inner(created_at, status, customer_delivery_date, amended_delivery_date)';
   const READY_SELECT_NOBATCH = 'id, doc_no, item_code, item_group, variants, warehouse_id, stock_qty_ready, so:mfg_sales_orders!inner(created_at, status, customer_delivery_date, amended_delivery_date)';
   let readyRows: ReadyLine[] = [];
@@ -1617,14 +1226,9 @@ inventory.get('/reservations', async (c) => {
     });
   }
 
-  // 3. Index READY demand two ways to mirror the allocator's two match paths.
-  //    `viaBatch` marks a claim the allocator locked to ONE batch (sofa,
-  //    allocated_batch_no) as opposed to a bucket-level QUANTITY claim (every
-  //    other category — so-stock-allocation fills those from a qty bucket and
-  //    FIFO picks the physical lot only at DO time).
   type Claim = { docNo: string; soCreatedAt: string | null; qtyReady: number; deliveryDate: string | null; viaBatch: boolean };
-  const byBatch = new Map<string, Claim[]>();   // key: `${batch_no}|${item_code}`
-  const byBucket = new Map<string, Claim[]>();  // key: `${warehouse_id}|${item_code}|${variant_key}`
+  const byBatch = new Map<string, Claim[]>();
+  const byBucket = new Map<string, Claim[]>();
   for (const r of readyRows) {
     const so = Array.isArray(r.so) ? r.so[0] : r.so;
     const deliveryDate = so ? effectiveSoDelivery(so) : null;
@@ -1642,9 +1246,6 @@ inventory.get('/reservations', async (c) => {
   const { data: whs } = await sb.from('warehouses').select('id, code, name, type');
   const whMap = new Map((whs ?? []).map((w: { id: string; code: string; name: string; type: string | null }) => [w.id, w]));
 
-  // 3b. SKU category per item_code (set-based) — drives the make-to-order
-  //     dead-stock emphasis (SOFA/BEDFRAME free stock is abnormal; MATTRESS free
-  //     stock is normal). Null-safe: a lot for an uncatalogued code stays neutral.
   const lotCodes = [...new Set(lots.map((l) => l.item_code).filter(Boolean))];
   const categoryByCode = new Map<string, string | null>();
   if (lotCodes.length > 0) {
@@ -1686,7 +1287,6 @@ inventory.get('/reservations', async (c) => {
       leadBuffers: await loadLeadBuffers(c.env.DB),
     });
     const stockAsg = mrpStockAssignment(mrp);
-    // Group the FIFO-ordered lots by their MRP bucket key (warehouse|code|variant).
     const lotsByBucket = new Map<string, typeof lots>();
     for (const l of lots) {
       const k = stockAssignmentKey(l.warehouse_id, l.item_code, l.variant_key ?? '');
@@ -1714,24 +1314,12 @@ inventory.get('/reservations', async (c) => {
     console.error('[inventory] reservations MRP assignment failed (degraded to all-free):', e instanceof Error ? e.message : e);
   }
 
-  // 4. One row per open lot, tagged RESERVED (claimed by ≥1 READY SO, or
-  //    MRP-assigned — see the status note below) or FREE.
   const reservations = lots.map((l) => {
     const vk = l.variant_key ?? '';
-    /* Audit D8 (2026-08-01). The old lookup was `l.batch_no ? byBatch : byBucket`
-       — but only SOFA claims ever carry allocated_batch_no, while EVERY
-       GRN-received lot carries batch_no (= the PO number, mig 0120). So a
-       batched non-sofa lot always looked up an empty byBatch and rendered
-       FREE, even while the same row's MRP-derived assigned_qty said otherwise.
-       A batched lot now sees its OWN batch's locked claims PLUS the bucket's
-       batchless QUANTITY claims (FIFO can serve those from any lot of the
-       bucket, this one included). Another batch's locked claims still never
-       reach it, and an unbatched lot keeps the full bucket view it had. */
     const bucketClaims = byBucket.get(`${l.warehouse_id}|${l.item_code}|${vk}`) ?? [];
     const claims = l.batch_no
       ? [...(byBatch.get(`${l.batch_no}|${l.item_code}`) ?? []), ...bucketClaims.filter((cl) => !cl.viaBatch)]
       : bucketClaims;
-    // Collapse to one entry per SO doc; reserved-since = earliest claiming SO.
     const byDoc = new Map<string, Claim>();
     for (const cl of claims) {
       const cur = byDoc.get(cl.docNo);
@@ -1741,8 +1329,6 @@ inventory.get('/reservations', async (c) => {
     const reservedBy = [...byDoc.values()].sort((a, b) => (a.soCreatedAt ?? '').localeCompare(b.soCreatedAt ?? ''));
     const reservedSince = reservedBy.length > 0 ? reservedBy[0].soCreatedAt : null;
     const w = whMap.get(l.warehouse_id);
-    // MRP-derived assigned/free for THIS lot (FIFO-spread from its bucket). Absent
-    // (MRP degraded / bucket not in demand) → all on-hand units are free.
     const isConsignment = isConsignmentLotSource(l.source_doc_type, l.source_doc_no);
     const qtyRemaining = Number(l.qty_remaining ?? 0);
     const mrpAsg = assignedByLotId.get(l.id);
@@ -1763,19 +1349,10 @@ inventory.get('/reservations', async (c) => {
       received_at: l.received_at,
       source_doc_type: l.source_doc_type ?? null,
       source_doc_no: l.source_doc_no ?? null,
-      // Display-only trace of a GRN-sourced lot back to its originating PO. Null
-      // for non-GRN sources (PCR / adjustment / transfer) and for a GRN with no
-      // resolvable PO — the drawer then shows just the GRN, as before.
       source_po_no: (l.source_doc_type ?? '').toUpperCase() === 'GRN' && l.source_doc_no
         ? (grnToPoNo.get(l.source_doc_no) ?? null)
         : null,
-      // Source-based consignment classification — the drawer separates these
-      // lots and drops them from OWNED value (never the warehouse flag).
       is_consignment: isConsignment,
-      // Audit D8 — status must never contradict this same row's assigned_qty:
-      // RESERVED when a READY SO hard-claims the lot OR the MRP allocation
-      // assigns any of its units. (No PARTIAL value exists on this contract —
-      // the exact split is already on assigned_qty / free_qty.)
       status: reservedBy.length > 0 || assignedQty > 0 ? 'RESERVED' : 'FREE',
       reserved_by: reservedBy.map((x) => ({
         doc_no: x.docNo, so_created_at: x.soCreatedAt, qty_ready: x.qtyReady, delivery_date: x.deliveryDate,
@@ -1797,8 +1374,6 @@ inventory.get('/reservations', async (c) => {
     };
   });
 
-  // Stamp fabric_supplier_code per lot so the merged drawer table renders the
-  // shared final fabric format — "EZ-002 (KN390-2) / SEAT 28". Batched; fail-soft.
   await enrichVariantKeyRowsWithFabricSupplierCode(sb, c, reservations);
 
   return c.json({ reservations });

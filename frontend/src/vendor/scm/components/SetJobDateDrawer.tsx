@@ -40,8 +40,6 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
   const updateFields = useUpdateDeliveryFields();
   const notify = useNotify();
 
-  /* The date Logistics confirmed (amended_delivery_date). Not confirmed yet: the
-     field opens on Service's requested date, so saving it confirms that date. */
   const current = (order.amended_delivery_date ?? '').slice(0, 10);
   const requested = (order.customer_delivery_date ?? '').slice(0, 10);
   const [date, setDate] = useState(current || requested);
@@ -55,7 +53,6 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
   const busy = sched.isPending || updateFields.isPending;
   const dirty = date !== current || reason !== currentReason;
 
-  // The date write (also used by "Clear date"); owns the success toast + close.
   const saveDate = (value: string | null) => {
     sched.mutate(
       {
@@ -83,8 +80,6 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
     );
   };
 
-  /* Save: record the per-leg amend reason FIRST (so a failure surfaces before the
-     date moves), then the date. Reason-only change closes with its own toast. */
   const saveAll = () => {
     const dateVal = date || null;
     const reasonVal = reason || null;
@@ -150,7 +145,6 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
               onChange={(e) => setReason(e.target.value)}
             >
               <option value="">—</option>
-              {/* Keep any free-text reason already on the leg selectable. */}
               {currentReason && !(AMEND_REASONS as readonly string[]).includes(currentReason)
                 ? <option value={currentReason}>{currentReason}</option>
                 : null}
@@ -166,9 +160,6 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
-          {/* Clearing is its own action rather than "save an empty field": an
-              operator emptying the box and pressing Save should not have to
-              wonder whether that meant anything. */}
           <Button variant="ghost" onClick={() => saveDate(null)} disabled={busy || !current}>
             Clear date
           </Button>

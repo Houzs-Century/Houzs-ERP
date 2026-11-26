@@ -3,12 +3,6 @@ import { Plus } from "lucide-react";
 import { AssrExchangePoLine } from "./AssrExchangePoLine";
 import { writeScmHandoff } from "../lib/scmHandoffStorage";
 
-/* Desktop case-detail "Exchange PO" panel: shows the case's REAL exchange POs
-   (scm.purchase_orders.assr_case_id) and a button to raise a new one for a
-   one-to-one exchange. The button seeds the New-PO form with this case's item
-   line and a `?fromAssrCase=` link; the purchaser sets supplier / warehouse /
-   price and saves, and the saved PO carries assr_case_id back to the case.
-   Kept out of ServiceCases.tsx (at its file-size ceiling) as its own module. */
 type ExchangeCaseRow = {
   id: number;
   company_id?: number | string | null;

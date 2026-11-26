@@ -1220,6 +1220,51 @@ jobs:
       # rather than passing with the ratchet half-disabled.
       - run: node scripts/check-file-size.mjs --require-base
 
+  agent-guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Make origin/main resolvable
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - run: npm ci --prefix backend
+      - name: Guardrail tests
+        run: node --test scripts/check-layout.test.mjs scripts/check-new-markdown.test.mjs scripts/agent-check.test.mjs scripts/verify-probe.test.mjs scripts/run-tla.test.mjs scripts/eslint/houzs-plugin.test.mjs
+      - name: Layout
+        run: node scripts/check-layout.mjs
+      - name: No unsolicited markdown
+        if: github.event_name == 'pull_request'
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/check-new-markdown.mjs
+
+  tla:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: formal/.cache/tla2tools.jar
+          key: tla2tools-v1.7.4
+      - run: node scripts/run-tla.mjs formal/ac-outbox-claim/AcOutboxClaim.cfg
+      - run: node scripts/run-tla.mjs --expect-violation formal/ac-outbox-claim/AcOutboxClaimBroken.cfg
+      - run: node scripts/run-tla.mjs --expect-violation formal/ac-outbox-claim/AcOutboxClaimFinding.cfg
+
   # Roll-up so the required status check keeps the name `frontend`. Branch
   # protection lists `frontend` by name; without this the split would make the
   # required check disappear and NO pull request could ever merge again.
@@ -1227,7 +1272,7 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [changes, frontend-tests, frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint]
+    needs: [changes, frontend-tests, frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint, agent-guardrails, tla]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1262,6 +1307,8 @@ jobs:
           # (its dependency failed), and skipped passes the line below — so the
           # shards' own result is what carries a test failure to this context.
           ok frontend-tests "${{ needs.frontend-tests.result }}"
+          [ "${{ needs.agent-guardrails.result }}" = success ] || { echo "::error::agent-guardrails = ${{ needs.agent-guardrails.result }}"; exit 1; }
+          [ "${{ needs.tla.result }}" = success ] || { echo "::error::tla = ${{ needs.tla.result }}"; exit 1; }
           ok frontend-checks "${{ needs.frontend-checks.result }}"
           ok frontend-typecheck "${{ needs.frontend-typecheck.result }}"
           ok frontend-build "${{ needs.frontend-build.result }}"

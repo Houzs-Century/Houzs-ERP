@@ -1,27 +1,3 @@
-// Stock Transfer PDF — the warehouse hand-off sheet.
-//
-// The Stock Transfer and the Stock Take were the only two documents in the
-// system that could not be printed at all — neither had ever had a print
-// handler, on any surface.
-//
-// Two owner quotes were cited here and have been removed: neither appears in any
-// message he sent in the session that produced this file. See
-// pages/scm-v2/row-menus.ts for the full provenance note.
-//
-// Same unified layout as SO / PO / DO / SI / GRN / DR: real letterhead, the
-// shared info block, the shared table look, the same footer (doc no · portal ·
-// page n of m) on every page. A4 portrait, pure B&W.
-//
-// NO MONEY, DELIBERATELY. `/stock-transfers` carries no value of any kind — no
-// unit price, no line total, no header total (`stock-transfers.ts` HEADER/LINE).
-// The cost side of a transfer exists only inside the movement rows
-// fn_stock_transfer_apply writes, and it is a FIFO basis carried from the source
-// lot, not a figure this document states. A totals rail here would be inventing
-// one, so the only total printed is the one the document genuinely has: quantity.
-//
-// THE WAREHOUSE PAIR IS THE DOCUMENT. Everything else on a transfer describes
-// the pair, so FROM and TO get their own band under the letterhead rather than
-// a row in the label gutter (same treatment the Purchase Order gives DELIVER TO).
 import { docPageLabel,
   COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader,
   drawInfoColumns, drawSignatureBoxes, ensurePdfCjkFont, safeName, fmtDocDate,
@@ -44,8 +20,6 @@ type StHeader = {
   notes: string | null;
   posted_at?: string | null;
   cancelled_at?: string | null;
-  /* Ids are the FALLBACK, never the headline: an unresolved embed still has to
-     say something, but a uuid on a printed sheet tells a storekeeper nothing. */
   from_warehouse_id?: string | null;
   to_warehouse_id?: string | null;
   from_warehouse?: StWarehouse | null;
@@ -57,30 +31,17 @@ type StLine = {
   product_name: string | null;
   qty: number;
   notes?: string | null;
-  /* The route SELECTs it (`stock-transfers.ts` LINE) and it is the bucket that
-     actually moved; optional because the frontend's `StockTransferLine` type
-     does not spell it and a legacy row stores ''. */
   variant_key?: string | null;
 };
 
-/** Code first then name — `warehouse-label.ts`, the one rule — with the raw id
- *  behind it so an unresolved embed is still identifiable. */
 const whLabel = (w: StWarehouse | null | undefined, id: string | null | undefined): string =>
   warehouseLabel(w) ?? (id ?? '—');
 
-/** The warehouse's full name, only when it adds something the label did not.
- *  `warehouseLabel` returns the CODE when there is one, so a storekeeper on the
- *  receiving dock otherwise gets a code and no words. */
 const whSubLabel = (w: StWarehouse | null | undefined): string => {
   const name = (w?.name ?? '').trim();
   return name && name !== warehouseLabel(w) ? name : '';
 };
 
-/* Draw ONE transfer's content into `doc` (letterhead → movement band → info →
-   table → qty total → signatures → footer). Split out from the single-file
-   generator on the same shape as the GRN / DR renderers, so a combined export
-   can share one doc later without this being rewritten; the footer numbers only
-   the pages THIS transfer added. */
 export async function renderStockTransferInto(
   doc: import('jspdf').jsPDF,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -88,9 +49,6 @@ export async function renderStockTransferInto(
   header: StHeader,
   lines: StLine[],
 ): Promise<void> {
-  /* Before ANY drawing: a product name or note carrying CJK needs the font
-     embedded up front, or helvetica silently paints the whole field as
-     mojibake. No-op for a pure-WinAnsi document. */
   await ensurePdfCjkFont(doc, [header, lines]);
 
   const startPage = doc.getNumberOfPages();
@@ -105,7 +63,6 @@ export async function renderStockTransferInto(
     ],
   });
 
-  // ── The movement band ───────────────────────────────────────────────
   const fromLabel = whLabel(header.from_warehouse, header.from_warehouse_id);
   const toLabel   = whLabel(header.to_warehouse,   header.to_warehouse_id);
   const fromName  = whSubLabel(header.from_warehouse);
@@ -118,10 +75,6 @@ export async function renderStockTransferInto(
   doc.text('TO WAREHOUSE', rightX, y);
   doc.setTextColor(0);
   y += 6;
-  /* WRAPPED, and the band's height follows the wrap. A warehouse with no code
-     falls back to its NAME (warehouse-label.ts), which can be long enough to
-     take two lines at this size — and a fixed step here would put the second
-     line straight through the name row below it. */
   const LABEL_LH = 5.5;
   const NAME_LH = 4;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
@@ -129,11 +82,6 @@ export async function renderStockTransferInto(
   const toLines = doc.splitTextToSize(toLabel, colW) as string[];
   fromLines.forEach((line, i) => doc.text(line, margin, y + i * LABEL_LH));
   toLines.forEach((line, i) => doc.text(line, rightX, y + i * LABEL_LH));
-  /* The arrow sits on the two labels' FIRST baseline, in the gutter between
-     them — the direction is the one thing a reader must not have to work out.
-     DRAWN, not typed: U+2192 is not one of the 27 codepoints jspdf's WinAnsi
-     table knows, and `ensurePdfCjkFont` only scans the PAYLOAD, so an arrow
-     written as a literal here would paint as mojibake with nothing to catch it. */
   const arrowY = y - 1.5;
   const arrowX = margin + colW + 3;
   doc.setDrawColor(60); doc.setLineWidth(0.5);
@@ -156,10 +104,6 @@ export async function renderStockTransferInto(
   doc.setDrawColor(180); doc.line(margin, y, pageW - margin, y);
   y += 5;
 
-  /* No `?? 0` guard: the route refuses a line whose qty is not a positive
-     integer at create time (`stock-transfers.ts` — `qty must be > 0`), so the
-     column is never null and a nullish default here would be a condition the
-     linter is right to call dead. */
   const totalQty = lines.reduce((s, l) => s + l.qty, 0);
 
   y = drawInfoColumns(doc, y,
@@ -184,10 +128,6 @@ export async function renderStockTransferInto(
     },
   );
 
-  /* Server order is kept as it comes (`.order('created_at')`), and the sofa
-     build walk the sales/purchase documents apply is NOT used here: transfer
-     lines carry no `item_group` and no `variants`, so it would be a no-op that
-     only added imports. */
   const rows = lines.map((l, idx) => {
     const variant = variantKeyLabel(l.variant_key, '');
     const desc = [l.product_name, variant].filter(Boolean).join('\n');
@@ -218,12 +158,6 @@ export async function renderStockTransferInto(
   });
   const lastY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
 
-  /* The ONLY total this document has. Named TOTAL QTY rather than TOTAL so it
-     can never be mistaken for a value on a sheet that states none.
-
-     Page-guarded for the same reason the Stock Take's rail is: a table that
-     runs to the bottom of the last page would otherwise put this line past the
-     paper, or on top of the footer at y=290. */
   const totalsX = pageW - margin - 70;
   let totalY = lastY + 2;
   if (totalY > 275) {
@@ -234,12 +168,6 @@ export async function renderStockTransferInto(
   doc.text('TOTAL QTY', totalsX, totalY);
   doc.text(String(totalQty), pageW - margin, totalY, { align: 'right' });
 
-  /* Naming the two warehouses on the signature boxes is what makes this a
-     hand-off sheet rather than a form — but drawSignatureBoxes does not wrap,
-     and the two labels sit half a page apart, so an over-long one would run
-     into its neighbour. MEASURED at the font drawSignatureBoxes draws them in,
-     and dropped rather than collided with: a warehouse whose label does not
-     fit falls back to the bare role, which is still true. */
   const sigMaxW = (pageW - margin * 2) / 2 - 7;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   const sigLabel = (role: string, wh: string): string => {
@@ -248,8 +176,6 @@ export async function renderStockTransferInto(
     return doc.getTextWidth(full) <= sigMaxW ? full : role;
   };
   const ty = drawSignatureBoxes(
-    /* From the total's OWN y, not from lastY — if the total moved to a new
-       page, the signatures follow it there. */
     doc, totalY + 10,
     sigLabel('Released By', fromLabel),
     sigLabel('Received By', toLabel),
@@ -262,7 +188,6 @@ export async function renderStockTransferInto(
   );
   doc.setTextColor(0);
 
-  // Footer: doc no · portal · page n of m — only on the pages THIS transfer added.
   const pageCount = doc.getNumberOfPages();
   for (let p = startPage; p <= pageCount; p += 1) {
     doc.setPage(p);

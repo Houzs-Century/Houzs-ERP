@@ -1,9 +1,3 @@
-/* BUG-28 — a line remark "AEON RAWANG March 24, 2026 → March 29, 2026" on
-   HC-PO-2609-266 refused the whole PO PDF ("a character we cannot print yet"):
-   the glyph pre-check scanned the raw "→", which neither Noto subset carries,
-   although paperText already folds it to "->" for paper. The check now scans
-   the folded text, and the doc folds the same symbols wherever it paints or
-   measures, autotable cells included. */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -82,7 +76,6 @@ describe('paper folds (→ ← − ≈) never block a PDF', () => {
    plain WinAnsi documents are unchanged. These load the COMMITTED subsets through
    the real jsPDF cmap guard, so they also fail if a future font drops the macrons. */
 describe('romaji macron letters embed in the Noto subset (no fold)', () => {
-  // vitest runs with cwd at the frontend root, where the committed subsets live.
   const faceFetch = () =>
     vi.fn((url: string) => {
       const name = String(url).split('/').pop() ?? '';
@@ -105,14 +98,12 @@ describe('romaji macron letters embed in the Noto subset (no fold)', () => {
       { po_number: 'HC-PCO-2610-001' },
       [{ item_code: 'AKEMI KŌRI ISHI MATT (K)', supplier_sku: 'AK-KŌRI ISHI-K' }],
     ])).resolves.toBeUndefined();
-    // A macron letter is not isHanzi -> the cheap PUNCT tier, both weights.
     const urls = fetchSpy.mock.calls.map(([u]) => String(u));
     expect(urls.some((u) => u.includes('noto-sans-sc-punct-400'))).toBe(true);
     expect(urls.some((u) => u.includes('noto-sans-sc-punct-700'))).toBe(true);
     expect(urls.some((u) => u.includes('hanzi'))).toBe(false);
     expect(Object.keys(doc.getFontList())).toContain('NotoSansSC');
 
-    // The macron survives to paper (NOT folded to "KORI"), autotable cells too.
     autoTable(doc, { body: [['AK-KŌRI ISHI-K', 'AKEMI KŌRI ISHI MATT (K)']] });
     const flat = painted.flat().map(String);
     expect(flat).toEqual(expect.arrayContaining(['AK-KŌRI ISHI-K', 'AKEMI KŌRI ISHI MATT (K)']));
@@ -123,8 +114,6 @@ describe('romaji macron letters embed in the Noto subset (no fold)', () => {
     const fetchSpy = faceFetch();
     vi.stubGlobal('fetch', fetchSpy);
     const doc = new jsPDF();
-    // Resolve or throw by glyph, but the tier is chosen and fetched before the
-    // cmap guard — that routing is what this pins.
     await ensurePdfCjkFont(doc, { customer: '大文 Sdn Bhd' }).catch(() => undefined);
     expect(fetchSpy.mock.calls.some(([u]) => String(u).includes('noto-sans-sc-hanzi'))).toBe(true);
   });

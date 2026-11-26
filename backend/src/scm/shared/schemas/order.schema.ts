@@ -1,8 +1,3 @@
-// Order POST /orders body schema. Hand-written Zod for Cart / ConfiguratorState /
-// CustomerDto shapes that don't 1:1 match a Drizzle row. drizzle-zod handles DB-row
-// schemas (in @2990s/db once we add them). PORT_DESIGN.md §11.1 Issue 6.
-//
-// Server `POST /orders` validates this BEFORE running pricing recompute (§5.2 step 2).
 
 import { z } from 'zod';
 
@@ -17,13 +12,11 @@ const cellSchema = z.object({
 });
 
 const sofaConfigSchema = z.object({
-  depth: z.string().regex(/^\d{2,3}$/),  // inches; F5 widened from '24'|'28'
+  depth: z.string().regex(/^\d{2,3}$/),
   mode: z.enum(['preset', 'custom']),
   presetId: z.string().optional(),
   quickFlip: z.enum(['L', 'R']).optional(),
   customCells: z.array(cellSchema),
-  // Upholstery fabric + colour (spec 2026-05-24). Optional in shape; server
-  // recompute enforces presence + validity for sofas. Labels are display-only.
   fabricId: z.string().optional(),
   colourId: z.string().optional(),
   fabricLabel: z.string().optional(),
@@ -91,7 +84,6 @@ export const orderPostSchema = z.object({
   slipKey: z.string().optional(),
   uploadSessionId: z.string().optional(),
 
-  // Submitted by client for >0.5% drift check; server recomputes everything.
   clientSubtotal: z.number().int(),
   clientAddonTotal: z.number().int(),
   clientTotal: z.number().int(),

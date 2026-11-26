@@ -82,7 +82,6 @@ describe("ProjectsCalendarView all-dates search", () => {
     ]);
     expect(rows[2].textContent).toContain("SETIA CITY CONVENTION CENTRE");
 
-    // Clicking a row jumps the calendar to that event's month.
     fireEvent.click(rows[2]);
     expect(await screen.findByText("January 2027")).toBeTruthy();
   });
@@ -96,7 +95,6 @@ describe("ProjectsCalendarView all-dates search", () => {
 
     fireEvent.keyDown(screen.getByPlaceholderText(/Search venue/), { key: "Enter" });
     expect(await screen.findByText("January 2027")).toBeTruthy();
-    // Nothing after the last match.
     await waitFor(() =>
       expect((screen.getByRole("button", { name: /Next match/ }) as HTMLButtonElement).disabled).toBe(true),
     );

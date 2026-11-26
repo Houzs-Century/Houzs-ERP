@@ -39,7 +39,6 @@ export const crewStopPhotos = new Hono<{ Bindings: Env; Variables: Variables }>(
 crewStopPhotos.use('*', supabaseAuth);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// A stop holds at most 20 photos (MAX_POD_KEYS); the rest of a long list is several phones' retakes.
 const STOP_PHOTO_LIST_MAX = 100;
 
 export type StopRef =
@@ -62,7 +61,6 @@ export function parseStopContext(raw: unknown): StopRef | null {
 
 type Access = { ok: true; lead: boolean } | { ok: false; status: 403 | 404 | 500; error: string; reason: string };
 
-/* May the caller see this stop's photos, and are they its lead? */
 export async function stopAccess(c: Ctx, stop: StopRef): Promise<Access> {
   const sb = c.get('supabase');
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
@@ -107,8 +105,6 @@ crewStopPhotos.get('/stop-photos', async (c) => {
   if (admitted instanceof Response) return admitted;
   const { context, access } = admitted;
   const me = houzsUserIdOf(c)!;
-  // `like` narrows by the stop; the exact context is checked on each row below,
-  // since `_` in a leg name is a LIKE wildcard.
   const { data, error } = await scopeToAllowedCompanies(
     c.get('supabase').from('pending_slip_uploads')
       .select('upload_session_id, r2_key, content_type, created_at, order_draft_id')
@@ -165,9 +161,6 @@ crewStopPhotos.get('/stop-photos/:session', async (c) => {
   });
 });
 
-/* Expiring the session hands it to the slip reaper, the same end as every
-   unclaimed upload. A photo a Complete already claimed is part of the delivery
-   record and is refused. */
 crewStopPhotos.post('/stop-photos/:session/discard', async (c) => {
   const admitted = await admit(c);
   if (admitted instanceof Response) return admitted;

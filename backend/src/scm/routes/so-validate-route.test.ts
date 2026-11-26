@@ -27,27 +27,19 @@ describe('the validate route is wired to the shared collector', () => {
   });
 
   it('forwards the edit context so the grandfather carve-out works on an edit', () => {
-    /* The edit surfaces send the order's ORIGINAL dates; without forwarding them
-       an untouched already-past date would wrongly block the save. */
     expect(handler).toContain('origProcDate: str(body.origProcessingDate)');
     expect(handler).toContain('origDelivDate: str(body.origDeliveryDate)');
   });
 
   it('forwards the stored phone on an edit only (B16)', () => {
-    /* Without it an imported order saved with no phone could not be edited at all. */
     expect(handler).toContain("origPhone: isEdit && typeof body.origPhone === 'string' ? body.origPhone : null");
   });
 
   it('asks the INTRODUCED-mix question on an edit, not the flat one', () => {
-    /* mixes(after) && !mixes(before): on a create origItemGroups is [] so it is
-       flat; on an edit a pre-existing mix the change does not touch must not
-       block (matches the server line-mix gate). */
     expect(handler).toContain('!mixesSofaWithOtherMain(((body.origItemGroups');
   });
 
   it('asks for the fair DAY through the shared rule (owner 2026-09-24)', () => {
-    /* An event picked without a day of it blocks a confirmed save; the rule is
-       fair-options.ts::fairDayMissing, the same bounds the save keeps a day by. */
     expect(handler).toContain('fairDayMissing: fairDayMissing(body,');
   });
 

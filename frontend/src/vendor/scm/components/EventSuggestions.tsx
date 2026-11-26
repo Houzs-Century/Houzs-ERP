@@ -10,7 +10,6 @@ import { eventLabel, type EventSuggestion } from '../lib/event-queries';
 
 export function EventSuggestions({ suggestions, current, onUse }: {
   suggestions: EventSuggestion[] | undefined;
-  /** The event the lines already share — its row reads "in use" instead of a button. */
   current: number | null;
   onUse: (projectId: number) => void;
 }) {

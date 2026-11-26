@@ -20,8 +20,6 @@ import { buildAcItemIndex } from './autocount-item-code';
    a document over a value that would never be sent.
    ------------------------------------------------------------------------ */
 
-/* An ERP code the snapshot maps to TWO items, neither belonging to the supplier
-   on the document — the exact shape of all 139 production refusals. */
 const INDEX = buildAcItemIndex([
   'HOK-1007 (K)\tCODY-(K)\tBEDFRAME\t400-O002',
   'NB-KHJ57(K)\tCODY-(K)\tBEDFRAME\t400-N002',
@@ -39,24 +37,16 @@ describe('an ambiguous item code refuses a CREATE and not a TRANSFER', () => {
   const opts = { supplierCode: '400-H003', itemIndex: INDEX, requireLocation: true };
 
   test('the create is still refused — there the ItemCode really is sent', () => {
-    /* THE HALF THAT MUST NOT CHANGE. On a create the ItemCode is what opens or
-       names an item in a licensed book, so an unresolved one is a refusal and
-       relaxing it would be the real regression. */
     expect(() => composeDetails([line()], opts)).toThrow(ItemCodeError);
   });
 
   test('the transfer composes, and keeps the line', () => {
     const { details, collapsed } = composeDetails([line()], { ...opts, forTransfer: true });
     expect(details).toHaveLength(1);
-    /* THE LINE MUST SURVIVE, not just the call. Dropping the unresolved line
-       would silently shorten Details and misalign the DtlKey zip — a wrong
-       quantity on a live purchase order rather than a refusal. */
     expect(collapsed).toHaveLength(1);
   });
 
   test('and what actually goes out carries no ItemCode at all', () => {
-    /* The end of the chain, asserted on the BYTES: whatever composeDetails put
-       in ItemCode, composeSoToPo does not send it. */
     const { details } = composeDetails([line()], { ...opts, forTransfer: true });
     const master = { DocNo: 'HC-PO-1', CreditorCode: '400-H003' } as never;
     const sent = composeSoToPo(master, [913445], details);
@@ -69,14 +59,9 @@ describe('an ambiguous item code refuses a CREATE and not a TRANSFER', () => {
 
 describe('the enqueue decides the shape BEFORE it composes', () => {
   test('readPoEnqueueShape is read above composeDetails', async () => {
-    /* The ordering IS the fix. composeDetails used to run first, so the option
-       that says "no ItemCode is sent" could not exist yet. */
     const src: string = (await import('../scm/lib/autocount-outbox.ts?raw')).default;
     const body = src.replace(/\/\*[\s\S]*?\*\//g, '');
     const shapeAt = body.indexOf('readPoEnqueueShape(sb, opts.poId)');
-    /* The PO block's OWN call — `composeDetails(lines,` also appears on the
-       sales-order path earlier in the file, and matching that one would compare
-       two unrelated positions and pass or fail by accident. */
     const composeAt = body.indexOf('composeDetails(lines, { supplierCode: header.creditor_code');
     expect(shapeAt, 'readPoEnqueueShape not found').toBeGreaterThan(-1);
     expect(composeAt, 'composeDetails not found').toBeGreaterThan(-1);

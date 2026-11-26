@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// Consignment Note query hooks — a faithful clone of the Delivery Order (mfg)
-// hooks in flow-queries.ts, repointed at the parallel backend route mounted at
-// `/consignment-notes` (which mirrors `/delivery-orders-mfg` 1:1: same create
-// body, same detail shape, same line/payment endpoints).
-//
-// Numbering on the backend is `CN-YYMM-NNN`. The request/response types are
-// intentionally kept identical to the DO hooks so the cloned ConsignmentNoteNew
-// / ConsignmentNoteDetail / ConsignmentNotes pages can render exactly like the
-// DO ones with only the endpoint + query key swapped.
-//
-// Query key namespace: ['consignment-note'] (+ '-detail') so consignment-note
-// cache invalidation never collides with the DO cache.
-//
-// ── HOUZS VENDOR NOTES ──────────────────────────────────────────────────────
-//   - All reads/writes route through the vendored authedFetch (→ /api/scm/...),
-//     NOT 2990's supabase REST. The supabase import is dropped.
-//   - serviceNotify maps to the vendored dialog-service serviceNotify.
-// ----------------------------------------------------------------------------
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -26,7 +7,6 @@ import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
-/* ── List ────────────────────────────────────────────────────────────── */
 export const useConsignmentNotes = (status?: string) => useQuery({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   queryKey: ['consignment-note', 'list', status ?? 'all'],
@@ -37,19 +17,6 @@ export const useConsignmentNotes = (status?: string) => useQuery({
   retry: retryUnlessClientError,
 });
 
-/* ── List (opt-in server-side pagination) ────────────────────────────────
-   Sending `page` switches /consignment-notes into its paginated contract
-   ({ deliveryOrders, total, page, pageSize }); the legacy useConsignmentNotes
-   above (no page) still returns the historical unpaginated array. `q` searches
-   do_number + debtor_name (columns the CN list already searches + in the header
-   select). `sort` is 'col:dir' over
-   { do_date, do_number, debtor_name, status, local_total_sen } (default
-   do_date:desc). placeholderData keepPrevious so paging doesn't flash empty. */
-/* Full-set money KPIs returned by the paginated CN list (mirrors the SO list
-   `aggregates` contract) — summed over the SAME filters as the page.
-   costSen / marginSen are FINANCE-ONLY: the server omits them for a
-   non-finance caller (canViewScmFinance), so they are optional here and the
-   Cost / Margin tiles are not rendered for such a viewer. */
 export type ConsignmentNoteAggregates = { revenueSen: number; costSen?: number; marginSen?: number };
 type ConsignmentNotesListFilter = { status?: string; q?: string; sort?: string };
 function consignmentNotesListParams(page: number, pageSize: number, f: ConsignmentNotesListFilter): URLSearchParams {
@@ -62,10 +29,6 @@ function consignmentNotesListParams(page: number, pageSize: number, f: Consignme
   return usp;
 }
 
-/* The list's Export: every page the list's status + search match, not the page
-   on screen. Same query string as the paged hook, so the file holds what the
-   list would show page by page; the server keeps the company scope.
-   fetchAllPages counts pages from 1 and the route from 0. */
 export function fetchConsignmentNotesExportRows<T>(f: ConsignmentNotesListFilter): Promise<T[]> {
   return fetchAllPages<T>(async (page, perPage) => {
     const usp = consignmentNotesListParams(page - 1, perPage, f);
@@ -94,7 +57,6 @@ export const useConsignmentNotesPaged = (params: {
   });
 };
 
-/* ── Detail ──────────────────────────────────────────────────────────── */
 export const useConsignmentNoteDetail = (id: string | null) => useQuery({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   queryKey: ['consignment-note-detail', id],
@@ -102,7 +64,6 @@ export const useConsignmentNoteDetail = (id: string | null) => useQuery({
   enabled: Boolean(id), staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
 });
 
-/* ── Deliverable Consignment Order lines (From-Order multi-picker) ────── */
 export type DeliverableOrderLine = {
   orderItemId: string;
   orderDocNo: string;
@@ -131,15 +92,6 @@ export const useDeliverableOrderLines = () => useQuery({
   retry: retryUnlessClientError,
 });
 
-/* ── Create ──────────────────────────────────────────────────────────── */
-/* `idempotencyKey` is OPTIONAL and must be destructured OUT of the body — the
-   rest-spread would otherwise post it as a note field. Pass one per note intent
-   (see lib/idempotency.ts): the middleware replays the first response — the SAME
-   doNumber — instead of consigning the goods twice. Omitting it is exactly
-   today's behaviour (the middleware no-ops).
-
-   Mirrors useAddConsignmentNotePayment below, idempotent since #657 while the
-   note the payment hangs off was not. */
 export const useCreateConsignmentNote = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -152,7 +104,6 @@ export const useCreateConsignmentNote = () => {
   });
 };
 
-/* ── Status update ───────────────────────────────────────────────────── */
 export const useUpdateConsignmentNoteStatus = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -170,7 +121,6 @@ export const useUpdateConsignmentNoteStatus = () => {
   });
 };
 
-/* ── Header update ───────────────────────────────────────────────────── */
 export const useUpdateConsignmentNoteHeader = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -185,7 +135,6 @@ export const useUpdateConsignmentNoteHeader = () => {
   });
 };
 
-/* ── Line items ──────────────────────────────────────────────────────── */
 export const useAddConsignmentNoteItem = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -227,7 +176,6 @@ export const useDeleteConsignmentNoteItem = () => {
   });
 };
 
-/* ── Payments ledger ─────────────────────────────────────────────────── */
 export type ConsignmentNotePayment = {
   id: string;
   delivery_order_id: string;
@@ -255,8 +203,6 @@ export const useConsignmentNotePayments = (id: string | null) => useQuery({
   retryDelay: 800,
 });
 
-/* `idempotencyKey` — optional, destructured OUT of the body. See
-   useAddSalesOrderPayment / lib/idempotency.ts for the one-key-per-intent rule. */
 export const useAddConsignmentNotePayment = () => {
   const qc = useQueryClient();
   return useMutation({

@@ -1,21 +1,3 @@
-// ---------------------------------------------------------------------------
-// Announcement approval + attachment-log routes — split out of
-// routes/announcements.ts (which sits at its file-size ceiling). Mounted on the
-// SAME prefix in src/index.ts, right after the main router, so the paths read
-// as one API:
-//
-//   GET  /api/announcements/:id/files    — the attachment log (mig 20260907T0715)
-//   POST /api/announcements/:id/submit   — DRAFT / REJECTED → PENDING_APPROVAL
-//   POST /api/announcements/:id/approve  — PENDING_APPROVAL → APPROVED (+ ref no)
-//   POST /api/announcements/:id/reject   — PENDING_APPROVAL → REJECTED, { reason }
-//   POST /api/announcements/:id/void     — any submitted notice → voided, { reason }
-//                                          (mig 20260907T1030; DELETE is drafts only)
-//
-// The transitions live in services/announcementApproval.ts; the policy and
-// the log in services/announcementFiles.ts; the row helpers (scoped lookup,
-// the Sales Director rule, the public shape) are the main router's, imported
-// here so the two files can never disagree about them.
-// ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermission, requirePermissionOrSalesDirector } from "../middleware/auth";
@@ -60,9 +42,6 @@ async function answerTransition(
   return c.json({ success: true, data: fresh ? toPublic(fresh) : null });
 }
 
-// GET /:id/files — the attachment log (mig 20260907T0715): who attached /
-// removed which file and when. For the people who manage or approve the
-// notice (a Sales Director on their own post); readers get the manifest only.
 app.get("/:id/files", async (c) => {
   const user = c.get("user");
   const granted = user.permissions_set;
@@ -105,8 +84,6 @@ app.post("/:id/approve", requirePermission(APPROVE_PERMISSION), async (c) => {
   return answerTransition(c, id, () => approveAnnouncement(c.env, existing, actorOf(c.get("user"))));
 });
 
-// Void — the poster's door (write, or a Sales Director on their own post),
-// the same people who could delete before mig 20260907T1030 took that away.
 app.post("/:id/void", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const id = c.req.param("id");
   const existing = await getScopedAnnouncement(c, id);

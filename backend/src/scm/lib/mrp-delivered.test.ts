@@ -11,20 +11,15 @@ import { MRP_DELIVERED_EMBED, compareDelivered, deliveredBySoItemFrom, readUnlin
 type Row = Record<string, unknown>;
 
 const SO_LINES: Row[] = [
-  // SO-A: a bedframe delivered across DO states; two lines of SKU X whose LISTING
-  // order (line_no) is the reverse of their id order; a null line_no last.
   { id: 'a-bf', doc_no: 'SO-A', item_code: 'BF-1', item_group: 'bedframe', variants: null, qty: 4, line_no: 1, created_at: '2026-10-01T00:00:00+00:00', cancelled: false },
   { id: 'a-x2', doc_no: 'SO-A', item_code: 'X', item_group: 'accessory', variants: null, qty: 1, line_no: 3, created_at: '2026-10-01T00:00:00+00:00', cancelled: false },
   { id: 'a-x1', doc_no: 'SO-A', item_code: 'x ', item_group: 'accessory', variants: null, qty: 2, line_no: 2, created_at: '2026-10-01T00:00:00+00:00', cancelled: false },
   { id: 'a-nul', doc_no: 'SO-A', item_code: 'X', item_group: 'accessory', variants: null, qty: 5, line_no: null, created_at: '2026-09-30T00:00:00+00:00', cancelled: false },
   { id: 'a-svc', doc_no: 'SO-A', item_code: 'DELIVERY', item_group: 'service', variants: null, qty: 1, line_no: 4, created_at: '2026-10-01T00:00:00+00:00', cancelled: false },
-  // SO-B: a sofa build whose module rows are walked left-to-right (x), and a
-  // mattress whose unlinked shipment is bigger than what the line has open.
   { id: 'b-s2', doc_no: 'SO-B', item_code: 'SF-2A', item_group: 'sofa', variants: { buildKey: 'build-1', x: 80, y: 0, cellIndex: 0 }, qty: 1, line_no: 1, created_at: '2026-10-02T00:00:00+00:00', cancelled: false },
   { id: 'b-s1', doc_no: 'SO-B', item_code: 'SF-2A', item_group: 'sofa', variants: { buildKey: 'build-1', x: 0, y: 0, cellIndex: 1 }, qty: 1, line_no: 2, created_at: '2026-10-02T00:00:00+00:00', cancelled: false },
   { id: 'b-mt', doc_no: 'SO-B', item_code: 'MT-1', item_group: 'mattress', variants: null, qty: 2, line_no: 3, created_at: '2026-10-02T00:00:00+00:00', cancelled: false },
   { id: 'b-cx', doc_no: 'SO-B', item_code: 'MT-1', item_group: 'mattress', variants: null, qty: 9, line_no: 4, created_at: '2026-10-02T00:00:00+00:00', cancelled: true },
-  // SO-C is not open: its shipments must not reach SO-A / SO-B.
   { id: 'c-x', doc_no: 'SO-C', item_code: 'X', item_group: 'accessory', variants: null, qty: 3, line_no: 1, created_at: '2026-10-03T00:00:00+00:00', cancelled: false },
 ];
 
@@ -53,11 +48,9 @@ const TABLES: Record<string, Row[]> = {
     { id: 'dl-04', delivery_order_id: 'do-4', so_item_id: 'a-bf', item_code: 'BF-1', qty: 1 },
     { id: 'dl-05', delivery_order_id: 'do-5', so_item_id: 'a-bf', item_code: 'BF-1', qty: null },
     { id: 'dl-06', delivery_order_id: 'do-1', so_item_id: 'a-x1', item_code: 'X', qty: 1 },
-    // Unlinked under SO-A: ONE unit of X, so the listing order decides which line takes it (a-x1).
     { id: 'dl-07', delivery_order_id: 'do-1', so_item_id: null, item_code: 'X', qty: 1 },
     { id: 'dl-08', delivery_order_id: 'do-2', so_item_id: null, item_code: 'X', qty: 4 },
     { id: 'dl-09', delivery_order_id: 'do-5', so_item_id: null, item_code: 'BF-1', qty: 9 },
-    // SO-B: one sofa module ships unlinked (the walk decides which); the mattress ships unlinked, bigger than its open qty.
     { id: 'dl-11', delivery_order_id: 'do-6', so_item_id: null, item_code: 'SF-2A', qty: 1 },
     { id: 'dl-12', delivery_order_id: 'do-6', so_item_id: null, item_code: 'MT-1', qty: 5 },
     { id: 'dl-13', delivery_order_id: 'do-7', so_item_id: null, item_code: 'MT-1', qty: 1 },
@@ -72,7 +65,6 @@ const TABLES: Record<string, Row[]> = {
 
 const byId = (t: string) => new Map(TABLES[t]!.map((r) => [String(r.id ?? r.doc_no), r]));
 
-/** A PostgREST fake that resolves the embeds both paths ask for, filters, orders and pages. */
 function fakeSb() {
   const dos = byId('delivery_orders');
   const drs = byId('delivery_returns');
@@ -138,7 +130,6 @@ describe('MRP delivered per SO line', () => {
     const ids = SO_LINES.filter((l) => docSet.has(String(l.doc_no)) && !l.cancelled).map((l) => String(l.id));
     const check = compareDelivered(ids.map((id) => ({ id, doc_no: '', item_code: null })), (id) => old.get(id)?.delivered ?? 0, (id) => now.get(id) ?? 0);
     expect(check).toEqual({ lines: ids.length, mismatched: 0, mismatches: [] });
-    // The fixture exercises the cases it claims to: DO states, listing-order fill, spill + drop, scope.
     expect(Object.fromEntries(ids.map((id) => [id, now.get(id) ?? 0]))).toEqual({
       'a-bf': 4, 'a-x1': 2, 'a-x2': 0, 'a-nul': 0, 'a-svc': 0, 'b-s2': 0, 'b-s1': 1, 'b-mt': 2,
     });

@@ -13,8 +13,6 @@ import { overlaySoLineCoverage, type CoverageOverlayFields } from './so-coverage
 import type { SoLineCoverage } from './sales-order-queries';
 import { soLineStockPill, type SoLineSourceFields } from '../../../components/SoSourceChips';
 
-/* Typed as the overlay's own field set so the assertions below read the fields
-   the overlay WRITES, not only the ones this fixture happened to seed. */
 type Line = CoverageOverlayFields & { item_code?: string };
 const line = (id: string, extra: Partial<Line> = {}): Line =>
   ({ id, item_code: 'X', stock_status: 'PENDING', coverage_po: null, ready_source_pos: [], ...extra });
@@ -62,19 +60,7 @@ describe('overlaySoLineCoverage', () => {
     expect(r.stock_status).toBe('READY');
   });
 
-  /* THE INVARIANT IS WHAT THE PILL RENDERS, NOT WHICH FIELD WAS WRITTEN.
-   *
-   * Every assertion above reads the overlay's output fields, and all of them
-   * were green while the healed verdict never reached the screen: the overlay
-   * wrote `stock_status`, the pill reads `stock_status_effective` FIRST, and
-   * the base payload always populates that field (effectiveLineStockStatus
-   * returns one of three strings, never null), so the `??` short-circuited and
-   * the fallback branch reading `stock_status` was dead on both call sites.
-   *
-   * A test that pins the field name cannot see that. These pin the pill. */
   describe('the healed verdict reaches the pill', () => {
-    /* The real payload shape: the base detail response carries a NON-NULL
-       stale verdict, which is precisely what made the `??` short-circuit. */
     const staleReady = (): Line =>
       line('a', { stock_status: 'READY', stock_status_effective: 'READY' });
 

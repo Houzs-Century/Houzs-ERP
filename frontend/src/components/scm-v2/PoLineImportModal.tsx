@@ -50,7 +50,6 @@ export function PoLineImportPreviewView({
 }: {
   preview: PoLineImportPreview;
   ignoredHeaders: string[];
-  /** Editable columns the file does not carry — nothing is changed in them. */
   missingHeaders: string[];
 }) {
   const [showUnchanged, setShowUnchanged] = useState(false);

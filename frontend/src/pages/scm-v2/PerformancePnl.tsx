@@ -57,10 +57,8 @@ const VIEWS: ReadonlyArray<{ value: PerfView; label: string }> = [
 
 const ratePct = (bp: number): string => `${(bp / 100).toFixed(2)}%`;
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'That was not accepted.');
-/** The codes typed into "also covers": comma or space apart, upper case, each once. */
 const codesOf = (text: string): string[] => [...new Set(text.split(/[\s,]+/).map((c) => c.trim().toUpperCase()).filter(Boolean))];
 
-/** The Single view's columns: Sales, Cost of sales, Gross profit with its % beside. */
 const singleColumns = (from: string, to: string): StatementColumn[] => [
   { key: 'sales', label: 'Sales', kind: 'period', from, to, pct: false },
   { key: 'cogs', label: 'Cost of sales', kind: 'period', from, to, pct: false },
@@ -104,7 +102,6 @@ export function performanceSingleLines(r: PerformanceReport): StatementLine[] {
   ];
 }
 
-/** By month: what each block's % is, in the design's words. */
 const MONTH_CAPTIONS: Record<string, string> = {
   'blk:sales': '· % = share of the month’s sales',
   'blk:cogs': '· % of the month’s sales',
@@ -113,8 +110,6 @@ const MONTH_CAPTIONS: Record<string, string> = {
   'sum:expenses': '· % of the month’s sales',
 };
 
-/* ── The chart (batch 6 §5.5): sales, cost of sales and expenses a month, net
-   performance under each — from read c6, the report's own builder. ── */
 const PERF_SERIES: ChartBarSeries[] = [
   { key: 'sales', label: 'Sales', color: REPORT_CHART_COLORS.petrol },
   { key: 'cogs', label: 'Cost of sales', color: REPORT_CHART_COLORS.gold },
@@ -234,7 +229,6 @@ function OperatingExpenseLine({ r }: { r: PerformanceReport }) {
   );
 }
 
-/** "October runs to the 29th" when the period's last month is still running. */
 function runsTo(lastDay: string, today: string): string {
   if (monthStart(lastDay) !== monthStart(today)) return '';
   const day = Number(today.slice(8, 10));
@@ -255,7 +249,6 @@ export const PerformanceTab = () => {
   const openLedger = useOpenLedger('Performance P&L');
   const chartWin = useChartMonths(r.from, r.to, r.usable);
 
-  /* Single: one read of the report. By month: one read per column (the same endpoint). */
   const single = usePerformanceReport(r.usable ? r.from : '', r.usable ? r.to : '');
   const rep = single.data;
   const monthCols = useMemo(() => (r.usable && view === 'month' ? monthColumns(r.to, months, r.today, true) : []), [r.usable, r.to, r.today, view, months]);

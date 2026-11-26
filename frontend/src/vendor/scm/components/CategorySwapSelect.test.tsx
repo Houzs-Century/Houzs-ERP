@@ -1,6 +1,3 @@
-/* The category picker on the model / SKU edit screens: every category is
- * offered under its one label, a move asks first (saying open orders keep the
- * old category), and it PATCHes the right record only when confirmed. */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

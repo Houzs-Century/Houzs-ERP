@@ -70,7 +70,6 @@ describe("the cost lines under the snapshot", () => {
     expect(box.textContent).toContain("Lorry 5-ton");
     expect(box.textContent).toContain("Rental · Rental (snapshot) — typed, replaced by the books");
     expect(box.textContent).toContain("Transport Fee — auto, replaced by the books");
-    // The typed setup line stays an ordinary, editable cost line; the books' lines are not in that list.
     expect(screen.getByText("Cost lines (1)")).toBeTruthy();
   });
 
@@ -134,7 +133,6 @@ describe("the quick Rental box", () => {
   });
 
   it("books holding only money back: the typed rental stays, the credit comes off it — the P&L's figure (owner 2026-10-22)", () => {
-    /* #343: typed 45,900; HC-ODB-2609-004 billed the partner's half back. */
     const back = line({
       id: -1_000_000_002, category: "rental", amount: -22950, source: "books", doc_no: "HC-ODB-2609-004",
       account_code: "900-R032", account_name: "RENTAL - EXHIBITION",

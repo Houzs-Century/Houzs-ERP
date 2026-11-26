@@ -1,8 +1,3 @@
-/* BUG-66 (Sim 2026-10-07): a stock adjustment had no document number, could
-   not be opened, and could not be edited. It is now a numbered document:
-   the list shows one row per HC-SA-... number and opens it, the detail page
-   shows every line, and Edit re-opens the form seeded from the saved lines,
-   counting what the document already took out as available to it again. */
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -31,7 +26,6 @@ vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/stock-queries')>()),
   useStockAdjustments: () => ({ data: [DOC], isLoading: false, error: null }),
   useStockAdjustmentDoc: () => ({ data: DOC, isLoading: false, isPending: false, error: null }),
-  // The bucket the -3 came out of is EMPTY now: nothing open to take from.
   useInventoryBuckets: () => ({ data: [], isLoading: false }),
   useInventoryProductBreakdown: (itemCode: string | null) => ({
     data: { balances: itemCode ? [{ warehouse_id: 'w1', item_code: itemCode, qty: 0 }] : [] },
@@ -114,8 +108,6 @@ describe('Stock adjustment is a document (BUG-66)', () => {
     const qty = document.querySelector('tbody input[aria-label="Qty for CH-1"]') as HTMLInputElement;
     expect(qty.value).toBe('-3');
 
-    // The lot the -3 came from is empty now, yet the line can still take from
-    // it: the 3 this document already took out are offered back.
     const takeFrom = screen.getByLabelText(/Take from for CH-1/) as HTMLSelectElement;
     expect(within(takeFrom).getByText(/3 PCS/)).toBeTruthy();
     expect(takeFrom.value).toBe(JSON.stringify(['', null]));

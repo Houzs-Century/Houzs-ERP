@@ -32,11 +32,8 @@ export const planStockTakeRackMoves = (lines: readonly RackCountLine[], existing
   }
   const plan: RackMovePlan = { remove: [], place: [], skippedCodes: [] };
   for (const [code, ls] of byCode) {
-    if (!ls.some((l) => l.rack_id)) continue; // nobody wrote a rack: nothing to say
+    if (!ls.some((l) => l.rack_id)) continue;
     if (ls.some((l) => !l.rack_id)) { plan.skippedCodes.push(code); continue; }
-    /* Off by CODE, on by (rack, variant): a GRN placement carries no variant
-       (variant_key ''), so clearing per variant would leave those behind and
-       count the goods twice. */
     plan.remove.push(...existing.filter((p) => p.item_code === code));
     const perSpot = new Map<string, { rack_id: string; variant_key: string; qty: number }>();
     for (const l of ls) {

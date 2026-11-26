@@ -161,7 +161,6 @@ describe("DataTable DataGrid-parity row behaviours", () => {
 
   it("a row with no click handler is not a tab stop", () => {
     render(<DataTable tableId="parity-nokeys" columns={columns} rows={rows} getRowKey={(r) => r.id} />);
-    // -1: out of the Tab order, but a click still focuses it so Ctrl+C knows the row.
     expect(screen.getByText("A").closest("tr")!.tabIndex).toBe(-1);
   });
 

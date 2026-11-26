@@ -1,9 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// The mocked useQuery must return a STABLE object per key (the real TanStack
-// wrapper memoises `data`); a fresh object each render would re-fire the
-// grants-seeding effect forever.
 const { QUERY } = vi.hoisted(() => {
   const ROLES = [
     { id: 1, name: "Owner", description: "Full access", permissions: ["*"], is_system: true, member_count: 1 },
@@ -90,7 +87,6 @@ describe("RolesTab", () => {
     expect(screen.getByText("Resource")).toBeTruthy();
     expect(screen.getByText("Read")).toBeTruthy();
     expect(screen.getByText("Manage")).toBeTruthy();
-    // The heterogeneous "approve" grant is its own row in the Manage column.
     fireEvent.click(screen.getByText("Projects"));
     expect(screen.getByText("Approve gated steps")).toBeTruthy();
   });
@@ -109,8 +105,8 @@ describe("RolesTab", () => {
   it("enters bulk mode with a Bulk edit badge when two roles are checked", () => {
     renderTab();
     const checkboxes = screen.getAllByLabelText(/Check role for bulk edit/);
-    fireEvent.click(checkboxes[1]); // Sales Manager
-    fireEvent.click(checkboxes[2]); // Sales Rep
+    fireEvent.click(checkboxes[1]);
+    fireEvent.click(checkboxes[2]);
     expect(screen.getByText("2 roles selected")).toBeTruthy();
     expect(screen.getByText("Bulk edit")).toBeTruthy();
   });

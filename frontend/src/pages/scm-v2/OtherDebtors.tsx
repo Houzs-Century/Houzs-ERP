@@ -61,7 +61,6 @@ export const OtherDebtors = () => {
   const openInTab = useOpenDocInTab();
   const toast = useToastOptional();
   const { can } = useHouzsAuth();
-  /* The registry's and the receipt's own keys (other-debtors.ts). */
   const canCreate = can('scm.payment_voucher.create');
   const canWrite = can('scm.payment_voucher.write');
   const segment: Segment = params.get('seg') === 'receipts' ? 'receipts' : 'debtors';
@@ -84,7 +83,6 @@ export const OtherDebtors = () => {
     return (code: string): string | null => names.get(code) ?? null;
   }, [accountsQ.data]);
 
-  /* Open bills: a debtor's bills with money still owed — the Invoices list's own figure. */
   const openBillsOf = useMemo(() => {
     const m = new Map<string, number>();
     for (const b of billsQ.data?.rows ?? []) {
@@ -113,7 +111,6 @@ export const OtherDebtors = () => {
     setUrl({ form: kind, id: null, debtor: null, ...patch }, true);
   const closeForm = () => setUrl({ form: null, id: null, debtor: null }, true);
 
-  /* ── Debtors ── */
   const setActive = (d: DebtorRow) => updateDebtor.mutate({ id: d.id, isActive: !d.is_active }, {
     onSuccess: () => toast?.success(`${d.name} ${d.is_active ? 'deactivated' : 'reactivated'}`),
     onError: (e) => toast?.error(errText(e)),
@@ -122,7 +119,6 @@ export const OtherDebtors = () => {
     { label: 'Open', onClick: () => openInTab(moneyInDocHref('debtor', d.id)) },
     ...(canWrite ? [{ label: 'Edit debtor', onClick: () => openForm('debtor', { id: d.id }) }] : []),
     DIVIDER,
-    /* An inactive debtor takes no new document until it is reactivated (the forms list active debtors only). */
     ...(canCreate && d.is_active ? [
       { label: 'New bill', onClick: () => openForm('bill', { debtor: d.id }) },
       { label: 'New receipt', onClick: () => openForm('receipt', { debtor: d.id }) },
@@ -160,7 +156,6 @@ export const OtherDebtors = () => {
     },
   ];
 
-  /* ── Receipts ── */
   const stepRowOf = (r: ReceiptRow): DebtorStepRow => ({
     id: r.id, no: r.number, stage: debtorStageOf(r), totalSen: r.totalSen, bankCode: r.moneyAccount, bankName: accountName(r.moneyAccount),
     bills: (r.bills ?? []).map((b) => b.no ?? '').filter(Boolean),
@@ -170,7 +165,6 @@ export const OtherDebtors = () => {
     const m = steps.menuOf(stepRowOf(r));
     return tidyMenu([
       { label: 'Open', onClick: () => openInTab(moneyInDocHref('debtorReceipt', r.id)) },
-      /* c5: a Draft or a Prepared receipt changes in place and keeps its stage. */
       ...((stage === 'Draft' || stage === 'Prepared') && (canWrite || canCreate) ? [{ label: 'Edit', onClick: () => openForm('receipt', { id: r.id }) }] : []),
       ...m.steps, DIVIDER, ...m.undo,
     ]);

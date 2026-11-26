@@ -44,14 +44,9 @@ import {
  *  SO line id, an item code) so it can correlate the per-item answer. */
 export interface ReadyDateItem {
   key?: string;
-  /** The line's item_group; matched lowercase against the five lead categories. */
   category: string | null;
   warehouseId: string | null;
-  /** The item's main supplier code — drives the learned supplier buffer. Omit to
-   *  skip that layer (base + season only). */
   supplierCode?: string | null;
-  /** The customer delivery date, if known — drives the season buffer (the month
-   *  the goods are needed). Omit to skip the season layer. */
   deliveryDate?: string | null;
 }
 
@@ -59,18 +54,13 @@ export interface ReadyDateItemResult {
   key: string | null;
   category: string | null;
   supplierCode: string | null;
-  /** Every lead layer broken out, so the caller can explain WHY a date is what it
-   *  is: "base 7 + supplier 3 + season 2". */
   leadDays: LeadTimeBreakdown;
   readyDate: string | null;
 }
 
 export interface ReadyDateEstimate {
   asOfDate: string;
-  /** When ALL items are ready = the LATEST per-item ready date (the critical
-   *  path). Null when there are no items. */
   readyDate: string | null;
-  /** The longest single-item lead in days — the critical path length. */
   leadDaysMax: number;
   perItem: ReadyDateItemResult[];
 }
@@ -90,12 +80,6 @@ export function estimateReadyDate(
   const asOf = String(asOfDate ?? '').slice(0, 10);
 
   const perItem: ReadyDateItemResult[] = items.map((it) => {
-    /* NO_OVERRIDES here, deliberately: the owner's manual per-(supplier,
-       category) override (scm.mrp_supplier_category_lead_times) is threaded into
-       the PO convert and the MRP hint, not this agent ready-date estimate — the
-       estimate keys items by supplier CODE, and adding the supplier id to
-       ReadyDateItem to honour the override is a separate change. No-op today: the
-       override table is empty until the owner sets one. */
     const leadDays = resolveLeadDays(base, NO_OVERRIDES, buffers, {
       warehouseId: it.warehouseId ?? null,
       category: it.category ?? null,
@@ -115,7 +99,6 @@ export function estimateReadyDate(
   let readyDate: string | null = null;
   for (const r of perItem) {
     if (r.leadDays.total > leadDaysMax) leadDaysMax = r.leadDays.total;
-    // YYYY-MM-DD compares lexicographically; the latest string is the latest date.
     if (r.readyDate && (readyDate == null || r.readyDate > readyDate)) readyDate = r.readyDate;
   }
 
@@ -144,9 +127,6 @@ export async function estimateReadyDateForCompany(
   }
   const companyId = company.companyId ?? null;
 
-  // Mirrors computeMrp's `scoped`: a NO-OP when companyId is null (unresolved /
-  // single-company), else `.eq('company_id', ...)`. The base loader THROWS on a
-  // read error — a zeroed lead table would quote "ready today" for everything.
   const scoped = <Q>(q: Q): Q =>
     companyId != null ? (q as unknown as { eq(c: string, v: unknown): Q }).eq('company_id', companyId) : q;
   const base = await loadLeadTimeBase(

@@ -48,9 +48,7 @@ export async function doListStatusCounts(
   const agg = await readAggregate(() => base('status, on_hold, cnt:id.count()') as PromiseLike<{ data: Grouped[] | null; error: ReadError }>);
   if (!agg.error && agg.data) return { ok: true, counts: countsFrom(agg.data) };
 
-  /* Ordered: unordered `.range()` pages can repeat and skip rows (lib/paginate-all.ts). */
   const rows = await paginateAll<Grouped>((from, to) => base('status, on_hold').order('id', { ascending: true }).range(from, to));
-  /* A count that could not be READ is reported, never served as 0 (lib/status-counts.ts). */
   if (rows.error || !rows.data) {
     return { ok: false, reason: `status counts failed: aggregate ${agg.error?.message ?? 'no value'}; fallback ${rows.error?.message ?? 'no value'}` };
   }

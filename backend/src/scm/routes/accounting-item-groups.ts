@@ -53,8 +53,6 @@ const SLOT_LABEL: Record<keyof GroupBinding, string> = {
   purchaseReturn: 'Purchase Return',
 };
 
-/** The four account codes from a request body — every slot present and
-    non-blank, or the missing slot named. */
 function readBinding(raw: any): { ok: true; binding: GroupBinding } | { ok: false; missing: string } {
   const out: Partial<GroupBinding> = {};
   for (const slot of Object.keys(SLOT_LABEL) as Array<keyof GroupBinding>) {
@@ -88,7 +86,6 @@ async function verifyBinding(
       .select('account_code, is_active, special_type')
       .eq('company_id', companyId)
       .in('account_code', codes),
-    /* Retired sub-accounts count too: the posting gate counts every child. */
     sb.from('accounts')
       .select('parent_code')
       .eq('company_id', companyId)
@@ -133,7 +130,6 @@ type BindingRow = {
   sales_return_account: string; purchase_return_account: string;
 };
 
-/* ── GET /accounting/item-groups — every group × every granted company ────── */
 export const itemGroupsList = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const ids = allowedIds(c);
@@ -176,7 +172,6 @@ export const itemGroupsList = async (c: any): Promise<Response> => {
   });
 };
 
-/* ── POST /accounting/item-groups — new group, bound-at-birth ─────────────── */
 export const itemGroupCreate = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   let body: any;
@@ -193,8 +188,6 @@ export const itemGroupCreate = async (c: any): Promise<Response> => {
   if (!Number.isInteger(companyId) || !ids.includes(companyId)) {
     return c.json({ error: 'company_not_yours', message: 'That company is not in your grants.' }, 403);
   }
-  /* Bound at birth — the owner's own rule. The OTHER company binds on its own
-     page when it first needs this group. */
   const bind = readBinding(body.accounts);
   if (!bind.ok) return c.json({ error: 'binding_required', message: `${bind.missing} account is required — a group cannot be created unbound.` }, 400);
 
@@ -202,9 +195,6 @@ export const itemGroupCreate = async (c: any): Promise<Response> => {
   const ver = await verifyBinding(sb, companyId, bind.binding);
   if (!ver.ok) return c.json({ error: 'bad_account', message: ver.message }, 400);
 
-  /* The registry function extends BOTH mfg_product_category enums and writes
-     the group row, atomically on the server. Everything else about the group
-     (bindings) is plain DML from here. */
   const { error: rpcErr } = await sb.rpc('acc_register_item_group', { p_code: code, p_name: name });
   if (rpcErr) return c.json({ error: 'register_failed', reason: rpcErr.message }, 500);
 
@@ -224,7 +214,6 @@ export const itemGroupCreate = async (c: any): Promise<Response> => {
   return c.json({ ok: true, code });
 };
 
-/* ── PUT /accounting/item-groups/:code/accounts — (re)bind one company ────── */
 export const itemGroupBind = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const code = String(c.req.param('code') ?? '').trim().toUpperCase();
@@ -261,7 +250,6 @@ export const itemGroupBind = async (c: any): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/* ── PATCH /accounting/item-groups/:code — rename / de-list from NEW products ─ */
 export const itemGroupPatch = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const code = String(c.req.param('code') ?? '').trim().toUpperCase();
@@ -274,8 +262,6 @@ export const itemGroupPatch = async (c: any): Promise<Response> => {
     if (!name) return c.json({ error: 'name_required', message: 'A group cannot be nameless.' }, 400);
     patch.name = name;
   }
-  /* De-activating only hides the group from NEW products; existing products
-     keep their category value and every posting rule still resolves it. */
   if (body.isActive !== undefined) patch.is_active = body.isActive === true;
 
   const sb = c.get('supabase');

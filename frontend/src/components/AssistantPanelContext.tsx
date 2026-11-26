@@ -1,10 +1,3 @@
-// ---------------------------------------------------------------------------
-// AssistantPanelContext — open/close state for the ONE floating Assistant panel.
-// Shared so the corner robot launcher (and, later, the sidebar entry / mobile
-// surface) all drive the same panel instance mounted once in App. No
-// persistence: the panel opens closed on every load — it is an action surface,
-// not a saved layout choice like the launcher's position.
-// ---------------------------------------------------------------------------
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 

@@ -15,9 +15,6 @@ describe("isSetupDismantleJob — booth POD visibility on the driver run sheet",
     expect(isSetupDismantleJob({ dp_job_type: "Dismantle" })).toBe(true);
   });
 
-  // The regression: a plain customer delivery that merely hauls away old
-  // furniture must NOT light up the booth photos + 3D floor plan. A SO row's
-  // dp_job_type is null, so disposal is irrelevant now. (HC-SO-2610-063)
   it("does NOT show for a customer delivery, even with a disposal note", () => {
     expect(isSetupDismantleJob({ dp_job_type: null })).toBe(false);
     expect(isSetupDismantleJob({})).toBe(false);

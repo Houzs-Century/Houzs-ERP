@@ -4,16 +4,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { ROUTE_ALIASES, resolveAlias } from "./routeAliases";
 
-// App.tsx is read as TEXT rather than imported — importing it would pull in
-// the whole lazy-loaded page graph, providers and auth context for what is a
-// pure routing-table assertion. This mirrors the existing pattern in
-// `src/auth/permissionDivergence.test.ts`.
 const appSource = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), "../App.tsx"),
   "utf8",
 );
 
-/** Every `path="..."` literal declared in App.tsx's route tree. */
 const declaredPaths = new Set(
   [...appSource.matchAll(/path="([^"]+)"/g)].map((m) => m[1]),
 );
@@ -23,7 +18,6 @@ describe("ROUTE_ALIASES", () => {
     expect(ROUTE_ALIASES.length).toBeGreaterThan(0);
   });
 
-  // ── The owner's condition: old paths must keep working. ──────────────────
   describe("every alias resolves to its destination", () => {
     it.each(ROUTE_ALIASES.map((a) => [a.from, a.to]))(
       "%s resolves to %s",
@@ -42,11 +36,7 @@ describe("ROUTE_ALIASES", () => {
     );
   });
 
-  // ── Safety invariants. ──────────────────────────────────────────────────
   it("no alias shadows a real route", () => {
-    // A `from` that is also a declared route would hijack a working page and
-    // bounce it elsewhere — the exact silent dead end this work exists to
-    // avoid.
     const shadowing = ROUTE_ALIASES.filter((a) => declaredPaths.has(a.from));
     expect(shadowing).toEqual([]);
   });
@@ -78,7 +68,6 @@ describe("ROUTE_ALIASES", () => {
     expect(resolveAlias("/")).toBeNull();
   });
 
-  // ── Regression pins for the specific reported pain. ──────────────────────
   describe("the reported 404 class", () => {
     it("a spurious /scm prefix on the fair report now resolves", () => {
       expect(resolveAlias("/scm/reports/fair-report")).toBe(
@@ -97,11 +86,6 @@ describe("ROUTE_ALIASES", () => {
     });
   });
 
-  // ── The renames deliberately NOT made. ───────────────────────────────────
-  // These paths double as permission identifiers (see routeAliases.ts header).
-  // If a future PR renames them, these assertions fail and force the author to
-  // update every mirror — Sidebar NAV_TABS, MOBILE_MENU_GROUPS,
-  // destinationScreen(), gateVia targets and SO_RESERVED_SEGMENTS.
   describe("identifier paths remain untouched", () => {
     it.each([
       "/reports/fair-report",

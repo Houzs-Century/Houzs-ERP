@@ -23,10 +23,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { fabricCodeOf, withFabricSupplierCode } from '../shared/variant-summary';
 
-/* A returned order line, loose enough to accept every detail endpoint's mapped
-   row shape. Record (index signature) — NOT `{ variants?: unknown }`, which is a
-   weak type TS rejects for the concrete mapped rows that carry no static
-   `variants` key. `variants` rides on the row as an index-signature value. */
 type LineWithVariants = Record<string, unknown>;
 
 const trimStr = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
@@ -43,7 +39,6 @@ export async function enrichLinesWithFabricSupplierCode(
   c: CompanyScopeCtx,
   items: LineWithVariants[],
 ): Promise<void> {
-  // Distinct internal fabric codes riding on the lines.
   const codes = new Set<string>();
   for (const it of items) {
     const v = it.variants;
@@ -56,7 +51,6 @@ export async function enrichLinesWithFabricSupplierCode(
 
   const map = new Map<string, string>();
   try {
-    // ONE batched read, company-scoped (no-op pre-activation / single-company).
     const { data } = await scopeToCompany(
       sb.from('fabric_trackings').select('fabric_code, supplier_code').in('fabric_code', [...codes]),
       c,
@@ -64,12 +58,10 @@ export async function enrichLinesWithFabricSupplierCode(
     for (const r of (data ?? []) as Array<{ fabric_code?: string | null; supplier_code?: string | null }>) {
       const code = trimStr(r.fabric_code);
       const sup = trimStr(r.supplier_code);
-      // On HOUZS fabrics supplier_code is often blank -> skip, so the line falls
-      // back to the bare internal code with NO empty parens.
       if (code && sup) map.set(code, sup);
     }
   } catch {
-    return; // a lookup hiccup must never fail the detail response
+    return;
   }
   if (map.size === 0) return;
 
@@ -79,8 +71,6 @@ export async function enrichLinesWithFabricSupplierCode(
     const fc = fabricCodeOf(v as Record<string, unknown>);
     if (!fc) continue;
     const sup = map.get(fc);
-    // Distinct-only: a supplier code equal to the internal code adds no parens
-    // (buildVariantSummary guards this too — belt and braces).
     if (sup && sup !== fc) {
       it.variants = withFabricSupplierCode(v as Record<string, unknown>, sup);
     }
@@ -124,7 +114,7 @@ export async function enrichVariantKeyRowsWithFabricSupplierCode(
   }
   if (codes.size === 0) return;
 
-  const map = new Map<string, string>(); // LOWERCASED internal code -> supplier code
+  const map = new Map<string, string>();
   try {
     const { data } = await scopeToCompany(
       sb.from('fabric_trackings').select('fabric_code, supplier_code').in('fabric_code', [...codes]),
@@ -136,7 +126,7 @@ export async function enrichVariantKeyRowsWithFabricSupplierCode(
       if (code && sup && sup.toLowerCase() !== code) map.set(code, sup);
     }
   } catch {
-    return; // a lookup hiccup must never fail an inventory response
+    return;
   }
   if (map.size === 0) return;
 

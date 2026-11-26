@@ -18,12 +18,12 @@ const sb = Object.assign(
   fakeSb({
     purchase_consignment_orders: [{ id: 'pco-1', pc_number: 'PCO-1', status: 'SUBMITTED', company_id: 1, supplier_id: 'sup-1', currency: 'MYR', purchase_location_id: 'loc-1', notes: 'orig' }],
     purchase_consignment_receives: [
-      { id: 'pcr-x', purchase_consignment_order_id: 'pco-1', status: 'POSTED', company_id: 1 }, // PCO's child
+      { id: 'pcr-x', purchase_consignment_order_id: 'pco-1', status: 'POSTED', company_id: 1 },
       { id: 'pcr-1', receive_number: 'PCR-1', status: 'POSTED', company_id: 1, supplier_id: 'sup-1', currency: 'MYR', received_at: '2026-08-10', delivery_note_ref: 'DN', notes: 'orig' },
     ],
-    purchase_consignment_receive_items: [{ id: 'li', pc_receive_id: 'pcr-1', returned_qty: 2 }], // PCR's child
+    purchase_consignment_receive_items: [{ id: 'li', pc_receive_id: 'pcr-1', returned_qty: 2 }],
     consignment_delivery_orders: [{ id: 'cn-1', do_number: 'CN-1', status: 'DISPATCHED', company_id: 1, debtor_code: 'C-1', debtor_name: 'Alice', currency: 'MYR', sales_location: 'PJ', branding: 'Houzs', notes: 'orig' }],
-    consignment_delivery_returns: [{ id: 'cr-x', consignment_do_id: 'cn-1', status: 'RECEIVED', company_id: 1 }], // CN's child
+    consignment_delivery_returns: [{ id: 'cr-x', consignment_do_id: 'cn-1', status: 'RECEIVED', company_id: 1 }],
     entity_audit_log: [],
     app_config: [],
   }),

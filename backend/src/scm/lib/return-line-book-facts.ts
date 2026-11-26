@@ -44,7 +44,6 @@ const tidy = (v: string | null | undefined): string | null => String(v ?? '').tr
 
 export type ReturnBookContext = {
   inBook: boolean;
-  /** The live bindings per supplier id ('' = no supplier). */
   bindings: Map<string, Map<string, string>>;
 };
 

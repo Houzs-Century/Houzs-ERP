@@ -21,7 +21,6 @@ const sb = fakeSb({
     { account_code: '310-0020', account_name: 'Bank — HLB', account_type: 'ASSET', acc_money: true, is_active: true, company_id: CO },
     { account_code: '900-A002', account_name: 'Advertisement', account_type: 'EXPENSE', acc_money: false, is_active: true, company_id: CO },
     { account_code: '332-0000', account_name: 'Bank — closed', account_type: 'ASSET', acc_money: true, is_active: false, company_id: CO },
-    /* The OTHER company's bank — must be invisible to company 1's PUT. */
     { account_code: '360-0000', account_name: '2990 Bank', account_type: 'ASSET', acc_money: true, is_active: true, company_id: 2 },
   ],
   acc_account_roles: [],
@@ -62,7 +61,7 @@ describe('the roles window', () => {
     const res = await app().request('/roles');
     expect(res.status).toBe(200);
     const body = await res.json() as { roles: Record<string, string>; overridden: Record<string, string> };
-    expect(body.roles.BANK_DEFAULT).toBe('310-0010');   // DEFAULT_ROLE_CODES fallback
+    expect(body.roles.BANK_DEFAULT).toBe('310-0010');
     expect(body.roles.AP).toBe('400-0000');
     expect(body.overridden.BANK_DEFAULT).toBeUndefined();
   });
@@ -87,7 +86,6 @@ describe('the roles window', () => {
     expect(theirs.status).toBe(404);
     expect(((await theirs.json()) as { error: string }).error).toBe('no_such_account');
 
-    /* And nothing above moved the role. */
     const body = await (await app().request('/roles')).json() as { roles: Record<string, string> };
     expect(body.roles.BANK_DEFAULT).toBe('310-0020');
   });
@@ -107,7 +105,6 @@ describe('the roles window', () => {
     expect(after.roles.BANK_DEFAULT).toBe('310-0020');
     expect(after.roles.BANK_PAY_DEFAULT).toBe('310-0010');
 
-    /* The same guard: never an expense, never another company's bank. */
     expect((await putPay('900-A002')).status).toBe(409);
     expect((await putPay('360-0000')).status).toBe(404);
   });

@@ -9,41 +9,7 @@ import { mobileDestinationMatches } from "./mobileRoute";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/**
- * EVERY mobile menu row must state its permission gate. This test is the reason
- * "I forgot to gate this" is a CI failure instead of a silently mis-scoped page.
- *
- * THE MECHANISM IT GUARDS. `MobileApp`'s `allowed(to)` now ends with
- * `matches.length === 0 ? false` — a path with NO NAV_TABS entry is HIDDEN, not
- * shown. That default was fail-OPEN (`? true`) until 2026-07-19, which made every
- * ungated row a page visible to EVERY mobile user, and it produced the same bug
- * twice: once when the desktop /scm/drivers page was retired out from under the
- * mobile row that borrowed its gate, and again when the mobile-only /scm/helpers
- * row was added. Both were caught by a human reading the code; neither by a
- * compiler, because an ungated row is perfectly valid TypeScript.
- *
- * THE FLIP DID NOT REMOVE ANY ROW. The two rows that have no nav gate to borrow —
- * `/activity-inbox` and `/announcements` (see UNGATED_BY_DESIGN) — carry
- * `alwaysShow`, which short-circuits `allowed()` at the filter call sites, so they
- * stay visible under the closed default. Nothing depended on the permissive
- * default itself; the enumeration below (every row names its gate) is what made
- * the flip safe, and the flip is what makes the enumeration true at runtime.
- *
- * WHY THE ENUMERATION STILL MATTERS UNDER FAIL-CLOSED. A row that names no gate no
- * longer leaks — it now VANISHES for the cohort that should see it, silently,
- * because `allowed()` denies an unmatched path. A screen that disappears with
- * nobody deciding it should is its own bug, so every row must still name its gate.
- *
- * WHEN THIS TEST FAILS, DO NOT ADD YOUR PATH TO UNGATED_BY_DESIGN TO GO GREEN.
- * That list is for rows with no permission to apply at all. If the screen reads
- * business data, it needs a real gate: give the row a `to` with a live NAV_TABS
- * entry, or a `gateVia` pointing at one that carries the same permission the
- * backend enforces on the screen's endpoint.
- */
 
-/** Every complete `to` in the desktop nav tree. Queries are part of the
- *  destination identity: /team?tab=members is not the gate for Departments.
- *  A mobile destination with no exact declared gate fails closed. */
 const navDestinations = ((): string[] => {
   const out: string[] = [];
   const walk = (t: NavTab) => {
@@ -57,20 +23,6 @@ const navDestinations = ((): string[] => {
 const hasNavDestination = (to: string): boolean =>
   navDestinations.some((navTo) => mobileDestinationMatches(to, navTo));
 
-/**
- * Rows that are ungated ON PURPOSE, each with the reason it has no permission to
- * apply. Adding to this list is a deliberate act that a reviewer must agree with
- * — it is not the way to silence a failure.
- *
- * TWO different mechanisms land a row here, and both must be justified:
- *   • no gate to borrow — no NAV_TABS entry, so `allowed()` fails open;
- *   • `alwaysShow` — which SKIPS `allowed()` even when a nav entry exists, and is
- *     therefore an ungating mechanism in its own right, not a mere hint.
- *
- * The third test below stops this list from rotting into a blanket exemption: an
- * entry that no longer names a row, or whose row has since become genuinely
- * gated, fails CI and must be removed.
- */
 const UNGATED_BY_DESIGN = new Map<string, string>([
   [
     "/hr/punch",
@@ -100,21 +52,6 @@ const UNGATED_BY_DESIGN = new Map<string, string>([
   ],
 ]);
 
-/** How a row states its gate, or null when it states none.
- *
- *  Order matters. `capability` and `alwaysShow` are checked BEFORE the nav
- *  lookup because both short-circuit `allowed()` at runtime — a row carrying
- *  `alwaysShow` is ungated whether or not a NAV_TABS entry happens to exist for
- *  its path, so crediting it with that entry's gate would be a false pass.
- *
- *  `capability` replaced `directorOnly`. It is the STRONGEST gate form a row can
- *  carry: the boolean is decided by the backend (services/capabilities.ts) and
- *  read verbatim, so unlike a nav-tab gate it cannot drift from the rule the
- *  endpoint enforces. A row is credited only when the key is one the frontend
- *  actually declares — a typo'd or retired key would otherwise read as a gate
- *  while `capability()` silently returned false for everyone, which is a
- *  fail-CLOSED bug but still a screen that vanished without anyone deciding it
- *  should. */
 function gateOf(item: MobileMenuItem): string | null {
   const path = item.to.split("?")[0];
   if (item.capability) {
@@ -135,12 +72,6 @@ const allRows: MobileMenuItem[] = [
 
 describe("mobile menu permission gates", () => {
   it("the runtime default fails CLOSED — an unlisted path is hidden, not shown to all", () => {
-    /* The gate this whole file exists around lives in MobileApp's `allowed()`,
-       a closure inside MobileAppInner that cannot be imported. Its guarantee is
-       pinned at the source instead: the no-NAV_TABS-match branch must resolve to
-       FALSE. This is the inversion of the original fail-open default (`? true`);
-       a future edit that restores it turns every ungated path back into a public
-       page and fails HERE, next to the enumeration that made the flip safe. */
     const appSrc = readFileSync(resolve(HERE, "MobileApp.tsx"), "utf8");
     const at = appSrc.indexOf("const allowed = (to: string)");
     expect(at, "allowed() not found in MobileApp.tsx — did it get renamed?").toBeGreaterThan(-1);
@@ -151,8 +82,6 @@ describe("mobile menu permission gates", () => {
 
   it("gives every menu and Profile row an explicit gate", () => {
     const ungated = allRows.filter((it) => gateOf(it) === null).map((it) => `${it.label} (${it.to})`);
-    // Named in the failure so the next author sees WHICH row and WHAT to do,
-    // rather than a bare `false !== true`.
     expect(
       ungated,
       ungated.length === 0
@@ -168,11 +97,6 @@ describe("mobile menu permission gates", () => {
   });
 
   it("keeps every gateVia pointing at a nav entry that still exists", () => {
-    /* A gateVia is only a gate while its TARGET is live. If /scm/fleet were
-       retired the way /scm/drivers was, the Drivers and Helpers rows would fail
-       open again in silence — the same bug a third time, one level further in.
-       gateOf() already returns null for a dead target, so the test above would
-       catch it; this asserts it directly so the failure names the cause. */
     const dead = allRows
       .filter((it) => it.gateVia && !hasNavDestination(it.gateVia))
       .map((it) => `${it.label} (${it.to}) -> gateVia ${it.gateVia}`);
@@ -184,17 +108,11 @@ describe("mobile menu permission gates", () => {
 
   it("keeps the ungated-by-design list honest", () => {
     for (const [path, reason] of UNGATED_BY_DESIGN) {
-      // A reason is the point of the list; an empty one is an exemption with no
-      // argument behind it.
       expect(reason.length, `UNGATED_BY_DESIGN["${path}"] must say WHY it is ungated`).toBeGreaterThan(40);
 
-      // Still a real row — a stale entry silently widens the exemption.
       const row = allRows.find((it) => it.to.split("?")[0] === path);
       expect(row, `UNGATED_BY_DESIGN names "${path}", which is no longer a mobile menu row — remove it`).toBeDefined();
 
-      /* Still genuinely ungated by one of the two mechanisms. If a row loses its
-         `alwaysShow` AND gains a nav entry, it is gated for real and the
-         exemption must go rather than sit here quietly claiming otherwise. */
       expect(
         row!.alwaysShow === true || !hasNavDestination(row!.to),
         `"${path}" is now gated for real (it has a NAV_TABS entry and no alwaysShow) — remove it from UNGATED_BY_DESIGN and let the real gate apply`,
@@ -203,10 +121,6 @@ describe("mobile menu permission gates", () => {
   });
 
   it("pins the full set of ungated rows", () => {
-    /* The list this PR was asked to produce, as an assertion rather than prose:
-       a future change that ungates a second screen fails here, so the owner is
-       told before it ships — not after someone notices a page they should not
-       be able to see. Sorted so the assertion does not depend on list order. */
     expect([...UNGATED_BY_DESIGN.keys()].sort()).toEqual(["/activity-inbox", "/announcements", "/hr/punch"]);
   });
 
@@ -217,9 +131,6 @@ describe("mobile menu permission gates", () => {
 
   it("gates every Team row on its exact query-bearing NAV_TABS destination", () => {
     const teamRows = allRows.filter((item) => item.to.startsWith("/team?tab="));
-    /* The 2026-08 Team redesign renamed the strip tabs — the mobile rows follow
-       the NAV_TABS destinations (directory / departments2) so the gate stays an
-       exact query match while the mobile screens remain the classic modules. */
     expect(teamRows.map((item) => item.to).sort()).toEqual([
       "/team?tab=departments2",
       "/team?tab=directory",

@@ -1,11 +1,3 @@
-// The floating PO↔SO pairing overlay ("soft until DO, hard from DO").
-//
-// The load-bearing assertion is the ONE-ENGINE SYMMETRY: the floating edge set
-// must equal EXACTLY the po-so-coverage assignments whose `source` is 'mrp' —
-// nothing added (no guessing at unlabelled assignments), nothing dropped
-// (dedup across SKUs only). 'delivered' and 'linked' assignments are anchored
-// or provenance and must never float; an assignment with no `source` (older
-// backend) must not be floated on a locked:false hunch.
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -73,10 +65,8 @@ describe('buildFloatingOverlay (merge for rendering)', () => {
   });
 
   it('synthesises only the endpoints the stored graph lacks', () => {
-    // Graph already carries the PO and SO-1 → nothing to synthesise.
     const full = buildFloatingOverlay({ nodes: [poNode('po-1', 'PO-1'), soNode('SO-1')] }, resp);
     expect(full.nodes).toEqual([]);
-    // Orphan graph (e.g. a GRN anchor of an unlinked PO) → both endpoints appear.
     const empty = buildFloatingOverlay({ nodes: [] }, resp);
     expect(empty.nodes.map((n) => n.key).sort()).toEqual(['po:po-1', 'so:SO-1']);
     const po = empty.nodes.find((n) => n.key === 'po:po-1')!;

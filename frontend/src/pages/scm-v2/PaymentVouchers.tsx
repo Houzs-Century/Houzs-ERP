@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// PaymentVouchers — list of standalone Payment Vouchers (PV), cloned from the
-// Purchase Invoices list UX (DataGrid, status chips, double-click → detail,
-// right-click context menu).
-//
-// A Payment Voucher is a "very plain" cash-out document: pay a vendor that is
-// NOT a goods invoice (freight forwarder, one-off service). Created at
-// /scm/payment-vouchers/new, posted to the GL from the detail page.
-//
-// The redesign (owner's Claude Design, batch 4): Money out opens here. Stage
-// chips and the month, a line saying what the stage means, stage tags, the
-// next step on every row (Prepare / Check / Approve & post, Print once done;
-// Remind approver on a checked one for whoever cannot approve), ⋯ and
-// right-click with the same menu, printing in place, and the batch bar in the
-// design's words. Every voucher still walks through its own door: the same
-// hooks, the same permissions, the same confirmations.
-//
-// HOUZS VENDOR — port of 2990's apps/backend/src/pages/PaymentVouchers.tsx.
-// Import boundary only: react-router → react-router-dom; flow-queries PV hooks →
-// vendored payment-voucher-queries; components/lib → ../../vendor/scm/*; nav
-// repointed to the parallel /scm/* routes.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -79,7 +57,6 @@ const CHIP_LABELS: Record<string, string> = {
   all: 'All', DRAFT: 'Draft', PREPARED: 'Prepared', CHECKED: 'Checked',
   POSTED: 'Approved', ADVANCE: 'Advance open', CANCELLED: 'Cancelled',
 };
-/* What the stage means, said under the chips (the design's own words). */
 const CHIP_HINTS: Record<string, string> = {
   all: 'Every voucher in any stage. Tick vouchers to prepare, check, approve or print them together.',
   DRAFT: 'Still being written, so everything can change. Prepare hands it on for the check.',
@@ -93,25 +70,15 @@ const CHIP_HINTS: Record<string, string> = {
 const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 const PV_LIST_STORAGE_KEY = 'pv-list.layout.v1';
-/* The server returns the newest 500 (listPaymentVouchersHandler). A count over
-   a list that may be cut short is not the population, so counts show only
-   while everything came back (FilterPills' own rule). */
 const LIST_CAP = 500;
 
-/** The Remark: what Finance typed beside the voucher (stored as notes). */
 const notesOf = (r: PaymentVoucherRow): string => (r.notes ?? '').trim();
-/** The Description: what is paid for, as the bills say it (the server's words, never the bill number). */
 const descriptionOf = (r: PaymentVoucherRow): string => (r.description_text ?? '').trim();
-/** The For line: what it pays for, and how much of an advance is still open. */
 const forOf = (r: PaymentVoucherRow): string => {
   const open = advanceOpenSen(r);
   return [descriptionOf(r), open > 0 ? `${fmtMoney(open, r.currency)} not knocked off` : ''].filter(Boolean).join(' · ');
 };
 
-/* Batch eligibility — the same questions the detail page's buttons ask, so
-   the tick can never offer what the door would refuse. Approvable includes
-   the approved-but-still-DRAFT row: that is a post that died halfway, and
-   re-approve resumes it (§0b). */
 const isPreparable = (r: PaymentVoucherRow): boolean =>
   r.status === 'DRAFT' && r.submitted_at == null;
 const isCheckable = (r: PaymentVoucherRow): boolean =>
@@ -119,12 +86,9 @@ const isCheckable = (r: PaymentVoucherRow): boolean =>
 const isApprovable = (r: PaymentVoucherRow): boolean =>
   r.status === 'DRAFT' && r.checked_at != null;
 
-/* The stage a row stands at, off the same three questions. */
 type Stage = 'DRAFT' | 'PREPARED' | 'CHECKED' | 'DONE';
 const stageOf = (r: PaymentVoucherRow): Stage =>
   isPreparable(r) ? 'DRAFT' : isCheckable(r) ? 'PREPARED' : isApprovable(r) ? 'CHECKED' : 'DONE';
-/* The tag's words and tone (the design: Draft calm · Prepared warn · Checked
-   info · Approved calm · Cancelled late). */
 const stageTag = (r: PaymentVoucherRow): { text: string; tone: string } => {
   switch (stageOf(r)) {
     case 'DRAFT': return { text: 'Draft', tone: mo.toneCalm };
@@ -136,17 +100,12 @@ const stageTag = (r: PaymentVoucherRow): { text: string; tone: string } => {
   }
 };
 
-/* The searchable/groupable text mirrors what the cell SHOWS — a grouped list
-   splits the layers the same way the eye does. */
 function queueLabel(r: PaymentVoucherRow): string {
   return `${stageTag(r).text}${advanceOpenSen(r) > 0 ? ' · Advance open' : ''}`;
 }
 
-/* MYR-equivalent for the approve dialog and the Total — the same conversion Daily
-   Bank and posting use: round(total_sen × exchange_rate) (lib/pv-list-total.ts). */
 const myrSen = ringgitSenOfPv;
 
-/** The last three months, newest first: the month chips (the design). */
 const lastMonths = (today: string, n: number): string[] => {
   const out: string[] = [];
   let y = Number(today.slice(0, 4));
@@ -181,7 +140,6 @@ export const PaymentVouchers = () => {
   };
 
   const { data, isLoading, error } = usePaymentVouchers({ counts: true });
-  /* The design's one search box: any voucher, every stage and month, on the server. */
   const [qText, setQText] = useState('');
   const q = useDebouncedValue(qText.trim(), 300);
   const searching = q !== '';
@@ -203,14 +161,12 @@ export const PaymentVouchers = () => {
   const remindPv = useRemindApprover();
 
   const allRows = useMemo<PaymentVoucherRow[]>(() => (data?.paymentVouchers ?? []) as PaymentVoucherRow[], [data]);
-  /* Everything came back: the counts are the population's, so they may show. */
   const whole = data != null && allRows.length < LIST_CAP;
   const found = useMemo<PaymentVoucherRow[]>(() => (search.data?.paymentVouchers ?? []) as PaymentVoucherRow[], [search.data]);
   const stageCounts = data?.counts;
   const months = useMemo(() => lastMonths(todayMY(), 3), []);
   const inMonth = (r: PaymentVoucherRow) => monthChip === 'all' || String(r.voucher_date ?? '').slice(0, 7) === monthChip;
   const rows = useMemo<PaymentVoucherRow[]>(
-    /* A search shows what it found, whatever the stage and month. */
     () => (searching ? found : allRows.filter((r) => statusChip === 'all' || chipMatches(statusChip, r)).filter(inMonth)),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- inMonth reads monthChip, listed
     [allRows, found, searching, statusChip, monthChip],
@@ -224,7 +180,6 @@ export const PaymentVouchers = () => {
      the whole post) — a failure names itself and the rest carry on. */
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRunning, setBatchRunning] = useState(false);
-  /* A ticked voucher may have come from the search, older than the newest 500. */
   const byId = useMemo(() => new Map([...allRows, ...found].map((r) => [r.id, r])), [allRows, found]);
   const tickedRows = useMemo(
     () => [...selected].map((k) => byId.get(k)).filter((r): r is PaymentVoucherRow => Boolean(r)),
@@ -245,9 +200,6 @@ export const PaymentVouchers = () => {
     const targets = [...(kind === 'prepare' ? prepareTargets : kind === 'check' ? checkTargets : approveTargets)]
       .sort((a, b) => String(a.voucher_date ?? '').localeCompare(String(b.voucher_date ?? '')) || String(a.pv_number).localeCompare(String(b.pv_number)));
     if (targets.length === 0) return;
-    /* Prepare is freely reversible (withdraw, and the voucher stays editable)
-       so it runs without a dialog — same as the detail page's button. The two
-       yeses move money standing, so they keep theirs. */
     if (kind !== 'prepare') {
       const verb = kind === 'check' ? 'Check' : 'Approve & post';
       const totalMyr = sumMyr(targets);
@@ -281,8 +233,6 @@ export const PaymentVouchers = () => {
     });
   };
 
-  /* ── One row's next step (the redesign): the same door as the batch and the
-     voucher page — Prepare without a dialog, Check and Approve with theirs. */
   const [stepping, setStepping] = useState<string | null>(null);
   const runStep = async (r: PaymentVoucherRow) => {
     const s = stageOf(r);
@@ -312,11 +262,6 @@ export const PaymentVouchers = () => {
     }
   };
 
-  /* ── Remind approver: a note in the approver's bell (the ERP's own, the system
-     slice), never a name on the screen (A6). Posts nothing; the voucher does not
-     change. One voucher from its row; the ticked ones from the batch bar make
-     ONE note listing them. One reminder per voucher an hour, and the toast says
-     when the next may go. */
   const [reminding, setReminding] = useState<string | null>(null);
   const runRemind = async (targets: PaymentVoucherRow[], key: string) => {
     if (targets.length === 0 || reminding != null) return;
@@ -370,7 +315,6 @@ export const PaymentVouchers = () => {
       const name = targets.length === 1 ? `${targets[0]!.pv_number}.pdf` : 'payment-vouchers.pdf';
 
       if (!withFiles) {
-        /* Vouchers only — one shared doc, each starting on a fresh page. */
         const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
         for (let i = 0; i < targets.length; i += 1) {
           if (i > 0) doc.addPage();
@@ -497,7 +441,6 @@ export const PaymentVouchers = () => {
       sortFn: (a, b) => descriptionOf(a).localeCompare(descriptionOf(b)),
     },
     {
-      /* The Remark: what Finance typed beside the voucher (Edit text & bank), off the list by default. */
       key: 'remark', label: 'Remark', width: 220, sortable: true, groupable: false, defaultHidden: true,
       accessor: (r) => notesOf(r) || '—',
       filterValue: (r) => notesOf(r),
@@ -541,9 +484,6 @@ export const PaymentVouchers = () => {
       },
     },
     {
-      /* The four layers' marks ride as the tag, never inside the status enum
-         (the 0324 lesson): a checked DRAFT reads Checked, a prepared one
-         Prepared, and an advance still open says so beside it. */
       key: 'status', label: 'Stage', width: 170, sortable: true, groupable: true,
       accessor: (r) => {
         const t = stageTag(r);
@@ -558,14 +498,12 @@ export const PaymentVouchers = () => {
       groupValue: (r) => queueLabel(r),
       exportValue: (r) => queueLabel(r),
       sortFn: (a, b) => a.status.localeCompare(b.status),
-      /* Beside the Total: what it left out, or converted. */
       total: (shown) => {
         const note = pvListTotalNote(pvListTotal(shown));
         return note ? <span style={{ fontWeight: 400, color: 'var(--fg-muted)' }}>{note}</span> : null;
       },
     },
     {
-      /* The next step on the row (the design): the voucher's own door. */
       key: 'next_step', label: '', exportLabel: 'Next step', width: 170, align: 'right', groupable: false,
       accessor: (r) => {
         const s = stageOf(r);
@@ -598,7 +536,6 @@ export const PaymentVouchers = () => {
       },
     },
     {
-      /* DEV-75: not in Total; posts Dr 900-B001 / Cr the bank with the voucher. */
       key: 'bank_charge_sen', label: 'Bank charges', width: 120, sortable: true, align: 'right', groupable: false, defaultHidden: true,
       accessor: (r) => fmtMoney(Number(r.bank_charge_sen ?? 0), 'MYR'),
       exportValue: (r) => Number(r.bank_charge_sen ?? 0) / 100,
@@ -606,7 +543,6 @@ export const PaymentVouchers = () => {
       sortFn: (a, b) => Number(a.bank_charge_sen ?? 0) - Number(b.bank_charge_sen ?? 0),
     },
     {
-      /* The journal its approval posted (the redesign's hidden column). */
       key: 'je_no', label: 'Journal', width: 150, sortable: true, groupable: false, defaultHidden: true,
       accessor: (r) => r.je_no ?? '—',
       searchValue: (r) => r.je_no ?? '',
@@ -621,7 +557,6 @@ export const PaymentVouchers = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the cells read the latest handlers through closures each render
   ], [accountName, canWrite, canCheck, canApprove, canRemind, stepping, reminding, batchRunning, printing]);
 
-  /* All months: the server's count over the company. One month: counted here, while everything came back. */
   const chipCount = (chip: string) => (monthChip === 'all' && stageCounts
     ? stageCounts[chip]
     : whole ? allRows.filter((r) => (chip === 'all' || chipMatches(chip, r)) && inMonth(r)).length : undefined);
@@ -644,8 +579,6 @@ export const PaymentVouchers = () => {
                   <Camera {...ICON} />
                   <span>Scan bills</span>
                 </Button>
-                {/* The third kind (§14): money back to a customer, named by
-                    the order or the cancelled invoice it refunds. */}
                 <Button variant="secondary" size="sm" onClick={() => navigate('/scm/payment-vouchers/new?type=refund')}>
                   <Plus {...ICON} />
                   <span>New customer refund</span>
@@ -719,8 +652,6 @@ export const PaymentVouchers = () => {
         </div>
       </div>
 
-      {/* The batch bar — appears once something is ticked. Each button says
-          how many of the ticked rows ITS yes applies to. */}
       {selected.size > 0 && (
         <div className={mo.batch}>
           <div className={mo.row}>
@@ -803,7 +734,6 @@ export const PaymentVouchers = () => {
              opens, right-click menus; nothing else ticks. */
           checkboxOnly: true,
         }}
-        /* The page's own search box asks the server (every stage and month). */
         hideSearch
         groupBanner={false}
         onRowDoubleClick={(r) => openDoc(r)}

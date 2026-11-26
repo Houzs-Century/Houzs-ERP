@@ -7,7 +7,7 @@ export function remarkSlug(remark: string): string {
     .replace(/[^A-Z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40)
-    .replace(/-+$/g, ''); // re-trim if the slice cut mid-dash
+    .replace(/-+$/g, '');
 }
 
 /**

@@ -1,4 +1,3 @@
-/* 3 · The overviews said "as of today" over a copy up to 2 h old. */
 import { describe, expect, test } from "vitest";
 import { cacheStampLabel, oldestCachedAt, withFresh } from "./cacheStamp";
 

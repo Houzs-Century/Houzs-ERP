@@ -1,31 +1,3 @@
-/* ----------------------------------------------------------------------------
-   autocount-host-read — the READ-ONLY routes AcSyncService already exposes, and
-   which nothing in this ERP has ever called.
-
-   WHY THIS FILE EXISTS. AcSyncService serves four read-only routes —
-   `/last-errors`, `/doc-read`, `/further-description`, `/picture-census` — and
-   on 2026-08-25 a grep proved every one of them was dead code from the ERP's
-   point of view: the only file in the repo naming `/last-errors` was the C#
-   that serves it.
-
-   That is not a tidiness problem, it is what a diagnosis costs. `HC-DO-2608-006`
-   failed with the contentless `Invalid transfer item.` The one line that settles
-   it — `target debtor before transfer = [...]`, written by the service itself —
-   sat in `C:\Temp\ac-sync-service.log` on the office machine. Reading it meant a
-   TeamViewer session, Notepad, and dragging a scrollbar through a 377 KB file,
-   and it still was not read. The service had been willing to serve that line
-   over HTTP the whole time.
-
-   A SEPARATE CALLER, NOT A NEW `AcOp`. `callAcService` is keyed by `AcOp`, and
-   every `AcOp` is a thing an outbox ROW can be — a document operation with a
-   status, attempts and a retry policy. `/last-errors` is none of those. Adding
-   it to that union would put a non-document into a vocabulary whose whole
-   discipline is that each member names a document's journey, and the queue's
-   own code would then have to carry "except this one" everywhere it switches on
-   op. One column serving two meanings is exactly the defect the owner named on
-   2026-08-25 about `supplier_material_bindings.supplier_sku`; this is the same
-   shape and it is cheaper to refuse here than to unpick later.
-   -------------------------------------------------------------------------- */
 
 import type { Env } from '../scm/env';
 import { acServiceConfig } from './autocount-writeback';
@@ -57,9 +29,7 @@ export type AcReadOp = keyof typeof AC_READ_ROUTE;
 export interface AcReadResult {
   ok: boolean;
   status: number;
-  /** The service's own JSON, verbatim, or null when it did not answer JSON. */
   body: Record<string, unknown> | null;
-  /** One sentence a person can act on. Null when ok. */
   error: string | null;
 }
 

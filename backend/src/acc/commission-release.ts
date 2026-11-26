@@ -29,7 +29,6 @@ import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { mytDateOf } from '../scm/lib/my-time';
 import { fmtSen } from '../scm/shared/format';
 
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Db = Parameters<typeof resolveRoles>[0];
 type SoRow = {
   doc_no: string; so_date: string | null; status: string | null; total_revenue_sen: number | null; local_total_sen: number | null;
@@ -59,7 +58,6 @@ export function mytMonths(nowMs: number): { current: Ym; last: Ym } {
 
 export const releaseDocNo = (companyId: number, month: Ym): string => `${RELEASE_SOURCE}-${companyId}-${month}`;
 
-/* ── Settings ────────────────────────────────────────────────────────────── */
 
 export type ReleaseSettings = { on: boolean; booksStart: Ym | null };
 
@@ -80,7 +78,6 @@ export async function saveReleaseSwitch(sb: Db, companyId: number, on: boolean, 
   return error ? { ok: false, reason: failed(error) } : { ok: true };
 }
 
-/* ── The reads the plan needs ────────────────────────────────────────────── */
 
 export type ReleaseData = {
   input: PlanInput;
@@ -90,7 +87,6 @@ export type ReleaseData = {
 
 const SO_COLS = 'doc_no, so_date, status, total_revenue_sen, local_total_sen, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen';
 const goodsOf = (s: SoRow): number => n(s.mattress_sofa_sen) + n(s.bedframe_sen) + n(s.accessories_sen) + n(s.others_sen);
-/* The order's total the way Event Commission measures it (total_revenue_sen, else local_total_sen). */
 const totalOf = (s: SoRow): number => (n(s.total_revenue_sen) > 0 ? n(s.total_revenue_sen) : n(s.local_total_sen));
 const ENDED = new Set(['CANCELLED', 'CLOSED']);
 
@@ -102,7 +98,6 @@ export function endedOnOf(status: string, audit: ReadonlyArray<{ action: string 
     if (!isEnd) since = null;
     else if (since == null) since = a.created_at;
   }
-  /* No trail at all: it ended before the trail began — long before any release. */
   return since ? mytDateOf(since) : '1970-01-01';
 }
 
@@ -116,7 +111,6 @@ export async function loadReleaseData(sb: Db, companyId: number, booksStart: Ym 
   const empty: PlanInput = { booksStart: start, through, prepaid, closes: [], orders: [], sales: [], goodsAt: () => 0 };
   if (prepaid.length === 0) return { ok: true, data: { input: empty, roles, prepaid } };
 
-  /* The closes: what each month paid each order, by SO date, its adjustments for earlier months included. */
   const cl = await sb.from('event_commission_closes').select('month, paid, carried').eq('company_id', companyId);
   if (cl.error) return { ok: false, reason: `closes: ${failed(cl.error)}` };
   const closes: PlanClose[] = ((cl.data ?? []) as CloseRow[]).map((c) => {
@@ -128,7 +122,6 @@ export async function loadReleaseData(sb: Db, companyId: number, booksStart: Ym 
     return { month: String(c.month).slice(0, 7), perOrder: [...per.entries()].sort((x, y) => x[0].localeCompare(y[0])) };
   });
 
-  /* The orders: every order dated up to the last month anything pays for or is planned, and any a close names beyond them. */
   const lastMonth = [through, ...prepaid.map((p) => p.month ?? ''), ...closes.map((c) => c.month)].filter(Boolean).sort().at(-1) ?? through;
   const sos = await paginateAll<SoRow>((f, t) => sb.from('mfg_sales_orders').select(SO_COLS)
     .eq('company_id', companyId).lte('so_date', lastDayOf(lastMonth)).order('doc_no').range(f, t));
@@ -142,7 +135,6 @@ export async function loadReleaseData(sb: Db, companyId: number, booksStart: Ym 
     for (const s of more.data) soRows.set(String(s.doc_no), s);
   }
 
-  /* When each ended order ended. */
   const endedDocs = [...soRows.values()].filter((s) => ENDED.has(String(s.status))).map((s) => String(s.doc_no));
   const audit = await chunkIn<AuditRow>(endedDocs, (batch, f, t) => sb.from('mfg_so_audit_log').select('so_doc_no, action, status_snapshot, created_at')
     .eq('company_id', companyId).in('so_doc_no', batch).order('created_at').range(f, t));
@@ -158,7 +150,6 @@ export async function loadReleaseData(sb: Db, companyId: number, booksStart: Ym 
     };
   });
 
-  /* Net sales: sales invoices, deposit invoices, less the credit notes that contra a deposit invoice. */
   const sis = await paginateAll<SiRow>((f, t) => sb.from('sales_invoices').select('so_doc_no, invoice_date, total_sen, status')
     .eq('company_id', companyId).not('so_doc_no', 'is', null).order('id').range(f, t));
   if (sis.error) return { ok: false, reason: `sales invoices: ${failed(sis.error)}` };
@@ -178,7 +169,6 @@ export async function loadReleaseData(sb: Db, companyId: number, booksStart: Ym 
       .map((c) => ({ docNo: diOrder.get(String(c.source_doc_no))!, day: String(c.note_date).slice(0, 10), amountSen: -n(c.total_sen) })),
   ];
 
-  /* Goods as at a day: the earliest change after it says what they were before; no change since, they are today's. */
   const ch = await paginateAll<ChangeRow>((f, t) => sb.from('so_total_changes').select('so_doc_no, changed_at, before_goods_sen')
     .eq('company_id', companyId).order('changed_at').range(f, t));
   if (ch.error) return { ok: false, reason: `order changes: ${failed(ch.error)}` };
@@ -197,7 +187,6 @@ export async function loadReleaseData(sb: Db, companyId: number, booksStart: Ym 
   return { ok: true, data: { input: { booksStart: start, through, prepaid, closes, orders, sales, goodsAt }, roles, prepaid } };
 }
 
-/* ── Posting one month ───────────────────────────────────────────────────── */
 
 export type ReleaseOutcome = {
   companyId: number;
@@ -291,7 +280,6 @@ export function monthParts(plan: CommissionPlan, month: Ym): MonthPart[] {
   });
 }
 
-/* ── One company, every month; the nightly sweep ─────────────────────────── */
 
 export async function runCommissionRelease(sb: Db, companyId: number, trigger: 'cron' | 'manual', nowMs: number = Date.now()): Promise<{ ok: true; outcomes: ReleaseOutcome[] } | { ok: false; reason: string }> {
   const st = await loadReleaseSettings(sb, companyId);
@@ -302,7 +290,6 @@ export async function runCommissionRelease(sb: Db, companyId: number, trigger: '
   if (!data.ok) return data;
   if (data.data.prepaid.length === 0) return { ok: true, outcomes: [] };
   const plan = planCommissionRelease(data.data.input);
-  /* Every month from the books' start to last month — including one whose entry should now come out. */
   const outcomes: ReleaseOutcome[] = [];
   for (const month of monthsFromTo(data.data.input.booksStart, last)) {
     outcomes.push(await postReleaseMonth(sb, companyId, month, monthParts(plan, month), data.data.roles, trigger));
@@ -320,14 +307,11 @@ export async function sweepCommissionRelease(sb: Db, companyIds: number[], trigg
   return out;
 }
 
-/* ── What the release has booked, month by month (the page) ──────────────── */
 
 export type PostedReleaseMonth = {
   month: Ym;
   jeNo: string;
-  /** The entry's cost: debits less credits on the commission expense. */
   releasedSen: number;
-  /** An earlier entry for the month was reversed. */
   reposted: boolean;
   bookedOn: string | null;
 };

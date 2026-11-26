@@ -48,7 +48,6 @@ export async function loadCostSetup(sb: any, companyId: number): Promise<
   const [chartRes, lorryRes, setRes] = await Promise.all([
     sb.from('accounts').select('account_code, account_name, account_type, is_active, parent_code, pms_row, logistics_row').eq('company_id', companyId),
     sb.from('lorries').select('id, plate, is_internal').eq('company_id', companyId),
-    /* Every column: fair_income_bp reads once its migration is in, the default before. */
     sb.from('acc_logistics_settings').select('*').eq('company_id', companyId).maybeSingle(),
   ]);
   if (chartRes.error) return { ok: false, what: 'chart of accounts', reason: chartRes.error.message };
@@ -131,7 +130,6 @@ export async function readMonthDos(sb: any, companyId: number, wholeFrom: string
   return { ok: true, dos, charges: charges.data };
 }
 
-/* ── GET /logistics ───────────────────────────────────────────────────────── */
 export const logisticsCostHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -152,8 +150,6 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
   if (!read.ok) return fail(c, read.what, read.reason);
   const { dos, charges } = read;
 
-  /* The carriers' bill lines: the runs (assigned to DOs), what nobody assigned,
-     and the fair lines with no fair. */
   const lines = await paginateAll<Row>((lo, hi) => sb.from('threepl_bill_lines')
     .select('id, ap_invoice_id, threepl_company_id, line_date, amount_sen, do_ids, text, assign, project_id')
     .eq('company_id', companyId).order('id').range(lo, hi));
@@ -182,8 +178,6 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
   const openLines = tally(billLines.filter((l) => l.assign == null && Number(l.amount_sen ?? 0) !== 0));
   const eventLinesNoFair = tally(billLines.filter((l) => l.assign === 'event' && l.project_id == null));
 
-  /* Our lorries' cost: what those accounts booked in the whole months — a
-     cancelled or corrected document's pair left out, the opening never. */
   let ownCost: OwnCostLeg[] = [];
   if (accounts.length > 0) {
     const legs = await chunkIn<Row>(accounts, (b, lo, hi) => sb.from('v_gl_entries')
@@ -197,7 +191,6 @@ export const logisticsCostHandler = async (c: any): Promise<Response> => {
     }));
   }
 
-  /* Setup & dismantle: the fairs starting in the range, each from its own books. */
   let events: EventCost[] = [];
   let eventsProblem: string | null = null;
   if (c.env?.DB) {

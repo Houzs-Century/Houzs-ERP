@@ -72,13 +72,9 @@ const SI_COLS = 'id, invoice_number, so_doc_no, debtor_code, debtor_name, invoic
 export type SiOwing = {
   id: string; number: string; soDocNo: string | null; date: string | null; totalSen: number; status: string;
   customer: CustomerKey;
-  /** What it still owes: its total less its receipts, its order's deposit and every credit note knocked off it. */
   owedSen: number;
 };
 
-/** The invoices' customers and what each still owes — the deposit and the credit
-    notes as every screen reads them (stampOrderDeposit). Fails closed: a figure
-    that could not be read is never taken as what the invoice owes. */
 async function owing(sb: Db, companyId: number, rows: Row[]): Promise<Read<Map<string, SiOwing>>> {
   const out = new Map<string, SiOwing>();
   if (rows.length === 0) return { ok: true, value: out };
@@ -124,7 +120,6 @@ export async function customerOpenInvoices(sb: Db, companyId: number, key: Custo
   const open = [...OPEN_SI_STATUSES];
   let found: Row[];
   if (code !== null && UUID.test(code)) {
-    /* A customer id lives on the orders (2990 keeps no debtor codes). */
     const orders = await paginateAll<Row>((from, to) => sb.from('mfg_sales_orders').select('doc_no')
       .eq('company_id', companyId).eq('customer_id', code).order('doc_no').range(from, to));
     if (orders.error) return { ok: false, reason: `orders: ${orders.error.message}` };

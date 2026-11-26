@@ -16,7 +16,6 @@ export type LedgerLine = {
   lineId: string;
   date: string;
   jeNo: string;
-  /** The entry's id — what its card opens by (absent from an older server). */
   jeId?: string | null;
   journal: LedgerJournal;
   counter: { code: string; name: string; more: number } | null;
@@ -53,7 +52,6 @@ export type LedgerReport = {
 export type LedgerParams = {
   from: string;
   to: string;
-  /** Picked accounts — wins over the range when given. */
   accounts?: string[];
   fromAccount?: string;
   toAccount?: string;
@@ -113,7 +111,6 @@ const csvCell = (raw: string): string => {
 /** The ledger as a CSV — exactly the rows the screen shows: a heading row per
     account, its balance b/f, its lines, its totals, then the grand totals. */
 export function ledgerCsv(r: LedgerReport): string {
-  /* The account in front (a flat file has no block heading) and the reversal mark behind. */
   const head = ['Account', ...LEDGER_COLUMNS, 'Reversal'];
   const rows: string[][] = [head];
   for (const b of r.blocks) {

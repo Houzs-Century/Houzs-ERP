@@ -39,7 +39,6 @@ vi.mock("../../components/scm-v2/DocumentRelationshipMapModal", () => ({
   DocumentRelationshipMapModal: () => null,
   DocumentChoiceDialog: () => null,
 }));
-/* Every grant except the PO exception, unless a test turns it on. */
 vi.mock("../../auth/AuthContext", () => ({
   useAuth: () => ({ user: { id: 1, name: "Desk" }, can: (p: string) => p !== "scm.so.override_po_processing_date" || auth.override }),
 }));
@@ -70,7 +69,7 @@ const line = {
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-10-13T09:14:00Z")); // 17:14 MYT
+  vi.setSystemTime(new Date("2026-10-13T09:14:00Z"));
   vi.stubGlobal("fetch", vi.fn(() => new Promise(() => undefined)));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); askConfirm.mockClear(); });
@@ -89,7 +88,6 @@ const mount = (so: Record<string, unknown>) => {
   );
 };
 
-/* The dialog body the Confirm Order click asked with, rendered on its own. */
 const confirmBody = async (): Promise<string> => {
   fireEvent.click(screen.getByRole("button", { name: "Confirm Order" }));
   await waitFor(() => expect(askConfirm).toHaveBeenCalled());

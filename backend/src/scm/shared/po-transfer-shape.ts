@@ -27,38 +27,11 @@
 /** One purchase-order line, as much of it as this decision needs. */
 export interface PoLineShape {
   id: string;
-  /** The single-valued link. NULL means the line is for stock. */
   so_item_id: string | null;
-  /**
-   * Allocation rows for this line. PRESENT means the line was consolidated and
-   * the allocations are authoritative (mig 0235) — which is exactly the case a
-   * transfer cannot carry.
-   */
   allocationCount: number;
-  /**
-   * AutoCount's own key for the SALES ORDER line behind `so_item_id`, when the
-   * book has one. A transfer is addressed by this key and by nothing else, so a
-   * line whose source was never sent to AutoCount cannot be transferred.
-   */
   sourceAcDtlKey: number | null;
-  /**
-   * The ERP sales order this line was raised for.
-   *
-   * A transfer needs ONE source document, not one per line: the drain holds the
-   * operation until the PARENT has an AutoCount number
-   * (`payload.fromDoc` -> `FromDocNo`), and there is only one such anchor. Lines
-   * drawn from several sales orders therefore fall back to a create, where the
-   * Ref names them all.
-   */
   sourceSoDocNo: string | null;
-  /**
-   * Is the source sales order already in the account book?
-   *
-   * Read from `mfg_sales_orders.linked_ac_docno`. It is what tells a key that
-   * does not exist YET from one that never will — see the `wait` shape.
-   */
   sourceSoInBook: boolean;
-  /** This purchase-order line's own product. */
   itemCode?: string | null;
   /** The product of the sales-order line it names. docs/bugs/0672 site 13. */
   sourceItemCode?: string | null;
@@ -66,18 +39,6 @@ export interface PoLineShape {
 
 export type PoTransferShape =
   | { kind: 'transfer'; dtlKeys: number[]; fromSoDocNo: string }
-  /**
-   * The sales order is not in the account book YET, so its line keys do not
-   * exist yet either. This is a transfer that cannot be addressed at this
-   * instant — NOT a document that can never be one.
-   *
-   * The distinction is the whole point. `create` used to swallow this case, and
-   * a purchase order raised in the same minute as its sales order silently
-   * became a create with no link to it in the book. Measured on production
-   * 2026-08-25: HC-PO-2608-007 from HC-SO-2608-008. The five before it
-   * transferred correctly — they were raised long enough afterwards. A race,
-   * not a rule, and a create is the one answer that cannot be taken back.
-   */
   | { kind: 'wait'; fromSoDocNo: string; reason: string }
   | { kind: 'create'; reason: string };
 
@@ -114,10 +75,6 @@ export function poTransferShape(lines: readonly PoLineShape[]): PoTransferShape 
 
   const keylessLines = lines.filter((l) => l.sourceAcDtlKey == null);
   if (keylessLines.length) {
-    /* NOT YET vs NEVER. A line whose sales order is not in the book yet has no
-       key because nothing has issued one — waiting produces the key. A line
-       whose sales order IS in the book and still has no key is a real gap, and
-       a create is the honest answer there. */
     const waitingOn = [...new Set(keylessLines
       .filter((l) => l.so_item_id != null && !l.sourceSoInBook)
       .map((l) => String(l.sourceSoDocNo ?? '').trim())
@@ -140,11 +97,6 @@ export function poTransferShape(lines: readonly PoLineShape[]): PoTransferShape 
     };
   }
 
-  /* DISTINCT keys, because two PO lines pointing at one SO line is the
-     consolidated case wearing different clothes — the allocations table is the
-     supported way to say that, and a duplicate here means the data disagrees
-     with itself. Transferring the same source line twice would double the
-     quantity in the account book. */
   const keys = lines.map((l) => l.sourceAcDtlKey as number);
   if (new Set(keys).size !== keys.length) {
     return {
@@ -186,10 +138,6 @@ export function poTransferShape(lines: readonly PoLineShape[]): PoTransferShape 
     };
   }
 
-  /* ONE source document. The drain waits on the parent's AutoCount number and
-     has exactly one anchor to wait on, so a purchase order drawing on several
-     sales orders cannot be expressed as a transfer at all — it becomes a create
-     whose UDF_SONo names every one of them. */
   const sources = [...new Set(lines.map((l) => String(l.sourceSoDocNo ?? '').trim()))];
   if (sources.length !== 1 || sources[0] === '') {
     return {

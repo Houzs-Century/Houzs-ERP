@@ -1,5 +1,3 @@
-// The device bundle's item rule: scope, event price, barcodes, inactive
-// items; and the device token shape.
 import { describe, expect, test } from "vitest";
 import { buildBundleItems, deviceTokenHash, isDeviceToken, mintDeviceToken, type BundleItemSource } from "./pos-bundle";
 

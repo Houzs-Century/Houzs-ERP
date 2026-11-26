@@ -1,41 +1,3 @@
-// ----------------------------------------------------------------------------
-// /reports — read-only reporting endpoints (AutoCount-style listings).
-//
-// Ported from 2990's apps/api/src/routes/reports.ts. Serves the four
-// AutoCount-style "Detail Listing" reads the vendored report pages render:
-//   GET /reports/sales-order-detail-listing
-//   GET /reports/delivery-order-detail-listing
-//   GET /reports/sales-invoice-detail-listing
-//   GET /reports/delivery-return-detail-listing
-// (the vendored authedFetch base prepends /api/scm).
-//
-// One row per LINE ITEM, with the parent document header denormalised onto
-// each row. The client decides which AutoCount columns to render.
-//
-// Houzs adaptation: same plumbing as the sibling SCM routes — supabaseAuth
-// bridge + scm-scoped service client via c.get('supabase'); every table ref
-// already resolves against the `scm` schema (mfg_sales_orders / *_items /
-// mfg_sales_order_payments / staff / delivery_orders / *_items / sales_invoices
-// / *_items / delivery_returns / *_items — all confirmed present in
-// scripts/scm-schema/2990s-full-schema.sql). Read-only: this route never
-// writes. Mounted at '/reports' in scm/index.ts.
-//
-// ── THESE LISTINGS ARE SALES DOCUMENTS, NOT NEUTRAL LOOKUPS (fix/c1-reports) ─
-// The mount comment in scm/index.ts calls the shared read helpers "read-mostly
-// and not sensitive" and leaves them on the coarse scm.access gate. That is
-// true of document-flow / outstanding / staff. It was NEVER true here: this
-// file returns the SO book line by line. Being read-only does not make a
-// payload safe — WHAT it reads is the question. Two rules therefore apply to
-// every sales-doc listing below, and a report must never be a way around the
-// rule its own module enforces:
-//   1. FINANCE — cost / margin / deposit reach only canViewScmFinance (fails
-//      closed). Mirrors gateSoFinance (#625) / gateDrFinance (#632); the key
-//      lists are SHARED from lib/finance-keys.ts, not re-declared here.
-//   2. SCOPE — rows are row-scoped to the caller's own + downline salespeople
-//      via resolveSalesScopeIds, the same source of truth the SO / DO / SI list
-//      handlers use. Without it a scoped rep read every other rep's documents
-//      through the report while being correctly blocked on the module page.
-// ----------------------------------------------------------------------------
 
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -67,13 +29,6 @@ import {
 } from '../lib/fair-report';
 import type { AuthUser } from '../../services/auth';
 
-/* Strip cost / margin / deposit from every FLAT report row for a non-finance
-   caller. The listing denormalises the SO header onto each line, so one row
-   carries BOTH halves of the vocabulary — strip both from the same object.
-   canViewScmFinance fails closed (no houzsUser / no director position → not
-   finance), so a mis-classified caller loses the columns rather than gaining
-   them. Applied AFTER the flatten, so no header key can slip through under its
-   own name. */
 const gateReportFinance = (
   c: Parameters<typeof canViewScmFinance>[0],
   rows: Array<Record<string, unknown>>,
@@ -100,21 +55,8 @@ reports.get('/sales-order-detail-listing', async (c) => {
   const deliveryDateTo   = c.req.query('deliveryDateTo');
   const sortBy           = (c.req.query('sortBy') ?? 'date') as 'date' | 'doc_no' | 'item_code';
 
-  /* Row-level visibility scope — the SAME rule and the SAME source of truth as
-     the SO list handler (lib/salesScope): view-all callers (`scm.so.view_all`
-     or a director position via canViewAllSales) are unrestricted; everyone else
-     sees SELF + their full manager_id downline. Resolved ONCE, outside the
-     pager, so every page of a wide date range uses one scope.
-     NOTE: must pass the REAL Houzs integer user id (houzsUser) — user.id here
-     is the bridge's pinned system staff uuid, and feeding that to the scope
-     lookup is the documented non-admin 500. */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
 
-  // Pull SO header + items as nested join. supabase-js renders the nested
-  // table as a property on the item row — we flatten it back out below so
-  // the client doesn't need to traverse mfg_sales_orders.*.
-  // PostgREST's 1000-row cap silently truncated this listing — page through so
-  // a wide date range returns every line, not just the first 1000.
   const { data, error } = await paginateAll((pFrom, pTo) => {
     let q = sb
       .from('mfg_sales_order_items')
@@ -142,12 +84,8 @@ reports.get('/sales-order-detail-listing', async (c) => {
     if (docNo)      q = q.ilike('doc_no', `%${docNo}%`);
     if (itemCode)   q = q.ilike('item_code', `%${itemCode}%`);
     if (debtorCode) q = q.eq('debtor_code', debtorCode);
-    /* salesperson_id lives on the HEADER — filter the EMBEDDED table. The
-       `!inner` join makes an embedded filter narrow the parent rows (same
-       mechanism the DO/SI listings below already use for docNo/debtorCode). */
     if (scopeIds) q = q.in('mfg_sales_orders.salesperson_id', scopeIds);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
-    // Sort: line-level for item_code, header-level (joined) for date/doc_no.
+    q = scopeToCompany(q, c);
     if (sortBy === 'item_code') {
       q = q.order('item_code', { ascending: true });
     } else if (sortBy === 'doc_no') {
@@ -160,8 +98,6 @@ reports.get('/sales-order-detail-listing', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
   type ItemRow = Record<string, unknown> & {
-    // Supabase's foreign-table join can return either a single object or an
-    // array — both shapes are normalised in the flatten pass below.
     mfg_sales_orders: Record<string, unknown> | Record<string, unknown>[] | null;
     line_date: string | null;
     doc_no: string;
@@ -172,11 +108,6 @@ reports.get('/sales-order-detail-listing', async (c) => {
   };
   const itemsRaw = (data ?? []) as unknown as ItemRow[];
 
-  // paid_sen is derived live from the mfg_sales_order_payments ledger.
-  // Aggregate once for all docs in this result and attach as paid_total_sen.
-  // Also capture per-doc: last_payment_at (MAX paid_at) + the most-recent
-  // payment's account_sheet / approval_code / collected_by. collected_by is a
-  // staff.id uuid, so resolve once via a second batch query to staff.
   const docNos = Array.from(new Set(itemsRaw.map((i) => i.doc_no))).filter(Boolean);
   const paidByDoc = new Map<string, number>();
   type PaymentMeta = {
@@ -186,13 +117,8 @@ reports.get('/sales-order-detail-listing', async (c) => {
     collectedById: string | null;
   };
   const paymentMetaByDoc = new Map<string, PaymentMeta>();
-  // The Approval Code column aggregates EVERY ledger code (a doc can be paid
-  // in multiple instalments, each with its own code).
   const approvalCodesByDoc = new Map<string, Array<{ paidAt: string | null; code: string }>>();
   if (docNos.length > 0) {
-    // chunkIn — docNos can exceed 1000 (un-truncated listing) and a doc can have
-    // many instalment payments; batch the .in() and page each batch so the
-    // paid totals are never UNDERSTATED (which would overstate outstanding).
     const { data: paymentTotals, error: payErr } = await chunkIn(docNos, (batch, pFrom, pTo) => scopeToCompany(sb
       .from('mfg_sales_order_payments')
       .select('so_doc_no, amount_sen, paid_at, account_sheet, approval_code, collected_by')
@@ -216,8 +142,6 @@ reports.get('/sales-order-detail-listing', async (c) => {
         approvalCodesByDoc.set(key, arr);
       }
       const prev = paymentMetaByDoc.get(key);
-      // "Most recent" = max paid_at; on tie keep first seen. Null paid_at
-      // sorts older than any real date.
       const isNewer = !prev || !prev.lastPaidAt || (row.paid_at && row.paid_at > prev.lastPaidAt);
       if (isNewer) {
         paymentMetaByDoc.set(key, {
@@ -230,15 +154,11 @@ reports.get('/sales-order-detail-listing', async (c) => {
     }
   }
 
-  // Resolve collected_by uuids → staff.name in a single batch query so
-  // each row can display a human-readable collector name.
   const collectorIds = Array.from(new Set(
     [...paymentMetaByDoc.values()].map((m) => m.collectedById).filter((v): v is string => Boolean(v))
   ));
   const staffNameById = new Map<string, string>();
   if (collectorIds.length > 0) {
-    // chunkIn — bound the collector-name resolve so the .in() list never exceeds
-    // 1000 and PostgREST's cap can't drop names (unresolved collector → blank).
     const { data: staffRows, error: staffErr } = await chunkIn(collectorIds, (batch, pFrom, pTo) => sb
       .from('staff')
       .select('id, name')
@@ -251,37 +171,23 @@ reports.get('/sales-order-detail-listing', async (c) => {
     }
   }
 
-  // Flatten the join + apply the header-level date range filters in JS
-  // (supabase-js can't .gte() across a joined table without rpc).
   const rows = itemsRaw
     .map((r) => {
-      // Supabase returns the joined header as either a single object or
-      // a one-element array depending on selection — normalise to single.
       const rawHeader = r.mfg_sales_orders;
       const h: Record<string, unknown> = Array.isArray(rawHeader)
         ? ((rawHeader[0] as Record<string, unknown>) ?? {})
         : ((rawHeader as Record<string, unknown>) ?? {});
       const flat: Record<string, unknown> = { ...r };
       delete flat.mfg_sales_orders;
-      // Header fields fill any line field that's empty (debtor_code, agent, etc.).
       for (const [k, v] of Object.entries(h)) {
         if (k in flat && flat[k] != null && flat[k] !== '') continue;
         flat[k] = v;
       }
-      // Always expose so_date + currency + status under canonical names too.
       flat.so_date  = h.so_date  ?? flat.so_date  ?? flat.line_date ?? null;
       flat.currency = h.currency ?? 'MYR';
       flat.status   = h.status   ?? null;
       flat.customer_delivery_date = h.customer_delivery_date ?? null;
-      // Per-doc paid total from the payments ledger (replaces legacy paid_sen).
       flat.paid_total_sen = paidByDoc.get(r.doc_no) ?? 0;
-      /* Light the Fabric / Divan / Leg columns from what SO lines ACTUALLY
-         carry. Fabric: three sources, most specific first — fabricColor
-         (GRN hand-keyed) ?? colourLabel (POS human label) ?? fabricCode (the
-         shared code). Divan/Leg: real column (GRN paths) ?? the variants the
-         SO paths write — legHeight / sofaLegHeight / divanHeight. Values can
-         be strings ('4"', 'No Leg'): normalise to a NUMBER when parseable
-         (frontend renders n″ + numeric sort) else pass the raw string. */
       const variantsObj = (r.variants ?? null) as Record<string, unknown> | null;
       const vStr = (k: string): string | null => {
         const v = variantsObj?.[k];
@@ -294,19 +200,15 @@ reports.get('/sales-order-detail-listing', async (c) => {
           const raw = vStr(k);
           if (!raw) continue;
           const m = raw.match(/^(-?\d+(?:\.\d+)?)\s*(?:"|”|inch(?:es)?)?$/i);
-          return m && m[1] ? Number(m[1]) : raw; // '4"' → 4; 'No Leg' → as-is
+          return m && m[1] ? Number(m[1]) : raw;
         }
         return null;
       };
       flat.divan_height = heightVal(r.divan_height_inches, 'divanHeight');
       flat.leg_height   = heightVal(r.leg_height_inches, 'legHeight', 'sofaLegHeight');
-      // Per-doc payment meta (last receipt only).
       const pm = paymentMetaByDoc.get(r.doc_no);
       flat.last_payment_at = pm?.lastPaidAt   ?? null;
       flat.account_sheet   = pm?.accountSheet ?? null;
-      /* ALL approval codes, oldest→newest, plus a count when there are several
-         ("123123 + 456456 (2)"). Header-level code covers legacy single-shot
-         SOs with no ledger rows. */
       const codes = (approvalCodesByDoc.get(r.doc_no) ?? [])
         .sort((a, b) => String(a.paidAt ?? '').localeCompare(String(b.paidAt ?? '')))
         .map((x) => x.code);
@@ -326,10 +228,6 @@ reports.get('/sales-order-detail-listing', async (c) => {
       return true;
     });
 
-  /* Cost / margin / deposit leave the server ONLY for a finance-viewer. This
-     listing is the widest finance surface in the app — every line of every
-     salesperson's every order — and it carried no gate at all. Revenue, order
-     totals, balance and the paid ledger stay for everyone who passes access. */
   gateReportFinance(c, rows);
 
   return c.json({ rows });
@@ -343,8 +241,6 @@ reports.get('/sales-order-detail-listing', async (c) => {
 // Sales Report so the owner sees exactly what is incomplete. Read-only;
 // finance-gated (it exposes the cost dimension).
 // ----------------------------------------------------------------------------
-/** A product's cost is present when the flat cost lane is set, or (SOFA) the seat
- *  grid carries a PRICE_2 cost row. Mirrors the restamp's unitCostSen fallbacks. */
 function productHasCost(p: { category?: unknown; base_price_sen?: unknown; cost_price_sen?: unknown; seat_height_prices?: unknown }): boolean {
   if (Number(p.base_price_sen) > 0 || Number(p.cost_price_sen) > 0) return true;
   const grid = Array.isArray(p.seat_height_prices) ? p.seat_height_prices : [];
@@ -355,8 +251,6 @@ reports.get('/costing-gap-listing', async (c) => {
   const sb = c.get('supabase');
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
 
-  // Products with NO cost, by code — the set a zero-cost line must belong to to
-  // count as a real (owner-fixable) gap.
   const { data: prodData, error: prodErr } = await paginateAll((pFrom, pTo) => {
     let q = sb.from('mfg_products').select('code, category, base_price_sen, cost_price_sen, seat_height_prices');
     q = scopeToCompany(q, c);
@@ -393,40 +287,6 @@ reports.get('/costing-gap-listing', async (c) => {
   return c.json({ rows });
 });
 
-// ----------------------------------------------------------------------------
-// L2 line-level Detail Listings for Delivery Order / Sales Invoice / Delivery
-// Return. Same shape as /sales-order-detail-listing: flatten the header onto
-// every line, apply filter params, return { rows: [...] }.
-//
-//   DO  : delivery_order_items     joined with delivery_orders
-//   SI  : sales_invoice_items      joined with sales_invoices
-//   DR  : delivery_return_items    joined with delivery_returns
-//
-// Delivery Return has a `refund_sen` instead of revenue — surfaced as
-// `total_sen` so the column reuse is straightforward.
-//
-// FINANCE: none of these three SELECT a cost or margin column (DO/SI carry
-// unit_price/discount/tax/line_total, DR carries unit_price/refund) — all
-// selling-side money the customer's own document shows them. Audited row by row
-// against lib/finance-keys.ts; no strip is needed. Add one the moment a cost
-// column joins a SELECT here.
-//
-// SCOPE: DO + SI ARE row-scoped below, because delivery-orders-mfg.ts and
-// sales-invoices.ts row-scope their own list handlers — leaving the report open
-// would let a rep read through the report exactly what the module page denies
-// them. DR is deliberately NOT scoped: delivery-returns.ts does not row-scope
-// its own list either, so scoping only the report would invent a rule the DR
-// module does not have. That module-level gap is real and flagged in
-// BUG-HISTORY (fix/c1-reports) rather than half-fixed here.
-//   DR UPDATE (feat/dead-cells-and-returns, 2026-07-17): the Sales cohort is now
-//   DENIED this listing outright (salesJdDenial — the owner's returns rule, which
-//   /delivery-returns/* enforces at its mount and this router could not). That is
-//   a COHORT gate, not a row scope: the "who may open the DR module at all"
-//   question, answered the same way in both places. It does NOT close the scoping
-//   gap above — a non-Sales caller with scm.access still reads every DR row here,
-//   exactly as they read every DR row on the module page. Still one gap, still
-//   flagged, still not half-fixed.
-// ----------------------------------------------------------------------------
 
 type AnyRow = Record<string, unknown>;
 
@@ -437,8 +297,6 @@ const flattenJoin = (item: AnyRow, headerKey: string): AnyRow => {
     : ((rawHeader as AnyRow) ?? {});
   const flat: AnyRow = { ...item };
   delete flat[headerKey];
-  // Item columns win over header columns when both exist (line-level
-  // debtor_code etc.); fall through to header values otherwise.
   for (const [k, v] of Object.entries(h)) {
     if (k in flat && flat[k] != null && flat[k] !== '') continue;
     flat[k] = v;
@@ -446,7 +304,6 @@ const flattenJoin = (item: AnyRow, headerKey: string): AnyRow => {
   return flat;
 };
 
-/* ── Delivery Order Detail Listing ──────────────────────────────────── */
 reports.get('/delivery-order-detail-listing', async (c) => {
   const sb = c.get('supabase');
   const dateFrom    = c.req.query('dateFrom');
@@ -455,11 +312,8 @@ reports.get('/delivery-order-detail-listing', async (c) => {
   const debtorCode  = c.req.query('debtorCode');
   const itemCode    = c.req.query('itemCode');
 
-  /* Same own+downline scope the DO list handler applies (delivery-orders-mfg.ts
-     `.in('salesperson_id', scopeIds)`); resolved once, outside the pager. */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
 
-  // PostgREST's 1000-row cap silently truncated this listing — page through.
   const { data, error } = await paginateAll((pFrom, pTo) => {
     let q = sb
       .from('delivery_order_items')
@@ -478,7 +332,7 @@ reports.get('/delivery-order-detail-listing', async (c) => {
     if (itemCode)   q = q.ilike('item_code', `%${itemCode}%`);
     if (debtorCode) q = q.eq('delivery_orders.debtor_code', debtorCode);
     if (scopeIds)   q = q.in('delivery_orders.salesperson_id', scopeIds);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
+    q = scopeToCompany(q, c);
     return q.range(pFrom, pTo);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -486,7 +340,6 @@ reports.get('/delivery-order-detail-listing', async (c) => {
   const rows = ((data ?? []) as unknown as AnyRow[])
     .map((r) => {
       const flat = flattenJoin(r, 'delivery_orders');
-      // Normalise common field names used by the L2 page.
       flat.doc_no = flat.do_number;
       flat.line_date = flat.do_date;
       flat.total_sen = flat.line_total_sen ?? 0;
@@ -498,13 +351,11 @@ reports.get('/delivery-order-detail-listing', async (c) => {
       if (dateTo   && (!d || d > dateTo))   return false;
       return true;
     });
-  // The order's customer reference, for the listing's row search.
   await stampSoRefs(sb, rows, 'so_doc_no', (q) => scopeToCompany(q, c), 'do-detail-listing');
 
   return c.json({ rows });
 });
 
-/* ── Sales Invoice Detail Listing ───────────────────────────────────── */
 reports.get('/sales-invoice-detail-listing', async (c) => {
   const sb = c.get('supabase');
   const dateFrom    = c.req.query('dateFrom');
@@ -513,11 +364,8 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
   const debtorCode  = c.req.query('debtorCode');
   const itemCode    = c.req.query('itemCode');
 
-  /* Same own+downline scope the SI list handler applies (sales-invoices.ts
-     `.in('salesperson_id', scopeIds)`); resolved once, outside the pager. */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
 
-  // PostgREST's 1000-row cap silently truncated this listing — page through.
   const { data, error } = await paginateAll((pFrom, pTo) => {
     let q = sb
       .from('sales_invoice_items')
@@ -536,19 +384,11 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
     if (itemCode)   q = q.ilike('item_code', `%${itemCode}%`);
     if (debtorCode) q = q.eq('sales_invoices.debtor_code', debtorCode);
     if (scopeIds)   q = q.in('sales_invoices.salesperson_id', scopeIds);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
+    q = scopeToCompany(q, c);
     return q.range(pFrom, pTo);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  /* The deposit taken on the source SALES ORDER settles part of this invoice
-     (scm/lib/si-order-deposit). Resolved ONCE per distinct invoice — the join
-     above returns one row per LINE, so stamping per row would re-read the same
-     orders dozens of times — then subtracted from `balance_sen` below. Same
-     function the invoice list uses, so the report and the screen cannot drift.
-     A failed stamp leaves the slice at 0 and the balance UN-adjusted, which is
-     the only direction a report of what is owed may be wrong in. The credit
-     notes knocked off the invoice (si-credit-notes.ts) come off the same way. */
   const depositByInvoice = new Map<string, number>();
   const creditByInvoice = new Map<string, number>();
   {
@@ -571,9 +411,6 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
 
   const rows = ((data ?? []) as unknown as AnyRow[])
     .map((r) => {
-      // Capture header totals before flatten — line items have their own
-      // discount_sen / tax_sen, and the LINE values win in flatten, so the
-      // header values must be snapshotted up front for the outstanding calc.
       const headerRaw = r.sales_invoices as AnyRow | AnyRow[] | null;
       const headerObj: AnyRow = Array.isArray(headerRaw)
         ? ((headerRaw[0] as AnyRow) ?? {})
@@ -586,9 +423,7 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
       const flat = flattenJoin(r, 'sales_invoices');
       flat.doc_no = flat.invoice_number;
       flat.line_date = flat.invoice_date;
-      // Use the LINE total, not the header total, for revenue column on L2.
       flat.total_sen = flat.line_total_sen ?? 0;
-      // Outstanding = header total − header paid (per doc, repeated per line).
       flat.header_total_sen    = headerTotal;
       flat.header_paid_sen     = headerPaid;
       flat.header_discount_sen = headerDiscount;
@@ -606,13 +441,11 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
       if (dateTo   && (!d || d > dateTo))   return false;
       return true;
     });
-  // The order's customer reference, for the listing's row search.
   await stampSoRefs(sb, rows, 'so_doc_no', (q) => scopeToCompany(q, c), 'si-detail-listing');
 
   return c.json({ rows });
 });
 
-/* ── Delivery Return Detail Listing ────────────────────────────────── */
 reports.get('/delivery-return-detail-listing', async (c) => {
   /* THE SECOND DOOR TO DELIVERY RETURNS, and closing only the first would have
      been a fake close. /reports is mounted on the COARSE umbrella (scm/index.ts
@@ -635,7 +468,6 @@ reports.get('/delivery-return-detail-listing', async (c) => {
   const debtorCode  = c.req.query('debtorCode');
   const itemCode    = c.req.query('itemCode');
 
-  // PostgREST's 1000-row cap silently truncated this listing — page through.
   const { data, error } = await paginateAll((pFrom, pTo) => {
     let q = sb
       .from('delivery_return_items')
@@ -651,15 +483,13 @@ reports.get('/delivery-return-detail-listing', async (c) => {
     if (docNo)      q = q.ilike('delivery_returns.return_number', `%${docNo}%`);
     if (itemCode)   q = q.ilike('item_code', `%${itemCode}%`);
     if (debtorCode) q = q.eq('delivery_returns.debtor_code', debtorCode);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
+    q = scopeToCompany(q, c);
     return q.range(pFrom, pTo);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
   const rows = ((data ?? []) as unknown as AnyRow[])
     .map((r) => {
-      // Both line and header have refund_sen. Capture each explicitly
-      // before flattenJoin's "line wins" rule discards the header value.
       const lineRefund = Number(r.refund_sen ?? 0);
       const headerRaw = r.delivery_returns as AnyRow | AnyRow[] | null;
       const headerObj: AnyRow = Array.isArray(headerRaw)
@@ -672,8 +502,6 @@ reports.get('/delivery-return-detail-listing', async (c) => {
       flat.doc_no = flat.return_number;
       flat.line_date = flat.return_date;
       flat.total_sen = lineRefund;
-      // "Outstanding" for a return = pending payout (status not yet REFUNDED
-      // / CREDIT_NOTED / REJECTED).
       const headerStatus = String(flat.status ?? '');
       const settled = headerStatus === 'REFUNDED' || headerStatus === 'CREDIT_NOTED' || headerStatus === 'REJECTED';
       flat.balance_sen = settled ? 0 : headerRefund;
@@ -716,16 +544,12 @@ reports.get('/delivery-return-detail-listing', async (c) => {
 // would need to add resolveSalesScopeIds here, exactly as the listings above do.
 // ============================================================================
 
-/* Build the AuthUser-shaped caller the gate reads, from the REAL Houzs user the
-   bridge stashed (the scm `user` context is the pinned system staff row with no
-   position). Only position_name + permissions_set are read by the gate. */
 function fairCaller(c: { get(key: 'houzsUser'): Variables['houzsUser'] }): AuthUser | null {
   const hu = c.get('houzsUser');
   if (!hu) return null;
   return { position_name: hu.position_name ?? null, permissions_set: hu.permissions_set } as AuthUser;
 }
 
-/* The SO-header columns every stage needs — fair dims + the money split. */
 const FAIR_SO_COLS = `
   doc_no, so_date, ref, venue, venue_id, customer_state, salesperson_id, project_id, branding,
   local_total_sen, total_revenue_sen, deposit_sen,
@@ -750,7 +574,6 @@ type FairSoHeader = {
   total_cost_sen: number | null;
 };
 
-/* Read the `stage` + shared filter query params off the request. */
 function readFairFilters(c: { req: { query(k: string): string | undefined } }): FairFilters {
   const projectRaw = c.req.query('project');
   const project = projectRaw != null && projectRaw.trim() !== '' && Number.isFinite(Number(projectRaw)) ? Number(projectRaw) : null;
@@ -766,11 +589,6 @@ function readFairFilters(c: { req: { query(k: string): string | undefined } }): 
   };
 }
 
-/* Fetch the CONFIRMED SOs of a fair matching the filters. The single source of
-   truth for "which orders are in scope" — all three stages start here. With
-   `docNos` (each stage by its own date: the orders whose DOs / invoices fall in
-   the window) the orders are those numbers, every other filter as ever, and no
-   SO-date window. */
 async function fetchFairSos(
   c: any,
   filters: FairFilters,
@@ -788,19 +606,8 @@ async function fetchFairSos(
        out. */
     let q = sb.from('mfg_sales_orders').select(FAIR_SO_COLS).not('status', 'in', '(DRAFT,CANCELLED)');
     if (filters.project != null) q = q.eq('project_id', filters.project);
-    /* Filter by the venue TEXT, not venue_id. mfg_sales_orders.venue_id is a UUID
-       FK to the empty/unused scm.venues; the SO write path NULLs it for every
-       venue picked from public.project_venues (the modern New-SO path) and keeps
-       only the `venue` TEXT column, which routes/mfg-sales-orders.ts documents as
-       "the source of truth for the venue". So an eq on venue_id matched almost
-       nothing and the Venue dropdown built off it was always empty (BUG-HISTORY
-       2026-07-24). Match STATE/BRANDING: the dropdown lists distinct venue TEXT
-       and filters on it. */
     if (filters.venue)       q = q.eq('venue', filters.venue);
     if (filters.state)       q = q.eq('customer_state', filters.state);
-    /* NO branding predicate here: header branding is blank on nearly every SO
-       (the create form has no branding field), so an eq matched nothing. The
-       handler derives display branding after this fetch and filters there. */
     if (filters.salesperson) q = q.eq('salesperson_id', filters.salesperson);
     if (batch) q = q.in('doc_no', batch);
     if (from) q = q.gte('so_date', from);
@@ -816,10 +623,6 @@ async function fetchFairSos(
   return { rows: (data ?? []) as unknown as FairSoHeader[] };
 }
 
-/* Each stage by its own date: the SO numbers whose delivery orders (by the
-   date a DO row shows — delivered, else the DO's own date, as a day in
-   Malaysia) or sales invoices (by invoice date) fall in the window. A DO is
-   read on either of its dates, then held to the one its row shows. */
 async function stageDocNosInWindow(
   c: FairCtx,
   stage: 'do' | 'invoice',
@@ -860,13 +663,11 @@ async function stageDocNosInWindow(
   return { docNos: [...out] };
 }
 
-/** The day a Delivery Orders row is dated — what its Date column shows. */
 const doRowDay = (d: { do_date: string | null; delivered_at: string | null }): string | null => {
   const v = d.delivered_at ?? d.do_date;
   return v ? mytDateOf(v) : null;
 };
 
-/* Resolve salesperson uuid → staff.name for a set of ids (batched). */
 async function resolveStaffNames(c: any, ids: string[]): Promise<Map<string, string>> {
   const sb = c.get('supabase');
   const out = new Map<string, string>();
@@ -880,9 +681,6 @@ async function resolveStaffNames(c: any, ids: string[]): Promise<Map<string, str
   return out;
 }
 
-/* Resolve project_id (int) → { name, start_date, end_date } from the PUBLIC
-   schema (projects lives in public, not scm — read via c.env.DB, the same
-   binding createSalesOrderCore stamps the link from). */
 type ProjectMeta = { name: string | null; start_date: string | null; end_date: string | null };
 async function resolveProjects(c: any, ids: number[]): Promise<Map<number, ProjectMeta>> {
   const out = new Map<number, ProjectMeta>();
@@ -897,16 +695,10 @@ async function resolveProjects(c: any, ids: number[]): Promise<Map<number, Proje
       out.set(Number(p.id), { name: p.name ?? null, start_date: p.start_date ?? null, end_date: p.end_date ?? null });
     }
   } catch {
-    /* non-fatal — an unresolved project simply renders a null name (the SO's
-       own venue text still identifies the fair). Never block the report. */
   }
   return out;
 }
 
-/* Fetch the payment ledger for a set of SO doc_nos, grouped by doc_no.
-   `is_deposit` is carried, not dropped: soPaidSen needs it to decide whether the
-   header's legacy `deposit_sen` is already in the ledger. Dropping it here is
-   what would double-count every modern order's deposit. */
 type FairPaymentRow = PaymentRow & { is_deposit: boolean | null };
 async function fetchPaymentsByDoc(c: any, docNos: string[]): Promise<Map<string, FairPaymentRow[]>> {
   const sb = c.get('supabase');
@@ -929,7 +721,6 @@ async function fetchPaymentsByDoc(c: any, docNos: string[]): Promise<Map<string,
 const joinParts = (parts: Array<string | null | undefined>, sep: string): string | null =>
   parts.map((p) => p?.trim()).filter(Boolean).join(sep) || null;
 
-/* Shared "fair identity" columns emitted on every stage row. */
 function fairDims(
   h: FairSoHeader,
   staffNames: Map<string, string>,
@@ -950,11 +741,6 @@ function fairDims(
   };
 }
 
-/* Resolve a fair (project_id) → its brand and the brand's cost-rate card, both
-   from the PUBLIC schema via c.env.DB (project_cost_rates + projects live there,
-   the same binding resolveProjects + services/projectCostRates.ts read). A fair
-   whose project has no brand, or whose brand has no rate row, yields rate=null —
-   the P&L then reports zero overhead rather than blocking. Never throws. */
 async function resolveFairRate(c: any, projectId: number): Promise<{ brand: string | null; rate: FairCostRate | null }> {
   try {
     const proj = (await c.env.DB.prepare('SELECT brand FROM projects WHERE id = ?')
@@ -971,9 +757,6 @@ async function resolveFairRate(c: any, projectId: number): Promise<{ brand: stri
   }
 }
 
-/* The rate card's columns, and the brand a fair's card is looked up by (the
-   project's brand, trimmed; blank is none) — one rule for one fair and for
-   every fair. */
 const FAIR_RATE_COLS = `transport_pct, merchandise_pct, commission_normal_pct,
               commission_boost_pct, boost_min_gp_pct, boost_min_sales`;
 const fairBrandOf = (raw: string | null | undefined): string | null => (raw?.trim() ? raw.trim() : null);
@@ -986,11 +769,6 @@ const rateCard = (r: FairCostRate): FairCostRate => ({
   boost_min_sales: r.boost_min_sales,
 });
 
-/* resolveFairRate for every fair of the period at once — two reads, whatever
-   the number of fairs. Same rule, same fallback: a fair whose project has no
-   brand, whose brand has no card, or whose card cannot be read gets
-   rate=null, and its line shows zero overhead rather than blocking the
-   report. Never throws. */
 async function resolveFairRates(c: { env: Pick<Env, 'DB'> }, projectIds: number[]): Promise<Map<number, { brand: string | null; rate: FairCostRate | null }>> {
   const out = new Map<number, { brand: string | null; rate: FairCostRate | null }>();
   const uniq = Array.from(new Set(projectIds.filter((v) => Number.isFinite(v))));
@@ -1009,7 +787,6 @@ async function resolveFairRates(c: { env: Pick<Env, 'DB'> }, projectIds: number[
       for (const f of out.values()) f.rate = f.brand ? byBrand.get(f.brand) ?? null : null;
     }
   } catch {
-    /* As for one fair: the lines show without overhead rather than not at all. */
     for (const f of out.values()) f.rate = null;
   }
   return out;
@@ -1017,10 +794,6 @@ async function resolveFairRates(c: { env: Pick<Env, 'DB'> }, projectIds: number[
 
 type FairCtx = Context<{ Bindings: Env; Variables: Variables }>;
 
-/* Exported so the route test can drive the handler DIRECTLY on a bare Hono app
-   (injecting supabase + houzsUser + env.DB via its own middleware), without the
-   supabaseAuth bridge — which cannot run in the test harness. Registered on the
-   real router with supabaseAuth in front, below. */
 export const fairReportHandler = async (c: FairCtx) => {
   const stage = parseStage(c.req.query('stage'));
   if (!stage) return c.json({ error: 'The `stage` parameter is required and must be one of: so, do, invoice.' }, 400);
@@ -1047,12 +820,6 @@ export const fairReportHandler = async (c: FairCtx) => {
 
   const sb = c.get('supabase');
 
-  /* Header `branding` is blank on essentially every SO (the create form has
-     never had a branding field — see lib/derive-line-branding.ts), so the raw
-     column rendered a dash on every report row. Derive the display branding
-     the SO LIST shows (first MAIN line's brand -> catalog mattress fallback ->
-     bedframe-only "BEDFRAME"), and apply the branding FILTER against the
-     derived value — the old SQL eq on the raw header column matched nothing. */
   {
     /* "Blank" includes the book's PLACEHOLDER spellings — "NONE" sits on 170
        imported orders and is not a brand (owner 2026-08-31, HC-SO-013402). */
@@ -1083,16 +850,11 @@ export const fairReportHandler = async (c: FairCtx) => {
     date_basis: dateBasis,
   };
 
-  // ── stage=so ──────────────────────────────────────────────────────────────
   if (stage === 'so') {
     const payByDoc = await fetchPaymentsByDoc(c, soRows.map((r) => r.doc_no));
     const rows = soRows.map((h) => {
       const money = fairSoMoney(h);
       const payments = payByDoc.get(h.doc_no) ?? [];
-      /* PAID and BALANCE both come from the payment LEDGER, never from the
-         header's `paid_sen` / `balance_sen` columns — neither is maintained
-         (see fairBalanceSen and scm/shared/so-outstanding.ts). soPaidSen owns
-         the legacy-deposit rule so a modern order does not double-count it. */
       const paidTotal = soPaidSen(soPaidInputsOf(h as unknown as Record<string, unknown>,
         payments.reduce((s, p) => s + Number(p.amount_sen ?? 0), 0),
         payments.some((p) => p.is_deposit === true)));
@@ -1123,22 +885,11 @@ export const fairReportHandler = async (c: FairCtx) => {
     return c.json({ stage, rows, summary, filters: filtersEcho, meta: { access_tier: access.tier } });
   }
 
-  // ── stage=pnl ───────────────────────────────────────────────────────────────
-  // Per fair: revenue (confirmed SO amount) vs the three-way fulfillment cost
-  // (most-progressed booked stage per order) vs the project_cost_rates overhead.
-  // The per-order rows need a fair (project) so the per-brand rate card
-  // resolves to one row. With NO fair picked (owner 2026/11/02, the redesign's
-  // Sales report: shown without picking first) the answer keeps that shape —
-  // no rows, `needs_project` — and adds `fairs`: every fair with orders in the
-  // period, a line each, priced on its own card (lib everyFairPnl), plus
-  // `no_fair`, the period's orders that carry none.
   if (stage === 'pnl') {
     const everyFair = filters.project == null;
     const pnlSos = everyFair ? soRows.filter((r) => r.project_id != null) : soRows;
     const pnlDocNos = pnlSos.map((r) => r.doc_no);
 
-    // DO cost per SO — Σ COALESCE(ship_cost_sen, unit_cost_sen) × qty over
-    // the SO's delivery-order lines. Absent (null) when the SO has no DO.
     const doCostBySo = new Map<string, number>();
     if (pnlDocNos.length > 0) {
       const { data: doData, error: doErr } = await chunkIn(pnlDocNos, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
@@ -1171,8 +922,6 @@ export const fairReportHandler = async (c: FairCtx) => {
       }
     }
 
-    // SI (landed) cost per SO — Σ line cost over the SO's sales-invoice lines.
-    // Absent (null) when the SO has no SI.
     const siCostBySo = new Map<string, number>();
     if (pnlDocNos.length > 0) {
       const { data: siData, error: siErr } = await chunkIn(pnlDocNos, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
@@ -1244,8 +993,6 @@ export const fairReportHandler = async (c: FairCtx) => {
 
     const pickedFair = filters.project as number;
     const { brand, rate } = await resolveFairRate(c, pickedFair);
-    /* The fair itself, even when none of its orders falls in the dates — the
-       page then names it and offers its own dates. */
     const fairMeta = projects.get(pickedFair) ?? (await resolveProjects(c, [pickedFair])).get(pickedFair) ?? null;
 
     const rows = soRows.map((h) => {
@@ -1293,7 +1040,6 @@ export const fairReportHandler = async (c: FairCtx) => {
       filters: filtersEcho,
       meta: {
         access_tier: access.tier, needs_project: false, brand, rate_present: rate != null,
-        /* The card itself, so the page can say what the overhead is made of. */
         rate,
         fair: fairMeta
           ? { project_id: pickedFair, project: fairMeta.name, project_start_date: fairMeta.start_date, project_end_date: fairMeta.end_date }
@@ -1308,9 +1054,7 @@ export const fairReportHandler = async (c: FairCtx) => {
     return c.json({ stage, rows: [], summary, filters: filtersEcho, meta: { access_tier: access.tier } });
   }
 
-  // ── stage=do ──────────────────────────────────────────────────────────────
   if (stage === 'do') {
-    // DOs whose SO is in the fair (link by so_doc_no text — no FK to embed on).
     const { data: doData, error: doErr } = await chunkIn(docNos, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
       .from('delivery_orders')
       .select('id, do_number, so_doc_no, do_date, delivered_at, status, address1, address2, city, postcode, state, warehouse_id, sales_location')
@@ -1322,11 +1066,8 @@ export const fairReportHandler = async (c: FairCtx) => {
       address1: string | null; address2: string | null; city: string | null; postcode: string | null; state: string | null;
       warehouse_id: string | null; sales_location: string | null;
     }>;
-    /* Each stage by its own date: only the deliveries dated in the window — by
-       the day the row shows — not every delivery of the orders found. */
     const dos = ownDate ? doDocs.filter((d) => dayInWindow(doRowDay(d), window.from, window.to)) : doDocs;
 
-    // Same Location the Delivery Orders list shows: the DO's warehouse code, else its sales_location.
     const whById = new Map<string, { code: string | null; name: string | null }>();
     const whIds = [...new Set(dos.map((d) => d.warehouse_id).filter((x): x is string => !!x))];
     if (whIds.length > 0) {
@@ -1339,8 +1080,6 @@ export const fairReportHandler = async (c: FairCtx) => {
       for (const w of whData as Array<{ id: string; code: string | null; name: string | null }>) whById.set(w.id, w);
     }
 
-    // Their lines (cost), grouped per DO id. item_group / item_code tell the
-    // service lines apart: they are left out of the goods-only margin.
     const linesByDo = new Map<string, DoCostLine[]>();
     const doIds = dos.map((d) => d.id);
     if (doIds.length > 0) {
@@ -1374,17 +1113,12 @@ export const fairReportHandler = async (c: FairCtx) => {
         delivery_location: joinParts([d.city, d.state], ', '),
         delivery_address: joinParts([d.address1, d.address2, joinParts([d.postcode, d.city], ' '), d.state], ', '),
         qty: doCost.qty,
-        // The linked SO's amount (product + service) — same value the SO tab
-        // shows in its Amount column, so the two stages reconcile per SO.
         so_amount_sen: money ? money.amount_sen : null,
         total_so_cost_sen: totalSoCost,
         total_do_cost_sen: doCost.total_do_cost_sen,
         do_cost_is_legacy: doCost.is_legacy,
-        /* Stock left before any lot existed, so FIFO froze it at zero — the row
-           would otherwise read as a naked 100% margin (2990-DO-2607-021). */
         do_cost_ship_anyway: doCost.has_zero_frozen,
         cost_delta_sen: costDelta,
-        // Goods only, both sides over the SO's goods sales (see marginPct).
         so_margin_pct: money ? money.margin_pct : null,
         do_margin_pct: money ? marginPct(money.selling_sen, doCost.goods_do_cost_sen) : null,
       };
@@ -1393,9 +1127,6 @@ export const fairReportHandler = async (c: FairCtx) => {
     return c.json({ stage, rows, summary, filters: filtersEcho, meta: { access_tier: access.tier } });
   }
 
-  // ── stage=invoice ───────────────────────────────────────────────────────────
-  // SIs whose SO is in the fair. so_cost = SO total_cost; do_cost = the linked
-  // DO's cost; landed(SI) cost = Σ SI line cost.
   const { data: siData, error: siErr } = await chunkIn(docNos, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
     .from('sales_invoices')
     .select('id, invoice_number, so_doc_no, delivery_order_id, invoice_date, total_sen, status')
@@ -1403,11 +1134,8 @@ export const fairReportHandler = async (c: FairCtx) => {
     .range(pFrom, pTo));
   if (siErr) return c.json({ error: 'load_failed', reason: siErr.message }, 500);
   const siDocs = (siData ?? []) as Array<{ id: string; invoice_number: string; so_doc_no: string | null; delivery_order_id: string | null; invoice_date: string | null; total_sen: number | null; status: string | null }>;
-  /* Each stage by its own date: only the invoices dated in the window. */
   const sis = ownDate ? siDocs.filter((s) => dayInWindow(s.invoice_date ? s.invoice_date.slice(0, 10) : null, window.from, window.to)) : siDocs;
 
-  // SI line costs grouped per SI id. line_total / item_group / item_code give
-  // the goods side the margin is worked on.
   const siLinesById = new Map<string, SiGoodsLine[]>();
   const siIds = sis.map((s) => s.id);
   if (siIds.length > 0) {
@@ -1427,7 +1155,6 @@ export const fairReportHandler = async (c: FairCtx) => {
     }
   }
 
-  // DO cost for each linked delivery_order_id (for the do_cost column of the progression).
   const linkedDoIds = Array.from(new Set(sis.map((s) => s.delivery_order_id).filter((v): v is string => Boolean(v))));
   const doCostById = new Map<string, number>();
   if (linkedDoIds.length > 0) {
@@ -1474,14 +1201,6 @@ export const fairReportHandler = async (c: FairCtx) => {
 };
 reports.get('/fair-report', fairReportHandler);
 
-// ----------------------------------------------------------------------------
-// GET /reports/fair-report/:docNo — per-order DETAIL for the quick-view.
-// docNo = the SO doc_no. Gated exactly like stage=so (management OR Sales
-// Director — both are finance-viewers, so the per-line cost + deposit-by-tender
-// this returns are theirs to see). Returns order lines, cost-by-category,
-// deposit-by-tender (+ merchant bank / instalment plan), and the SO→DO→Invoice
-// linkage doc numbers.
-// ----------------------------------------------------------------------------
 export const fairReportDetailHandler = async (c: FairCtx) => {
   const access = fairReportAccess('so', fairCaller(c));
   if (!access.allowed) return c.json({ error: access.error }, 403);
@@ -1495,8 +1214,6 @@ export const fairReportDetailHandler = async (c: FairCtx) => {
   if (!headerData) return c.json({ error: 'Sales Order not found.' }, 404);
   const h = headerData as unknown as FairSoHeader;
 
-  /* Same display-branding derivation as the list handler above, so the
-     quick-view drawer agrees with the row it was opened from. */
   if (!h.branding || !String(h.branding).trim()) {
     const derived = await deriveDisplayBrandingByDoc(sb, c, [h.doc_no]);
     h.branding = derived.get(h.doc_no) ?? h.branding;
@@ -1505,7 +1222,6 @@ export const fairReportDetailHandler = async (c: FairCtx) => {
   const staffNames = await resolveStaffNames(c, h.salesperson_id ? [h.salesperson_id] : []);
   const projects = await resolveProjects(c, h.project_id != null ? [h.project_id] : []);
 
-  // Order lines — item, qty, unit sell, amount, unit cost, line cost.
   const { data: itemData, error: iErr } = await paginateAll((pFrom: number, pTo: number) => scopeToCompany(sb
     .from('mfg_sales_order_items')
     // item_group + variants + description2 carry the VARIANT summary so the
@@ -1523,11 +1239,8 @@ export const fairReportDetailHandler = async (c: FairCtx) => {
     unit_cost_sen: r.unit_cost_sen, line_cost_sen: r.line_cost_sen,
     cancelled: r.cancelled,
   }));
-  // Stamp each line's supplier fabric code so the Fair Report line reads
-  // "BF-01 (PC151-01)" too — same enrichment the SO/PO/DO/SI detail endpoints do.
   await enrichLinesWithFabricSupplierCode(sb, c, lines);
 
-  // Deposit-by-tender + merchant bank / plan.
   const { data: payData, error: pErr } = await paginateAll((pFrom: number, pTo: number) => scopeToCompany(sb
     .from('mfg_sales_order_payments')
     .select('method, amount_sen, merchant_provider, installment_months, approval_code, paid_at, is_deposit')
@@ -1535,15 +1248,12 @@ export const fairReportDetailHandler = async (c: FairCtx) => {
     .range(pFrom, pTo));
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
   const payments = (payData ?? []) as Array<{ method: string | null; amount_sen: number | null; merchant_provider: string | null; installment_months: number | null; approval_code: string | null; paid_at: string | null; is_deposit: boolean | null }>;
-  /* Same ledger rule as the list — the header's balance_sen/paid_sen columns
-     are not maintained (fairBalanceSen, scm/shared/so-outstanding.ts). */
   const paidTotal = soPaidSen(soPaidInputsOf(h as unknown as Record<string, unknown>,
     payments.reduce((s, p) => s + Number(p.amount_sen ?? 0), 0),
     payments.some((p) => p.is_deposit === true)));
   const money = fairSoMoney(h);
   const balanceSen = fairBalanceSen(money.amount_sen, paidTotal);
 
-  // SO → DO → Invoice linkage doc numbers.
   const { data: doData } = await scopeToCompany(sb
     .from('delivery_orders').select('do_number').eq('so_doc_no', docNo), c);
   const { data: siData } = await scopeToCompany(sb

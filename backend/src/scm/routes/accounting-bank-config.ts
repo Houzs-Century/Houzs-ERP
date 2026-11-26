@@ -33,8 +33,6 @@ const guard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promis
 
 const ROLES = ['date', 'description', 'reference', 'amount', 'debit', 'credit', 'indicator', 'balance', 'valueDate'] as const;
 
-/** A heading list from whatever the screen sent — a string, a comma-separated
-    string, or an array — trimmed, deduplicated, empties dropped. */
 const headings = (raw: unknown): string[] => {
   const list = Array.isArray(raw) ? raw : String(raw ?? '').split(',');
   const out: string[] = [];
@@ -45,9 +43,6 @@ const headings = (raw: unknown): string[] => {
   return out;
 };
 
-/* ── GET /bank/config — this company's statement accounts, and the built-in
-   headings the reader knows, so the screen can show what a blank role falls
-   back to. ───────────────────────────────────────────────────────────────── */
 export const bankConfigList = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -56,7 +51,6 @@ export const bankConfigList = guard(async (c) => {
   return c.json({ configs: cfgs.configs, defaultHeadings: DEFAULT_HEADINGS });
 });
 
-/* ── POST /bank/config — add or change one account's statement setup ──────── */
 export const bankConfigSave = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -66,8 +60,6 @@ export const bankConfigSave = guard(async (c) => {
 
   const accountCode = String(body.accountCode ?? '').trim();
   if (!accountCode) return c.json({ error: 'account_required', message: 'Pick the bank account this statement belongs to.' }, 400);
-  /* A statement is reconciled against a MONEY account of THIS company's chart —
-     never a name, never another company's code. */
   const { data: acct, error: aErr } = await sb.from('accounts')
     .select('account_code, account_name, acc_money, is_active')
     .eq('company_id', co.companyId).eq('account_code', accountCode).maybeSingle();
@@ -100,8 +92,6 @@ export const bankConfigSave = guard(async (c) => {
     const list = headings(rawMap[role]);
     if (list.length > 0) columnMap[role] = list;
   }
-  /* A config may leave every role to the reader's built-in names; what it
-     cannot do is name an amount BOTH ways — one column or a pair, not both. */
   if (columnMap.amount && (columnMap.debit || columnMap.credit)) {
     return c.json({ error: 'amount_both_ways', message: 'Name either one signed amount column, or a money-in and a money-out column — not both.' }, 400);
   }

@@ -8,7 +8,6 @@ import { hasPermission, hasPermissionLiterally } from "./permissions";
  * pages while the IT Admin role tries them. Set it true at launch and the gate
  * behaves like every other permission gate.
  */
-// ponytail: temporary launch switch; delete it and call hasPermission directly once the IT pages open to Owner.
 export const IT_PAGES_WILDCARD_PASSES: boolean = true;
 
 export function canViewItPages(granted: ReadonlyArray<string> | ReadonlySet<string>): boolean {

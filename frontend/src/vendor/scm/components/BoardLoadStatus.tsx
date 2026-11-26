@@ -1,8 +1,3 @@
-/* One line under a board's header: when its data was last loaded ("Updated
-   14:32", Malaysia time) and, while date bands are still arriving, which one is
-   loading; a band that failed says so and offers Retry. Refresh re-reads every
-   band at once (board-change-poll.ts). Shared by Delivery
-   Planning, Last Mile and Logistic Overview (desktop and the phone shell). */
 import { fmtDateTime } from '../../shared/format';
 import type { BandedBoard } from '../lib/delivery-board-bands';
 

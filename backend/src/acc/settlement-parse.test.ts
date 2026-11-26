@@ -1,8 +1,3 @@
-// What this file pins: a statement the system cannot read is REFUSED with a
-// reason, never parsed into zero silent rows (§2.14); the acquirer's config —
-// not the code — decides which column is which and how the fee is presented;
-// and a prorated fee adds up to the total the acquirer actually charged, to
-// the sen, because a rounding leftover would sit in 320-0000 forever.
 
 import { describe, it, expect } from 'vitest';
 import { cardTotalsOf, parseStatement, splitCsvLine, toSen, toIsoDate, type ParseConfig, type ParsedRow } from './settlement-parse';
@@ -68,11 +63,6 @@ describe('parseStatement — refusals are loud and name what is wrong', () => {
     expect((r as { reason: string }).reason).toMatch(/The file starts: Date, Amount/);
   });
 
-  /* Two failures the owner hit on the demo rig, both invisible to him:
-     Excel stamps a BOM on every CSV it saves, which glued itself to the first
-     heading; and the refusal that would have explained it was being replaced
-     with "some details weren't accepted" by the frontend's shared
-     humanApiError, because it contained the word "column". */
   it('a file Excel re-saved (with a BOM) still reads', () => {
     const r = parseStatement(baseCfg(), `﻿${CSV(
       'Txn Date,Approval Code,Gross,MDR',
@@ -84,9 +74,6 @@ describe('parseStatement — refusals are loud and name what is wrong', () => {
   });
 
   it('every refusal survives the frontend error humaniser', () => {
-    /* The shared humanApiError drops any message that looks like a database
-       internal, or runs past 200 characters. A refusal nobody can read is the
-       silence §2.14 exists to prevent, so the wording is part of the contract. */
     const swallowed = /violates|constraint|null value|column|relation|syntax|PGRST|error_code|\b\d{5}\b/i;
     const refusals = [
       parseStatement(baseCfg({ statement_format: null }), 'x'),
@@ -110,11 +97,6 @@ describe('parseStatement — refusals are loud and name what is wrong', () => {
     expect((r as { reason: string }).reason).toMatch(/empty|No transaction lines/i);
   });
 
-  /* Found on the demo rig with a realistic MBB export: the file ends
-     `,,TOTAL,6077.00,91.16` — no date, but a perfectly readable amount. The
-     first cut skipped a line only when BOTH failed, so the whole upload was
-     refused for a summary row. A dateless row cannot be a transaction; it is
-     skipped, and COUNTED, so "some rows were dropped" is never a guess. */
   it('a totals row with a readable amount is skipped and counted, not refused', () => {
     const r = parseStatement(baseCfg(), CSV(
       'Txn Date,Approval Code,Card,Gross,MDR',
@@ -128,13 +110,6 @@ describe('parseStatement — refusals are loud and name what is wrong', () => {
     expect(r.grossSen).toBe(100000);
   });
 
-  /* This rule CHANGED once real statements arrived. A row whose date column
-     holds something that is not a date used to stop the parse — but that is
-     exactly what a statement's summary rows look like ("SALES & MANUAL
-     POSTINGS, , , , , 3500.00, …"), and one file can carry a dozen of them.
-     They are skipped and counted now. The protection that matters survives: a
-     file with no readable transaction at all is still REFUSED, never shown as
-     an empty batch. */
   it('a file whose rows are all furniture is still refused, not shown empty', () => {
     const r = parseStatement(baseCfg(), CSV(
       'Txn Date,Approval Code,Gross,MDR',
@@ -212,10 +187,6 @@ describe('parseStatement — the three fee methods', () => {
   });
 });
 
-/* The shapes of the OWNER'S ACTUAL EXPORTS, read off the files he uploaded on
-   2026-08-17. Everything above was written against invented statements, and
-   every one of these cases is something a real file does that an invented one
-   did not — which is why all three of his uploads were refused. */
 describe('parseStatement — the real terminal statements', () => {
   const MAYBANK = [
     'MERCHANT NO:,00000000000,,,TRADING NAME:,DEMO',
@@ -242,7 +213,6 @@ describe('parseStatement — the real terminal statements', () => {
     if (!r.ok) return;
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0]).toMatchObject({ txnDate: '2026-06-05', ref: '454919', grossSen: 570000, feeSen: 25650, netSen: 544350 });
-    // Preamble + the batch total + the footnote, all counted, none silent.
     expect(r.skippedLines).toBe(8);
   });
 
@@ -253,10 +223,6 @@ describe('parseStatement — the real terminal statements', () => {
     expect((r as { reason: string }).reason).toMatch(/05-Jun/);
   });
 
-  /* The real Hong Leong export: TWO merchant blocks in one file, each opening
-     with its own SUMMARY whose rows carry prose in the date column and money in
-     the money column. Refusing those made every multi-merchant statement
-     unreadable — this is the case that proved it. */
   it('reads a file holding several MERCHANT blocks, each with its own summary', () => {
     const twoMerchants = [
       'MERCHANT NO:,00005407101,,,TRADING NAME:,DEMO',
@@ -280,7 +246,6 @@ describe('parseStatement — the real terminal statements', () => {
     if (!r.ok) return;
     expect(r.rows.map((x) => x.ref)).toEqual(['663554', '448433']);
     expect(r.grossSen).toBe(180000 + 350000);
-    // Everything that is not a transaction is counted, never silently dropped.
     expect(r.skippedLines).toBeGreaterThan(0);
   });
 
@@ -318,13 +283,10 @@ describe('parseStatement — the real terminal statements', () => {
     ].join('\n'));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    // The fee is printed NEGATIVE and the id wears Excel's text-guard quote.
     expect(r.rows[0]).toMatchObject({ txnDate: '2026-06-02', ref: '615318040666', grossSen: 286500, feeSen: 11460, netSen: 275040 });
   });
 });
 
-/* The 2990 HOME acquirer — a THIRD layout again, and the one that nearly cost
-   real money: its "MDR" column is the RATE (0.85 = 0.85%), not the amount. */
 describe('parseStatement — the rate-not-amount trap', () => {
   const STATEMENT = [
     '"Sett_date","Trans_date","Card_no","Card_type","Trans_amt","Sett_amt","MDR","Approval_code"',
@@ -349,16 +311,11 @@ describe('parseStatement — the rate-not-amount trap', () => {
       column_map: { date: 'Trans_date', ref: 'Approval_code', gross: 'Trans_amt', fee: 'MDR', net: 'Sett_amt' },
     }, STATEMENT);
     expect(r).toMatchObject({ ok: false });
-    // Names the numbers AND the fix, instead of booking RM 0.85 as the charge.
     expect((r as { reason: string }).reason).toMatch(/944\.15.*936\.97|936\.97/);
     expect((r as { reason: string }).reason).toMatch(/gross minus net/);
   });
 });
 
-/* AEON's instalment statement charges a SUBVENTION FEE against the statement,
-   not against any transaction — and it is 3.5x the fee the transaction line
-   shows. Booking the lines would leave that money stranded in 320-0000 for ever
-   and understate the true cost of an instalment sale (5.4%, not 1.2%). */
 describe('parseStatement — a charge that belongs to no transaction', () => {
   const AEON = [
     'SETTLEMENT DATE :,14/08/2026',
@@ -383,10 +340,9 @@ describe('parseStatement — a charge that belongs to no transaction', () => {
     const r = parseStatement(aeonCfg({ total_net_label: 'TOTAL NET PAYMENT (RM) :' }), AEON);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.netSen).toBe(592800);          // what the lines come to
-    expect(r.statedNetSen).toBe(567384);    // what AEON actually pays
-    expect(r.adjustmentSen).toBe(25416);    // the charge with no transaction behind it
-    // The per-line figures are left alone — the charge belongs to no line.
+    expect(r.netSen).toBe(592800);
+    expect(r.statedNetSen).toBe(567384);
+    expect(r.adjustmentSen).toBe(25416);
     expect(r.rows[0].netSen).toBe(592800);
   });
 
@@ -414,11 +370,6 @@ describe('parseStatement — a charge that belongs to no transaction', () => {
   });
 });
 
-/* Maybank's CSV export. Its transaction line carries NO fee at all — only the
-   gross and an interchange figure — and the MDR is stated once, on a TOTAL row
-   under a summary table with its own headings. Reading it from the file rather
-   than asking the operator to copy it removes the number most likely to be
-   mistyped, on the largest acquirer of the lot. */
 describe('parseStatement — a fee stated once, in the statement summary', () => {
   const MAYBANK = [
     'Credit Card Transactions',
@@ -427,7 +378,6 @@ describe('parseStatement — a fee stated once, in the statement summary', () =>
     'Card Number,,Amount,,Tran Date,,Auth Code,,Tran ID,,Reference No,,Terminal No.,,Card Type.,,Interchange Fee,',
     '429320******3105,,2300.00,,14/08/26,,861777,,40,,000246,,38210103,,VISA CR LOCAL,,13.80,',
     'Total Amount,:,2300.00,,Items,:,1',
-    // An earlier TOTAL closes the withheld/rejected block — not the one we want.
     'TOTAL,,,,0.00,,0.00,,0.00,,0.00',
     ',,,,Gross Amt,,CashBack Amt,,Total After CashBack,,Disc Rate,,Disc. Amt,,Net Amount,,Trnx Count,,Interchange Fee',
     'TOTAL,,,,+2300.00,,+0.00,,+0.00,,,,+23.00,,+2277.00,,1,,+13.80',
@@ -446,7 +396,6 @@ describe('parseStatement — a fee stated once, in the statement summary', () =>
     if (!r.ok) return;
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0]).toMatchObject({ txnDate: '2026-08-14', ref: '861777', grossSen: 230000, feeSen: 2300, netSen: 227700 });
-    // And the net on the same row proves the arithmetic against the statement.
     expect(r.statedNetSen).toBe(227700);
     expect(r.adjustmentSen).toBe(0);
   });
@@ -455,7 +404,6 @@ describe('parseStatement — a fee stated once, in the statement summary', () =>
     const r = parseStatement(mbbCfg(), MAYBANK);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    // The earlier TOTAL reads 0.00; taking it would book no fee at all.
     expect(r.feeSen).toBe(2300);
   });
 
@@ -478,7 +426,6 @@ describe('toIsoDate — the year rule', () => {
     expect(toIsoDate('05-Jun')).toBeNull();
     expect(toIsoDate('05-Jun-2025')).toBe('2025-06-05');
     expect(toIsoDate('05-06-25')).toBe('2025-06-05');
-    // Eight packed digits, both ways round, and a shape that is neither.
     expect(toIsoDate('17062026')).toBe('2026-06-17');
     expect(toIsoDate('20260617')).toBe('2026-06-17');
     expect(toIsoDate('99999999')).toBeNull();
@@ -587,9 +534,6 @@ describe('parseStatement — Hong Leong DuitNow QR lines', () => {
   });
 });
 
-/* A report's head is what the acquirer pays THROUGH ITS CLEARING ACCOUNT. QR
-   money is already in the bank by the sale itself, so it never joins that
-   total — not the gross, the fee, the net, nor the net the file states. */
 describe('cardTotalsOf', () => {
   const ok = (rows: Array<Partial<ParsedRow> & { grossSen: number; netSen: number }>, statedNetSen: number | null = null) => ({
     ok: true as const,

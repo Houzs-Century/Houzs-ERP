@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// journal-document — the document a journal entry was written from, found so
-// the entry card can open it (the owner's redesign, batch 6 owner question g3:
-// a document's entry is corrected through its document, so its card offers
-// "Open <document>" and nothing that posts). An entry names its source by
-// NUMBER; the document pages open by id, so the number is read back to its row
-// here — one company-scoped read, two for a payment.
-//
-//   SI / SIPAY      the sales invoice (a payment on an invoice: its invoice)
-//   SOPAY / SOCONV  the sales order the payment sits on (it opens by number)
-//   PI · API · PV   the purchase invoice, the AP invoice, the voucher
-//   CN DN OCN · SCN the customer / other-debtor note, or the supplier's
-//   anything else   none — a card settlement, a stock close, a manual journal
-// A reversal (…_REVERSAL) opens its original's document. Reads only.
-// ----------------------------------------------------------------------------
 
 type Db = any;
 
@@ -22,7 +7,6 @@ export type JournalDocumentResult = { ok: true; document: JournalDocument | null
 
 const NONE: JournalDocumentResult = { ok: true, document: null };
 
-/** One row of `table` whose `keyCol` is `key`, in the company. */
 async function one(sb: Db, companyId: number, table: string, keyCol: string, key: string, cols: string): Promise<{ ok: true; row: Record<string, unknown> | null } | { ok: false; reason: string }> {
   const { data, error } = await sb.from(table).select(cols).eq('company_id', companyId).eq(keyCol, key).limit(1);
   if (error) return { ok: false, reason: `${table}: ${String(error.message ?? error)}` };

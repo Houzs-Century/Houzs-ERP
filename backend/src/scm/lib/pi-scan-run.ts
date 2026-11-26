@@ -1,23 +1,3 @@
-// ---------------------------------------------------------------------------
-// pi-scan-run — the headless pipeline for a supplier-INVOICE scan: read the
-// invoice, anchor it to our OPEN Goods Receipt(s), and convert those receipt
-// lines into a DRAFT Purchase Invoice. The PI MIRROR of runScanJob in
-// routes/scan-so.ts, sharing the SAME scan_jobs lifecycle, R2 bucket, queue and
-// learning table — only the document is different.
-//
-// SAFETY (non-negotiable, tasks/PLAN-ocr-scan-gr-pi.md):
-//   · ONLY ever creates a DRAFT / unposted PI (books no AP, consumes no GRN
-//     qty). The DRAFT is raised by createDraftPiFromGrnItems (slice 4), which is
-//     draft-only by construction.
-//   · CONVERT, NEVER STANDALONE. Every line billed is a line of a matched GRN;
-//     if the invoice cannot be anchored to a received GRN (no DO/PO match, or no
-//     line codes match), NO PI is created — the job lands a needs-review notice
-//     for the operator to bill the GRN by hand. It never guesses a link.
-//
-// Runs from the queue consumer (processScanQueueMessage) and the stale-job
-// reaper, both in routes/scan-so.ts, which rebuild the identity + photos from
-// the durable scan_jobs row + R2 and dispatch here when document_type='PI'.
-// ---------------------------------------------------------------------------
 
 import type { Env } from '../env';
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
@@ -59,18 +39,13 @@ const MSG = {
 
 export type PiScanJob = {
   id: string;
-  /** scm.staff UUID captured at enqueue — stamped created_by on the PI. */
   userId: string;
-  /** public users bigint — the audit WHO and the notice target. */
   houzsUserId: number | null;
-  /** ACTIVE company captured on the scan_jobs row. null = legacy / unresolved. */
   companyId: number | null;
   fileBlocks: ContentBlock[];
   uploadedImages: UploadedImage[];
   firstBuffer: ArrayBuffer | null;
   imageKeys: string[];
-  // A check-first scan (scan-pi-check.ts): keep the read for the operator to
-  // check and edit instead of minting the draft.
   review: boolean;
 };
 
@@ -103,9 +78,6 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
       userIds: [job.houzsUserId], category, title, body, source: 'scan', expiresDays: 7,
     });
   };
-  // A needs-review outcome is NOT a failure: the operator's scan card shows the
-  // note, and they bill the GRN by hand. No PI, no wrong link. (A hard system
-  // fault uses fail() below and asks them to scan again.)
   const needsReview = async (msg: string): Promise<void> => {
     await touch({ status: 'done', error: msg });
     await notice('WARNING', 'Invoice scan needs review', msg);
@@ -123,13 +95,11 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
       return await fail(MSG.noKey);
     }
 
-    // 1) READ the invoice (one Claude vision call, confirmed-read few-shot pool).
     const fewShot = await loadPiFewShot(svc);
     const call = await callClaudePiExtract(apiKey, fewShot, job.fileBlocks,
       { env, feature: 'scan_pi', model: CLAUDE_MODEL, companyId: job.companyId, userId: job.houzsUserId, waitUntil: null });
     const parsed = call.parsed;
 
-    // 2) Learning sample + invoice image (best-effort — never blocks the draft).
     const sampleId = await insertPiScanSample(svc, parsed, call.errorMsg, call.claudeText);
     if (sampleId) await touch({ sample_id: sampleId });
     await storePiScanImage(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages);
@@ -145,21 +115,13 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
       return await needsReview(MSG.unreadable);
     }
 
-    // 3) ANCHOR the invoice to our GRN(s) by DO No / PO No — the safety gate.
     const anchors = await findAnchorGrns(svc, parsed, job.companyId);
     if (anchors.length === 0) return await needsReview(MSG.noAnchor);
 
-    // 4) Load the anchored GRNs' outstanding lines + the supplier Article-No map,
-    // 5) and MATCH invoice lines -> GRN lines, the printed PO's lines first.
     const bindingBySku = await loadSupplierBindings(svc, anchors, job.companyId);
     const { match, tier } = await matchAnchoredLines(svc, parsed, anchors, job.companyId, bindingBySku);
     if (match.picks.length === 0) return await needsReview(MSG.noLines);
 
-    // 6) CONVERT the matched picks into a DRAFT PI (draft-only, always linked to
-    //    the source GRN(s)). companyCode is left null: the headless path mints
-    //    the base HC- prefix exactly as the SO scanner's create does (a scan is
-    //    Houzs-native), and the source GRN read is still company-scoped by
-    //    companyId inside the core.
     const res = await createDraftPiFromGrnItems(env, {
       userId: job.userId,
       houzsUserId: job.houzsUserId,
@@ -176,8 +138,6 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
     });
 
     if (!res.ok) {
-      // The convert refused (over-invoice race, migrated-source guard, load
-      // error). Its reasons are plain sentences; surface one and leave no doc.
       const reason =
         (typeof res.body.message === 'string' && res.body.message) ||
         (typeof res.body.reason === 'string' && res.body.reason) ||
@@ -186,17 +146,13 @@ export async function runPiScanJob(env: Env, job: PiScanJob): Promise<void> {
       return await needsReview(reason);
     }
     if (res.created.length === 0) {
-      // Every bucket rolled back (all picks over-billed a sibling draft). No doc.
       return await needsReview(MSG.noLines);
     }
 
     const docNos = res.created.map((d) => d.invoiceNumber);
     const grnNumbers = [...new Set(res.created.flatMap((d) => d.grnNumbers))];
-    // linked_doc_no is the generic "the document this scan produced" column
-    // (mig 20260919T1000). PI writes only it (so_doc_no stays SO-only).
     await touch({ status: 'done', linked_doc_no: docNos.join(', ') });
 
-    // 7) Tell the operator, and name anything left to review (unmatched lines).
     const reviewNote = summarizeUnmatched(match.unmatched.length, parsed);
     const body = [
       `Draft supplier invoice ${docNos.join(', ')} was created from Goods Receipt ${grnNumbers.join(', ')}. `
@@ -247,9 +203,7 @@ export async function reviewOfPiRead(svc: SupabaseClient, companyId: number | nu
   return { review, note };
 }
 
-/** The rows the rules left untied, put to the AI in one call; printed row -> our SKU. */
 async function askAi(ai: AiSkuMatcher | null, review: PiReview, open: ReadonlyArray<BillableLine>): Promise<Map<string, string>> {
-  // A row printed at RM 0 can only bill a free receipt line: with none open, nothing to ask.
   const anyFree = open.some((o) => o.unitPriceSen === 0);
   const untied = review.lines.filter((l) => !l.grnItemId && l.read && (l.read.itemCode || l.read.description) && (anyFree || !isFreePrice(l.read.unitPrice, l.read.lineTotal)));
   if (!ai || untied.length === 0 || open.length === 0) return new Map();
@@ -281,11 +235,6 @@ function summarizeUnmatched(count: number, _parsed: PiScanExtract): string | nul
     : `${count} invoice lines did not match the receipt and were left off — add them on the draft if needed.`;
 }
 
-// ---------------------------------------------------------------------------
-// Reads — all company-scoped by the active company id (the tenant boundary on a
-// service-role client). Kept small and targeted (the anchored GRNs only), not a
-// company-wide outstanding sweep.
-// ---------------------------------------------------------------------------
 
 /** Find the POSTED, not-held GRN(s) this invoice is for: DO No against
  *  delivery_note_ref (strongest), then grn_number, then PO No against
@@ -331,8 +280,6 @@ export async function findAnchorGrns(
     };
   });
 
-  // DO No is the strongest anchor (one D.O. = one GRN). Prefer it; fall back to
-  // PO No (which may name several GRNs — multi-GR -> one PI is supported).
   const refs = docRefsOf(doNo);
   const byDo = rows.filter((g) => refs.some((d) => docRefMatches(d, g.delivery_note_ref) || docRefMatches(d, g.grn_number)));
   if (byDo.length > 0) return byDo;
@@ -344,13 +291,6 @@ export async function findAnchorGrns(
     || (linePoNumbers.get(g.id) ?? []).some((n) => docRefMatches(p, n))));
 }
 
-/* One goods receipt can take lines from several POs (the add-PO picker,
-   `/from-po-items`) and grns.purchase_order_id names only the first, so an
-   invoice for a later PO of that receipt never matched its header. Each line's
-   PO comes through its purchase_order_item_id, resolved by the same reader the
-   Bill-a-GRN picker uses. null when a read fails: anchoring on the header alone
-   would bill a subset of the receipts the invoice names, so the scan stops at
-   needs-review instead. */
 async function loadLinePoNumbersByGrn(
   svc: SupabaseClient,
   grnIds: string[],
@@ -381,9 +321,6 @@ async function loadLinePoNumbersByGrn(
   return out;
 }
 
-/** Resolve the invoice's supplier to a suppliers.id (by code, then name),
- *  company-scoped. null when unresolvable — the anchor read then runs unnarrowed
- *  by supplier and relies on the DO/PO number alone. */
 async function resolveSupplierId(
   svc: SupabaseClient,
   parsed: PiScanExtract,
@@ -393,8 +330,6 @@ async function resolveSupplierId(
     let q = svc.from('suppliers').select('id').ilike(col, val).limit(1);
     if (companyId != null) q = q.eq('company_id', companyId);
     const { data, error } = await q.maybeSingle();
-    // A read failure degrades to "supplier unresolved" (the anchor read then
-    // relies on the DO/PO number alone) — never a false "no such supplier".
     if (error) return null;
     return ((data as { id?: string } | null)?.id as string | undefined) ?? null;
   };
@@ -405,8 +340,6 @@ async function resolveSupplierId(
   if (!parsed.supplierName) return null;
   const byName = await tryOne('name', parsed.supplierName.trim());
   if (byName) return byName;
-  // HOOKKA INDUSTRIES SDN BHD on the paper is HOOKKA INDUSTRIES SDN. BHD. in the
-  // master: punctuation and the company tail aside, and only one supplier fitting.
   try {
     const suppliers = await loadSuppliers(svc, companyId);
     const named = suppliers.flatMap((s) => (s.name ? [{ id: s.id, code: s.code, name: s.name }] : []));
@@ -442,9 +375,6 @@ export async function matchAnchoredLines(
   return { match: matchInvoiceLinesToGrnLines(parsed.lines, all, bindingBySku), tier: 'whole_receipt' };
 }
 
-/** The anchored GRNs' outstanding lines (remaining-to-bill > 0), each with its
- *  own PO (the receipt header's PO for a line with no PO link; null when the
- *  PO read failed, so no line counts as the printed PO's). */
 async function loadGrnLinesForAnchors(
   svc: SupabaseClient,
   anchors: AnchorGrn[],
@@ -495,9 +425,6 @@ async function loadGrnLinesForAnchors(
   return out;
 }
 
-/** What this supplier's codes name of ours — model words and model prefixes —
- *  from its bindings, the codes the scanner learned and the lines waiting to be
- *  billed. A failed read costs a suggestion, never a wrong link. */
 async function loadSupplierCodes(
   svc: SupabaseClient,
   supplierId: string | null,
@@ -516,8 +443,6 @@ async function loadSupplierCodes(
   return of();
 }
 
-/** supplier_material_bindings.supplier_sku -> item_code for the anchored GRNs'
- *  supplier(s), so a printed Article No that differs from our code still maps. */
 async function loadSupplierBindings(
   svc: SupabaseClient,
   anchors: AnchorGrn[],
@@ -543,11 +468,6 @@ async function loadSupplierBindings(
   return map;
 }
 
-// ---------------------------------------------------------------------------
-// Learning sample + image provenance — the PI slice of the shared so_scan_samples
-// pool (document_type='PI'). The DRAFT->POSTED transition promotes / corrects it
-// (notePiScanAccepted). Both writes are best-effort and never block the draft.
-// ---------------------------------------------------------------------------
 
 async function insertPiScanSample(
   svc: SupabaseClient,
@@ -577,8 +497,6 @@ async function insertPiScanSample(
   }
 }
 
-/** Store the FIRST uploaded image as the invoice proof under scan-slips/{sampleId}
- *  (image_key), served back by GET /scan-pi/slip-image. */
 async function storePiScanImage(
   bucket: Env['SO_ITEM_PHOTOS'] | undefined,
   svc: SupabaseClient,

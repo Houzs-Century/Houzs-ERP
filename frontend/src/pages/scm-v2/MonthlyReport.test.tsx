@@ -17,7 +17,6 @@ type Data = { period: string; lines: FlatLine[] };
 const line = (id: string, label: string, amountSen: number, pct: number | null, depth = 1, kind: FlatLine['kind'] = 'row'): FlatLine =>
   ({ id, label, kind, depth, amountSen, pct });
 
-/* Three months of a tiny P&L; ADVERT was booked in August alone. */
 const DATA: Partial<Record<string, Data>> = {
   '2026-07-01..2026-09-30': { period: 'cumulative', lines: [line('blk', 'Expenses', 0, null, 0, 'block'), line('rent', 'RENT', 300_000, 30), line('tot', 'Total expenses', 300_000, 30, 0, 'total')] },
   '2026-09': { period: '2026-09', lines: [line('blk', 'Expenses', 0, null, 0, 'block'), line('rent', 'RENT', 100_000, 25), line('tot', 'Total expenses', 100_000, 25, 0, 'total')] },
@@ -55,7 +54,6 @@ const draw = () => render(
   <MemoryRouter><MonthlyReport<Data> report="pnl" title="P&L" withCumulative fetchColumn={async (c: MonthColumn) => DATA[c.key]!} linesOf={(d) => d.lines} fmt={(sen) => `RM ${(sen / 100).toFixed(2)}`} pctTitle="% of sales" /></MemoryRouter>,
 );
 
-/** A cell's own first text (the amount) and the % line under it. */
 const amountOf = (c: HTMLElement): string => (c.firstChild?.textContent ?? '');
 const pctBeside = (c: HTMLElement): string => c.querySelector('span[data-pct]')?.textContent ?? '';
 
@@ -67,7 +65,6 @@ describe('the monthly view', () => {
     } finally { vi.useRealTimers(); }
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent);
     expect(heads.slice(0, 4)).toEqual(['P&L', 'Cumulative 04/2026 – 09/2026', '09/2026', '08/2026']);
-    /* Six months by default: the range asks Apr..Sep; the fixture only knows three of them — those show, the rest report an error. */
     expect(seen).toContain('2026-04-01..2026-09-30');
     expect(screen.getByText(/did not load/).textContent).toContain('4 column(s)');
     const rent = screen.getByText('RENT').closest('tr')!;
@@ -83,7 +80,6 @@ describe('the monthly view', () => {
     expect(within(advert).getAllByRole('cell').map(amountOf)).toEqual(['ADVERT', '-', '-', 'RM 50.00', '-', '-', '-', '-']);
     /* A dash in the % slot too — nothing is left blank (owner 2026-09-18, method B). */
     expect(within(advert).getAllByRole('cell').map(pctBeside)).toEqual(['', '-', '-', '2.0%', '-', '-', '-', '-']);
-    /* ADVERT sits after RENT, where August had it. */
     const rows = screen.getAllByRole('row').map((r) => String(r.textContent));
     expect(rows.findIndex((t) => t.startsWith('ADVERT'))).toBe(rows.findIndex((t) => t.startsWith('RENT')) + 1);
   });
@@ -106,10 +102,8 @@ describe('the monthly view', () => {
     fireEvent.click(screen.getByRole('button', { name: '%' }));
     expect(rent()).toEqual(['RENT', '30.0%', '25.0%', '40.0%', '20.0%']);
     expect(screen.getAllByRole('columnheader')[0]!.textContent).toBe('P&L · % of sales');
-    /* The total line keeps its cells; a block line prints nothing. */
     expect(within(screen.getByText('Total expenses').closest('tr')!).getAllByRole('cell').map((c) => c.textContent)).toEqual(['Total expenses', '30.0%', '25.0%', '42.0%', '20.0%']);
     expect(within(screen.getByText('Expenses').closest('tr')!).getAllByRole('cell').map((c) => c.textContent)).toEqual(['Expenses', '', '', '', '']);
-    /* One level deep: nothing to fold. */
     expect(screen.queryByRole('group', { name: 'Levels' })).toBeNull();
     /* Excel and PDF carry the table as shown — these columns; in % mode the % alone (owner 2026-09-19: 我这页显示什么就要 export 什么). */
     type Sheet = { title: string; subtitle: string; tables: Array<{ columns: Array<{ label: string; kind: string }>; rows: Array<{ label: string; kind: string; cells: unknown[] }> }> };
@@ -122,7 +116,6 @@ describe('the monthly view', () => {
     expect(sheet.tables[0]!.columns.map((c) => c.label)).toEqual(['Cumulative 07/2026 – 09/2026', '09/2026', '08/2026', '07/2026']);
     expect(sheet.tables[0]!.columns.every((c) => c.kind === 'pct')).toBe(true);
     expect(sheet.tables[0]!.rows.find((r) => r.label === 'RENT')!.cells).toEqual([30, 25, 40, 20]);
-    /* Amounts mode: an amount column with the % beside it per month; a block line carries no cells. */
     fireEvent.click(screen.getByRole('button', { name: 'RM' }));
     fireEvent.click(screen.getByRole('button', { name: 'PDF' }));
     expect(pdf).toHaveBeenCalledTimes(1);
@@ -150,7 +143,6 @@ describe('the monthly view', () => {
     expect(screen.getByText('900-A001 — RENT')).toBeTruthy();
     /* A subtotal (net) row wears the stronger shade (owner 2026-09-19). */
     expect(screen.getByText('NET PROFIT').closest('tr')!.className).toMatch(/(^|[\s_])net([\s_]|$)/);
-    /* The amount keeps its % under it on the opened rows too. */
     expect(within(screen.getByText('900-A001 — RENT').closest('tr')!).getAllByRole('cell').map(pctBeside)).toEqual(['', '10.0%', '10.0%', '10.0%', '10.0%']);
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT' }));
     expect(useLedger).toHaveBeenLastCalledWith({ from: '2026-07-01', to: '2026-09-30', accounts: ['900-A001'] });
@@ -168,7 +160,6 @@ describe('the monthly view', () => {
     expect(within(august).getAllByRole('cell')[0]!.getAttribute('title')).toBe('2026/08/05 · Rent August · PV-1');
     expect(within(august).getAllByRole('cell').slice(1).map((c) => c.querySelector('span[data-pct]')?.textContent)).toEqual(['', '', '', '']);
     expect(within(foot()).getAllByRole('cell').slice(1).every((c) => c.querySelector('span[data-pct]') !== null)).toBe(true);
-    /* August's figure: that month's line alone; the same figure again closes; the name reopens the range. */
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT · 08/2026' }));
     expect(lineRows()).toHaveLength(1);
     expect(within(foot()).getAllByRole('cell')[0]!.textContent).toBe('1 entry · 08/2026Open in GL');
@@ -179,7 +170,6 @@ describe('the monthly view', () => {
     expect(lineRows()).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENT' }));
     expect(lineRows()).toHaveLength(2);
-    /* In % mode the account rows carry no % slot, so neither do the lines. */
     fireEvent.click(screen.getByRole('button', { name: '%' }));
     expect(within(lineRows()[0]!).getAllByRole('cell')[1]!.querySelector('span[data-pct]')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'RM' }));

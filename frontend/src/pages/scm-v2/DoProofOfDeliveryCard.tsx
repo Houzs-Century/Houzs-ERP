@@ -1,15 +1,9 @@
 import { PodPhotoAlbum } from "../../components/scm-v2/PodPhotoAlbum";
 import { DO_DELIVERED_STATUSES } from "../../vendor/scm/lib/delivery-stop-status";
 
-/* The delivery run as the crew recorded it, on the DO itself (owner,
-   2026-10-08: what the driver does on the phone must be visible on the DO):
-   On the way, Arrived, Delivered, the POD photo, the customer signature and
-   where the POD was taken. Times are the server's, stamped when the crew
-   tapped. */
 
 export type DoPodFields = {
   id: string;
-  /** Every caller reads GET /delivery-orders-mfg/:id, which carries it. */
   do_number?: string | null;
   status?: string | null;
   departure_at?: string | null;
@@ -32,7 +26,6 @@ export const doIsDelivered = (h: DoPodFields): boolean =>
   DO_DELIVERED_STATUSES.includes((h.status ?? "").toUpperCase()) || !!h.delivered_at;
 
 export function DoProofOfDeliveryCard({ h }: { h: DoPodFields }) {
-  // Every photo the POD carries; a DO closed before multi-photo has just pod_r2_key.
   const count = h.pod_photo_keys?.length ? h.pod_photo_keys.length : h.pod_r2_key ? 1 : 0;
   const docNo = h.do_number || `DO ${h.id.slice(0, 8)}`;
   const paths = Array.from({ length: count }, (_, n) => `/api/scm/delivery-orders-mfg/${encodeURIComponent(h.id)}/pod-photo/${n}`);

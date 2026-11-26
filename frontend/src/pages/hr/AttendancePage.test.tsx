@@ -1,8 +1,3 @@
-/* HR · Attendance month grid (v3 redesign). The grid must read calm: days with
- * no punch (every day before go-live) and rest days render BLANK, not a grey
- * "?" box, so only real exceptions — late (L), absent (A), leave (V) — and the
- * present dot draw the eye. A past month is used so the test never depends on
- * the run date (no day is "future"). */
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -33,10 +28,10 @@ const WH: WorkingHoursResponse = {
   departments: [],
   days: [
     day(1, "2020-01-06", "PRESENT", 0),
-    day(1, "2020-01-07", "PRESENT", 20), // late
+    day(1, "2020-01-07", "PRESENT", 20),
     day(2, "2020-01-08", "ABSENT", 0),
     day(3, "2020-01-09", "ANNUAL_LEAVE", 0),
-    day(1, "2020-01-04", "REST_DAY", 0), // weekend rest -> blank
+    day(1, "2020-01-04", "REST_DAY", 0),
   ],
   entries: [],
   canManage: true,
@@ -69,7 +64,6 @@ const show = () => render(<MemoryRouter initialEntries={["/?month=2020-01"]}><At
 describe("Attendance month grid redesign", () => {
   it("renders no grey '?' cell for days with no punch", () => {
     const { container } = show();
-    // The eye-strain was a grid full of "?". Not one may remain.
     expect(screen.queryByText("?")).toBeNull();
     expect(container.textContent).not.toContain("?");
   });
@@ -95,15 +89,15 @@ describe("Attendance month grid redesign", () => {
     show();
     const rowOf = (name: string) => screen.getByText(name).closest("tr")!;
     const totalsOf = (name: string) => [...rowOf(name).querySelectorAll("td")].slice(-4).map((td) => String(td.textContent).trim());
-    expect(totalsOf("Faslie Anak")).toEqual(["2", "1", "0", "0"]); // 1 present + 1 late
-    expect(totalsOf("Mohd Zaimir")).toEqual(["0", "0", "1", "0"]); // 1 absent
-    expect(totalsOf("Abd Khalid")).toEqual(["0", "0", "0", "1"]); // 1 leave
+    expect(totalsOf("Faslie Anak")).toEqual(["2", "1", "0", "0"]);
+    expect(totalsOf("Mohd Zaimir")).toEqual(["0", "0", "1", "0"]);
+    expect(totalsOf("Abd Khalid")).toEqual(["0", "0", "0", "1"]);
   });
 
   it("removes a recorded day through the delete endpoint", async () => {
     const del = vi.spyOn(api, "del").mockResolvedValue(undefined);
     show();
-    fireEvent.click(screen.getByRole("button", { name: "Faslie Anak 2020-01-06" })); // a present day with a record
+    fireEvent.click(screen.getByRole("button", { name: "Faslie Anak 2020-01-06" }));
     fireEvent.click(await screen.findByRole("button", { name: "Remove day" }));
     await waitFor(() => expect(del).toHaveBeenCalledWith("/api/hr/attendance/106"));
     del.mockRestore();
@@ -111,8 +105,8 @@ describe("Attendance month grid redesign", () => {
 
   it("offers no Remove day on a day with no record", () => {
     show();
-    fireEvent.click(screen.getByRole("button", { name: "Faslie Anak 2020-01-10" })); // no record that day
-    expect(screen.getByRole("heading", { name: "Record attendance" })).toBeTruthy(); // editor is open
+    fireEvent.click(screen.getByRole("button", { name: "Faslie Anak 2020-01-10" }));
+    expect(screen.getByRole("heading", { name: "Record attendance" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Remove day" })).toBeNull();
   });
 });

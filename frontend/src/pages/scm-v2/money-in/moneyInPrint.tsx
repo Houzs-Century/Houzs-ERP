@@ -28,13 +28,9 @@ export const batchTitle = (n: number, receipts: boolean): string =>
   `Print ${n} ${receipts ? (n === 1 ? 'receipt' : 'receipts') : (n === 1 ? 'document' : 'documents')}`;
 
 export type PrintJob = {
-  /** The document's kind (or the batch's title) under the company name. */
   title: string;
-  /** The number in the band's right column (a batch: how many). */
   docNo: string;
-  /** The papers it prints on, A5 before A4. */
   papers: Paper[];
-  /** Identifying lines, the paper line added after them. */
   rows?: PrintPreviewRow[];
   deliver: (action: PdfAction) => Promise<void>;
 };

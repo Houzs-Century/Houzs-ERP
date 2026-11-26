@@ -23,11 +23,8 @@
 
 export interface PositionCapabilityDef {
   key: string;
-  /** Column header in the matrix. */
   label: string;
-  /** Matrix group header (Delivery / Finance / …). */
   group: string;
-  /** One-liner shown in the editor. */
   description: string;
 }
 
@@ -88,8 +85,6 @@ export function isValidPositionCapability(key: string): boolean {
 export interface PositionCapabilityCaller {
   permissions?: ReadonlyArray<string>;
   permissions_set?: ReadonlySet<string>;
-  /** Capability keys hydrated for the caller's position (PR-C wires this onto
-   *  the session envelope; a route may also pass a freshly-read set). */
   position_capabilities?: ReadonlyArray<string> | null;
 }
 

@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// Stock Adjustment document — the pure part (no I/O), shared by POST and PATCH
-// in routes/inventory-adjustments.ts.
-//
-// A BUCKET is what the FIFO trigger moves stock in: (item_code, variant_key,
-// batch_no) inside the document's one warehouse. Availability is checked per
-// bucket and an edit writes one signed ADJUSTMENT per bucket whose net changed,
-// so a bucket the edit did not touch never gets a movement.
-// ----------------------------------------------------------------------------
 
 import {
   isAdjustmentReasonCode,
@@ -26,13 +17,9 @@ export type AdjustmentLine = {
   variant_key: string;
   batch_no: string | null;
   qty: number;
-  /** What the operator typed, if anything — the route resolves the real cost. */
   unit_cost_sen: number | null;
   reason_code: string;
   notes: string | null;
-  /** Non-empty when an INCREASE is missing the variant / batch it needs. The
-      caller decides whether it blocks: always on create, only for a changed
-      bucket on edit (an untouched legacy line must not block a notes fix). */
   increase_errors: string[];
 };
 
@@ -70,11 +57,6 @@ export function parseAdjustmentLines(raw: unknown[]): LinesParse {
     const itemGroup = str(it.itemGroup) || null;
     const variants = (it.variants as Record<string, unknown> | null | undefined) ?? null;
     const batchNo = str(it.batchNo) || null;
-    /* An explicit variantKey wins on BOTH signs: a decrease names the bucket it
-       picked, and an edited line that kept its variants sends the key it was
-       stored under, so a legacy row whose key no longer recomputes the same way
-       does not read as a bucket change. Without one, an increase derives it from
-       its attributes exactly like a GRN. */
     const variantKey = it.variantKey != null
       ? String(it.variantKey)
       : qty > 0 ? computeVariantKey(itemGroup, (variants as VariantAttrs | null) ?? null) : '';

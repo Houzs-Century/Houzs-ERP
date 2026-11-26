@@ -24,9 +24,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { consumedAddLine, wantsAddLine } from './add-line-handoff';
 
 export type AddLineHandoffTarget = {
-  /** Whether the editor is in a state that can accept a new line right now. */
   enabled: boolean;
-  /** Opens the editor's add row. */
   onTrigger: () => void;
 };
 
@@ -50,9 +48,6 @@ export function useAddLineHandoff(): MutableRefObject<AddLineHandoffTarget> {
   useEffect(() => {
     if (fired.current) return;
     if (!wantsAddLine(location.hash)) return;
-    /* Not yet editable — the editor is still loading, or the document is
-       locked. Leave the fragment ALONE so the effect can fire on a later
-       render; consuming it here would swallow the operator's intent. */
     if (!target.current.enabled) return;
     fired.current = true;
     target.current.onTrigger();

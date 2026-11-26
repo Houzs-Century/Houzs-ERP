@@ -1,8 +1,3 @@
-// ----------------------------------------------------------------------------
-// Scan, check, then create — the client side of /scan-gr/check (owner
-// 2026-11-03, after Hookka's scan modal). Types mirror the backend's
-// lib/grn-scan-check.ts; every call goes through authedFetch.
-// ----------------------------------------------------------------------------
 import { authedFetch } from './authed-fetch';
 import type { SearchableSelectOption } from '../components/SearchableSelect';
 
@@ -123,7 +118,6 @@ export function skuOptions(lines: ReadonlyArray<CheckPoLine>, skus: ReadonlyArra
   const onPo = poNumber ? lines.filter((l) => l.poNumber === poNumber) : lines;
   const out: SkuOption[] = onPo.map((l) => ({
     value: `line:${l.poItemId}`,
-    // The line's colour beside the SKU, so a row tied to the wrong colour shows (HOOKKA DO-2611-035).
     label: [l.supplierSku || l.itemCode, l.colour].filter(Boolean).join(' · '),
     detail: [l.supplierSku ? l.itemCode : null, l.spec, poNumber ? null : l.poNumber, `owed ${l.remaining}`].filter(Boolean).join(' · '),
     group: poNumber ? `Still owed on ${poNumber}` : 'Still owed on open POs',
@@ -135,7 +129,6 @@ export function skuOptions(lines: ReadonlyArray<CheckPoLine>, skus: ReadonlyArra
       if (!owed.has(s.code)) out.push({ value: `gift:${s.code}`, label: s.name ? `${s.code} · ${s.name}` : s.code, group: 'Other SKUs of this supplier · free gift · RM0', search: `${s.code} ${s.name ?? ''}` });
     }
   }
-  // A saved pick still shows while the supplier's SKUs load.
   if (row.gift && !out.some((o) => o.value === `gift:${row.gift?.itemCode}`)) out.push({ value: `gift:${row.gift.itemCode}`, label: `${row.gift.itemCode} · ${row.gift.name}`, group: 'Free gift · RM0' });
   return out;
 }

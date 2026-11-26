@@ -1,8 +1,3 @@
-// Delivery Zones page logic, kept pure so it is tested. Mirrors the backend
-// classifier (backend/src/scm/lib/zone-classify.ts zoneForPostcode + the route's
-// toPrefixMap): the ACTIVE company rules are the map, the built-in default map
-// applies only while no rule is active, and when ranges overlap the narrowest
-// range wins (ties go to the earlier rule).
 
 export type ZoneRange = { zone: string; prefixStart: number; prefixEnd: number };
 export type RuleLike = ZoneRange & { id: string; isActive: boolean; label: string | null };
@@ -25,8 +20,6 @@ export const isKlangValley = (zone: string) => (KLANG_VALLEY as readonly string[
 export const EAST_MALAYSIA_ZONES = ['SABAH', 'SARAWAK', 'LABUAN'] as const;
 export const isThreePlOnly = (zone: string) => (EAST_MALAYSIA_ZONES as readonly string[]).includes(zone);
 
-/** Tile background / text per zone: green for the Klang Valley, blue south,
- *  violet north, sand for the east coast and Pahang, rose for East Malaysia. */
 const ZONE_COLOUR: Record<string, [string, string]> = {
   KL: ['#cfe6df', '#0b4740'], PJ: ['#d9ece6', '#0b4740'], KLANG: ['#e3f0eb', '#0b4740'], KAJANG: ['#c4dfd6', '#0b4740'],
   RAWANG: ['#e9f3ef', '#0b4740'], PUCHONG: ['#dbebe5', '#0b4740'],

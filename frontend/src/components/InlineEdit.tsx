@@ -12,15 +12,8 @@ interface Props {
   onSave: (newValue: string | null) => Promise<void>;
   placeholder?: string;
   textarea?: boolean;
-  /** When provided, renders a <select> dropdown instead of an input. */
   options?: readonly string[];
-  /* How to word an option. The stored value is a slug — `supplier_repair` —
-     and without this the dropdown shows the operator the slug while every
-     other surface (status card, printed document) shows the human label, so
-     the same field reads two different ways on one screen. Defaults to the
-     raw value, so callers with already-readable options need not pass it. */
   optionLabel?: (value: string) => string;
-  /** The surrounding section header already names the field. */
   isLabelHidden?: boolean;
 }
 
@@ -85,7 +78,6 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
           }}
         >
           <option value="">— none —</option>
-          {/* Include the current value even if it isn't in the option list, so legacy/unknown values aren't silently overwritten. */}
           {draft && !options.includes(draft) && (
             <option value={draft}>{optionLabel ? optionLabel(draft) : draft}</option>
           )}
@@ -105,9 +97,6 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
         />
       ) : (
         type === "date" ? (
-          // Dates save on a calendar pick or on blur. The Save button (Nico
-          // 2026-08-20) is the retry handle, so it shows only after a failed save:
-          // shown on every unsaved edit it popped up beside a date already saved.
           <div className="flex items-center gap-2">
             <DateField className={inputClass} value={draft} placeholder={placeholder} onChange={setDraft} onBlur={() => commit()} fullWidth/>
             {status === "error" && draft !== (value == null ? "" : String(value)) && (

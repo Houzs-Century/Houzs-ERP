@@ -52,7 +52,7 @@ describe('canonicalizeMyState', () => {
     expect(canonicalizeMyState('PENANG', 'Malaysia')).toBe('Pulau Pinang');
     expect(canonicalizeMyState('penang', 'malaysia')).toBe('Pulau Pinang');
     expect(canonicalizeMyState('PENANG', 'MY')).toBe('Pulau Pinang');
-    expect(canonicalizeMyState('PENANG', '')).toBe('Pulau Pinang'); // empty country still probes
+    expect(canonicalizeMyState('PENANG', '')).toBe('Pulau Pinang');
   });
 
   it('returns unknown strings unchanged (never invents a state)', () => {

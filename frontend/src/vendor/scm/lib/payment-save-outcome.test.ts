@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { paymentSaveOutcome } from './payment-save-outcome';
 
-/* The money half of a Save. Leaving the page discards an unbooked row, so
-   anything short of "all of them landed" must keep the page open — and say
-   which rows, in words the operator can act on. */
 describe('what a Save says about the payment rows it had to book', () => {
   test('nothing typed: silent, and the page may leave', () => {
     expect(paymentSaveOutcome({ committed: 0, failed: 0, blocked: [] }))

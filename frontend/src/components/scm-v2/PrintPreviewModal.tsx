@@ -41,31 +41,10 @@ import {
   trackPrintAction,
 } from "../../lib/chunkActionRecovery";
 
-/* Every print button in the app is the same three lines of state, so they live
-   here once. Pass the page's generator call; get back the dialog's open state
-   and its three handlers, ready to spread.
-
-     const print = usePrintPreview((action) =>
-       import("…/sales-invoice-pdf").then(({ generateSalesInvoicePdf }) =>
-         generateSalesInvoicePdf(header, items, { action })));
-     …
-     <Button onClick={print.openPreview}>Print PDF</Button>
-     <PrintPreviewModal open={print.open} onClose={print.close}
-       docTitle="Sales Invoice" docNo={header.invoice_number}
-       rows={rows} {...print.handlers} />
-
-   Print and download close the dialog once the render RESOLVES (not before), so
-   the button can show "Preparing…" while a slow document is drawn. A new-tab
-   preview leaves it open — the operator looked, and now wants to print. */
 export function usePrintPreview(deliver: (action: PdfAction) => void | Promise<void>) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
   const openPreview = useCallback(() => setOpen(true), []);
-  /* Every exit runs as a TRACKED print (lib/chunkActionRecovery): if the
-     generator's chunk was deleted by a deploy, the tab may reload once and this
-     same preview reopens — but only on a page that consumes the resume through
-     useOpenPrintPreviewFromUrl below. deliver's own catch and toast are
-     untouched. */
   const tracked = useCallback(
     (action: PdfAction) => trackPrintAction({ kind: "preview", open: openPreview }, () => deliver(action), Date.now),
     [deliver, openPreview],
@@ -89,21 +68,6 @@ export function usePrintPreview(deliver: (action: PdfAction) => void | Promise<v
   };
 }
 
-/* Every SCM list's row drawer has a Print button that navigates to the detail
-   page with `?print=1`. NOTHING has ever consumed that param — eight buttons
-   that just opened the record and sat there. Now the detail page opens its
-   Print preview on arrival, which is what the drawer meant all along.
-
-   `ready` gates on the record being loaded, so the dialog never opens over an
-   empty header. The ref makes it fire ONCE: closing the preview must not be
-   undone by the next render, and the param stays in the URL.
-
-   The SAME door reopens a print that a stale-build reload interrupted
-   (lib/chunkActionRecovery). Mounting this hook is what registers the page as
-   able to do that — a page without it gets the version banner, never an
-   automatic reload that would drop the operator somewhere else. The resume is
-   sessionStorage, not `?print=1`, so a later manual refresh does not reopen
-   the preview a second time. */
 export function useOpenPrintPreviewFromUrl(open: () => void, ready: boolean) {
   const [params] = useSearchParams();
   const fired = useRef(false);
@@ -127,14 +91,8 @@ export type PrintPreviewRow = {
   value: ReactNode;
 };
 
-/* Handlers may be async (every generator is), so the dialog can disable itself
-   while a document renders instead of letting an impatient second click queue a
-   second render. */
 type PrintAction = () => void | Promise<void>;
 
-/* A preview belongs to the page it was opened on. The print-chain provider sits in
-   the SCM shell, which outlives a move to another SCM page, so leaving the page
-   closes the card instead of leaving it open over the next one. */
 function ClosesOnLeave({ onLeave }: { onLeave: () => void }) {
   const { pathname } = useLocation();
   const first = useRef(true);
@@ -160,9 +118,7 @@ export function PrintPreviewModal({
 }: {
   open: boolean;
   onClose: () => void;
-  /** Document type under the company name, e.g. "Delivery Order". */
   docTitle: string;
-  /** Document number in the band's right column. */
   docNo: string;
   /* Override the band's company. Needed where the document does NOT print on
      the active workspace's letterhead: a service case can be raised under one
@@ -173,19 +129,11 @@ export function PrintPreviewModal({
      every document that cannot be re-headed. */
   companyName?: string;
   rows: PrintPreviewRow[];
-  /** Render the real PDF in a new tab. Omit to hide the button. */
   onViewPdf?: PrintAction;
-  /** Label for that button — HTML surfaces open a page, not a PDF. */
   viewLabel?: string;
   onPrint: PrintAction;
-  /** Omit on surfaces with no PDF to download — the HTML-printed pages (fleet
-   *  run sheet, portal case, listing shell, org chart) print the page itself,
-   *  so "Download PDF" would be a button with nothing behind it. */
   onDownload?: PrintAction;
 }) {
-  // Letterhead follows the ACTIVE company (2990 DO previews were once branded
-  // with a hardcoded Houzs literal). Same source as the jspdf letterhead, so the
-  // card and the document it previews always name the same company.
   const branding = useBranding();
   const inRouter = useInRouterContext();
   const [pending, setPending] = useState<"view" | "print" | "download" | null>(null);
@@ -214,7 +162,6 @@ export function PrintPreviewModal({
             <Button
               variant="ghost"
               icon={<FileText size={14} />}
-              /* The ghost variant carries no disabled styling of its own. */
               className="disabled:opacity-50"
               disabled={pending !== null}
               onClick={run("view", onViewPdf)}
@@ -224,7 +171,6 @@ export function PrintPreviewModal({
           )}
           <div className="ml-auto flex items-center gap-2">
             <Button
-              /* With no download beside it, Print IS the primary action. */
               variant={onDownload ? "secondary" : "primary"}
               icon={<Printer size={14} />}
               disabled={pending !== null}
@@ -276,10 +222,6 @@ export function PrintPreviewModal({
   );
 }
 
-/* ── Batch preview ───────────────────────────────────────────────────────────
-   The lists' "Export PDF (N)" merges several documents into one file, so there
-   is no single doc no to head the card and no point summarising one of them.
-   Same shell, same three exits; the card names the stack instead. */
 export function PrintPreviewBatchModal({
   open,
   onClose,
@@ -291,17 +233,12 @@ export function PrintPreviewBatchModal({
 }: {
   open: boolean;
   onClose: () => void;
-  /** Plural document type, e.g. "Delivery Orders". */
   docTitle: string;
-  /** Every doc no going into the file, in output order. */
   docNos: string[];
   onViewPdf?: PrintAction;
   onPrint: PrintAction;
   onDownload: PrintAction;
 }) {
-  /* Long selections would push the buttons off a laptop screen; the card lists
-     the first ten and counts the rest, which is enough to confirm you ticked
-     the right rows. */
   const shown = docNos.slice(0, 10);
   const rest = docNos.length - shown.length;
   return (

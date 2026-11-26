@@ -9,9 +9,6 @@ describe('road figures', () => {
     expect(fmtDrive(11_400)).toBe('3 h 10 min');
     expect(fmtDrive(2_700)).toBe('45 min');
   });
-  /* The server orders each run with windowStartMinutes (backend/src/scm/lib/lorry-day-runs.ts,
-     backend/tests/lorryDayRuns.test.ts holds the same table): the card order and the road
-     order must not drift apart. */
   it.each([
     ['9:00-12:00', 540], ['TIME AROUND 9AM TO 11AM', 540], ['2pm - 6pm', 840], ['10.30am', 630],
     ['AM', 0], ['PM', 720], ['', Number.MAX_SAFE_INTEGER], [null, Number.MAX_SAFE_INTEGER], ['call first', Number.MAX_SAFE_INTEGER],

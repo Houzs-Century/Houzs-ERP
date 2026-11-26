@@ -60,7 +60,7 @@ describe('the Sales Order list and the approval codes', () => {
     expect(readSource).toContain('approvalCodeOrPart(');
     const search = betweenIn(readSource, 'if (search) {', 'if (p.from)');
     expect(search, 'the list search does not admit orders found by approval code').toContain('codePart');
-    const arm = betweenIn(routeSource, 'PAGINATED PATH', 'const moneyProm');
+    const arm = betweenIn(routeSource, 'page = Math.max(0, Math.trunc(Number(pageRaw)) || 0);', 'const moneyProm');
     expect(arm, 'the page query does not read through the shared header').toContain('let q = read.header(');
     expect(arm, 'the money aggregate does not admit the same orders').toContain('const applyMoneyFilters = (moneyQ0: any): any => read.header(moneyQ0)');
   });

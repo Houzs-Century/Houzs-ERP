@@ -1,47 +1,7 @@
-// ---------------------------------------------------------------------------
-// collection-agent.ts — the Collection Agent's deterministic ENGINE: a daily
-// accounts-receivable sweep that turns every unpaid sales invoice into an
-// actionable per-DEBTOR chase, plus a live AR-aging brief.
-//
-// The owner asked for Collection as its OWN family (not folded into Document).
-// Where the Document Agent's UNPAID_SI finding flags one invoice at a time,
-// the Collection Agent works the way a credit-control clerk does: it groups a
-// debtor's overdue invoices together, ranks debtors by how much and how long
-// they owe, and proposes ONE chase per debtor with everything the office needs
-// to make the call. It shares nothing but the source table with Document — the
-// two never write each other's rows.
-//
-// The engine only:
-//   1. generateCollectionProposals — writes PENDING DEBTOR_CHASE rows into
-//      collection_agent_proposals (migration 0094), one per debtor with
-//      outstanding AR past the chase threshold. `key` = debtor handle, so a
-//      debtor already on the worklist is never duplicated.
-//   2. collectCollectionBrief — today's AR picture (total outstanding, aging
-//      buckets, worst debtors, DSO-style oldest-invoice age) + a snapshot row
-//      in collection_agent_briefs.
-//   3. runCollectionAgent — orchestrates 1-2 for the scheduler.
-//   4. collectionAgentStatus — cheap counters for the console card.
-//
-// RED LINES (enforced structurally):
-//   - PROPOSAL-ONLY: approving a chase marks it ready for the office / Mail
-//     Center to send. This module NEVER contacts a customer, sends a message,
-//     or edits any scm.* invoice/payment. It writes ONLY
-//     collection_agent_proposals + collection_agent_briefs (public schema).
-//   - Deterministic — no LLM calls. ai_focus over the brief is the lead's
-//     shared-brain pass, on top of this engine's JSON, never inside it.
-//   - Money is integer sen end-to-end (scm columns are *_sen = sen; the
-//     engine's payloads/brief expose them as *Sen).
-//
-// DB handle = env.DB (the d1-compat shim over postgres.js). scm tables are
-// schema-qualified (scm.sales_invoices) because the shim's search_path is
-// public. Row reads are dual-keyed (r.camelCase ?? r.snake_case) per the
-// house gotcha, though Houzs's pg.ts returns snake_case as-is.
-// ---------------------------------------------------------------------------
 
 import type { Env } from "../../types";
 import { readAgentSetting } from "../agent-console";
 
-// ── Tunables (app_settings['agents.collection']) ─────────────────────────────
 
 /** An invoice younger than this many days (from invoice_date) is not chased
  *  yet — B2C retail invoices fall due at delivery, so the default chases from
@@ -51,18 +11,14 @@ export const DEFAULT_CHASE_THRESHOLD_DAYS = 1;
 /** app_settings key for the Collection Agent's tunables. */
 export const COLLECTION_AGENT_SETTING_KEY = "agents.collection";
 
-/** A debtor owing at least this many sen across all invoices is CRIT. */
-const DEBTOR_CRIT_OUTSTANDING_SEN = 500_000; // RM 5,000
-/** A debtor with any invoice past this age is CRIT regardless of value. */
+const DEBTOR_CRIT_OUTSTANDING_SEN = 500_000;
 const DEBTOR_CRIT_AGE_DAYS = 90;
 
-/** Bound a first run against a deep backlog. */
 const MAX_DEBTORS = 500;
 
 export type CollectionBucket = "0-30" | "31-60" | "61-90" | "90+";
 export type CollectionSeverity = "INFO" | "WARN" | "CRIT";
 
-// ── Small helpers (mirrors document-agent.ts) ────────────────────────────────
 
 type Row = Record<string, unknown>;
 
@@ -94,7 +50,6 @@ function bucketOf(age: number): CollectionBucket {
   return age <= 30 ? "0-30" : age <= 60 ? "31-60" : age <= 90 ? "61-90" : "90+";
 }
 
-/** Whole-day tunable from app_settings['agents.collection'], clamped 0..90. */
 async function chaseThresholdDays(db: D1Database): Promise<number> {
   const cfg = await readAgentSetting<Record<string, unknown>>(
     db,
@@ -105,12 +60,6 @@ async function chaseThresholdDays(db: D1Database): Promise<number> {
   return Math.floor(n);
 }
 
-// ── Source read: unpaid invoices (the one scm.* query) ───────────────────────
-// sales_invoice_status: DRAFT SENT PARTIALLY_PAID PAID OVERDUE CANCELLED.
-// DRAFT excluded (no AR posted), PAID/CANCELLED have nothing to collect —
-// the same leak-guard the Document Agent's UNPAID_SI detector uses. Outstanding
-// = total_sen - paid_sen (paid_sen is the header stamp the SI payment
-// routes maintain).
 
 interface UnpaidInvoice {
   siId: string;
@@ -164,7 +113,6 @@ async function loadUnpaidInvoices(
   });
 }
 
-// ── Debtor aggregation ───────────────────────────────────────────────────────
 
 export interface DebtorChase {
   debtorName: string;
@@ -232,12 +180,10 @@ function aggregateByDebtor(invoices: UnpaidInvoice[]): DebtorChase[] {
         })),
     });
   }
-  // Worst first: most overdue, then largest balance.
   chases.sort((a, b) => b.oldestAgeDays - a.oldestAgeDays || b.outstandingSen - a.outstandingSen);
   return chases;
 }
 
-// ── 1. generateCollectionProposals ───────────────────────────────────────────
 
 export type CollectionProposalKind = "DEBTOR_CHASE";
 
@@ -296,7 +242,6 @@ export async function generateCollectionProposals(
   return { created, skippedOpen, debtors: worklist.length, capped };
 }
 
-// ── 2. collectCollectionBrief ────────────────────────────────────────────────
 
 export interface CollectionBriefData {
   generatedAt: string;
@@ -305,7 +250,6 @@ export interface CollectionBriefData {
   invoicesOutstanding: number;
   oldestInvoiceDays: number;
   buckets: Array<{ bucket: CollectionBucket; invoices: number; outstandingSen: number }>;
-  /** Worst debtors (oldest then largest), top 10. */
   topDebtors: Array<{
     debtorName: string;
     invoiceCount: number;
@@ -382,7 +326,6 @@ async function openProposalTotal(db: D1Database): Promise<number> {
   }
 }
 
-// ── 3. runCollectionAgent (orchestrator) ─────────────────────────────────────
 
 export interface RunCollectionAgentResult {
   summary: string;
@@ -413,7 +356,6 @@ export async function runCollectionAgent(env: Env): Promise<RunCollectionAgentRe
   return { summary, brief, proposalsCreated: gen.created };
 }
 
-// ── 4. collectionAgentStatus (console card counters) ─────────────────────────
 
 export interface CollectionAgentStatus {
   openProposals: number;
@@ -432,7 +374,6 @@ export async function collectionAgentStatus(env: Env): Promise<CollectionAgentSt
       .first<{ last?: string | null }>();
     lastBriefAt = r?.last ?? null;
   } catch {
-    /* pre-migration — null */
   }
   try {
     const r = await db
@@ -445,7 +386,6 @@ export async function collectionAgentStatus(env: Env): Promise<CollectionAgentSt
       .first<Row>();
     totalOutstandingSen = num(col(r ?? {}, "out", "out"));
   } catch {
-    /* zeros */
   }
   return { openProposals, lastBriefAt, totalOutstandingSen };
 }

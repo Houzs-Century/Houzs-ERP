@@ -81,7 +81,6 @@ const NAMES_SHOWN = 12;
 const named = (names: string[]): string => `${names.slice(0, NAMES_SHOWN).join(', ')}${names.length > NAMES_SHOWN ? ` and ${names.length - NAMES_SHOWN} more` : ''}`;
 const rm = (sen: number): string => `RM ${fmtSenPlain(sen)}`;
 
-/** What the Orders & bills column is, said under the table. */
 function docsNote(d: NonNullable<CashFlowForecast['docs']>): string[] {
   const month = monthName(d.asAt);
   const parts = [
@@ -100,7 +99,6 @@ function docsNote(d: NonNullable<CashFlowForecast['docs']>): string[] {
   return parts;
 }
 
-/** What the trade-finance plan puts in both forecasts, said under the table. */
 function tfNote(t: NonNullable<CashFlowForecast['tf']>): string[] {
   const parts = t.facilities.map((x) => {
     const n = Math.round(x.tenorDays / 30);

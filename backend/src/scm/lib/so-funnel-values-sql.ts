@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-funnel-values-sql — the two whole-company reads behind
-// GET /mfg-sales-orders/funnel-values, as two SQL statements.
-//
-// They used to be paged 1,000 rows at a time (pageWithTruncation): about 12
-// sequential pages of the payment-totals view plus the book-number pages, ~25
-// round trips per open. Same rows here: the caller's scope closure compiled by
-// pgrest-sql.ts, the same columns in the same doc_no order, and the same 20-page
-// ceiling — `truncated` is true exactly when the paged read would have filled
-// all 20 pages. Null = the caller pages through PostgREST as before.
-// ----------------------------------------------------------------------------
 
 import { OUTSTANDING_MAX_PAGES, OUTSTANDING_PAGE } from './outstanding-po-lines';
 import { FRESH_READ, SqlParams, selectCol, whereOf, type SqlFilterRecorder } from './pgrest-sql';

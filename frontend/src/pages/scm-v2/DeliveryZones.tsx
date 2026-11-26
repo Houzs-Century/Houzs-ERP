@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// Delivery Zones — the owner-maintained postcode -> area-zone map (mig 0205,
-// route delivery-zones.ts). Each rule maps a first-two-digit postcode prefix
-// RANGE to one of the area zones; the date proposer derives every order's zone
-// from its postcode through this map.
-//
-// Until a rule is in use the classifier falls back to the built-in Malaysian
-// map, so the page shows that map and offers to load it as editable rules.
-// The page logic that mirrors the classifier lives in delivery-zones/zoneModel.ts.
-//
-// Each zone also lists its PLACES (mig 20261111T1100): the towns 3PL rate cards
-// price there, read only for addresses whose postcode is in that zone.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -76,7 +63,6 @@ export const DeliveryZones = () => {
     setLoading(true);
     const failed: string[] = [];
     for (const d of missingDefaults) {
-      // Sequential so one failure does not hide the others; the set is small (18).
       try {
         // eslint-disable-next-line no-await-in-loop -- sequential on purpose, see above
         await create.mutateAsync({ zone: d.zone, prefixStart: d.prefixStart, prefixEnd: d.prefixEnd });

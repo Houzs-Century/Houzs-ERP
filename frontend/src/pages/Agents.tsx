@@ -32,7 +32,6 @@ import { ListSkeleton } from "../components/Skeleton";
 import { EmptyState } from "../components/EmptyState";
 import { cn, formatCurrency, relativeTime } from "../lib/utils";
 
-// ── Types (mirror the /api/agents contract, docs/agent-console-api.md) ────────
 
 type Family = "DELIVERY" | "DOCUMENT" | "COLLECTION" | "CS" | "PROCUREMENT" | "PMS" | "OF" | "SI";
 
@@ -51,7 +50,6 @@ interface AgentCard {
   live: boolean;
   paused: boolean;
   autoApprove: boolean;
-  /** Stored autonomy dial 1/2/3, and the per-agent ceiling it can't exceed. */
   stage: number;
   maxStage: number;
   tasks: { agent: string; nextRun: string; lastRun: RunRow | null }[];
@@ -98,11 +96,9 @@ interface Finding {
   severity: string;
   docType?: string;
   docNo?: string | null;
-  // Order-fulfilment (OF) findings are order-centric, not doc-centric.
   soDocNo?: string;
   readiness?: number;
   owner?: string | null;
-  // Sales-intelligence (SI) findings are subject-centric (order / salesperson / venue).
   subject?: string;
   metric?: string | null;
   summary: string;
@@ -156,7 +152,6 @@ interface FamilyMeta {
   label: string;
   base: string;
   icon: LucideIcon;
-  /** Document works a findings list, not proposals. */
   findings?: boolean;
 }
 
@@ -177,13 +172,10 @@ function severityTone(sev: string): "error" | "warning" | "neutral" {
   return sev === "CRIT" ? "error" : sev === "WARN" ? "warning" : "neutral";
 }
 
-// The /api/agents routes all return the house `{ success, data }` envelope,
-// and api.get does NOT unwrap it — pull `.data` out so callers get the payload.
 function getData<T>(path: string): Promise<T> {
   return api.get<{ success: boolean; data: T }>(path).then((r) => r.data);
 }
 
-// ── Page ─────────────────────────────────────────────────────────────────────
 
 export function Agents() {
   const toast = useToast();
@@ -270,7 +262,6 @@ export function Agents() {
             </div>
           )}
 
-          {/* View tabs */}
           <div className="flex gap-1 border-b border-border">
             <TabBtn active={view === "console"} onClick={() => setView("console")}>
               Console
@@ -284,7 +275,6 @@ export function Agents() {
             <Scorecard />
           ) : (
           <>
-          {/* Metrics */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <StatCard label="Families live" value={`${liveCount} / ${FAMILIES.length}`} />
             <StatCard
@@ -301,7 +291,6 @@ export function Agents() {
             />
           </div>
 
-          {/* Family grid */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {FAMILIES.map((f) => {
               const card = data.agents.find((a) => a.id === f.id);
@@ -341,7 +330,6 @@ export function Agents() {
             })}
           </div>
 
-          {/* Working surface for the selected family */}
           <WorkingSurface meta={meta} card={data.agents.find((a) => a.id === selected)} />
           </>
           )}
@@ -351,7 +339,6 @@ export function Agents() {
   );
 }
 
-// ── View tab button ──────────────────────────────────────────────────────────
 
 function TabBtn({
   active,
@@ -378,7 +365,6 @@ function TabBtn({
   );
 }
 
-// ── Family tile ──────────────────────────────────────────────────────────────
 
 function FamilyTile({
   meta,
@@ -536,7 +522,6 @@ function MiniBtn({
   );
 }
 
-// ── Working surface (proposals / findings + brief + config + notebook) ───────
 
 function WorkingSurface({ meta, card }: { meta: FamilyMeta; card: AgentCard | undefined }) {
   const Icon = meta.icon;
@@ -565,7 +550,6 @@ function WorkingSurface({ meta, card }: { meta: FamilyMeta; card: AgentCard | un
   );
 }
 
-// ── Recent errors (from /status → card.recentErrors) ─────────────────────────
 
 function RecentErrors({ errors }: { errors: RunRow[] }) {
   if (errors.length === 0) return null;
@@ -589,7 +573,6 @@ function RecentErrors({ errors }: { errors: RunRow[] }) {
   );
 }
 
-// ── Run history drawer (read-only, from /history?family=) ────────────────────
 
 function RunHistory({ meta }: { meta: FamilyMeta }) {
   const [open, setOpen] = useState(false);
@@ -934,7 +917,6 @@ function FeedbackPanel({ meta }: { meta: FamilyMeta }) {
   );
 }
 
-// ── Scorecard (read-only per-family performance, from /review) ───────────────
 
 function pct(part: number, whole: number): number | null {
   return whole > 0 ? Math.round((part / whole) * 100) : null;

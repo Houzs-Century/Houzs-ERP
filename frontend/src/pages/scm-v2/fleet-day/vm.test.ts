@@ -129,7 +129,7 @@ describe('buildRuns — grouping + driver join + sort', () => {
     expect(r.driverPhone).toBe('019-9');
     expect(r.driver2Name).toBe('Zaki');
     expect(r.helpers).toEqual(['Ali', 'Bo']);
-    expect(r.docs.map((d) => d.soDocNo)).toEqual(['S1', 'S2']); // sorted by stop, off-trip dropped
+    expect(r.docs.map((d) => d.soDocNo)).toEqual(['S1', 'S2']);
     expect(r.status).toBe('COMPLETED');
     expect(r.rollup).toMatchObject({ drops: 2, delivered: 2, withPod: 1 });
     expect(r.color).toBe('#2563eb');
@@ -164,12 +164,10 @@ describe('buildLorryCards — pin in-house, outsourced only when working', () =>
       docRowVM(order({ so_doc_no: 'B', trip_id: null, trip_stop_no: null, crew: { lorry_plate: 'MCF 3084' } as PlanningOrder['crew'] }), 'scheduled', CLOCK, null),
     ];
     const cards = buildLorryCards([trip()], docs, lorries, drivers, () => '#000');
-    // In-house A->Z (VQE, VRH) then outsourced (MCF). The crew plate "MCF 3084"
-    // normalises onto the master's "MCF3084".
     expect(cards.map((c) => c.plate)).toEqual(['VQE9058', 'VRH9058', 'MCF3084']);
     const byPlate = Object.fromEntries(cards.map((c) => [c.plate, c] as const));
-    expect(byPlate.VQE9058!.trip).not.toBeNull();   // backed by its trip
-    expect(byPlate.VRH9058!.trip).toBeNull();        // pinned, empty
+    expect(byPlate.VQE9058!.trip).not.toBeNull();
+    expect(byPlate.VRH9058!.trip).toBeNull();
     expect(byPlate.VRH9058!.rollup.drops).toBe(0);
     expect(byPlate.MCF3084!.isInternal).toBe(false);
     expect(byPlate.MCF3084!.rollup.drops).toBe(1);
@@ -180,12 +178,10 @@ describe('buildLorryCards — pin in-house, outsourced only when working', () =>
   });
   test('non-SO jobs ride their lorry too — a DP job on the trip, an ASSR leg by its crew plate', () => {
     const docs: DocRowVM[] = [
-      // a TRANSFER on VQE's trip (dp rows carry trip_id) groups via the trip
       docRowVM(order({
         row_type: 'dp', so_doc_no: 'DP:42', dp_job_type: 'TRANSFER', dp_no: 'DP-261102-VQE01',
         trip_id: 't1', trip_stop_no: null, delivery_orders: [], local_total_sen: 0,
       }), 'scheduled', CLOCK, null),
-      // an ASSR service leg on VRH by its echoed crew plate, no trip of its own
       docRowVM(order({
         row_type: 'assr', so_doc_no: 'ASSR/1#delivery', assr_id: 1, job_kind: 'delivery',
         ref: 'ASSR/1', trip_id: null, trip_stop_no: null, delivery_orders: [], local_total_sen: 0,
@@ -207,7 +203,6 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
     { id: 'l1', plate: 'VQE9058', is_internal: true, active: true },
     { id: 'l2', plate: 'VRH9058', is_internal: true, active: true },
   ];
-  // VQE runs three drops in delivery-time order; two geocode, one does not.
   const docs: DocRowVM[] = [
     docRowVM(order({ so_doc_no: 'A', trip_id: 't1', trip_stop_no: 1, time_range: 'AM', debtor_name: 'Ada' }), 'done', CLOCK, null),
     docRowVM(order({ so_doc_no: 'B', trip_id: 't1', trip_stop_no: 2, time_range: '2pm-4pm', debtor_name: 'Ben' }), 'scheduled', CLOCK, null),
@@ -218,18 +213,17 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
   const pointByRef = new Map<string, MapLatLng>([
     ['A', { lat: 3.2, lng: 101.7 }],
     ['C', { lat: 3.3, lng: 101.8 }],
-    // 'B' deliberately missing — it must surface, not vanish.
   ]);
   const { routes, unlocated, noByRef } = buildLorryRoutes(cards, pointByRef, new Set(), new Map(), depot, () => null, (k) => `col:${k}`);
 
   test('one route per working lorry; an empty pinned lorry has none', () => {
-    expect(routes.map((r) => r.id)).toEqual(['VQE9058']); // VRH is empty -> no route
+    expect(routes.map((r) => r.id)).toEqual(['VQE9058']);
   });
   test('every stop is numbered by its place in the run; the pin carries the same number as the card', () => {
     const vqe = routes[0]!;
-    expect(vqe.stops.map((s) => s.ref)).toEqual(['A', 'C']);     // B has no point, so no pin
-    expect(vqe.stops.map((s) => s.order)).toEqual([1, 3]);       // C is the 3rd stop, on the card and the map
-    expect([...noByRef]).toEqual([['A', 1], ['B', 2], ['C', 3]]); // B keeps its number on the card
+    expect(vqe.stops.map((s) => s.ref)).toEqual(['A', 'C']);
+    expect(vqe.stops.map((s) => s.order)).toEqual([1, 3]);
+    expect([...noByRef]).toEqual([['A', 1], ['B', 2], ['C', 3]]);
     expect(vqe.stops.map((s) => s.label)).toEqual(['Ada', 'Cho']);
     expect(vqe.stops[0]!.windowLabel).toBe('AM');
   });
@@ -239,9 +233,9 @@ describe('buildLorryRoutes — per-lorry numbered route + surfaced unlocated sto
     expect(vqe.crewLabel).toBe('Shamsul');
     expect(vqe.depot).toEqual(depot);
     expect(vqe.color).toBe('col:VQE9058');
-    expect(vqe.delivered).toBe(1);   // A is done
-    expect(vqe.total).toBe(3);       // all three drops counted, located or not
-    expect(vqe.allRefs).toEqual(['A', 'B', 'C']); // focus still finds the ungeocoded B
+    expect(vqe.delivered).toBe(1);
+    expect(vqe.total).toBe(3);
+    expect(vqe.allRefs).toEqual(['A', 'B', 'C']);
   });
   test('a lorry with a home warehouse starts and ends its route there, not at the day depot', () => {
     const penang: MapLatLng = { lat: 5.4, lng: 100.3 };
@@ -309,11 +303,11 @@ describe('applyFilters + searchMatch', () => {
   });
   test('search matches name, SO, DO, ref and >=3 phone digits', () => {
     const d = docs[0]!;
-    expect(searchMatch(d, 'a')).toBe(true); // <2 chars = everything
+    expect(searchMatch(d, 'a')).toBe(true);
     expect(searchMatch(d, 'ada')).toBe(true);
     expect(searchMatch(d, 'pg0791')).toBe(true);
     expect(searchMatch(d, 'HC-DO-9')).toBe(true);
-    expect(searchMatch(d, '345')).toBe(true); // phone digits
+    expect(searchMatch(d, '345')).toBe(true);
     expect(searchMatch(d, 'nope')).toBe(false);
   });
   test('filtersActive flags any non-default', () => {

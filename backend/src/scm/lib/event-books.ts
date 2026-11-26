@@ -111,8 +111,6 @@ export function withScnCredits(posted: readonly BooksLeg[], credits: readonly Bo
   return [...posted.filter((l) => !(l.source_type === 'SCN' && covered.has(l.source_doc_no ?? ''))), ...credits];
 }
 
-/* The ONE read of an event's tagged legs, shared by the event page (one event)
-   and the Projects list (a page of events). */
 const GL_LEGS = `SELECT l.project_id, l.id::text AS leg_id, l.account_code, l.debit_sen, l.credit_sen, l.notes,
               je.je_no, to_char(je.entry_date, 'YYYY-MM-DD') AS entry_date, je.source_type, je.source_doc_no,
               je.posted, je.reversed, je.reversed_by_je::text AS reversed_by_je,
@@ -153,8 +151,6 @@ export function chargeLegs(charges: readonly FairCharge[]): BooksLeg[] {
   }));
 }
 
-/** The rows the event P&L sums the books straight into; the others
- *  (transport fee, commission) are % rows (services/eventPnl.ts pctRow). */
 const SUMMED_ROWS: ReadonlySet<PmsRow> = new Set<PmsRow>(['rental', 'setup', 'transport_setup_dismantle', 'others']);
 
 /** Marks a leg read from a voucher that is CHECKED but not yet approved. */
@@ -187,7 +183,6 @@ export async function readCheckedVoucherLegs(db: D1Database, projectId: number, 
   }
 }
 
-/* The ONE read of checked-not-approved voucher lines (event page and list). */
 const CHECKED_PV_LEGS = `SELECT l.project_id, l.id::text AS leg_id, l.debit_account_code AS account_code, l.amount_sen AS debit_sen, 0 AS credit_sen,
               l.description AS notes, pv.pv_number AS je_no, to_char(pv.voucher_date, 'YYYY-MM-DD') AS entry_date,
               '${PV_CHECKED_SOURCE}' AS source_type, pv.pv_number AS source_doc_no,
@@ -234,8 +229,6 @@ export function rowOfLeg(leg: Pick<BooksLeg, 'pms_row' | 'account_type'>): PmsRo
   return String(leg.account_type ?? '').toUpperCase() === 'EXPENSE' ? 'others' : null;
 }
 
-/** A stored line's id is positive and a sales entry's is its negation; the
-    books run below both. */
 const BOOKS_ID_BASE = 1_000_000_000;
 
 /** A leg on the event page: a cost line nobody there can edit, carrying the
@@ -285,7 +278,6 @@ export function booksLinesFor(projectId: number, legs: BooksLeg[]): BooksLine[] 
       archived_at: null,
       auto_source: null,
       source: 'books',
-      /* A checked voucher says so: it is Finance's figure, not yet in the GL. */
       doc_no: leg.source_type === PV_CHECKED_SOURCE
         ? `${leg.source_doc_no || leg.je_no} (checked)`
         : leg.source_doc_no || leg.je_no,
@@ -300,13 +292,9 @@ type LedgerLine = { kind?: string | null; category?: string | null; source?: str
 
 export type EventBooks<L> = {
   ok: boolean;
-  /** Why the ledger could not be read — the page's figures are the typed ones. */
   reason: string | null;
-  /** The rows the books fill, in the page's order. */
   rows: PmsRow[];
-  /** Picker categories whose row the books fill — a line typed there would not count. */
   closed_categories: string[];
-  /** The typed and auto lines the books replaced, kept aside. */
   replaced: L[];
 };
 
@@ -391,12 +379,10 @@ export async function readEventBooksMany(db: D1Database, projectIds: readonly nu
   if (!checked.ok) return checked;
   if (!credits.ok) return credits;
   if (!trips.ok) return { ok: false, reason: trips.reason };
-  /* Each fair's in-house setup / dismantle charge (chargeLegs). */
   const wanted = new Set(projectIds);
   for (const [id, charges] of chargesByFair(trips.trips)) {
     if (wanted.has(id)) posted.byProject.set(id, [...(posted.byProject.get(id) ?? []), ...chargeLegs(charges)]);
   }
-  /* The supplier notes' credits, each event's own (withScnCredits). */
   for (const [id, legs] of credits.byProject) posted.byProject.set(id, withScnCredits(posted.byProject.get(id) ?? [], legs));
   for (const [id, legs] of checked.byProject) posted.byProject.set(id, [...(posted.byProject.get(id) ?? []), ...legs]);
   return posted;

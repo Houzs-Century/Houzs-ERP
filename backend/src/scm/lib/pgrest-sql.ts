@@ -1,24 +1,3 @@
-// ----------------------------------------------------------------------------
-// pgrest-sql — run a list's EXISTING PostgREST filter closure as a SQL WHERE.
-//
-// WHY. Production PostgREST has aggregates switched off (PGRST123, see
-// postgrest-aggregate.ts), so every count and money total on the Sales Order and
-// Purchase Invoice lists fell back to paging the WHOLE filtered set 1,000 rows at
-// a time and adding it up in JS: about a dozen sequential round trips per tile on
-// the unfiltered tab. Postgres itself (Hyperdrive, db/pg.ts) can answer the same
-// question in one statement.
-//
-// HOW PARITY IS KEPT. The predicates are NOT rewritten by hand. The list's own
-// closure (`read.header`, `read.scoped`, scopeToCompany, applySoScope …) is run
-// against a recorder that has the PostgREST builder's filter methods; each call
-// becomes the SQL that PostgREST itself would have produced for it. So a filter
-// added to the closure reaches this path with no second copy to drift.
-//
-// FAIL-SAFE. Anything the recorder does not understand — an unknown method, an
-// embedded-resource column (`supplier.name`), an operator not listed below —
-// throws PgrestSqlUnsupported, and the caller takes its PostgREST path, which is
-// slower and has always been right.
-// ----------------------------------------------------------------------------
 
 import { parsePgrestInList } from './pgrest-in-list';
 
@@ -32,9 +11,6 @@ export function sqlIdent(col: string): string {
   return `"${col}"`;
 }
 
-/* PostgREST COMPUTED FIELDS: functions over the view's row that PostgREST lets a
-   filter or select name like a column (migrations-pg 20260914T1600). In SQL they
-   are called on the row. Every statement built here aliases its relation `t`. */
 const COMPUTED_FIELDS: Readonly<Record<string, string>> = {
   so_line_warehouse_ids: 'scm.so_line_warehouse_ids',
   so_line_categories: 'scm.so_line_categories',
@@ -52,11 +28,8 @@ export function selectCol(col: string): string {
   return COMPUTED_FIELDS[col] ? `${colRef(col)} AS ${sqlIdent(col)}` : colRef(col);
 }
 
-/* PostgREST reads `*` in a like / ilike pattern as `%` (url grammar). */
 const likePattern = (v: string): string => v.replace(/\*/g, '%');
 
-/* A scalar value as PostgREST reads it: a double-quoted value is unquoted, with
-   backslash escapes; anything else is taken verbatim. */
 function unquote(raw: string): string {
   if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
     return raw.slice(1, -1).replace(/\\(.)/g, '$1');
@@ -101,7 +74,6 @@ export class SqlParams {
 
 const CMP: Record<string, string> = { eq: '=', neq: '<>', gt: '>', gte: '>=', lt: '<', lte: '<=' };
 
-/** One PostgREST condition, `<op>.<value>` on `col`, as SQL. */
 function condition(col: string, opAndValue: string, p: SqlParams): string {
   const c = colRef(col);
   if (opAndValue.startsWith('not.')) return `NOT (${condition(col, opAndValue.slice(4), p)})`;
@@ -132,7 +104,6 @@ function condition(col: string, opAndValue: string, p: SqlParams): string {
   }
 }
 
-/** One term of an `or=` / `and=` body: a condition or a nested group. */
 function term(t: string, p: SqlParams): string {
   const group = t.match(/^(not\.)?(and|or)\((.*)\)$/s);
   if (group) {
@@ -175,7 +146,6 @@ export class SqlFilterRecorder {
   lte(col: string, v: unknown) { return this.cmp('lte', col, v); }
   like(col: string, v: string) { return this.push(`${colRef(col)} LIKE ${this.p.add(likePattern(v))}`); }
   ilike(col: string, v: string) { return this.push(`${colRef(col)} ILIKE ${this.p.add(likePattern(v))}`); }
-  /* `unknown`: the list closures are untyped, so a non-boolean can arrive. */
   is(col: string, v: unknown) {
     if (v === null) return this.push(`${colRef(col)} IS NULL`);
     if (v === true) return this.push(`${colRef(col)} IS TRUE`);
@@ -186,12 +156,10 @@ export class SqlFilterRecorder {
     const uniq = [...new Set(vals.map(scalar))];
     return this.push(uniq.length === 0 ? 'FALSE' : `${colRef(col)} IN (${uniq.map((v) => this.p.add(v)).join(', ')})`);
   }
-  /* supabase-js builds `ov.{a,b}` from an array by a plain join. */
   overlaps(col: string, v: string | readonly unknown[]) {
     const lit = typeof v === 'string' ? v : `{${v.map(scalar).join(',')}}`;
     return this.push(`${colRef(col)} && ${this.p.add(lit)}`);
   }
-  /* supabase-js appends `${op}.${value}` verbatim, so `.not(col, 'is', null)` is `not.is.null`. */
   not(col: string, op: string, v: unknown) { return this.push(condition(col, `not.${op}.${String(v)}`, this.p)); }
   filter(col: string, op: string, v: unknown) { return this.push(condition(col, `${op}.${String(v)}`, this.p)); }
   or(body: string, opts?: { foreignTable?: string; referencedTable?: string }) {
@@ -213,13 +181,10 @@ export const FRESH_READ = 'now() IS NOT NULL';
 export function whereOf(apply: (q: SqlFilterRecorder) => unknown, p: SqlParams): string {
   const rec = new SqlFilterRecorder(p);
   let out: unknown;
-  /* A method the recorder lacks is a TypeError here — the same "cannot
-     translate", not a database failure. */
   try { out = apply(rec); } catch (e) {
     if (e instanceof PgrestSqlUnsupported) throw e;
     throw new PgrestSqlUnsupported(`filter closure: ${e instanceof Error ? e.message : String(e)}`);
   }
-  /* A closure that built a NEW builder instead of chaining would lose filters. */
   if (out !== rec) throw new PgrestSqlUnsupported('filter closure did not return its builder');
   return rec.where();
 }

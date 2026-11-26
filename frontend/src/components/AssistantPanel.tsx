@@ -1,18 +1,3 @@
-// ---------------------------------------------------------------------------
-// AssistantPanel — the floating, resizable Assistant chat card (the owner's
-// "like Facebook Messenger, a small window on the side" concept). The corner
-// robot launcher TOGGLES it; it does NOT navigate away, so the operator keeps
-// the page they were on. A drag handle at the top-left corner resizes it in
-// both axes, and the chosen size persists per browser (a personal preference,
-// the same class of client-side state as the launcher's position).
-//
-// No scrim: the app stays fully interactive behind the card, exactly like a
-// docked chat window — you reference an order on the page while you ask about
-// it. Escape and the close button dismiss it.
-//
-// The body is the shared <AssistantChat/>, so the panel and the /assistant page
-// are ONE chat, not two implementations (owner rule: one shared logic layer).
-// ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
@@ -43,9 +28,6 @@ export function AssistantPanel() {
   const [h, setH] = useState(() => readSize(H_KEY, DEFAULT_H, MIN_H, MAX_H));
   const drag = useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null);
 
-  /* Top-left drag handle: moving the pointer UP/LEFT grows the card, so both
-     dimensions increase by (start − current). Clamped to sane bounds AND the
-     viewport (minus a gutter) so the card can't outgrow the screen. */
   const onMove = useCallback((e: PointerEvent) => {
     const d = drag.current;
     if (!d) return;
@@ -62,14 +44,12 @@ export function AssistantPanel() {
     document.body.style.cursor = "";
     window.removeEventListener("pointermove", onMove);
     window.removeEventListener("pointerup", onUp);
-    // Persist via functional updater so we store the latest size, not a stale
-    // closure value.
     setW((cur) => {
-      try { window.localStorage.setItem(W_KEY, String(Math.round(cur))); } catch { /* private mode */ }
+      try { window.localStorage.setItem(W_KEY, String(Math.round(cur))); } catch { }
       return cur;
     });
     setH((cur) => {
-      try { window.localStorage.setItem(H_KEY, String(Math.round(cur))); } catch { /* private mode */ }
+      try { window.localStorage.setItem(H_KEY, String(Math.round(cur))); } catch { }
       return cur;
     });
   }, [onMove]);
@@ -83,7 +63,6 @@ export function AssistantPanel() {
     window.addEventListener("pointerup", onUp);
   };
 
-  /* Escape closes while open. */
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") closePanel(); };
@@ -91,7 +70,6 @@ export function AssistantPanel() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, closePanel]);
 
-  /* Belt-and-braces: drop any in-flight drag listeners on unmount. */
   useEffect(
     () => () => {
       window.removeEventListener("pointermove", onMove);
@@ -111,7 +89,6 @@ export function AssistantPanel() {
       style={{ width: w, height: h }}
       className="fixed bottom-24 right-5 z-[92] flex max-h-[calc(100vh-40px)] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-slab"
     >
-      {/* top-left corner resize handle */}
       <div
         onPointerDown={startDrag}
         role="separator"
@@ -123,7 +100,6 @@ export function AssistantPanel() {
         <span className="h-2.5 w-2.5 rounded-tl-sm border-l-2 border-t-2 border-border-strong transition-colors group-hover:border-primary" />
       </div>
 
-      {/* header */}
       <div className="flex h-12 shrink-0 items-center gap-2 bg-sidebar px-4 text-sidebar-ink">
         <span className="flex h-6 w-6 flex-none items-center justify-center rounded-md bg-sidebar-ink/10">
           <Bot size={15} />
@@ -148,7 +124,6 @@ export function AssistantPanel() {
         </button>
       </div>
 
-      {/* shared chat body fills the remaining height */}
       <AssistantChat className="flex-1" />
     </section>
   );

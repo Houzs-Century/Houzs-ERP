@@ -1,7 +1,3 @@
-/* HR · Allowances (step-2 re-skin). Monthly allowance lines (leadership,
- * transport, overnight, KPI, attendance) and Backpay (a company advance that is
- * deducted). New design over HrTablePage, real /api/hr/allowances, add/edit via
- * a modal, remove with a confirm. (Ported from the old AllowancesTab.) */
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";

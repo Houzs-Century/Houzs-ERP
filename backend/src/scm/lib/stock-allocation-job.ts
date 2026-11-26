@@ -6,58 +6,6 @@
    to. `job_key` is the queue's own identity, not a business key two companies
    could each hold. */
 
-/* ══════════════════════════════════════════════════════════════════════════════
-   SCOPE — READ THIS BEFORE RELYING ON "DURABLE".
-
-   This queue makes an SO stock-allocation recompute durable for the SIX call
-   sites that use `scheduleStockAllocationAfterCommand`: the three TBC line
-   commands, amendment approve-so, and — since 2026-08-20 — the GRN line DELETE
-   and GRN cancel. Those six run inside `runScmPgCommand`, so the queue row
-   commits in the SAME database transaction as the source write, and a Worker
-   crash between the two is impossible.
-
-   The other THIRTY-TWO allocation triggers in this codebase still call
-   `recomputeSoStockAllocation` best-effort (GRN post, DO ship/cancel,
-   delivery + purchase returns, stock takes, transfers, inventory adjustments,
-   consignment, and eight paths in mfg-sales-orders itself). For those, a crash
-   between the source write and the recompute leaves READY / PENDING and the SO
-   header status stale until some later mutation happens to sweep. ALLOCATION IS
-   NOT DURABLE IN GENERAL. Do not read the word "durable" in this file as
-   covering the whole surface — it covers six entry points.
-
-   NARROWED, NOT CLOSED, 2026-08-17. `recomputeSoStockAllocation` now enqueues
-   its OWN retry row whenever a sweep it actually ENTERED did not finish — a
-   lost single-flight race, a throw, or a header left un-advanced under an edit
-   lease. So the cron below IS now a repair loop for those outcomes, on all ~38
-   triggers rather than the durable six. The gap that remains is the one this
-   header was written about and it is unchanged: if the Worker dies BEFORE the
-   recompute is reached, there is still no row and still no retry, because only
-   a queue write inside the source write's own transaction can cover that. Six
-   entry points have it. Converting the rest still means moving each route onto
-   `runScmPgCommand` first.
-
-   2026-11-22 (port of Conts D16): every best-effort trigger now answers the
-   save first, through `deferAllocationRecompute` (routes holding `c`) or
-   `recomputeAllocationAfterSave` (helpers holding only a db client); the only
-   inline sweep left is the manual "Re-allocate stock" endpoint, which returns
-   the sweep's result. The history below explains what deferring does and does
-   not buy.
-
-   THIRTY-ONE of those thirty-two were `await`ed inline, so the operator's
-   request paid for the whole global sweep. ONE — the SO header PATCH — was
-   DEFERRED via `deferAllocationRecompute` below. Deferred is NOT a durability
-   upgrade: same call, same crash window, just moved off the response path. If
-   anything it is harder to reason about, because the operator has already been
-   told the save succeeded when the sweep dies. It buys latency and nothing
-   else; the honest fix for that call site is still to move it onto
-   `runScmPgCommand` so it can join the durable six.
-
-   The exact inventory is pinned by tests/stockAllocationDurabilityScope.test.ts,
-   which fails if any count moves. Converting the rest requires first moving
-   each route onto the PG command transaction: enqueuing from a route that has
-   no transaction to join produces a queue row that can commit without its
-   source write, which is worse than the honest inline call.
-   ══════════════════════════════════════════════════════════════════════════ */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseService } from '../../db/supabase';
 import type { Env } from '../env';
@@ -69,26 +17,10 @@ import { afterResponse } from '../../lib/after-response';
 const JOB_KEY = 'GLOBAL';
 const LEASE_MS = 4 * 60_000;
 
-/* Terminal state (2026-07-22). Without one, a permanently failing recompute —
-   a dropped column, a broken PL/pgSQL function, a poison row — retried every
-   five minutes forever and nobody ever found out, because `attempts` was reset
-   to 0 by the very next enqueue. After MAX_ATTEMPTS consecutive HARD failures
-   the row is parked in state 'DEAD': automatic retries stop, the row (with its
-   last_error) stays for a human, and every subsequent cron sweep logs it loudly
-   so the silence is broken. Clearing it is deliberate — see the runbook. */
 const MAX_ATTEMPTS = 10;
 export const DEAD_LETTER_STATE = 'DEAD';
 export const PENDING_STATE = 'PENDING';
 
-/* A DEFERRAL is not a failure: some SO header could not be advanced because a
-   human holds its edit lease. Those are counted separately so a busy shop can
-   never dead-letter a perfectly healthy projection. The deferral backoff is
-   deliberately NOT a multiple of five minutes: the cron is 5 min, and two equal
-   timers can beat against each other forever. The SO edit lease was 5 min too
-   until 2026-09-03 and is now 60s (scm/lib/so-edit-lease.ts), which only makes
-   a deferral rarer - the lock is usually gone before the first retry.
-   A jittered 45-105s next_attempt_at breaks the resonance, and the next cron
-   tick picks the row up regardless. */
 const DEFER_BACKOFF_BASE_MS = 45_000;
 const DEFER_BACKOFF_JITTER_MS = 60_000;
 const DEFER_BACKOFF_CAP_MS = 4 * 60_000;
@@ -120,10 +52,6 @@ export type AllocationDrainResult = {
   reason?: string;
 };
 
-/* The enqueue moved to lib/stock-allocation-queue.ts on 2026-08-17 so that
-   so-stock-allocation.ts can write its own retry row without closing an import
-   cycle. Re-exported here because this is where callers look for it, and there
-   must go on being exactly ONE enqueue. */
 export { enqueueStockAllocationRecompute };
 
 /**
@@ -147,8 +75,6 @@ export async function drainStockAllocationRecomputeWithClient(
   const row = pending as QueueRow;
   const attempts = Number(row.attempts ?? 0);
 
-  /* Terminal. Never retried automatically, and never silent: the cron logs this
-     reason on every sweep until a human clears the row. */
   if (row.state === DEAD_LETTER_STATE) {
     return {
       processed: false,
@@ -159,7 +85,6 @@ export async function drainStockAllocationRecomputeWithClient(
     };
   }
 
-  /* Deferral backoff — the row is queued but not due yet. */
   const dueAt = row.next_attempt_at ? Date.parse(row.next_attempt_at) : NaN;
   if (Number.isFinite(dueAt) && dueAt > Date.now()) {
     return { processed: false, completed: false, deferred: true, attempts, reason: 'backoff_not_due' };
@@ -185,8 +110,6 @@ export async function drainStockAllocationRecomputeWithClient(
     if (!result.ok) failure = result.reason ?? 'stock allocation returned ok=false';
     else if (result.reason === 'another_recompute_in_progress') softDefer = result.reason;
     else if (result.deferredDocNos && result.deferredDocNos.length > 0) {
-      /* Headers left un-advanced because a human is editing them. The line
-         projection committed; only these headers are outstanding. Soft. */
       softDefer = `headers_leased:${result.deferredDocNos.join(',')}`;
     }
   } catch (error) {
@@ -240,7 +163,6 @@ export async function drainStockAllocationRecomputeWithClient(
     .maybeSingle();
   if (deleteError) return { processed: true, completed: false, reason: deleteError.message };
   if (!deleted) {
-    // New work arrived while recompute ran. Release only our lease; keep it queued.
     const { error } = await sb.from('stock_allocation_recompute_queue').update({
       locked_by: null,
       locked_until: null,
@@ -297,10 +219,8 @@ export function deferAllocationRecompute(c: any, sb: any, where: string): void {
       console.error(`[so-allocation] ${where} failed:`, error);
     },
   );
-  /* c.executionCtx throws outside Workers (vitest). There the floating promise
-     just runs — already `.catch`ed, so it cannot break the test run. */
   try { c.executionCtx.waitUntil(sweep); }
-  catch { /* non-Workers runtime — let the floating promise run */ }
+  catch { }
 }
 
 /**
@@ -320,7 +240,7 @@ export function deferQueuedAllocationDrain(c: { executionCtx: ExecutionContext }
     },
   );
   try { c.executionCtx.waitUntil(sweep); }
-  catch { /* non-Workers runtime — let the floating promise run */ }
+  catch { }
 }
 
 async function drainOrSweepOnce(sb: QueueDb): Promise<void> {
@@ -342,11 +262,6 @@ export async function recomputeAllocationAfterSave(sb: QueueDb, where: string): 
   await afterResponse(`so-allocation ${where}`, () => sweepThenCatchUp(sb));
 }
 
-/* COALESCING. A save whose sweep loses the single-flight lock to a running one
-   leaves the one GLOBAL retry row (recomputeSoStockAllocation's own enqueue)
-   and stops. The sweep that held the lock drains that row as soon as it ends,
-   so a burst of saves costs the running sweep plus one more, finished within
-   the same waitUntil instead of at the next five-minute cron tick. */
 async function sweepThenCatchUp(sb: QueueDb): Promise<void> {
   const result = await recomputeSoStockAllocation(sb);
   if (result.queuedForRetry !== undefined) return;
@@ -357,10 +272,6 @@ async function sweepThenCatchUp(sb: QueueDb): Promise<void> {
   }
 }
 
-/* Saves that land while a drain's sweep runs each write a new request_token, so
-   that drain ends in new_work_arrived; draining again covers them. Bounded so a
-   constant stream of saves cannot hold one request's waitUntil open; the row
-   stays PENDING for the cron. */
 const MAX_DRAIN_PASSES = 4;
 export async function drainCoalesced(
   sb: QueueDb,
@@ -383,9 +294,6 @@ export async function scheduleStockAllocationAfterCommand(c: any, sb: any, reaso
           throw new Error(result.reason ?? 'stock-allocation drain failed');
         }
       });
-    // The durable row is already committed, so the response need not wait for
-    // a global allocation sweep. waitUntil keeps the low-latency attempt alive;
-    // environments without it await as a safe fallback.
     try { c.executionCtx.waitUntil(attempt); }
     catch { await attempt; }
   });

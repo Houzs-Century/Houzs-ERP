@@ -58,9 +58,7 @@ const outbox = (sb: { tables: Record<string, Row[]> }) => sb.tables.autocount_ou
 const jsonRes = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-/** AutoCount takes it. */
 const accepts = () => vi.fn(async () => jsonRes(200, { ok: true, docNo: 'SO-000123' })) as never;
-/** AutoCount throws — the shape production is in right now (`Primary Key Error`). */
 const refuses = () => vi.fn(async () => jsonRes(500, { ok: false, error: 'Primary Key Error' })) as never;
 
 beforeEach(() => resetWritebackFlagCache());
@@ -72,30 +70,15 @@ describe('a waiting row can be pushed now', () => {
 
     expect(r.outcome).toBe('sent-now');
     expect(outbox(sb)[0].status).toBe('sent');
-    /* The write-back half of the map, exactly as the sweep would have written
-       it — this is the same dispatchOne, not a second sender. */
     expect(sb.tables.mfg_sales_orders[0].linked_ac_docno).toBe('SO-000123');
   });
 
-  /* THE SHAPE PRODUCTION IS IN, and it is not the obvious one. AcSyncService
-     turns every exception into a 500 and `callAcService` calls a 500 RETRYABLE,
-     so AutoCount REFUSING a document does not fail the row — it keeps it pending
-     and retrying until the attempt cap. That is why HC-SO-2608-002 sat at
-     `pending` with `Primary Key Error` while HC-SO-2608-001 next to it read
-     `failed` with the same words: the second had simply spent its six.
-
-     This test exists because the first version of the copy for this outcome
-     said "AutoCount could not be reached", which would have sent an operator to
-     check a tunnel that was working perfectly and refusing him on purpose. */
   test("AutoCount's refusal comes back as the answer, and the row keeps retrying under the cap", async () => {
     const sb = world();
     const r = await sendOutboxRowNow(env as never, sb as never, { rowId: 'ob-1', companyId: 1 }, refuses());
 
-    /* NOT accepted — a refusal must never read as success, because the document
-       is then in the ERP and not in the book. */
     expect(acRequeueAccepted(r.outcome)).toBe(false);
     expect(r.outcome).toBe('send-now-retrying');
-    /* The account book's own words reach the operator either way. */
     expect(r.detail).toContain('Primary Key Error');
     expect(outbox(sb)[0].status).toBe('pending');
   });
@@ -114,9 +97,6 @@ describe('a waiting row can be pushed now', () => {
     const sb = world([waitingRow({ attempts: 2 })]);
     await sendOutboxRowNow(env as never, sb as never, { rowId: 'ob-1', companyId: 1 }, refuses());
 
-    /* The counter means "times we asked AutoCount" to the page, the health check
-       and the dead-lettering rule. A manual call that did not count would make
-       all three false. */
     expect(outbox(sb)[0].attempts).toBe(3);
   });
 
@@ -161,7 +141,6 @@ describe('a waiting row can be pushed now', () => {
 describe('it cannot send the same document twice', () => {
   test('a second press while the first is in flight sends nothing', async () => {
     const sb = world();
-    /* The first press has taken the row and is still talking to the host. */
     expect(await claimOutboxRow(sb as never, 'ob-1')).toBe(true);
 
     const fetchImpl = accepts();
@@ -178,20 +157,10 @@ describe('it cannot send the same document twice', () => {
     expect(await claimOutboxRow(sb as never, 'ob-1')).toBe(false);
   });
 
-  /* THE SWEEP IS GUARDED BY THE SAME GATE, and it is asserted here rather than
-     by running the drain: `drainAutoCountOutbox` builds its own Supabase client
-     out of `env` and there is no seam to hand it the fake, so a test of the
-     sweep would have to catch its own failure to construct a client and could
-     then never fail for the reason it claims to test. What IS testable is the
-     gate itself — the sweep calls `claimOutboxRow` on every row before
-     `dispatchOne`, and a claim it cannot take is a row it skips. That call is
-     one line in the drain loop; this is the behaviour behind it. */
   test('a claim is released when the send finishes, so the next sweep can have it', async () => {
     const sb = world();
     await sendOutboxRowNow(env as never, sb as never, { rowId: 'ob-1', companyId: 1 }, refuses());
 
-    /* mark() clears it on every outcome — including the refusals, which stay
-       pending and must remain sendable. */
     expect(outbox(sb)[0].claimed_at).toBe(null);
   });
 
@@ -199,8 +168,6 @@ describe('it cannot send the same document twice', () => {
     const dead = new Date(Date.now() - AC_CLAIM_LEASE_MS - 60_000).toISOString();
     const sb = world([waitingRow({ claimed_at: dead })]);
 
-    /* Before the sweep releases it, the row is untouchable — that is the claim
-       working, not a bug. */
     expect(await claimOutboxRow(sb as never, 'ob-1')).toBe(false);
 
     await releaseExpiredClaims(sb as never);
@@ -221,8 +188,6 @@ describe('it cannot send the same document twice', () => {
 });
 
 describe('which button a row is offered', () => {
-  /* THE TWO ARE DISJOINT BY CONSTRUCTION, and that is the property that keeps
-     "Send again" and "Send now" from meaning the same thing on screen. */
   const cases: Array<{ status: string; attempts: number; err: string | null }> = [
     { status: 'pending', attempts: 0, err: null },
     { status: 'pending', attempts: 3, err: 'Primary Key Error' },

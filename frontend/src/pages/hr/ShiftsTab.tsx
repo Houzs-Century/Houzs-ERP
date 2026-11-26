@@ -1,9 +1,3 @@
-/* HR · Shifts (v3 design). The shift templates assigned to employees: a list of
- * shift groups with their hours (and a delivery-day window), how many people are
- * on each, and whether it is active. A row — or "New shift" — opens a drawer to
- * set the times and manage who is on the shift. Lateness and OT are judged against
- * each employee's group shift. Real data and all editing (save / delete / assign)
- * are unchanged. */
 import { useMemo, useState } from "react";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { useToast } from "../../hooks/useToast";

@@ -1,7 +1,3 @@
-// Classification coverage for amendment-routing.ts — proves the owner's model:
-// a colour change is PROCESSING (Production / Design); a delivery-date change is
-// DELIVERY/COMMERCIAL (Logistics); a mixed amendment tags BOTH types and both
-// departments.
 import { describe, it, expect } from 'vitest';
 import {
   routeField,

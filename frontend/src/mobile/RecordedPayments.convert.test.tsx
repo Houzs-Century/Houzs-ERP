@@ -59,7 +59,6 @@ describe('AddPaymentSheet', () => {
     const method = screen.getByText('Method').parentElement!.querySelector('select') as HTMLSelectElement;
     fireEvent.change(method, { target: { value: CONVERT_LABEL } });
     const record = screen.getByRole('button', { name: 'Record Payment' }) as HTMLButtonElement;
-    /* An amount alone is not enough: the order it comes from is owed. */
     fireEvent.change(screen.getByText('Amount').parentElement!.querySelector('input')!, { target: { value: '100.00' } });
     expect(record.disabled).toBe(true);
     expect(screen.getByText('Pick the order the money comes from.')).toBeTruthy();

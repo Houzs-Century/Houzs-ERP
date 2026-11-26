@@ -1,20 +1,3 @@
-// ----------------------------------------------------------------------------
-// acc/self-check — Books › Self-check summed up (the owner's Claude Design,
-// batch 6 c3): how many of its eight checks name something to look at, and
-// the one-line items To do lists for them. Pure: the reads are made by the
-// caller (scm/routes/accounting-self-check.ts — Run again and the nightly
-// run), the same reads the page shows.
-//
-//   a control account   "<doc> journal RM x short|over" per document whose
-//                        journal disagrees; "N lines from other sources on
-//                        <code>"; "<name> not checked" when it could not run
-//   payments            "N payments not in the books"; "N payments no longer
-//                        agree with their entry"
-//   money not done with "N cancelled orders holding money"; "N payments
-//                        without an official receipt"
-//
-// A read that failed counts as one to look at — never as clean.
-// ----------------------------------------------------------------------------
 
 import type { ControlCheckResult } from './control-check';
 
@@ -22,16 +5,13 @@ export type SelfCheckSummary = { checks: number; findings: number; items: string
 
 export type SelfCheckFacts = {
   control: { ok: true; value: ControlCheckResult } | { ok: false; reason: string };
-  /** Cancelled orders still holding money. */
   cancelled: { ok: true; count: number } | { ok: false; reason: string };
-  /** Payments without an official receipt. */
   receipts: { ok: true; count: number } | { ok: false; reason: string };
 };
 
 /** The page's four control rows, the two payment rows and the two money rows. */
 export const SELF_CHECK_COUNT = 8;
 
-/** A control role by the name Finance uses for it. */
 const controlName = (role: string): string => {
   switch (role) {
     case 'AR': return 'Trade debtors';
@@ -47,7 +27,6 @@ export function selfCheckSummary(f: SelfCheckFacts): SelfCheckSummary {
   const items: string[] = [];
   let findings = 0;
   if (!f.control.ok) {
-    /* The control check read every row below it: all six are unknown. */
     findings += 6;
     items.push(`Control check not run (${f.control.reason})`);
   } else {

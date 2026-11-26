@@ -168,7 +168,6 @@ const DETAIL_COLUMNS: Column<ProductChangeRow>[] = [
   },
 ];
 
-/* ── Product changes: one month ─────────────────────────────────────────── */
 export const ProductChangesTab = () => {
   const r = useReportRange();
   const [params, setParams] = useSearchParams();
@@ -244,7 +243,6 @@ export const ProductChangesTab = () => {
   );
 };
 
-/* ── Product changes P&L: a month or a range ───────────────────────────── */
 const PERSON_COLUMNS: Column<SalespersonRow>[] = [
   { key: 'salesperson', label: 'Salesperson', getValue: (p) => p.salesperson, render: (p) => <span className={s.strong}>{p.salesperson}</span> },
   { key: 'margin_changes', label: 'Changes', align: 'right', getValue: (p) => p.events, render: (p) => p.events },

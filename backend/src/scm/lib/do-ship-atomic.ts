@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// scm/lib/do-ship-atomic — the shapes and answers of an all-or-nothing DO ship.
-//
-// DO_SHIP_MODE=atomic (lib/stock-post-tx.ts): the status write and the ship's
-// stock writes (the OUT rows, which fire the FIFO trigger, and the rack
-// STOCK_OUT rows) commit together or not at all. HC-DO-2610-319 shipped with 4
-// lines and no OUT because they were separate PostgREST calls. The transaction
-// itself runs in routes/delivery-orders-mfg.ts (shipDoAtomically), beside the
-// deduction it wraps; this file holds what does not need the route, which sits
-// near its size ceiling.
-// ----------------------------------------------------------------------------
 
 import { scopeToCompanyId } from './companyScope';
 import { hasUnreadableLines, LINES_UNREADABLE, linesUnreadableMessage } from './failed-read-refusal';
@@ -63,7 +52,7 @@ export async function keepCreatedDoAsDraft(
       sb.from('delivery_orders').update({ status: 'DRAFT', updated_at: new Date().toISOString() }).eq('id', doId), companyId,
     ).eq('status', 'LOADED').select('id').maybeSingle()) as { data: unknown; error: unknown };
     reverted = !error && !!data;
-  } catch { /* reported below */ }
+  } catch { }
   return {
     error: f.reason,
     message: reverted

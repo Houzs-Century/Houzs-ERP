@@ -1,39 +1,17 @@
-// ----------------------------------------------------------------------------
-// useColumnWidths — the resizable columns of a Finance grid that is not a
-// DataTable (the owner's redesign, batch 6 §1.3: Journal entries, General
-// ledger, Merchant charges, Collection; and the AP invoice form's lines, owner
-// 2026-11-16, where a cell is a text box). Every row of the grid is a CSS grid on
-// the same track list; a header edge is dragged to resize its column, and a
-// double-click fits it to what it holds. Columns marked `fit` (numbers, dates,
-// entry numbers) are never dragged narrower than their contents. The widths a
-// person sets are theirs: localStorage `fin-<kind>-cw`, cleared by "Reset
-// column widths". A personal preference, so localStorage (repo rule).
-//
-// The grid's markup carries three attributes the hook measures by:
-// `data-cw-root` on the box that holds every row, `data-cw-row` on each row,
-// and `data-cw-lbl` on a header's label; a cell spanning columns says so in
-// its inline `gridColumn: 'span N'`.
-// ----------------------------------------------------------------------------
 
 import { useCallback, useState, type MouseEvent as ReactMouseEvent } from 'react';
 
 export type ColumnWidthSpec = {
-  /** The track each column opens at: '78px', 'minmax(200px,1fr)'. */
   defaults: readonly string[];
-  /** No column is dragged narrower than this, in px. */
   min: readonly number[];
-  /** Columns that never go narrower than what they hold. */
   fit?: readonly boolean[];
-  /** The grid's column gap in px — counted into its minimum width. */
   gap?: number;
 };
 
 type Widths = Array<number | null>;
 
-/** Widest a drag may make a column, and a double-click's fit. */
 const DRAG_MAX = 720;
 const FIT_MAX = 480;
-/** The rows' left and right padding, counted into the minimum width. */
 const ROW_PADDING = 30;
 
 export const columnWidthsKey = (kind: string): string => `fin-${kind}-cw`;
@@ -42,7 +20,7 @@ function readWidths(kind: string, n: number): Widths | null {
   try {
     const v: unknown = JSON.parse(window.localStorage.getItem(columnWidthsKey(kind)) ?? 'null');
     if (Array.isArray(v) && v.length === n && v.every((x) => x === null || (typeof x === 'number' && x > 0))) return v as Widths;
-  } catch { /* private mode or a stale value — the defaults */ }
+  } catch { }
   return null;
 }
 
@@ -64,21 +42,16 @@ export function gridMinWidth(defaults: readonly string[], widths: Widths | null,
   return px.reduce((a, b) => a + b, 0) + (px.length - 1) * gap + ROW_PADDING;
 }
 
-/** How wide a text box's text is, padding and border included, in layout px.
-    A form grid's box is only as wide as its column, so the box's own size
-    would make a double-click fit to nothing; its text is what the column holds. */
 function inputTextWidth(el: HTMLInputElement): number {
   const ctx = document.createElement('canvas').getContext('2d');
   if (!ctx) return 0;
   const cs = window.getComputedStyle(el);
   ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-  /* data-upper shows typed text in capitals (index.css); its placeholder stays as written. */
   const text = el.value ? (cs.textTransform === 'uppercase' ? el.value.toUpperCase() : el.value) : el.placeholder;
   const px = (v: string) => parseFloat(v) || 0;
   return ctx.measureText(text).width + px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth);
 }
 
-/** How wide column `i`'s widest single-column cell is, in layout px. */
 function contentWidth(root: HTMLElement, i: number, scale: number): number {
   let w = 0;
   root.querySelectorAll<HTMLElement>('[data-cw-row]').forEach((row) => {
@@ -97,7 +70,7 @@ function contentWidth(root: HTMLElement, i: number, scale: number): number {
             range.selectNodeContents(target);
             const cw = range.getBoundingClientRect().width / scale;
             if (cw > w) w = cw;
-          } catch { /* no layout (tests) */ }
+          } catch { }
         }
       }
       col += span;
@@ -118,7 +91,7 @@ export function useColumnWidths(kind: string, spec: ColumnWidthSpec) {
     try {
       if (clean) window.localStorage.setItem(columnWidthsKey(kind), JSON.stringify(clean));
       else window.localStorage.removeItem(columnWidthsKey(kind));
-    } catch { /* private mode — the widths last this visit */ }
+    } catch { }
   }, [kind]);
 
   const current = useCallback((): Widths => (widths ? [...widths] : Array.from({ length: n }, () => null)), [widths, n]);
@@ -137,7 +110,6 @@ export function useColumnWidths(kind: string, spec: ColumnWidthSpec) {
     const rows = Array.from(root.querySelectorAll<HTMLElement>('[data-cw-row]'));
     const x0 = ev.clientX;
     let last: Widths | null = null;
-    /* Live while dragging — straight onto the rows, no re-render per pixel. */
     const move = (e: MouseEvent) => {
       const w = Math.max(lo, Math.min(DRAG_MAX, Math.round(startW + (e.clientX - x0) / scale)));
       const next = [...base];
@@ -172,14 +144,10 @@ export function useColumnWidths(kind: string, spec: ColumnWidthSpec) {
   };
 
   return {
-    /** grid-template-columns for every row. */
     template: gridTemplate(spec.defaults, widths),
-    /** The root's min-width, px. */
     minWidth: gridMinWidth(spec.defaults, widths, gap),
-    /** True once a width was set — "Reset column widths" shows then. */
     custom: widths != null,
     reset: () => save(null),
-    /** The props of column `i`'s resize handle. */
     handle: (i: number) => ({
       onMouseDown: startResize(i),
       onDoubleClick: fitColumn(i),

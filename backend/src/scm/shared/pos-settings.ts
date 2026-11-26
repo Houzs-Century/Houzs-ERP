@@ -1,12 +1,3 @@
-/* Houzs POS settings (layouts E4 / E5): the three groups the POS Admin menu
- * edits, their defaults, and the one normaliser that turns whatever is stored
- * into a fully-typed document — so the ERP form, the API and the booth app
- * all read the same shape with the same defaults.
- *
- * ONE home. backend/src/scm/shared/pos-settings.ts is the original and
- * frontend/src/vendor/shared/pos-settings.ts its byte-identical copy
- * (check-shared-mirrors.mjs).
- */
 import { POS_PAYMENT_METHODS, type PosPaymentMethod } from "./pos-vocabulary";
 
 export type PosPaperWidth = 58 | 80;
@@ -18,7 +9,6 @@ export type SstReceiptSettings = {
   price_includes_sst: boolean;
   sst_reg_no: string;
   receipt_title: string;
-  /** Three header lines; `{event name}` is replaced on the device. */
   header_lines: string[];
   footer: string;
   paper_width: PosPaperWidth;
@@ -51,11 +41,8 @@ export type GeneralSettings = {
   heartbeat_minutes: number;
   daily_summary_email: boolean;
   customer_field: "OPTIONAL" | "HIDDEN";
-  /** scm.warehouses.id of the main POS stock location; null = not set. */
   pos_store_warehouse_id: string | null;
   return_window: "EVENT" | "SAME_DAY";
-  /** Project brands whose fairs the Events tab lists for the booth, beside
-   *  every Cash & Carry project (projects.brand, exact text). */
   booth_brands: string[];
 };
 
@@ -66,7 +53,6 @@ export type PosSettings = {
   general: GeneralSettings;
 };
 
-/** Cash is OFF by default: fairs are cashless (spec section 0). */
 const defaultPaymentMethods = (): Record<PosPaymentMethod, boolean> =>
   Object.fromEntries(POS_PAYMENT_METHODS.map((m) => [m, m !== "CASH"])) as Record<PosPaymentMethod, boolean>;
 

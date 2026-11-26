@@ -19,7 +19,6 @@ import {
   type MatrixLevel,
 } from "./roleMatrixModel";
 
-// A trimmed page catalogue mirroring GET /api/roles/page-access (backend PAGES).
 const PAGES: PageLite[] = [
   { key: "sales", label: "Sales Entries", parent: null },
   { key: "settings", label: "System Settings", parent: null },
@@ -109,7 +108,6 @@ describe("buildMatrixModules", () => {
       "service_cases.cases",
       "service_cases.pnl",
     ]);
-    // scm.sales claims scm.sales + its grandchild, NOT the warehouse pages.
     expect(mod("scm.sales").pages.map((p) => p.key)).toEqual(["scm.sales", "scm.sales.orders"]);
     expect(mod("scm.warehouse").pages.map((p) => p.key)).toEqual([
       "scm.warehouse",
@@ -165,14 +163,14 @@ describe("applyLevelToPerms", () => {
     expect(next.has("service_cases.read")).toBe(true);
     expect(next.has("service_cases.write")).toBe(false);
     expect(next.has("service_cases.manage")).toBe(false);
-    expect(next.has("projects.manage")).toBe(true); // untouched
+    expect(next.has("projects.manage")).toBe(true);
   });
   it("never removes or adds an approval key the owner set explicitly", () => {
     const start = new Set(["service_cases.approve"]);
     const full = applyLevelToPerms(start, mod("service_cases"), "full");
-    expect(full.has("service_cases.approve")).toBe(true); // kept
+    expect(full.has("service_cases.approve")).toBe(true);
     const none = applyLevelToPerms(start, mod("service_cases"), "none");
-    expect(none.has("service_cases.approve")).toBe(true); // still kept
+    expect(none.has("service_cases.approve")).toBe(true);
   });
 });
 
@@ -198,7 +196,7 @@ describe("applyLevelToPages keeps dormant pages frozen", () => {
     const next = applyLevelToPages(start, mod("service_cases"), "edit");
     expect(next["service_cases"]).toBe("edit");
     expect(next["service_cases.cases"]).toBe("edit");
-    expect(next["service_cases.pnl"]).toBe("full"); // dormant, untouched
+    expect(next["service_cases.pnl"]).toBe("full");
   });
 });
 
@@ -213,8 +211,7 @@ describe("pageRowsToSend", () => {
     const rows = pageRowsToSend(PAGES, levels);
     expect(rows.length).toBe(PAGES.length);
     const scm = rows.find((r) => r.pageKey === "scm");
-    expect(scm?.level).toBe("full"); // max(view, full)
-    // pages with no staged level default to none
+    expect(scm?.level).toBe("full");
     expect(rows.find((r) => r.pageKey === "sales")?.level).toBe("none");
   });
   it("derives scm = none when every area is none", () => {

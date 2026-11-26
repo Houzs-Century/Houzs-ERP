@@ -17,15 +17,8 @@ import { Plus, X } from 'lucide-react';
 import type { SupplierRow } from '../lib/suppliers-queries';
 import { useAnchoredPanel, anchoredPanelStyle } from '../../../lib/anchoredPanel';
 
-/* How tall this checkbox list wants to be when there is room for it. Shorter
-   whenever there is not — lib/anchoredPanel clamps it to the space on
-   whichever side of the trigger has more, and flips it above the chip row
-   rather than letting the last suppliers fall off the bottom of the window. */
 const SUPPLIER_MENU_MAX_H = 280;
 
-/* Perf cap — bound the rendered checkbox rows so a large ACTIVE-supplier list
-   can't freeze the dropdown open. A search input above the list keeps every
-   supplier reachable within the cap. Render-only; no selection/data change. */
 const SUPPLIER_RENDER_CAP = 60;
 
 export function MultiSupplierPicker({
@@ -44,14 +37,9 @@ export function MultiSupplierPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  // The dropdown is portaled to body (so an overflow:hidden ancestor can't clip
-  // it); menuRef tracks the portaled node so click-outside doesn't close on an
-  // in-dropdown click, and menuPos pins it under the trigger.
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuPos = useAnchoredPanel(wrapRef, open, SUPPLIER_MENU_MAX_H);
 
-  // Click-outside closes the dropdown — must treat BOTH the wrapper and the
-  // portaled menu as "inside".
   useEffect(() => {
     if (!open) return;
     const onDocClick = (e: MouseEvent) => {
@@ -67,8 +55,6 @@ export function MultiSupplierPicker({
   const selected    = suppliers.filter((s) => selectedSet.has(s.id));
   const remaining   = suppliers.filter((s) => !selectedSet.has(s.id));
 
-  // Client-side narrow so the render cap can never hide a supplier the operator
-  // is looking for — typing surfaces any match within SUPPLIER_RENDER_CAP.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return suppliers;
@@ -202,9 +188,6 @@ export function MultiSupplierPicker({
               }}
             />
           )}
-          {/* minHeight 0 so this list gives way when the shared positioner
-              shortens the whole panel — otherwise a cramped window pushes the
-              search box off the top instead of scrolling the rows. */}
           <div style={{ overflowY: 'auto', minHeight: 0 }}>
           {suppliers.length === 0 ? (
             <div style={{ padding: '12px', color: 'var(--fg-muted)', fontSize: 'var(--fs-13)' }}>

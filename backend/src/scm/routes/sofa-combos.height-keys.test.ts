@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { comboHasChargedPrice, validatePricesByHeight } from './sofa-combos';
 
-// BUG-46: the Maintenance Sizes pool holds inch-marked seat heights (`25"`),
-// and the Combo Pricing composer sends every pool height, so a key with `"`
-// must not refuse the whole grid.
 describe('validatePricesByHeight height keys', () => {
   it('accepts the composer payload from the BUG-46 screenshot', () => {
     const out = validatePricesByHeight({

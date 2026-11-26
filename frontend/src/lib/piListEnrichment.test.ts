@@ -6,14 +6,9 @@ import {
   type PiListMrpEnrichment,
 } from "./piListEnrichment";
 
-/* The PI list paints WITHOUT the four MRP-derived columns (the list endpoint
-   omits them — resolving them ran a company-wide computeMrp on the critical
-   path), then the deferred enrichment fetch fills them. These pin that two-phase
-   behaviour on the overlay the list applies. */
 
 const firstPaint: EnrichablePiRow = {
   id: "pi-1",
-  // The four MRP-derived columns are ABSENT at first paint (omit not blank).
 };
 
 const enrichment: PiListMrpEnrichment = {
@@ -26,7 +21,7 @@ const enrichment: PiListMrpEnrichment = {
 describe("applyPiListMrpEnrichment", () => {
   it("returns the row unchanged before the endpoint resolves", () => {
     const out = applyPiListMrpEnrichment(firstPaint, undefined);
-    expect(out).toBe(firstPaint); // same reference — no churn
+    expect(out).toBe(firstPaint);
     expect(out.assigned_sos).toBeUndefined();
     expect(out.delivered_dos).toBeUndefined();
   });
@@ -37,7 +32,6 @@ describe("applyPiListMrpEnrichment", () => {
     expect(out.assigned_so_linked).toBe(true);
     expect(out.assigned_so_provenance).toEqual([{ soDocNo: "SO-2" }]);
     expect(out.delivered_dos).toEqual([{ doNo: "DO-1", qty: 3 }]);
-    // First-paint row is untouched (pure overlay).
     expect(firstPaint.assigned_sos).toBeUndefined();
   });
 
@@ -54,10 +48,6 @@ describe("applyPiListMrpEnrichment", () => {
   });
 });
 
-/* C16 guard (Hookka rule: pin the projection's whole key set in a test, in the
-   same commit as the split). Its backend twin is PI_LIST_MRP_ENRICHMENT_KEYS in
-   backend/src/scm/lib/pi-assigned-sos.ts — the two literal arrays must stay
-   equal, so a new MRP-derived PI-list field added on only one side fails CI. */
 describe("applyPiListMrpEnrichment — C16 field-set parity", () => {
   it("heals EXACTLY the four MRP-derived fields — no more, no less", () => {
     expect([...PI_MRP_DERIVED_LIST_FIELDS].sort()).toEqual(

@@ -1,9 +1,3 @@
-// "Delivered with issue": the crew's POD problem report records an issue row
-// with the photos kept on the POD, WITHOUT opening a Service Case (owner
-// 2026-11-16 — the office opens the case). createCaseForDeliveryIssue is the
-// office action that opens the case and files the POD photos onto it. Every
-// read and write of the row stays inside the caller's companies, and the
-// delivery's status is never touched.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createAssrCase = vi.fn();
@@ -26,9 +20,6 @@ import {
 
 type Call = { table: string; op: string; args: unknown[] };
 
-/** A PostgREST builder fake: records every chained call per statement.
- *  `load` feeds `.maybeSingle()` (the office create's row read); `insert` /
- *  `update` feed `.single()`; `select` feeds an awaited list read. */
 function fakeSb(results: { insert?: unknown; update?: unknown; select?: unknown[]; load?: unknown } = {}) {
   const calls: Call[][] = [];
   const sb = {
@@ -60,8 +51,6 @@ function ctx(sb: unknown, opts: { allowed?: number[] | undefined; active?: numbe
     allowedCompanyIds: 'allowed' in opts ? opts.allowed : [1],
     companyId: opts.active,
   };
-  // env.DB answers the reporter-name lookup and the PIC read back. A single
-  // stub row is enough for both reads in these tests.
   const first = async () => (opts.reporterName !== undefined ? { name: opts.reporterName } : null);
   const DB = { prepare: () => ({ bind: () => ({ first }) }) };
   return { get: (k: string) => vars[k], env: { DB } } as unknown as Parameters<typeof listDeliveryIssues>[0];
@@ -72,7 +61,6 @@ const DO_TARGET: DeliveryIssueTarget = {
   soDocNo: 'HC-SO-000200', job: null,
 };
 
-/** A stored delivery_issues row the office create reads back. */
 const ISSUE_ROW = {
   id: 'iss-1', company_id: 1, delivery_order_id: '11111111-1111-1111-1111-111111111111',
   do_number: 'HC-DO-000100', so_doc_no: 'HC-SO-000200', source_type: null, source_id: null, leg: null,
@@ -123,14 +111,12 @@ describe('reportDeliveryIssue', () => {
     const r = await reportDeliveryIssue(ctx(sb), DO_TARGET, { kinds: ['damaged'], note: null, photoKeys: ['slips/p1', 'slips/p2'] });
     expect(r).toMatchObject({ ok: true, issue: { id: 'iss-1', assr_case_id: null } });
 
-    // One statement: the insert. No case, no attach, no link, no notify.
     expect(calls).toHaveLength(1);
     const insert = calls[0]!.find((x) => x.op === 'insert')!.args[0] as Record<string, unknown>;
     expect(insert).toMatchObject({ company_id: 1, delivery_order_id: DO_TARGET.deliveryOrderId, kinds: ['damaged'], photo_keys: ['slips/p1', 'slips/p2'] });
     expect(createAssrCase).not.toHaveBeenCalled();
     expect(saveAttachment).not.toHaveBeenCalled();
     expect(notifyServiceCaseResponsible).not.toHaveBeenCalled();
-    // The delivery's own status is never touched.
     expect(calls.flat().some((x) => x.table === 'delivery_orders')).toBe(false);
   });
 
@@ -173,14 +159,11 @@ describe('createCaseForDeliveryIssue', () => {
       doc_no: 'HC-SO-000200', delivery_order: 'HC-DO-000100', issue_category: DELIVERY_ISSUE_CATEGORY,
       company_id: 1, created_by: 99, items: [],
     });
-    // The complaint reuses deliveryIssueComplaint, naming the reporter + the problem.
     expect(String(input.complaint_issue)).toContain('(Aimir)');
     expect(String(input.complaint_issue)).toContain('HC-DO-000100 (SO HC-SO-000200)');
-    // The crew's POD photos are filed on the case as complaint photos.
     expect(saveAttachment.mock.calls.map((a) => [a[1], a[2], a[5], a[6]])).toEqual([
       [77, 'slips/p1', 'complaint', 99], [77, 'slips/p2', 'complaint', 99],
     ]);
-    // The load read and the link write are both company-scoped; nothing touches delivery_orders.
     expect(calls[0]!.find((x) => x.op === 'in')!.args).toEqual(['company_id', [1]]);
     const link = calls[1]!;
     expect(link.find((x) => x.op === 'update')!.args[0]).toEqual({ assr_case_id: 77, assr_no: 'ASSR/2611-001' });
@@ -195,7 +178,6 @@ describe('createCaseForDeliveryIssue', () => {
     expect(r).toMatchObject({ ok: false, status: 409, error: 'already_linked' });
     expect(String((r as { reason: string }).reason)).toContain('ASSR/2611-009');
     expect(createAssrCase).not.toHaveBeenCalled();
-    // Only the scoped load ran; no link write.
     expect(calls).toHaveLength(1);
   });
 

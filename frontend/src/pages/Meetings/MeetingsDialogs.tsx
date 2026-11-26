@@ -7,8 +7,6 @@ import {
   hhmm, inUsualHours, isoDay, minutesOfDay, ms, peopleOf, personLine, personName, remLabel, snapMinutes, startOfDay, withTime,
   type ConflictReply, type Draft, type Meeting, type Person, type Room, bestRoom } from "../../lib/meetings";
 
-/* The Meetings page's dialogs: a meeting's details, quick booking, the full editor
-   (people picker and Find a time), the conflict dialog and the repeat-scope question. */
 
 export const CONTROL =
   "w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-ink-muted focus:border-primary focus:outline-none";
@@ -32,7 +30,6 @@ export function Veil({ onClose, children, label, wide }: { onClose: () => void; 
   );
 }
 
-/** Where a popover sits next to the click; a bottom sheet on a phone. */
 function popStyle(x: number, y: number, w = 440, h = 470): CSSProperties {
   const W = window.innerWidth;
   const H = window.innerHeight;
@@ -150,7 +147,6 @@ const REPEAT_OPTIONS = (start: number): [Draft["repeat"], string][] => [
   ["none", "Does not repeat"], ["daily", "Every day"], ["weekdays", "Every weekday (Mon - Fri)"], ["weekly", `Every week on ${DAY_NAMES[new Date(start).getDay()]}`], ["monthly", "Every 4 weeks"],
 ];
 
-/** In person (pick a room, best fit first) or Online (no room, private to the people in it). Over-full rooms warn but still book. */
 function RoomPicker({ rooms, d, busyRooms, onRoom, compact, onOnline }: { rooms: Room[]; d: Draft; busyRooms: Set<number>; onRoom: (id: number | null) => void; compact: boolean; onOnline: (() => void) | null }) {
   const [online, setOnline] = useState(d.roomId === null && d.id !== null);
   const count = 1 + d.attendees.length;
@@ -447,7 +443,6 @@ function DayColumns({ d, rooms, people, busy, who, onPick }: { d: Draft; rooms: 
 export function MeetingEditor(p: {
   draft: Draft; isNew: boolean; me: string; rooms: Room[]; people: Person[]; peopleMap: Map<string, Person>; meetings: Meeting[]; now: number;
   busyRooms: Set<number>; saving: boolean; pendingFiles: File[]; onFiles: (f: File[]) => void;
-  /** Creates a Google Meet link; null while Google Meet is not connected. */
   makeMeet: (() => Promise<string>) | null;
   onClose: () => void; onSave: (d: Draft) => void;
 }) {

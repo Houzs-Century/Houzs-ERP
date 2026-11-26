@@ -62,10 +62,6 @@ export function makeCloseAction(deps: {
   askConfirm: (o: { title: string; body: string; confirmLabel: string }) => Promise<boolean>;
   notify: (o: { title: string; body: string; tone: "error" }) => void;
   mutate: (
-    /* `expectedStatus` is REQUIRED, matching the mutation's own signature. It is
-       the optimistic-CAS term, so an omittable one would mean a caller that
-       forgot it silently overwrote whatever the row had moved to — the repo's
-       standing rule about a parameter that DECIDES something. */
     vars: { docNo: string; status: string; expectedStatus: string | null },
     opts: { onError: (e: unknown) => void },
   ) => void;

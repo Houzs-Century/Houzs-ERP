@@ -35,11 +35,6 @@
 import { effectiveDelivery } from '../shared/effective-delivery';
 import { chunkIn } from './paginate-all';
 
-/** Every `.in()` read here goes through chunkIn: batches sized by URL bytes, and
- *  each batch PAGED. The old fixed 200-value loop was not paged, so 200 orders
- *  x their lines passed PostgREST's 1,000-row page and the rest were dropped
- *  without an error (a converted order showing no PO). null = failed or
- *  truncated read; callers keep their best-effort empty answer. */
 async function readIn<T>(
   ids: string[],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -170,9 +165,6 @@ export async function soConvertedPos(
   if (docs.length === 0) return out;
 
   try {
-    // 1. SO line id → its SO doc_no. (Not filtered on `cancelled`: a PO raised
-    //    against a line that was later cancelled still exists and still counts
-    //    as a conversion of that SO.)
     const docByItemId = new Map<string, string>();
     const lineRows = await readIn<{ id: string | null; doc_no: string | null }>(docs, (part) => scoped(sb
       .from('mfg_sales_order_items')
@@ -185,7 +177,6 @@ export async function soConvertedPos(
     const itemIds = [...docByItemId.keys()];
     if (itemIds.length === 0) return out;
 
-    // 2. PO lines raised from those SO lines → (SO line id, PO id).
     const links: Array<{ so_item_id: string; purchase_order_id: string }> = [];
     const poIds = new Set<string>();
     const linkRows = await readIn<{ so_item_id: string | null; purchase_order_id: string | null }>(itemIds, (part) => scoped(sb
@@ -202,8 +193,6 @@ export async function soConvertedPos(
     }
     if (links.length === 0) return out;
 
-    // 3. PO id → po_number, dropping CANCELLED (filtered app-side so a schema
-    //    without the status column can't silently widen the set).
     const numById = new Map<string, string>();
     const heads = await readIn<{ id: string; po_number: string | null; status: string | null }>([...poIds], (part) => scoped(sb
       .from('purchase_orders')
@@ -215,7 +204,6 @@ export async function soConvertedPos(
       if (p.po_number) numById.set(p.id, p.po_number);
     }
 
-    // Assemble doc_no → PO de-duped by id, sorted by number.
     const byDoc = new Map<string, Map<string, SoConvertedPo>>();
     for (const l of links) {
       const doc = docByItemId.get(l.so_item_id);

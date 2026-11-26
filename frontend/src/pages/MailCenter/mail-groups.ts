@@ -12,7 +12,6 @@ export type GroupedMailbox = {
 
 export const UNASSIGNED_DEPT = "Other";
 
-/** "Operation Department" -> "Operation", so a person lands under the same heading as operation@. */
 const shortName = (name: string) => name.trim().replace(/\s+department$/i, "").trim();
 
 /**

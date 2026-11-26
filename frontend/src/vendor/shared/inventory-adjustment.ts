@@ -1,21 +1,3 @@
-// Vendored VERBATIM from packages/shared/src/inventory-adjustment.ts — the
-// stock-movements wave (StockAdjustmentNew INCREASE Save gate). Pure (no I/O,
-// no supabase); its only dependency is ./so-variant-rule, also vendored.
-//
-// ----------------------------------------------------------------------------
-// inventory-adjustment — shared validation for a manual stock ADJUSTMENT that
-// INCREASES stock (a "found / recount up" correction behaves like a tiny GRN:
-// the new stock must carry the same variant attributes + batch that a real
-// receipt would, or it lands in the wrong bucket and — for sofa — can never be
-// allocated to an order (sofa allocation only sees lots with a batch_no).
-//
-// Used by BOTH the frontend Save gate (apps/backend StockAdjustmentNew) and the
-// backend POST /inventory/adjustments 422 gate, so the operator sees the SAME
-// plain-language reason at both points (per the unified-validation rule). Pure —
-// no I/O. Decrease adjustments don't use this: they pick an EXISTING stock bucket
-// (variant + batch) from the picker, so their attributes are inherently valid;
-// their only gate is "qty <= available", which is DB-side.
-// ----------------------------------------------------------------------------
 
 import { missingVariantAxes } from './so-variant-rule';
 
@@ -36,10 +18,6 @@ export function adjustmentIncreaseErrors(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
   batchNo: string | null | undefined,
-  /* The SKU. A DIVAN ONLY / adjustable / bunk frame has no divan base, so it
-     has no Divan Height, Leg Height or Gap to state — the same exemption the
-     order forms apply, which this gate silently lacked while itemCode was an
-     optional parameter nobody here passed. */
   itemCode: string | null,
 ): string[] {
   const errors: string[] = [];

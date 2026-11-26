@@ -21,11 +21,9 @@ import { useEffect, useState } from 'react';
 import { fetchScanSlipImageBlobUrl } from '../lib/slip';
 
 export type OrderSlipPhotoProps = {
-  /** `slip_image_key` off the sales-order header. */
   imageKey: string;
   title?: string;
   alt?: string;
-  /** Largest width the image is drawn at; it always shrinks to fit. */
   maxWidth?: number;
 };
 
@@ -45,8 +43,6 @@ export function OrderSlipPhoto({
     setError(null);
     fetchScanSlipImageBlobUrl(imageKey)
       .then((u) => {
-        /* Revoke on the losing race too: an image key that changes under a
-           mounted card would otherwise leak one blob URL per change. */
         if (cancelled) { URL.revokeObjectURL(u); return; }
         url = u;
         setSrc(u);
@@ -61,9 +57,6 @@ export function OrderSlipPhoto({
   return (
     <div>
       {error ? (
-        /* Said out loud rather than rendered as an empty card: "no photo" and
-           "the photo would not load" look identical when a failure is silent,
-           and on a document the first one is a fact about the order. */
         <div className="text-[12.5px] text-danger" role="status">
           The order slip photo could not be loaded, which is not the same as this
           order having none. {error}

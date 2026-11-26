@@ -77,9 +77,6 @@
 
 import type { AccessLevel } from "./pageAccess";
 
-/** Position names that ARE the Sales cohort. Mirrors pmsAccess.isSalesUser and
- *  the frontend's salesAccess.isSalesStaff -- department first, position-name
- *  prefix as the fallback for anyone filed outside a Sales department. */
 const SALES_POSITION = /^sales/i;
 
 /** The Sales-cohort detection, exported so positionPolicy classifies the cohort
@@ -89,9 +86,6 @@ const SALES_POSITION = /^sales/i;
 export function isSalesCohort(u: {
   position_name?: string | null;
   department_name?: string | null;
-  /** The Title's stored policy row, when the caller carries one: it decides
-   *  the cohort (Roles & Permissions › Titles); the org-field rule below is the
-   *  fallback for a Title with no row. */
   position_policy?: { cohort: string } | null;
 }): boolean {
   if (u.position_policy) return u.position_policy.cohort === "sales";
@@ -139,20 +133,11 @@ export const SALES_JD: Readonly<Record<string, AccessLevel>> = {
   "scm.sales.returns": "none",
 };
 
-/** Plain-language reason per denied area, for the 403 body. Keyed off the SAME
- *  map above rather than standing as a second list of denied areas -- a second
- *  list is how the rule and its enforcement drift apart. A denied area with no
- *  sentence here still denies (the fallback below); it just says less. */
 const DENY_REASON: Readonly<Record<string, string>> = {
   "scm.sales.returns":
     "Delivery Returns is handled by the Office team, not Sales. Ask Office to raise the return for you.",
 };
 
-/** Plain-language reason per WRITE-capped area, for the 403 body of
- *  `salesJdWriteDenial`. Same construction as DENY_REASON: keyed off SALES_JD,
- *  never a second list of areas. It has to name the READ that survives, because
- *  the salesperson CAN still open the document and print it -- a bare "forbidden"
- *  would read as "the page is broken" for someone looking straight at it. */
 const WRITE_DENY_REASON: Readonly<Record<string, string>> = {
   "scm.sales.delivery":
     "Delivery Orders are raised by the Office team, not Sales. You can view and print this one; ask Office to create or change a DO.",
@@ -268,9 +253,7 @@ export function salesJdWriteDenial(
   method: string,
 ): string | null {
   if (!user) return null;
-  // Reads are always allowed — Sales views + prints DO/SI. Method check first.
   if (!isWriteMethod(method)) return null;
-  // Only a `view` cap denies here. "edit" grants, "none" belongs to salesJdDenial.
   if (SALES_JD[area] !== "view") return null;
   if (hasWildcard(user)) return null;
   if (!isSalesCohort(user)) return null;

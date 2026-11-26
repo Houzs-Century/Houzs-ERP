@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// Suppliers — master + supplier_material_bindings management.
-//
-// Two-code mapping (the HOOKKA pattern):
-//   OUR `item_code` (mfg_products.code / fabrics.code)
-//     ↔ THEIR `supplier_sku` (whatever the supplier calls it)
-//
-// UI: design-system reskin (2026-07-16) — full-bleed on the app background,
-// shared <PageHeader>, local <Button>, Ink & Petrol Tailwind tokens for the
-// chips / search / banner / pagination. The right-side drawer + modal still
-// use the shared Suppliers.module.css content primitives (that module is
-// imported by ~20 scm-v2 pages, so its classes are deliberately left intact).
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
@@ -78,9 +65,6 @@ const STATUS_CLASS: Record<SupplierStatus, string> = {
 
 export const Suppliers = () => {
   const navigate = useNavigate();
-  /* Status, category, search and page live in the address, so a supplier's Back
-     (which returns to the last list address, lib/scmListReturn) lands on the same
-     page with the same filters instead of page 1 (Conts-ERP #406). */
   const [params, setParams] = useSearchParams();
   const setParam = (changes: Record<string, string | null>) =>
     setParams((prev) => {
@@ -95,38 +79,26 @@ export const Suppliers = () => {
     ? (statusParam as SupplierStatus)
     : 'all';
   const setStatus = (v: 'all' | SupplierStatus) => setParam({ status: v === 'all' ? null : v, page: null });
-  // Supply Category filter — now applied SERVER-SIDE (the /suppliers paged
-  // endpoint takes ?category=/?pool=) so it stays correct across pages.
   const category = params.get('category') ?? FILTER_ALL;
   const setCategory = (v: string) => setParam({ category: v === FILTER_ALL ? null : v, page: null });
   const [search, setSearch] = useState(() => params.get('q') ?? '');
   const page = Math.max(0, Math.floor(Number(params.get('page')) || 0));
   const setPage = (n: number) => setParam({ page: n > 0 ? String(n) : null });
-  /* The supplier last opened from this list, brought back into view on return. */
   const [returnFocus] = useState(() => takeScmListFocus('/scm/suppliers'));
   const [scrollTo, setScrollTo] = useState<{ key: string; nonce: number } | null>(null);
   const [creating, setCreating] = useState(false);
 
   const [pageSize, setPageSize] = useLocalStorage<number>('scm:perpage:suppliers', 50);
-  // Debounce the search box so each keystroke doesn't fire a server round-trip.
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
-  // Maintained Supply Category pool (fallback: the default five). Declared up
-  // here because it feeds both the filter chips AND the server query (the
-  // "Mixed / Other" chip needs the pool to be computed exactly server-side).
   const pool = useSupplierCategoryPool();
 
-  // A new search goes back to the first page (status and category do it in their
-  // setters); the search already in the address on the way back does not, or Back
-  // would lose the page.
   useEffect(() => {
     const term = debouncedSearch.trim();
     if (term !== (params.get('q') ?? '')) setParam({ q: term || null, page: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only a settled new search term moves the address
   }, [debouncedSearch]);
 
-  /* Batch edit (Commander 2026-06-19 — HOOKKA parity). Selection lives in the
-     parent so it survives DataGrid re-renders and drives the batch modal. */
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchOpen, setBatchOpen] = useState(false);
 
@@ -144,9 +116,6 @@ export const Suppliers = () => {
       return next;
     });
 
-  /* Clear the selection whenever the visible row set shifts (filter change OR
-     page change) — a lingering selection would batch-edit rows the operator can
-     no longer see. Selection does not survive paging (server-side, per page). */
   useEffect(() => {
     setSelectedIds(new Set());
   }, [status, category, page, debouncedSearch]);
@@ -156,8 +125,6 @@ export const Suppliers = () => {
     pageSize: pageSize,
     status: status === 'all' ? undefined : status,
     q: debouncedSearch.trim() || undefined,
-    // '__all__' → omit (no filter); '__mixed__' → send + pool so the server
-    // reproduces the "Mixed / Other" set exactly.
     category: category === FILTER_ALL ? undefined : category,
     pool: category === FILTER_MIXED ? pool : undefined,
   });
@@ -180,23 +147,14 @@ export const Suppliers = () => {
     [pool],
   );
 
-  /* Server page rows + grand total. The Supply-Category chip (incl. the
-     owner-spec "Mixed / Other" semantics) is now resolved server-side in the
-     /suppliers paged endpoint, so this is just the loaded page. */
   const rows = data?.suppliers ?? [];
   const total = data?.total ?? 0;
 
-  // Back from a supplier: once its page has loaded, bring that supplier into view (once).
   useEffect(() => {
     if (!returnFocus || scrollTo || isPlaceholderData) return;
     if (rows.some((r) => r.id === returnFocus)) setScrollTo({ key: returnFocus, nonce: Date.now() });
   }, [returnFocus, scrollTo, isPlaceholderData, rows]);
 
-  /* Shared DataGrid conversion (2026-06-12). Status + Supply Category chip
-     rows above stay as-is (they drive the server query / client pre-filter);
-     the grid adds sort, per-column filters, column show-hide / reorder / pin.
-     Row click still opens the supplier detail page. Payment Terms ships
-     default-hidden (low-value) — re-enable via the Columns popover. */
   const columns = useMemo<GridColumn<SupplierRow>[]>(() => [
     {
       key: 'code',
@@ -320,9 +278,6 @@ export const Suppliers = () => {
           </div>
         </div>
 
-        {/* Supply Category filter — same FilterPills slab, rendered from the
-            maintained pool + "Mixed / Other". Client-side filter on the
-            in-memory list (small dataset). Hides nothing on "All". */}
         <FilterPills
           options={categoryChips.map((c) => ({ value: c.value as string, label: c.label }))}
           value={category}
@@ -332,7 +287,6 @@ export const Suppliers = () => {
         {error && !isLoading && (
           <div className="rounded-lg border border-err/40 bg-err/10 px-4 py-2.5 text-[12.5px] text-err">
             <strong className="font-semibold">Failed to load suppliers.</strong>{' '}
-            {/* authedFetch already humanised `message`; fallback for a non-Error throw. */}
             {error instanceof Error ? error.message : 'Something went wrong.'}
             <span className="mt-1 block text-[12px] text-ink-secondary">
               If this keeps happening, sign out and back in — your session may have expired — or let IT know.
@@ -340,11 +294,6 @@ export const Suppliers = () => {
           </div>
         )}
 
-        {/* Search + Supply-Category + status are all driven SERVER-SIDE from the
-            page-level controls above, so the grid's own client search box is
-            hidden (`hideSearch`) — it would otherwise only filter the loaded page
-            and silently hide matches on other pages. Column sort / filters /
-            show-hide still operate on the loaded page. */}
         <DataGridCompat
           rows={searchTransition.resultsAreStale ? [] : rows}
           columns={columns}
@@ -410,14 +359,6 @@ const StatusChip = ({
   </button>
 );
 
-/* ════════════════════════════════════════════════════════════════════════
-   Batch edit modal (Commander 2026-06-19 — HOOKKA parity)
-
-   Sets ONE shared SAFE field across the selected suppliers. Only Payment
-   Terms (free-text) and Status (enum) are offered — name / code are unique
-   identity and unsafe to bulk-set. Applies one PATCH per supplier (the chosen
-   field only), counts ok / fail, then reports + clears the selection.
-   ════════════════════════════════════════════════════════════════════════ */
 
 type BatchField = 'payment_terms' | 'status';
 
@@ -450,8 +391,6 @@ const BatchEditModal = ({
     for (const id of ids) {
       try {
         if (field === 'payment_terms') {
-          /* The PATCH reads `paymentTerms`; `payment_terms` was ignored and the
-             batch reported every supplier updated while changing none. */
           await update.mutateAsync({ id, paymentTerms: paymentTerms.trim() || null } as unknown as Partial<SupplierRow> & { id: string });
         } else {
           await update.mutateAsync({ id, status: statusValue });
@@ -553,9 +492,6 @@ const BatchEditModal = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Create drawer (edit lives on the full /suppliers/:id page now)
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCreateDrawer = ({ onClose }: { onClose: () => void }) => (
   <>
@@ -581,12 +517,10 @@ const CreateForm = ({ onClose }: { onClose: () => void }) => {
   const [form, setForm] = useState<Record<string, string | number>>({
     code: '',
     name: '',
-    /* PR #40 — full master record */
     supplierType: '',
     category: '',
     tinNumber: '',
     businessRegNo: '',
-    /* Mig 0028 — AutoCount creditor-export parity */
     registrationNo: '',
     exemptionNo: '',
     natureOfBusiness: '',
@@ -612,8 +546,6 @@ const CreateForm = ({ onClose }: { onClose: () => void }) => {
     state: '',
     businessNature: '',
     paymentTerms: '',
-    /* Supplier currency — backend supports MYR/RMB/CNY/USD/SGD; default MYR.
-       Once set, PurchaseOrderNew + PI pages read supplier.currency. */
     currency: 'MYR',
     rating: 0,
     notes: '',
@@ -671,7 +603,6 @@ const SupplierFields = ({
 }: {
   form: Record<string, string | number>;
   onChange: (k: string, v: string | number) => void;
-  /** Finance sees the Finance part (TIN, registration numbers); nobody else does. */
   finance: boolean;
 }) => (
   <div className={styles.section}>
@@ -695,7 +626,6 @@ const SupplierFields = ({
         <>
           <Field label="TIN Number" value={(form.tinNumber as string) ?? ''} onChange={(v) => onChange('tinNumber', v)} />
           <Field label="Business Reg No" value={(form.businessRegNo as string) ?? ''} onChange={(v) => onChange('businessRegNo', v)} />
-          {/* Mig 0028 — AutoCount creditor-export parity. */}
           <Field label="Registration No." value={(form.registrationNo as string) ?? ''} onChange={(v) => onChange('registrationNo', v)} />
           <Field label="Exemption No." value={(form.exemptionNo as string) ?? ''} onChange={(v) => onChange('exemptionNo', v)} />
         </>
@@ -706,9 +636,7 @@ const SupplierFields = ({
     <div className={styles.formGrid}>
       <Field label="Contact Person" value={(form.contactPerson as string) ?? ''} onChange={(v) => onChange('contactPerson', v)} />
       <Field label="Attention" value={(form.attention as string) ?? ''} onChange={(v) => onChange('attention', v)} />
-      {/* Task #91 — phone fields normalize to E.164 on blur via PhoneInput. */}
       <PhoneField label="Phone" value={(form.phone as string) ?? ''} onChange={(v) => onChange('phone', v)} />
-      {/* Mig 0028 — secondary phone, same E.164 normalization. */}
       <PhoneField label="Phone 2" value={(form.phone2 as string) ?? ''} onChange={(v) => onChange('phone2', v)} />
       <PhoneField label="Mobile" value={(form.mobile as string) ?? ''} onChange={(v) => onChange('mobile', v)} />
       <PhoneField label="WhatsApp" value={(form.whatsappNumber as string) ?? ''} onChange={(v) => onChange('whatsappNumber', v)} />
@@ -721,8 +649,6 @@ const SupplierFields = ({
     <p className={styles.eyebrow} style={{ marginTop: 'var(--space-3)' }}>Commercial</p>
     <div className={styles.formGrid}>
       <Field label="Payment Terms" value={(form.paymentTerms as string) ?? ''} onChange={(v) => onChange('paymentTerms', v)} />
-      {/* Supplier currency — fixed enum (MYR/RMB/CNY/USD/SGD), order is canonical.
-          Set RMB here for China suppliers; PO + PI pages pick it up. */}
       <CurrencySelect value={(form.currency as string) ?? 'MYR'} onChange={(v) => onChange('currency', v)} />
       <Field label="Business Nature" value={(form.businessNature as string) ?? ''} onChange={(v) => onChange('businessNature', v)} />
     </div>
@@ -801,9 +727,6 @@ const Field = ({
   </label>
 );
 
-/* Supplier currency picker. Fixed MYR/RMB/CNY/USD/SGD enum (NOT sorted — the
-   order is canonical). The backend defaults to MYR if unset, but we send an
-   explicit default so the create payload always carries a currency. */
 const CURRENCY_OPTIONS = ['MYR', 'RMB', 'CNY', 'USD', 'SGD'] as const;
 
 const CurrencySelect = ({
@@ -825,8 +748,6 @@ const CurrencySelect = ({
   </label>
 );
 
-/* Task #91 — Phone variant of Field. Same label/layout, but the input runs
-   through PhoneInput so its value is normalized to E.164 on blur. */
 const PhoneField = ({
   label, value, onChange,
 }: {

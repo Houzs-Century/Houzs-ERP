@@ -23,7 +23,6 @@ export const CREDIT_NOTE_FILES: DocFilesSpec = {
   table: 'acc_credit_note_files',
   fkColumn: 'note_id',
   keyPrefix: 'credit-note-files',
-  /* The keys that raise a note (routes/credit-notes.ts create) attach to it. */
   writePerms: ['scm.payment_voucher.create', 'scm.payment_voucher.write'],
   scanKind: null,
   load: async (c: any) => {

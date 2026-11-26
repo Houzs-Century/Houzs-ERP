@@ -1,30 +1,3 @@
-// ----------------------------------------------------------------------------
-// project-pos-sales — the Houzs POS bills synced from the booth terminals of
-// ONE event, read from inside the project page (layout E9).
-//
-// WHY. A Cash & Carry fair has no Sales Order module: the part-timers at the
-// booth sell through the POS app, every bill is saved on the device and then
-// pushed into pos_sales / pos_sale_lines / pos_payments in the ERP's own
-// database. This read is how the office sees those bills per event — grouped
-// by receipt, filterable, with the totals the project's Total Sales is set
-// from.
-//
-//   GET /api/project-pos-sales/:projectId?date=&terminal=&cashier=&method=&status=
-//     { project: { id, name, event_type_slug }, pos_enabled,
-//       data: [...receipts], totals, options: { terminals, cashiers, methods } }
-//
-// GATE. index.ts puts `requirePageAccessOrSalesView("sales")` in front of this
-// prefix — the SAME read gate as the project's Sales section — so the people
-// who see the section see its POS half. No row scope: a booth bill belongs to
-// the event, not to the person reading it.
-//
-// COMPANY SCOPE. The project is resolved under the caller's active company and
-// pos_sales carries its own company_id, so both reads carry the predicate.
-//
-// Its own prefix, not /api/projects: routes/projects.ts is at its size ceiling.
-// Drizzle throughout (getDb); the grouping and totals are pure in
-// routes/lib/pos-sales-list.ts and tested there.
-// ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -51,9 +24,6 @@ export const CASH_CARRY_SLUG = "cash_carry";
 
 type ProjectHead = { id: number; name: string; event_type_slug: string | null };
 
-/** The project under the caller's company, with its event type's slug (the
- *  shared project_event_types master is not in the Drizzle schema). Degrades
- *  to no company predicate when the company is unresolved, like every read. */
 async function loadProject(db: Db, projectId: number, companyId: number | undefined): Promise<ProjectHead | null> {
   const companyPred = companyId != null ? sql` AND p.company_id = ${companyId}` : sql``;
   const rows = await db.execute<{ id: number | string; name: string; event_type_slug: string | null }>(sql`
@@ -147,7 +117,6 @@ export async function projectPosSalesHandler(c: Ctx): Promise<Response> {
   const db = getDb(c.env);
   const companyId = activeCompanyId(c);
   const project = await loadProject(db, projectId, companyId);
-  /* 404 for a foreign project too: confirming it exists is itself a leak. */
   if (!project) return c.json({ error: "Not found" }, 404);
   try {
     const all = await loadReceipts(db, project.id, companyId);

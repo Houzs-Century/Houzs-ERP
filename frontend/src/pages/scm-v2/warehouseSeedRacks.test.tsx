@@ -1,14 +1,3 @@
-// What the Seed Racks modal SENDS.
-//
-// The label shapes themselves are pinned on both sides of the vendored pair
-// (backend/src/scm/shared/rack-labels.test.ts and
-// vendor/shared/rack-labels.canonical.test.ts). Neither of those can see the
-// wire: a modal that computes a perfect preview and then posts the old flat
-// body would pass all of them and still create "Rack 1".."Rack 21". This test
-// reads the body the page hands the mutation, which is the only place that
-// claim is checkable.
-//
-// The hooks are mocked at the module seam, the way mrpUndated.test.tsx does it.
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -84,7 +73,6 @@ describe('Seed Racks — the body the page posts', () => {
     setField(/^How many/, '21');
     setField(/^Levels per aisle$/, '2');
 
-    // The preview names the FIRST and LAST label, from the shared generator.
     expect(screen.getByText(/Creates 42 racks/)).toBeTruthy();
     expect(screen.getByText('Rack L1.1')).toBeTruthy();
     expect(screen.getByText('Rack L21.2')).toBeTruthy();

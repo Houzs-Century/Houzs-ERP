@@ -19,10 +19,6 @@ import { AddressTripleFields } from "../vendor/scm/components/AddressTripleField
 import { VENUE_TRIPLE_CLASSES } from "./project-maintenance/VenueManagerRow";
 import { masterNeedsPostcode, masterPostcodeError } from "../vendor/shared/master-postcode-rule";
 
-// ── Projects tab ─────────────────────────────────────────────
-// Lookup management for the project module: organizers, venues, and
-// the default checklist that's cloned into every new project (per
-// event type).
 
 interface OrganizerRow {
   id: number;
@@ -41,13 +37,9 @@ interface VenueRow {
   id: number;
   name: string;
   state: string | null;
-  /* Mig 0178 — optional so pre-mig responses still parse.
-     Mig 0182 — city (optional same reason). */
   country?: string | null;
   postcode?: string | null;
   city?: string | null;
-  /* Mig 0222 — physical venue size, free text (e.g. "12,000 sqft" or "Hall 3").
-     Optional so pre-mig responses still parse. */
   size?: string | null;
   notes: string | null;
   active: number;
@@ -73,32 +65,22 @@ interface ChecklistTemplateItem {
   title: string;
   description: string | null;
   required_perm: string | null;
-  /** mig 085 — display-only owner tag (DRIVER / SALES PIC / BD / PURCHASER). */
   role_label: string | null;
-  /** mig 086 — when 1, every project instantiated from this template
-   *  surfaces this row in the Driver App's Documents card. */
   crew_visible: number;
   due_offset_days: number | null;
   section_id: number | null;
-  requires_review: number; // 0 | 1 — admin-driven flag (mig 050)
+  requires_review: number;
 }
 
 interface ChecklistTemplateSection {
   id: number;
   name: string;
   sort_order: number;
-  /** mig 085 — "list" (default) or "documents" (column-headed layout). */
   display_mode?: "list" | "documents";
 }
 
 export function ProjectMaintenanceView() {
   const { user } = useAuth();
-  // Cost Rates is finance data (per-brand transport / merchandise / commission
-  // rate card) — the /api/projects/cost-rates endpoint is denyFinance-guarded
-  // server-side (#345). HARD-GATE it on the DIRECTOR-level finance-viewer flag:
-  // a non-finance-viewer with projects.maintenance access must NOT mount the
-  // section AND must NOT fire the fetch (which would 403). Fail-open when the
-  // flag is absent — the backend still enforces.
   const canProjectFinance = !!user?.project_finance_viewer;
   return (
     <div>
@@ -107,10 +89,6 @@ export function ProjectMaintenanceView() {
         title="Project Maintenance"
         description="All the picker lists that drive the new-project form: brands, event types, organizers, venues, plus the default checklist that clones into every new project."
       />
-      {/* Picker lists are short — pack them two-up on wide screens to
-          kill the vertical whitespace. Tasklist templates stay
-          full-width because their item rows already pack columns
-          internally. */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <BrandManager />
         <EventTypeManager />
@@ -130,18 +108,8 @@ export function ProjectMaintenanceView() {
   );
 }
 
-// Picker lists collapse to this many rows by default; users hit the
-// expand button to see the rest. Keeps the 2-up grid balanced when one
-// list is much longer than the others.
 const PICKER_PREVIEW_ROWS = 5;
 
-// ── Collapsible section shell ────────────────────────────────
-// Each manager below wraps its body in this. The header (title +
-// count + rotating chevron) toggles the body open/closed. Default:
-// the first section (Brands) is open; the rest start collapsed so
-// the page isn't a single long scroll (owner: "Venues (59)" was
-// always fully expanded). Count shows even when collapsed so admins
-// can see list sizes at a glance.
 function CollapsibleSection({
   title,
   description,
@@ -430,11 +398,6 @@ function ContractorManager() {
   );
 }
 
-/* MY_STATES was the hard-coded fallback list read by VenueManager. Removed
-   2026-07-23 — VenueManager now uses <StatePicker> exclusively, which reads
-   from scm.my_localities. Any future state that needs to appear here (e.g.
-   the CN + SG rows seeded by mig 0181) is added via the Localities
-   Maintenance UI, not a code constant. */
 
 function VenueManager() {
   const toast = useToast();
@@ -449,7 +412,6 @@ function VenueManager() {
   const [countryField, setCountryField] = useState("");
   const [cityField, setCityField] = useState("");
   const [postcodeField, setPostcodeField] = useState("");
-  /* Mig 0222 — free-text physical venue size (owner enters sqft or a hall label). */
   const [sizeField, setSizeField] = useState("");
   const [adding, setAdding] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -526,12 +488,6 @@ function VenueManager() {
             must be added via the Localities Maintenance UI first.
           - Country auto-fills from State via StatePicker's derivedCountry
             callback. City + Postcode run the Sales Order cascade both ways. */}
-      {/* grid-cols use minmax(0,1fr) on the name track and min-w-0 on every input
-          so each field shrinks to its own fixed track instead of forcing its
-          ~20ch intrinsic min-width. That intrinsic min-width was the postcode
-          overflow the owner reported: a bare <input> in a fixed 110px grid cell
-          keeps min-width:auto, refuses to shrink below its content box, and
-          spills past the cell. min-w-0 lets it size to the track. */}
       {/* Two rows (owner 2026-11-18, the venue name was squeezed to one word per
           line): the name, size and Add on the first, the Sales Order's State /
           City / Postcode on the second, so no track has to share the width. */}
@@ -557,9 +513,6 @@ function VenueManager() {
             Add
           </Button>
         </div>
-        {/* State / City / Postcode in the Sales Order's controls (owner
-            2026-11-17): a postcode fills City and State back, and Country
-            follows the State. Delivery Planning reads them for SETUP / DISMANTLE. */}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <AddressTripleFields
             postcodeRequired={masterNeedsPostcode(countryField)}
@@ -720,7 +673,6 @@ function ChecklistManager() {
   );
 }
 
-// RowActionsMenu and ColorPicker live in ../components for reuse.
 
 function ChecklistItemsEditor({ templateId }: { templateId: number }) {
   const toast = useToast();
@@ -732,17 +684,12 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
     () => api.get(`/api/projects/checklist-templates/${templateId}/items`),
     [templateId]
   );
-  // Per-section quick-add. Tracks which section's "Add task" form is
-  // open + the title being typed.
   const [addInSectionId, setAddInSectionId] = useState<number | null | "_none">(null);
   const [newTitle, setNewTitle] = useState("");
   const [newOffset, setNewOffset] = useState("");
   const [adding, setAdding] = useState(false);
-  // Tracks which section a drag is currently hovering over so we can
-  // tint the drop zone. Null = not dragging into any section.
   const [dragOverSectionKey, setDragOverSectionKey] = useState<string | null>(null);
 
-  // Section management state
   const [newSectionName, setNewSectionName] = useState("");
   const [editingSectionId, setEditingSectionId] = useState<number | null>(null);
   const [editingSectionName, setEditingSectionName] = useState("");
@@ -802,9 +749,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
     }
   }
 
-  // Reorder a section by one slot. The order here propagates to every
-  // project cloned from this template, which drives the stage-chip
-  // progress bar at the top of the project detail page.
   async function moveSection(sectionId: number, delta: -1 | 1) {
     const idx = sections.findIndex((s) => s.id === sectionId);
     if (idx < 0) return;
@@ -823,8 +767,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
     }
   }
 
-  // Local order overrides server data while a reorder is in flight, so
-  // the UI feels instant. Reset whenever the server payload changes.
   const [localOrder, setLocalOrder] = useState<ChecklistTemplateItem[] | null>(
     null
   );
@@ -849,8 +791,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
       });
       setNewTitle("");
       setNewOffset("");
-      // Keep the form open in the same section so admins can batch-add
-      // multiple tasks per stage without re-clicking.
       q.reload();
       toast.success("Item added");
     } catch (e: any) {
@@ -888,8 +828,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
     }
   }
 
-  // Push the proposed order to the server. The local state has already
-  // been updated; on failure we reload to bring the server's truth back.
   async function persistOrder(next: ChecklistTemplateItem[]) {
     try {
       await api.put(
@@ -939,17 +877,12 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
     const target = items[targetIdx];
     const next = items.slice();
     const [moved] = next.splice(sourceIdx, 1);
-    // Cross-section drop: inherit the target row's section before
-    // splicing in, so the persisted order + section_id agree.
     const movedNew = { ...moved, section_id: target.section_id };
     const targetIdxAdj =
       sourceIdx < targetIdx ? targetIdx - 1 : targetIdx;
     next.splice(targetIdxAdj, 0, movedNew);
     setLocalOrder(next);
     if (source.section_id !== target.section_id) {
-      // Patch the item's section_id first, then persist the new order.
-      // Sequential awaits since reorder relies on the section move
-      // already being durable.
       (async () => {
         try {
           await api.patch(`/api/projects/checklist-templates/items/${source.id}`, {
@@ -966,10 +899,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
     }
   }
 
-  // Drop on a section block (header or empty area). Moves the dragged
-  // item into this section and parks it at the end of that section's
-  // existing items. Avoids the row-on-row collision when a section is
-  // empty or the user wants to append rather than insert before a row.
   async function onDropOnSection(
     e: React.DragEvent,
     sectionId: number | null
@@ -983,11 +912,8 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
     if (sourceIdx < 0) return;
     const source = items[sourceIdx];
     if ((source.section_id ?? null) === sectionId) {
-      // Already in this section — nothing to do at the section level.
       return;
     }
-    // Move the row to just after the last item in the target section
-    // (or to the end if that section is empty).
     const next = items.slice();
     const [moved] = next.splice(sourceIdx, 1);
     moved.section_id = sectionId;
@@ -1019,8 +945,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
 
   return (
     <div>
-      {/* Sections (mig 050) — define stages that group template items.
-          Project-level sections are cloned from these on project create. */}
       <div className="mb-3 rounded-md border border-border bg-bg/40 p-2">
         <div className="mb-1.5 flex items-center justify-between gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
@@ -1059,9 +983,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
                 key={s.id}
                 className="group inline-flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-ink-secondary"
               >
-                {/* Reorder arrows — order here propagates to every
-                    project cloned from this template, driving the
-                    stage progress bar's left-to-right order. */}
                 <button
                   onClick={() => moveSection(s.id, -1)}
                   disabled={idx === 0}
@@ -1129,10 +1050,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
         </div>
       )}
 
-      {/* Section-keyed blocks. Each block is a drop zone — drop a row
-          onto it to move the row into that section. Reordering within
-          a section uses the row-on-row drop (cross-section drop also
-          works that way; the row inherits the target's section). */}
       {!q.loading &&
         (() => {
           const blocks: Array<{
@@ -1182,7 +1099,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
                         : "border-border"
                     )}
                   >
-                    {/* Block header */}
                     <div className="flex items-center gap-2 border-b border-border-subtle bg-bg/60 px-3 py-1.5">
                       <span className="flex-1 text-[10px] font-semibold uppercase tracking-brand text-ink-secondary">
                         {block.name}
@@ -1207,7 +1123,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
                       </button>
                     </div>
 
-                    {/* Block rows */}
                     <ul className="divide-y divide-border-subtle">
                       {block.items.length === 0 && !addOpenHere && (
                         <li className="px-3 py-3 text-[10.5px] italic text-ink-muted">
@@ -1247,7 +1162,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
                               isRowDropTarget && "bg-accent-soft/40"
                             )}
                           >
-                            {/* Drag handle + arrow controls */}
                             <div className="flex items-center gap-0.5 text-ink-muted">
                               <span
                                 className="cursor-grab rounded p-1 hover:bg-bg/70 active:cursor-grabbing"
@@ -1316,12 +1230,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
                               title="Days from project start_date (negative = before)"
                               className="h-7 w-full rounded-md border border-border bg-surface px-2 text-[11px] tabular-nums outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
                             />
-                            {/* State strip — visible chips for the
-                                review-required and crew-visible flags
-                                (otherwise hidden inside the kebab menu
-                                and easy to miss across 19 rows). The
-                                same kebab still shows the toggles for
-                                editing. */}
                             <div className="flex items-center justify-end gap-1.5">
                               {!!item.requires_review && (
                                 <span
@@ -1375,7 +1283,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
                           </li>
                         );
                       })}
-                      {/* Inline quick-add inside the section */}
                       {addOpenHere && (
                         <li className="grid grid-cols-1 gap-2 bg-bg/30 px-3 py-2 sm:grid-cols-[1fr_140px_auto_auto] sm:items-center">
                           <input
@@ -1441,10 +1348,6 @@ function ChecklistItemsEditor({ templateId }: { templateId: number }) {
   );
 }
 
-// ── Brand manager ────────────────────────────────────────────
-// Brands live in project_brands (migration 044). The calendar now
-// tints by project status (mig 088), so brand colour is unused;
-// the column still exists in the DB for backward compatibility.
 
 interface BrandRow {
   id: number;
@@ -1452,23 +1355,13 @@ interface BrandRow {
   color: string;
   sort_order: number;
   active: number;
-  /** R2 key of the brand's letterhead logo (migration-pg 0069); null/'' =
-   *  none. The pg driver camelCases result columns, so consumers dual-read
-   *  logo_r2_key ?? logoR2Key. */
   logo_r2_key?: string | null;
   logoR2Key?: string | null;
 }
 
-/** Dual-read the brand logo key (camelCase ?? snake_case — #1 recurring bug). */
 const brandLogoKey = (b: BrandRow): string =>
   (b.logo_r2_key ?? b.logoR2Key ?? "").trim();
 
-// ── Per-row brand logo cell ─────────────────────────────────
-// Thumb + Upload/Replace/Remove, cloning the Settings → Branding company
-// logo uploader (api.postBinary raw-binary upload + fetchBlobUrl preview,
-// because the serve endpoint needs the bearer so <img src> can't hit it
-// directly + in-app dialog.confirm for Remove). The uploaded logo prints
-// on SCM Sales Order PDFs when the SO resolves to this brand.
 function BrandLogoCell({
   brand,
   onChanged,
@@ -1483,8 +1376,6 @@ function BrandLogoCell({
   const [busy, setBusy] = useState(false);
   const key = brandLogoKey(brand);
 
-  // Load / refresh the thumb whenever the stored key changes. Keys carry a
-  // Date.now() stamp, so passing the key as a query param busts stale caches.
   useEffect(() => {
     if (!key) {
       setUrl(null);
@@ -1522,7 +1413,7 @@ function BrandLogoCell({
     setBusy(true);
     try {
       await api.postBinary(`/api/projects/brands/${brand.id}/logo`, file, file.type);
-      clearBrandLogoCache(); // next SO PDF re-reads the new image
+      clearBrandLogoCache();
       toast.success(`${brand.name} logo uploaded`);
       onChanged();
     } catch (e: any) {
@@ -1614,7 +1505,6 @@ function BrandManager() {
   const [adding, setAdding] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  // Drag + arrow ordering replaces the old sort_order number input.
   const reorder = useReorderable(q.data?.data ?? [], async (ids) => {
     try {
       await api.put("/api/projects/brands/reorder", { ids });
@@ -1738,9 +1628,6 @@ function BrandManager() {
               isDropTarget && "bg-accent-soft/40"
             )}
           >
-            {/* Drag + arrow controls — replaces the old sort_order
-                number input for visual consistency with the
-                checklist editor. */}
             <div className="flex items-center gap-0.5 text-ink-muted">
               <span
                 className="cursor-grab rounded p-1 hover:bg-bg/70 active:cursor-grabbing"
@@ -1779,9 +1666,6 @@ function BrandManager() {
               }}
               className="flex-1 min-w-[140px] h-8 rounded-md border border-transparent bg-transparent px-2 text-[13px] font-medium text-ink hover:border-border focus:border-primary focus:bg-surface focus:ring-1 focus:ring-primary/20 focus:outline-none"
             />
-            {/* Brand logo (owner 2026-07) — prints on SCM Sales Order PDFs
-                in place of the company letterhead when the SO resolves to
-                this brand. */}
             <BrandLogoCell brand={b} onChanged={() => q.reload()} />
             <span
               className={cn(
@@ -1824,8 +1708,6 @@ function BrandManager() {
   );
 }
 
-// ── Event type manager ──────────────────────────────────────
-// project_event_types has existed since 021; this UI was missing.
 
 function EventTypeManager() {
   const toast = useToast();
@@ -1947,8 +1829,6 @@ function EventTypeManager() {
                 isDropTarget && "bg-accent-soft/40"
               )}
             >
-              {/* Drag + arrow controls — replaces the old sort_order
-                  number input. */}
               <div className="flex items-center gap-0.5 text-ink-muted">
                 <span
                   className="cursor-grab rounded p-1 hover:bg-bg/70 active:cursor-grabbing"
@@ -2030,11 +1910,6 @@ function EventTypeManager() {
   );
 }
 
-// ── Cost rates (mig 063) ─────────────────────────────────────
-// Per-brand transport / merchandise / commission rate card. The
-// recompute service runs on every finance edit and on every save
-// here, so changes are visible across all active projects of the
-// brand immediately.
 
 interface CostRateRow {
   brand: string;
@@ -2049,9 +1924,6 @@ interface CostRateRow {
 
 function CostRateManager({ enabled = true }: { enabled?: boolean }) {
   const toast = useToast();
-  // `enabled` is the finance-viewer hard gate (see ProjectMaintenanceView). The
-  // parent already skips rendering this section when false; the enabled guard
-  // is the belt-and-suspenders so the denyFinance-guarded fetch never fires.
   const q = useQuery<{ data: CostRateRow[] }>("/api/projects/cost-rates",
     () => api.get("/api/projects/cost-rates"),
     [],
@@ -2101,9 +1973,6 @@ function CostRateRowEditor({
   onSaved: () => void;
   onError: (msg: string) => void;
 }) {
-  // Local edit state per numeric field. Empty string saves as NULL
-  // for the optional boost columns; clearing those disables the
-  // boost tier for the brand.
   const [transport, setTransport] = useState(String(row.transport_pct ?? ""));
   const [merchandise, setMerchandise] = useState(String(row.merchandise_pct ?? ""));
   const [normal, setNormal] = useState(String(row.commission_normal_pct ?? ""));

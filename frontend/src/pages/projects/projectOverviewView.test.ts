@@ -49,7 +49,7 @@ describe("the overview's choices in the URL", () => {
   it("opening a project notes the address it came from — its Back goes there, period and sort included", () => {
     rememberOpenedFrom(303, SEPT, { page: 640, table: 120, tableLeft: 300 });
     expect(projectBackTo(303)).toBe(SEPT);
-    expect(projectBackTo(304)).toBe("/projects");   // a project opened some other way: the list
+    expect(projectBackTo(304)).toBe("/projects");
   });
 
   it("the place you were looking at is given back once, at that address", () => {

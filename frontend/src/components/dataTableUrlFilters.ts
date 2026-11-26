@@ -1,10 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 
-/* The shape of a table's column filters in the address: a JSON object of
-   column key to the allowed values. Only non-empty funnels are written; a
-   hand-edited or truncated link reads as no filter rather than breaking the
-   page. */
 export type ColFilters = Record<string, string[]>;
 
 export function serializeUrlColFilters(filters: ColFilters): string | null {

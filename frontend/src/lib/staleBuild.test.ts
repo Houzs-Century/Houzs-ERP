@@ -5,10 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { reportClientError } = vi.hoisted(() => ({ reportClientError: vi.fn() }));
 vi.mock("./errorReporter", () => ({ reportClientError }));
 
-/** A FRESH copy of the module per test: the failure latch and the "installed"
- *  guard are module-level singletons on purpose (the event fires from outside
- *  React), so sharing one instance across tests would let the first latch decide
- *  every later assertion. */
 async function freshModule() {
   vi.resetModules();
   return await import("./staleBuild");
@@ -24,8 +20,6 @@ describe("staleBuild matchers", () => {
     'Expected a JavaScript module script but the server responded with a MIME type of "text/html".',
   ];
 
-  /** The bare-word alternatives. RECOVERY may act on these — a wrong guess costs
-   *  one reload — but nothing may TELL an operator a deploy happened on them. */
   const AMBIGUOUS = [
     "Cannot read properties of undefined (reading 'preload')",
     "usePreloadRows: module script registry is empty",
@@ -67,9 +61,6 @@ describe("staleBuild matchers", () => {
 describe("installChunkFailureWatch", () => {
   const disposers: Array<() => void> = [];
 
-  /** Fresh module + fresh listener, detached again after the test: jsdom shares
-   *  ONE window across the file, so a leaked listener from an earlier module
-   *  instance would observe the next test's dispatch too. */
   async function watching() {
     const mod = await freshModule();
     disposers.push(mod.installChunkFailureWatch());
@@ -114,9 +105,6 @@ describe("installChunkFailureWatch", () => {
     const event = dispatchPreloadError(
       new Error("Failed to fetch dynamically imported module: /assets3/x.js"),
     );
-    // preventDefault() is what Vite reads to decide whether to rethrow. If this
-    // ever became true, all 55 `await import()` handlers would stop seeing their
-    // own rejection and their toasts would silently disappear.
     expect(event.defaultPrevented).toBe(false);
   });
 
@@ -167,17 +155,9 @@ describe("installChunkFailureWatch", () => {
 });
 
 describe("the Vite contract this whole file rests on", () => {
-  /** The claim in staleBuild.ts's header is that EVERY dynamic import in a
-   *  production build funnels through Vite's preload helper, and that the helper
-   *  dispatches `vite:preloadError` for a failure of the MODULE itself and not
-   *  only of its preload <link>s. That is a fact about the installed Vite, not
-   *  about our code, and jsdom can never exercise it — so pin it here. If Vite
-   *  changes the shape, this fails and someone re-reads the helper instead of
-   *  trusting a comment. */
   function viteBundleSources(): string[] {
     const root = join(process.cwd(), "node_modules", "vite", "dist", "node", "chunks");
     const files = readdirSync(root).filter((f) => f.endsWith(".js"));
-    // A verdict computed over nothing must never read as a pass.
     expect(files.length, `no vite chunk sources under ${root}`).toBeGreaterThan(0);
     return files.map((f) => readFileSync(join(root, f), "utf8"));
   }
@@ -185,12 +165,9 @@ describe("the Vite contract this whole file rests on", () => {
   it("still dispatches vite:preloadError, and still wraps the module import itself", () => {
     const sources = viteBundleSources();
     expect(sources.some((s) => s.includes('new Event("vite:preloadError"'))).toBe(true);
-    // The tail of the helper. Without the `.catch` on baseModule() only PRELOAD
-    // failures would be reported and the 55 handler sites would stay uncovered.
     expect(sources.some((s) => s.includes("return baseModule().catch(handlePreloadError)"))).toBe(
       true,
     );
-    // Cancelable, which is why the "never swallows" test above is meaningful.
     expect(sources.some((s) => s.includes("if (!e.defaultPrevented) throw err"))).toBe(true);
   });
 });

@@ -2,9 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { withMasterPickerPools } from './picker-maint';
 import type { MaintenanceConfig } from './mfg-products-queries';
 
-/* The production shapes from BUG-60 (2990's Home, read 2026-10-06): HOOKKA
-   INDUSTRIES' supplier overlay saved 2026-05-29, and master after DEFAULT was
-   added on 2026-10-05. */
 const HOOKKA = {
   sofaSizes: ['24', '26', '28', '30', '32', '35'],
   sofaLegHeights: [

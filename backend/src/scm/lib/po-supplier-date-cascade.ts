@@ -21,8 +21,6 @@ export const SUPPLIER_DATE_SLOT_COL = {
 } as const;
 export type SupplierDateSlot = keyof typeof SUPPLIER_DATE_SLOT_COL;
 
-/* A postgres.js transaction hands a date column back as a JS Date; the audit's
-   from-value must still read as the day, not "Tue Sep 15 2026 ...". */
 const dayOrRaw = (v: unknown): unknown => (v instanceof Date ? v.toISOString().slice(0, 10) : v);
 
 /* A recorded supplier date is history (DEV-73), so POST /bulk-supplier-date
@@ -72,16 +70,12 @@ export async function cascadePoSupplierDate(
   args: {
     companyId: number;
     poId: string;
-    /** The header row read BEFORE the write: po_number, status, company_id and the slot column. */
     before: Record<string, unknown>;
     slot: SupplierDateSlot;
-    /** null clears the slot, as the PO editor's own blank does. */
     date: string | null;
     applyToLines: boolean;
     actor: AuditActor | null;
     note: string | null;
-    /** true = write only while the slot is still NULL (bulk route: a double click
-     *  or a concurrent edit must not overwrite a just-recorded date). */
     requireEmpty: boolean;
   },
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
@@ -101,8 +95,6 @@ export async function cascadePoSupplierDate(
       sb.from('purchase_order_items').update({ [col]: date }).eq('purchase_order_id', poId),
       companyId,
     );
-    /* The header already moved, so a line failure is reported rather than
-       swallowed: the operator has to know this PO is half-applied. */
     if (lineErr) return { ok: false, reason: `Header updated but lines failed: ${lineErr.message}` };
   }
 

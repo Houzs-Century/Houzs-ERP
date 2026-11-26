@@ -1,5 +1,3 @@
-// Mail Center per-person read state and "needs acknowledgement" (DEV-03 P2).
-// Shared by the desktop thread, the inbox sidebar and the phone.
 import { useState } from "react";
 import { CheckCheck, Eye, Loader2, MailCheck } from "lucide-react";
 import { api } from "../../api/client";

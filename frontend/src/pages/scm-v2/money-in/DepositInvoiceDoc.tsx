@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// DepositInvoiceDoc — /scm/ar-invoices/deposit/:id, one deposit invoice as a
-// page (the owner's Claude Design, batch 5 §8; it was a pop-out over the
-// Deposit invoices list). The invoice, its customer and order, the payment it
-// was born from, its journal, what closed it or refunded it, the page as it
-// prints — and the two steps it had: Post to ledger (a journal refused at
-// birth) and Cancel with a reason (refused while a credit note stands against
-// it). The same hooks and endpoints the pop-out used; nothing posts
-// differently.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
@@ -72,7 +62,6 @@ export const DepositInvoiceDoc = () => {
     const names = new Map((accountsQ.data?.accounts ?? []).map((a) => [a.account_code, a.account_name]));
     return (code: string): string | null => names.get(code) ?? null;
   }, [accountsQ.data]);
-  /* The page as it prints: the sheet (the row with its order's address and figures). */
   const draw = useMemo(() => (sheet
     ? () => import('../../../vendor/scm/lib/deposit-invoice-pdf').then(({ depositInvoicePdfBlob }) => depositInvoicePdfBlob(sheet))
     : null), [sheet]);

@@ -17,7 +17,7 @@ import { escapeForOr } from './postgrest-search';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 
 export const PI_HEADER_COLS =
-  'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_sen, tax_sen, total_sen, paid_sen, status, notes, posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS; // HOLD_COLUMNS = mig 0324's marker, BESIDE the status pill
+  'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_sen, tax_sen, total_sen, paid_sen, status, notes, posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS;
 
 /* Supplier CONTACT fields ride the list embed — the quick-view drawer's
    SUPPLIER panel renders off the list row (owner 2026-07-24: all "—"). */
@@ -41,8 +41,6 @@ export type PiListFilters = {
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
 
-/* Multi-value funnel params ride as a JSON array in ONE param (a creditor name
-   may contain a comma). Malformed / empty reads as no filter. */
 function jsonArrayParam(v: string | undefined): string[] | null {
   if (v === undefined || v === '') return null;
   try {
@@ -81,7 +79,6 @@ export function piListSelect(f: PiListFilters): string {
   return `${PI_HEADER_COLS}, ${supplierEmbed}, purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number, delivery_note_ref), linked_ac_docno`;
 }
 
-/* Indexed by a caller's string, so an unknown key is `undefined` — say so. */
 const BUCKETS: Readonly<Record<string, string[] | undefined>> = PI_STATUS_BUCKETS;
 
 const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'status', 'total_sen']);
@@ -112,17 +109,12 @@ export function orderPiList<Q>(q: Q, sort: string | null): Q {
 /** Tab + COMPANY + search + date range. */
 export function filterPiList<Q>(q: Q, f: PiListFilters, c: CompanyScopeCtx): Q {
   let out = q as unknown as Filterable;
-  /* A known bucket key → all its raw statuses; 'all'/empty → no filter;
-     otherwise a raw DB status. The `on_hold` tab reads the MARKER (mig 0324). */
   if (f.status && f.status !== 'all') {
     if (f.status === 'on_hold') out = out.or(HELD_OR_TERM);
     else if (BUCKETS[f.status]) out = out.in('status', BUCKETS[f.status]!);
     else out = out.eq('status', f.status);
   }
-  out = scopeToCompany(out, c); // multi-company: isolate to the active company
-  /* free-text search over the base-table text columns the list searches.
-     Supplier name / PO / GRN source are embedded resources, not base
-     purchase_invoices columns, so they can't be ilike'd here. */
+  out = scopeToCompany(out, c);
   if (f.q) {
     const s = escapeForOr(f.q);
     if (s) out = out.or(`invoice_number.ilike.%${s}%,supplier_invoice_ref.ilike.%${s}%,notes.ilike.%${s}%`);

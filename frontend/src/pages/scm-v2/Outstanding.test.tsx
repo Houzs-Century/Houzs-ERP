@@ -1,8 +1,3 @@
-// Outstanding in the owner's redesign (Finance › Money in, batch 5): the cards
-// in the design's order, the summary's notes kept on them, the list's status
-// and due tags, the sand tint on an invoice still owed, and the view held in
-// the URL (?mod=&mode=&from=&to=). The PO chasing card has its own file
-// (Outstanding.poLines.test.tsx).
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -10,10 +5,6 @@ import { afterAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { fmtDate } from '../../vendor/shared/format';
 
-/* One fixed instant, midday in Malaysia, set before the module-level dates below
-   are worked out: TODAY / TEN_DAYS_AGO were read once at import while the page
-   reads todayMyt() at render, so a run that crossed MYT midnight compared two
-   different days and failed. */
 vi.hoisted(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-11-10T04:00:00Z'));
@@ -102,7 +93,6 @@ describe('Outstanding — the cards', () => {
     expect(within(screen.getByRole('button', { name: /DO · Deliveries/ })).getByText('1 document')).toBeTruthy();
     expect(within(screen.getByRole('button', { name: /GRN · Goods received/ })).getByText('5 documents')).toBeTruthy();
     expect(within(screen.getByRole('button', { name: /PI · Purchase invoices/ })).getByText('RM 250.00')).toBeTruthy();
-    // The summary sums no refund, so PR counts documents rather than invent a total.
     expect(within(screen.getByRole('button', { name: /PR · Purchase returns/ })).getByText('2 documents')).toBeTruthy();
   });
 
@@ -139,7 +129,6 @@ describe('Outstanding — the sales invoice list', () => {
     expect(screen.getByText('Partially Paid')).toBeTruthy();
     expect(screen.getByText(`${fmtDate(TEN_DAYS_AGO)} · 10d late`)).toBeTruthy();
     expect(screen.getByText(fmtDate(IN_25_DAYS))).toBeTruthy();
-    // The credit notes knocked off each invoice show beside its deposit (headers are title-cased).
     expect(screen.getByRole('columnheader', { name: /Credit Notes/ })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: /SO Deposit/ })).toBeTruthy();
   });
@@ -165,7 +154,6 @@ describe('Outstanding — the sales invoice list', () => {
     expect(within(row).getByText('Cancelled')).toBeTruthy();
     expect(within(row).queryByText('RM 1,000.00')).toBeNull();
     expect(within(row).getByText(fmtDate(TEN_DAYS_AGO))).toBeTruthy();
-    // Footer: only the part-paid invoice's RM 500.00 total counts.
     const foot = row.closest('table')?.querySelector('tfoot') as HTMLElement;
     expect(within(foot).getByText('RM 500.00')).toBeTruthy();
   });
@@ -215,7 +203,6 @@ describe('Outstanding — the view lives in the URL', () => {
     expect(search).toContain('from=&to=');
     expect(lastRowsCall()).toEqual({ module: 'so', opts: { mode: 'completed', from: '', to: '' } });
 
-    // Back to the default window: the URL forgets the dates again.
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Last 12 months' }));
     expect(search).not.toContain('from=');
     expect(lastRowsCall().opts).toEqual({ mode: 'completed', from: todayMyt(-365), to: TODAY });

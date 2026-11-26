@@ -79,10 +79,6 @@ export interface CapabilityCaller {
   position_policy?: PositionPolicyRow | null;
 }
 
-/** Adapt a `CapabilityCaller` to the `AuthUser`-shaped argument the pmsAccess /
- *  fair-report gates take. Those gates read ONLY position_name, department_name
- *  and permissions_set — asserted by capabilities.test.ts, which calls each gate
- *  through both this adapter and a full AuthUser and pins the answers equal. */
 function asAuthUser(u: CapabilityCaller): AuthUser {
   return {
     position_name: u.position_name ?? null,
@@ -92,9 +88,6 @@ function asAuthUser(u: CapabilityCaller): AuthUser {
   } as unknown as AuthUser;
 }
 
-/** Adapt to the tolerant caller shape `moneyWriteDenial` takes. It reads the
- *  wildcard out of EITHER `permissions` or `permissions_set` and the position
- *  name; nothing else. */
 function asMoneyCaller(u: CapabilityCaller): MoneyWriteCaller {
   return {
     permissions: u.permissions,
@@ -104,20 +97,11 @@ function asMoneyCaller(u: CapabilityCaller): MoneyWriteCaller {
   };
 }
 
-/** The caller's granted flat keys, in whichever shape they arrived. Empty when
- *  the caller carries none — `hasPermission([], k)` is false, so this fails
- *  closed rather than throwing. */
 function granted(u: CapabilityCaller): ReadonlyArray<string> | ReadonlySet<string> {
   return u.permissions_set ?? u.permissions ?? [];
 }
 
-/* Two predicates are named ahead of the registry because a third entry composes
-   them. Referencing `PREDICATES[k]` from inside the object literal that defines
-   `PREDICATES` would make its inferred type circular, so the shared terms live
-   here and BOTH the registry entry and the composition call the same function —
-   which is the point: one definition, two readers. */
 
-/** `scm.config.write` — see the registry entry for the gate this mirrors. */
 function canWriteScmConfigFor(u: CapabilityCaller): boolean {
   return (
     hasPermission(granted(u), "scm.config.write") ||
@@ -131,83 +115,28 @@ function canWriteScmConfigFor(u: CapabilityCaller): boolean {
   );
 }
 
-/** `org.director` — pmsAccess.isDirectorUser, verbatim. */
 function isDirectorFor(u: CapabilityCaller): boolean {
   return isDirectorUser(asAuthUser(u));
 }
 
-/**
- * THE REGISTRY. Key → the predicate that answers it.
- *
- * Each entry names the backend gate it composes, so a reviewer can check the
- * pairing without leaving this file, and capabilities.test.ts pins every pairing
- * over a matrix of synthetic callers.
- */
 const PREDICATES = {
-  /** May WRITE SCM master data / config.
-   *  GATE: scm/lib/houzs-perms.canWriteScmConfig — `flat key OR positionPolicy
-   *  .canWriteConfig`. Restated here as the same two terms over the same inputs
-   *  because that gate takes a Hono context, not a user; capabilities.test.ts
-   *  pins the two equal over every position in the snapshot. */
   "scm.config.write": canWriteScmConfigFor,
 
-  /** May see COST / MARGIN / per-category subtotals on SCM documents.
-   *  GATE: scm/lib/houzs-perms.canViewScmFinance → pmsAccess.isFinanceViewer.
-   *  This is the same function /auth/me's `project_finance_viewer` is computed
-   *  from; the capability is the newer name for that answer. */
   "scm.finance.view": (u: CapabilityCaller): boolean => isFinanceViewer(asAuthUser(u)),
 
-  /** May see a product / SKU COST price (`cost_price_sen`), and ONLY that.
-   *  GATE: scm/lib/houzs-perms.canViewScmProductCost → pmsAccess.isProductCostViewer.
-   *  Deliberately WIDER than scm.finance.view by exactly one function —
-   *  Procurement/Purchasing. Keep the two questions apart: merging them is how an
-   *  owner ruling sat dead for a month. */
   "scm.productCost.view": (u: CapabilityCaller): boolean => isProductCostViewer(asAuthUser(u)),
 
-  /** May see ALL sales-side documents rather than own+downline.
-   *  GATE: scm/lib/houzs-perms.canViewAllSales — `flat scm.so.view_all OR
-   *  pmsAccess.isDirectorUser`. */
   "scm.sales.viewAll": (u: CapabilityCaller): boolean =>
     hasPermission(granted(u), "scm.so.view_all") || isDirectorUser(asAuthUser(u)),
 
-  /** May MOVE MONEY — post a journal entry, or raise/post/cancel a payment
-   *  voucher. Seeing is not doing: the default-full cohort reads every money
-   *  surface and still may not post.
-   *
-   *  GATE: positionPolicy.moneyWriteDenial, CALLED DIRECTLY (a denial reason of
-   *  `null` is the grant) rather than reading `flags.canMoveMoney`. That flag is
-   *  NOT the gate and the two do not agree: the live rule also passes the `*`
-   *  wildcard, and it fails OPEN for a caller with no position_name, neither of
-   *  which the flag knows about. Reading the flag here would have shipped a
-   *  capability that told the Owner he may not post a voucher the API would have
-   *  accepted — the exact SO-Maintenance bug, rebuilt inside the machine meant to
-   *  prevent it. `scm.finance.accounting` + POST is the canonical money-write
-   *  probe; the guard applies the same rule to `scm.finance.outstanding`.
-   *
-   *  ONE DELIBERATE ASYMMETRY: `moneyWriteDenial(null, …)` returns null, i.e. the
-   *  GATE fails open on a null caller, while `resolveCapabilities(null)` denies.
-   *  The capability is therefore never WIDER than the gate, only narrower, and
-   *  only in a case that cannot reach a client — /auth/me 401s before it has a
-   *  user to resolve. Narrower-than-the-gate is the safe direction and the one
-   *  the fail-closed rule requires. */
   "scm.money.move": (u: CapabilityCaller): boolean =>
     moneyWriteDenial(asMoneyCaller(u), "scm.finance.accounting", "POST") === null,
 
-  /** Fair Report, PER STAGE. GATE: scm/lib/fair-report.fairReportAccess — called
-   *  directly, so the nav/tab visibility and the 403 are literally one function.
-   *  The FE previously re-derived these three tiers in auth/salesAccess.ts
-   *  (fairAllowedStages), a second copy of an owner ruling. */
   "fair.so.view": (u: CapabilityCaller): boolean => fairReportAccess("so", asAuthUser(u)).allowed,
   "fair.do.view": (u: CapabilityCaller): boolean => fairReportAccess("do", asAuthUser(u)).allowed,
   "fair.invoice.view": (u: CapabilityCaller): boolean =>
     fairReportAccess("invoice", asAuthUser(u)).allowed,
 
-  /** May this caller OPEN the Fair / Sales Report at all — the nav row, the route
-   *  mount, the mobile overlay — as opposed to any one document stage. GATE:
-   *  scm/lib/fair-report.fairReportAccess ORed over every stage, so it is the SAME
-   *  gate the per-stage 403 enforces; a caller allowed on no stage is refused here
-   *  too. The FE previously re-derived this as auth/salesAccess.canViewFairReport
-   *  (fairAllowedStages(...).length > 0), a second copy of the owner ruling. */
   "fair.report.view": (u: CapabilityCaller): boolean =>
     FAIR_STAGES.some((stage) => fairReportAccess(stage, asAuthUser(u)).allowed),
 
@@ -248,48 +177,20 @@ const PREDICATES = {
   "scm.maintenance.open": (u: CapabilityCaller): boolean =>
     canWriteScmConfigFor(u) || isDirectorFor(u),
 
-  /** Is this caller Sales staff by STABLE ORG FIELDS. GATE: pmsAccess.isSalesUser
-   *  — the classifier the SO row-scope and the Service-Case admittance both use.
-   *  The FE mirrored it as auth/salesAccess.isSalesStaff with the dept/position
-   *  terms in the OPPOSITE order and its own regex copy. */
   "org.sales.staff": (u: CapabilityCaller): boolean => isSalesUser(asAuthUser(u)),
 
-  /** Is this caller the DIRECTOR tier that sees all data. GATE:
-   *  pmsAccess.isDirectorUser (`*` wildcard OR an exact director position name). */
   "org.director": isDirectorFor,
 
-  /** Is this caller EXACTLY the "Sales Director" position — the signal for the
-   *  DEPARTMENT-SCOPED Team grant. GATE: pmsAccess.isSalesDirectorUser. Exact
-   *  normalised name on both sides: a free-text rename must never slide into a
-   *  tier. */
   "org.salesDirector": (u: CapabilityCaller): boolean => isSalesDirectorUser(asAuthUser(u)),
 
-  /** Is this caller the defect REVIEWER position (Storekeeper Supervisor's job:
-   *  triage fresh defects outside the region states). GATE:
-   *  projectGates.isDefectReviewerPosition — the Title's row, then its name. */
   "org.defect.reviewer": (u: CapabilityCaller): boolean => isDefectReviewerPosition(asAuthUser(u)),
 
-  /** Is this caller CREW-SCOPED on projects (sees only the events they are
-   *  crewed on: helpers, storekeepers, the warehouse crew). GATE:
-   *  projectGates.isCrewScopedUser — the Title's row, then its name. */
   "org.crew.scoped": (u: CapabilityCaller): boolean => isCrewScopedUser(asAuthUser(u)),
 
-  /** Is this caller the 2990 POS MARKETING account — the tablet shows it the
-   *  Marketing section and refuses it "Complete order". Read by that POS
-   *  (repo wenwei4046/2990s, @2990s/shared/marketing-access), not by this
-   *  frontend. GATE: pmsAccess.isPosMarketingAccount, the same function
-   *  scm/routes/sales-analysis.ts GET /lines admits through
-   *  (houzs-perms.isPosMarketingCaller). */
   "pos.marketing": (u: CapabilityCaller): boolean => isPosMarketingAccount(asAuthUser(u)),
 
-  /** May this caller open the Assistant at all. GATE: assistant-scope.canUseAssistant
-   *  — wildcard yes, field crew + Sales denied, an unrecognised position fails
-   *  CLOSED. The FE mirrored this deny list twice (auth/assistantAccess.ts route
-   *  guard + Sidebar hideForPositions); both now read this answer instead. */
   "org.assistant.use": (u: CapabilityCaller): boolean => canUseAssistant(asAuthUser(u)),
 
-  /** May this caller open the IT pages (System Health, AI usage). GATE:
-   *  itAccess.canViewItPages, the same check middleware/auth.requireItPages runs. */
   "it.pages.view": (u: CapabilityCaller): boolean => canViewItPages(granted(u)),
 } as const satisfies Record<string, (u: CapabilityCaller) => boolean>;
 
@@ -306,8 +207,6 @@ export type CapabilityKey = keyof typeof PREDICATES;
  *  site, and "indistinguishable" is how a fail-open starts. */
 export type CapabilitySet = Readonly<Record<CapabilityKey, boolean>>;
 
-/** The all-false set — the answer for an unresolvable caller. Built fresh per
- *  call rather than shared, so no consumer can mutate the denial into a grant. */
 function denyAll(): CapabilitySet {
   const out = {} as Record<CapabilityKey, boolean>;
   for (const key of Object.keys(PREDICATES) as CapabilityKey[]) out[key] = false;
@@ -335,18 +234,6 @@ export function resolveCapabilities(
   for (const key of Object.keys(PREDICATES) as CapabilityKey[]) {
     out[key] = PREDICATES[key](u) === true;
   }
-  // GLOBAL cost/margin DISPLAY switch (env COSTING_DISPLAY_ENABLED, resolved by
-  // scm/lib/costing-enabled and passed in by routes/auth.ts). It is ONE env flag,
-  // not a per-user predicate, so it cannot live in the (u) => boolean registry
-  // above; it is applied here as the single global multiplier on the one
-  // capability it governs. OFF forces scm.finance.view false for EVERYONE, so the
-  // FE's canViewScmCosting (which reads this capability) hides the cost/margin
-  // columns + nav, in lock-step with canViewScmFinance stripping the SAME fields
-  // from the wire — ONE switch, both sides, the two-rule split closed. Absent opts
-  // (or true) = ON, the no-regression default; only an explicit false hides. This
-  // touches ONLY scm.finance.view: the finance-viewer COHORT (isFinanceViewer) is
-  // unchanged, and product cost (scm.productCost.view) deliberately does NOT ride
-  // the display switch — cost ENTRY must not depend on a cost-DISPLAY toggle.
   if (opts?.costingDisplayEnabled === false) {
     out["scm.finance.view"] = false;
   }

@@ -21,18 +21,12 @@ export function MobileLogin() {
   const { login, verifyTotpLogin } = useAuth();
   const [email, setEmail] = useState(() => readRememberedEmail());
   const [password, setPassword] = useState("");
-  // Default Remember me ON — internal ERP, staff expect to stay signed in (7-day
-  // session). Was `remembered != null`, which left it UNCHECKED on a fresh/cleared
-  // device → the token went to sessionStorage and was lost on app close, forcing a
-  // re-login every open. Default true → token persists in localStorage.
   const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [challenge, setChallenge] = useState<string | null>(null);
   const [code, setCode] = useState("");
-  /* Nick 2026-07-09 — show-password toggle on both login + code steps. */
   const [showPw, setShowPw] = useState(false);
-  // Crew sign-in (staff code + PIN) — the shared form, on a light card.
   const [crew, setCrew] = useState(false);
 
   async function onSignIn() {
@@ -41,11 +35,7 @@ export function MobileLogin() {
     try {
       const res = await login(email.trim(), password, remember);
       if (res.kind === "totp") { setChallenge(res.challenge); setBusy(false); }
-      // res.kind === "ok": AuthContext sets the user; AuthGate swaps to the app.
     } catch (e) {
-      // Same helper the desktop login uses — the wording is NOT duplicated per
-      // platform. See auth/loginErrors for why it does not name which half was
-      // wrong.
       setErr(signInErrorMessage(e));
       setBusy(false);
     }
@@ -57,22 +47,15 @@ export function MobileLogin() {
     try {
       await verifyTotpLogin(challenge, code.trim(), remember);
     } catch (e) {
-      // e.message carries the server's specific plain sentence (wrong code vs
-      // expired sign-in attempt); the fallback must be a sentence too, not
-      // the machine-flavoured "Invalid code.".
       setErr(e instanceof Error && e.message ? e.message : "That code didn't work — try the current code or a backup code.");
       setBusy(false);
     }
   }
 
   const labelStyle: React.CSSProperties = { display: "block", fontSize: 10, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "rgba(231,234,228,.55)", marginBottom: 6 };
-  // fontSize MUST be >= 16 — iOS Safari auto-zooms the page when a focused input's
-  // font is under 16px (that's the "page keeps zooming when I type" bug).
   const inputStyle: React.CSSProperties = { width: "100%", background: "rgba(255,255,255,.07)", border: "1px solid rgba(231,234,228,.18)", borderRadius: 12, padding: "13px 14px", color: "#fff", fontFamily: "inherit", fontSize: 16, outline: "none" };
   const delay = (i: number): React.CSSProperties => ({ animationDelay: `${0.05 + i * 0.07}s` });
 
-  // Pre-auth: no branding fetch possible — brand by the hostname default
-  // (erp.2990shome.com → 2990's name; everything else stays Houzs, verbatim).
   const loginCompanyCode = hostDefaultCompanyCode();
   const isHouzsHost = loginCompanyCode === HOUZS_COMPANY_CODE;
   const loginCompanyName = isHouzsHost
@@ -86,10 +69,6 @@ export function MobileLogin() {
       <AmbientSnow />
 
       <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column", justifyContent: "center", padding: "34px 28px", maxWidth: 460, margin: "0 auto" }}>
-        {/* Brand lockup — rounded-square app icon holding the real HC mark
-            (black-on-transparent PNG inverted to cream, same trick as the
-            desktop AuthShell), "Houzs Century" title, "ERP · MOBILE" gold
-            eyebrow. Wrapped in our entrance-animation items. */}
         <div className="appicon hz-lg-item" style={{ ...delay(0), width: 70, height: 70, borderRadius: 20, background: "linear-gradient(160deg,#23242a,#0e0f12)", marginBottom: 22, boxShadow: "inset 0 0 0 1px rgba(216,168,90,.16)" }}>
           {isHouzsHost ? (
             <img src="/logo-hc-mark.png" alt={loginCompanyName} style={{ width: 36, height: 36, objectFit: "contain", filter: "brightness(0) invert(1)" }} />

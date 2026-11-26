@@ -1,11 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { DELIVERY_PLANNING_LAYOUT_PRESETS, LAYOUT_PRESET_REGION } from "./deliveryPlanningLayouts";
 
-/* The full Delivery Planning board column set, AFTER the 2026-09-24 pass that
-   dropped delivery_state / arrangement_stage / em_delivered_date as columns.
-   Every preset must cover exactly this set (order lists all columns; the hidden
-   ones keep their place). If a board column is added or removed, update both the
-   board's DP_DEFAULT_ORDER and the presets — this list is the reminder. */
 const BOARD_COLUMNS = [
   "delivery_message_status", "row_type", "company_code", "so_doc_no", "do",
   "so_date", "so_ref", "branding", "debtor_name", "phone", "region",
@@ -22,13 +17,8 @@ const BOARD_COLUMNS = [
   "bs_remarks", "ctn",
 ].sort();
 
-/** Columns the owner deleted — must not reappear in any preset. */
 const DROPPED = ["delivery_state", "arrangement_stage", "em_delivered_date", "days_left", "attention"];
 
-/** Owner's four tabs, in order, with the visible-column count he arranged
- *  (+1 on the three BASE_ORDER tabs since 2026-10-14: "Customer Amend Reason"
- *  sits beside Customer Request Date; EM Order hides both. +1 on every tab
- *  since 2026-10-19: the "POD" column shows; "Delivered At" is added hidden). */
 const EXPECTED = [
   { id: "delivery-date", label: "Delivery Date", visible: 30 },
   { id: "delivery-details", label: "Delivery Details", visible: 43 },

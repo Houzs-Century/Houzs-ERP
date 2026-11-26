@@ -1,10 +1,3 @@
-// BUG-111 (Sim, 2026-10-13): 2990-PO-2609-042 printed the "Houzs Century Sdn
-// Bhd" letterhead. The PDF letterhead reads the module-level branding cache,
-// which useBranding fills from GET /api/branding. That answer depends on the
-// tab's X-Company-Id header, but the query key did not carry the company: an
-// answer fetched before the tab adopted 2990 (no header -> hostname default
-// HOUZS) stayed "fresh" for 10 minutes and every PDF in that window printed
-// Houzs.
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -30,7 +23,6 @@ function Probe() {
 
 beforeEach(() => {
   apiGet.mockReset();
-  // The backend resolves the company from this tab's X-Company-Id header.
   apiGet.mockImplementation(async () => (getActiveCompanyId() === 2 ? H2990 : HOUZS));
   queryClient.clear();
   setActiveCompanyId(null);

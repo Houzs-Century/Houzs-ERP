@@ -1,7 +1,4 @@
 // @vitest-environment node
-// stock-take-xlsx (2990-0014): the Count Sheet as a workbook — the screen's
-// columns, numbers in the cells, an uncounted line with no variance, and the
-// blind take without System / Variance / Value.
 import { describe, expect, it } from 'vitest';
 import { read, utils } from 'xlsx';
 import type { StockTakeLine } from './stock-queries';
@@ -34,7 +31,6 @@ describe('stock take Excel export', () => {
     expect(rows[0]).toEqual(['HC-STK-2610-005']);
     expect(rows[3]).toEqual(['SKU', 'Name', 'Variant', 'System Qty', 'Counted Qty', 'Rack', 'Notes', 'Variance', 'Value (RM)', 'Counted By']);
     expect(rows[4]).toEqual(['MATT-A', 'Mattress A', undefined, 4, 6, 'Rack L5.1', undefined, 2, 1000, 'Adrian']);
-    /* Uncounted: no count, no variance, no value, nobody — the row ends at System Qty. */
     expect(rows[5]).toEqual(['MATT-B', 'Mattress A', 'Size Q', 3]);
     expect(ws.I5!.z).toBe(AMOUNT_FORMAT);
   });

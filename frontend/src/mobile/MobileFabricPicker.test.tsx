@@ -18,10 +18,10 @@ import { MobileFabricPicker } from "./MobileFabricPicker";
 
 const colour = (colourId: string, fabricId: string) => ({ colourId, fabricId, label: null, swatchHex: null });
 const HITS = [
-  colour("BO315-23", "BO315"),     // series enabled
-  colour("CG-002-11", "CG-002"),   // colour enabled, series not
-  colour("TARONI-05", "TARONI"),   // pool entry carries a trailing space
-  colour("GD2502-11", "GD2502"),   // neither enabled
+  colour("BO315-23", "BO315"),
+  colour("CG-002-11", "CG-002"),
+  colour("TARONI-05", "TARONI"),
+  colour("GD2502-11", "GD2502"),
 ];
 
 afterEach(cleanup);

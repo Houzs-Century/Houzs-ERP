@@ -86,13 +86,10 @@ type GlLine = RpGlLine;
 
 export type RpRow = {
   key: string; code: string | null; name: string; cells: Record<string, number>; totalSen: number;
-  /** A sub-heading the row prints under, within its account's place on the tree (Deposit / Settlement). */
   group?: { id: string; label: string };
   /** The Settlement / Deposit column the row's money goes to whatever its category says
       (a customer's order payment by its kind, a refund to Deposit — owner 2026-11-09). */
   splitTo?: SplitTo;
-  /** The Cash Flow category, by id, the row prints directly under — a row no account places
-      (opening bills paid, read by their supplier's category). */
   category?: string;
 };
 export type RpEntry = {
@@ -109,7 +106,6 @@ export type RpReport = {
   opening: Record<string, number>;
   receipts: RpRow[]; payments: RpRow[];
   layout?: { stored: boolean; tree: LaidNode[]; inSen: number; outSen: number };
-  /** Empty when the company has no money account to report on. */
   totals: RpTotals | Record<string, never>;
   entries: RpEntry[];
   /** The card money the bank has not received (owner 2026-09-28). */
@@ -161,13 +157,11 @@ const CASH_PART = 'CASH';
 const CASH_PART_NAME = 'Transfer / cash';
 export const CUSTOMER_REFUND = 'REFUND';
 export const CUSTOMER_OTHER = 'OTHER';
-/* Where a debtor-control row prints among its siblings: Deposit's four, Balance's four, Refund, Other. */
 const CUSTOMER_ORDER = (['DEP', 'BAL'] as const).flatMap((kind) => [CASH_PART, CARD_IN_BANK, CARD_MATCHED, CARD_NOT_MATCHED].map((part) => `${kind}:${part}`)).concat(CUSTOMER_REFUND, CUSTOMER_OTHER);
 const customerRank = (r: RpRow): number => {
   const i = r.code === null ? -1 : CUSTOMER_ORDER.indexOf(r.key.slice(r.code.length + 1));
   return i < 0 ? -1 : i;
 };
-/* The settlement module's own journals (a fee, a payout, a move between the clearing accounts) — never a swipe. */
 const settlementOwn = (l: { source_type: string | null }): boolean => String(l.source_type ?? '').replace(/_REVERSAL$/, '').startsWith('SETTLE');
 /* What a supplier is paid out of a trade-finance account (owner 2026-11-05: its own line
    under Cost of funds, apart from Accounts payable). No chart account: the layout
@@ -178,7 +172,6 @@ const TRADE_FINANCE_AP_NAME = 'Trade finance - Accounts payable & creditors';
    category (owner 2026-11-25): a line of that category's own, keyed by it, with no account. */
 const OPENING_BILLS = 'OPENING-BILLS';
 const OPENING_BILLS_NAME = 'Opening bills (AutoCount)';
-/* A money account is a trade-finance one by its name (CASH AT BANK - MAYBANK (TRADE FINANCE)). */
 const isTradeFinanceAccount = (name: string | null | undefined): boolean => /TRADE\s*FINANCE/i.test(String(name ?? ''));
 /* Owner 2026-11-25 (不是应该和下面 drawdown 一样吗): a drawdown is the bank paying a supplier, so the
    same money is Drawdown in and TF-AP out, whichever bank Finance books it through. The facility
@@ -195,7 +188,7 @@ export function drawdownPaidVouchers(journals: Iterable<[string, GlLine[]]>, mon
   const draws: Array<{ day: number; account: string; sen: number }> = [];
   const vouchers: Array<{ jeNo: string; day: number; account: string; sen: number }> = [];
   for (const [jeNo, lines] of journals) {
-    if (lines.some(isOpeningJournal)) continue; // the books' starting balances, not a drawdown
+    if (lines.some(isOpeningJournal)) continue;
     if (lines.some((l) => onFacility(l, moneySet) && sen(l) < 0)) {
       for (const l of lines) {
         if (moneySet.has(l.account_code) && !tradeFinance.has(l.account_code) && sen(l) > 0) draws.push({ day: dayNo(l.entry_date), account: l.account_code, sen: sen(l) });
@@ -220,9 +213,6 @@ export function drawdownPaidVouchers(journals: Iterable<[string, GlLine[]]>, mon
   return paid;
 }
 
-/** A journal on the facility whose lines pair off into equal opposite amounts (a drawdown into one
-    bank with a bank charge taken from another) is read pair by pair, so the charge does not shave
-    the drawdown; any other journal is read whole. */
 function facilityParts(lines: GlLine[], moneySet: Set<string>): GlLine[][] {
   if (lines.length < 4 || !lines.some((l) => onFacility(l, moneySet))) return [lines];
   const left = [...lines].sort((a, b) => Number(moneySet.has(b.account_code)) - Number(moneySet.has(a.account_code)));
@@ -235,20 +225,15 @@ function facilityParts(lines: GlLine[], moneySet: Set<string>): GlLine[][] {
   }
   return parts;
 }
-/* The opening journal (acc/opening-balance) is the books' starting position, not a
-   receipt or a payment: its money legs are Balance b/f whatever their date. */
 const isOpeningJournal = (l: GlLine): boolean => String(l.source_type ?? '').replace(/_REVERSAL$/, '') === OPENING_SOURCE;
 /* Neither side of a reversal pair is a receipt or a payment (docs/bugs/0923). */
 const live = (l: GlLine) => countsInTheBooks(l);
 const sen = (l: GlLine) => Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
 
 type Fail = { ok: false; reason: string };
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 const failed = (e: unknown): string => String((e as { message?: string }).message ?? e);
 
-/** Every posted line the company has on the MONEY accounts up to `to` (the
-    opening is the ones before `from`), and every line inside [from, to]. */
 async function loadLines(sb: any, companyId: number, moneyCodes: string[], clearingCodes: string[], from: string, to: string): Promise<{ ok: true; money: GlLine[]; period: GlLine[]; clearing: GlLine[] } | Fail> {
   const money = await paginateAll<GlLine>((f, t) =>
     sb.from('v_gl_entries')
@@ -262,7 +247,6 @@ async function loadLines(sb: any, companyId: number, moneyCodes: string[], clear
       .eq('company_id', companyId).gte('entry_date', from).lte('entry_date', to)
       .order('line_id').range(f, t));
   if (period.error) return { ok: false, reason: String((period.error as { message?: string }).message ?? period.error) };
-  /* Every line on the card-machine clearing accounts up to `to` — the memo's whole history. */
   const clearing = clearingCodes.length === 0 ? { data: [] as GlLine[], error: null } : await paginateAll<GlLine>((f, t) =>
     sb.from('v_gl_entries')
       .select('je_no, entry_date, source_type, source_doc_no, account_code, account_name, debit_sen, credit_sen, party_type, party_code, party_name, notes, posted, reversed, reversed_by_je')
@@ -272,7 +256,6 @@ async function loadLines(sb: any, companyId: number, moneyCodes: string[], clear
   return { ok: true, money: (money.data ?? []).filter(live), period: (period.data ?? []).filter(live), clearing: (clearing.data ?? []).filter(live) };
 }
 
-/** The acquirers' own transit accounts (scm.acc_acquirers), active or retired — a retired acquirer's account can still hold money. */
 async function loadAcquirerTransits(sb: Sb, companyId: number): Promise<{ ok: true; codes: string[] } | Fail> {
   const { data, error } = await sb.from('acc_acquirers').select('transit_account_code').eq('company_id', companyId);
   if (error) return { ok: false, reason: failed(error) };
@@ -314,19 +297,13 @@ export function supplierVouchersOf(period: GlLine[], colSet: Set<string>, apCont
     and the vouchers' purpose were read again for every period). */
 export type RpSources = {
   lines: (moneyCodes: string[], clearingCodes: string[], from: string, to: string) => Promise<{ ok: true; money: GlLine[]; period: GlLine[]; clearing: GlLine[] } | Fail>;
-  /** The acquirers' transit accounts — with the chart's EDC transit role, the card-machine clearing accounts (the Card column). */
   acquirerTransits: () => Promise<{ ok: true; codes: string[] } | Fail>;
   layout: () => Promise<({ ok: true } & ResolvedLayout) | Fail>;
-  /** The orders behind the named customer-payment rows (SOPAY source_doc_no), with all of each order's payments. */
   orderPayments: (paymentIds: string[]) => Promise<{ ok: true; facts: OrderPaymentFacts } | Fail>;
-  /** The card settlement history: which statement claimed each card payment and what the bank has received on it. */
   cardPayouts: () => Promise<{ ok: true; facts: CardPayoutFacts } | Fail>;
-  /** The company's active money accounts, by code. */
   moneyAccounts: () => Promise<{ ok: true; accounts: Array<{ code: string; name: string }> } | Fail>;
   roles: () => Promise<RoleCodes>;
-  /** What each named supplier-payment voucher settled (rule A), keyed by pv_number. */
   splits: (pvNumbers: string[], controlCodes: Set<string>) => Promise<{ ok: true; byPv: Map<string, RpSplit[]> } | Fail>;
-  /** Customers' money AutoCount recorded in the period after the books started; a source without it names none. */
   autoCountReceipts?: (from: string, to: string) => Promise<{ ok: true; payments: AutoCountReceipt[] } | Fail>;
 };
 /** The database, as the route reads it. */
@@ -348,15 +325,11 @@ export const rpDbSources = (sb: Sb, companyId: number, layoutIds: number[]): RpS
   autoCountReceipts: (from, to) => loadAutoCountReceipts(sb, companyId, from, to),
 });
 
-/** What each supplier-payment voucher settled, read through the documents it
-    settled — the purpose split (rule A). Keyed by pv_number. A voucher that
-    settled nothing (a pure prepayment) yields [] and reads as an advance. */
 async function supplierPurposeSplits(
   sb: any, companyId: number, pvNumbers: string[], controlCodes: Set<string>,
 ): Promise<{ ok: true; byPv: Map<string, Split[]> } | { ok: false; reason: string }> {
   const byPv = new Map<string, Split[]>();
   if (pvNumbers.length === 0) return { ok: true, byPv };
-  /* Every in-list below is chunked to PostgREST's URL budget and every read paginated — the Dashboard names a whole window's vouchers at once. */
   const pvs = await chunkIn<{ id: string; pv_number: string }>(pvNumbers, (batch, f, t) =>
     sb.from('payment_vouchers').select('id, pv_number').eq('company_id', companyId).in('pv_number', batch).range(f, t));
   if (pvs.error) return { ok: false, reason: pvs.error.message };
@@ -375,8 +348,6 @@ async function supplierPurposeSplits(
   const piIds = [...new Set(rows.flatMap((a) => (a.pi_id ? [String(a.pi_id)] : [])))];
   const apiIds = [...new Set(rows.flatMap((a) => (a.ap_invoice_id ? [String(a.ap_invoice_id)] : [])))];
 
-  /* A PI's purpose = its own journal's debit lines off the control (the
-     periodic shape: one debit per product group). */
   const piSplit = new Map<string, Split[]>();
   if (piIds.length > 0) {
     const pis = await chunkIn<{ id: string; invoice_number: string }>(piIds, (batch, f, t) =>
@@ -401,12 +372,6 @@ async function supplierPurposeSplits(
       }
     }
   }
-  /* An AP invoice's purpose = its own lines. An opening bill's own line is the opening
-     clearing, which says nothing of what was bought: Finance's choice for the bill comes
-     first; else what the bill bought in AutoCount, by product group, splits it the way a
-     purchase invoice splits, the rest of it carrying on; that share carries Finance's choice
-     for its supplier and the accounts the supplier's own live bills in the ERP sit on (owner
-     2026-11-25, acc/opening-bill-places.ts), which the report places. */
   const apiSplit = new Map<string, Split[]>();
   const openingShares = new Map<string, RpOpeningShare>();
   const goodsSplit = new Map<string, Split[]>();
@@ -432,8 +397,6 @@ async function supplierPurposeSplits(
     const lines = await chunkIn<ApLine>(apiIds, (batch, f, t) => sb.from('ap_invoice_lines')
       .select('invoice_id, debit_account_code, amount_sen').eq('company_id', companyId).in('invoice_id', batch).range(f, t));
     if (lines.error) return { ok: false, reason: lines.error.message };
-    /* The bill's own choice, else its supplier's — for a bill read by its goods, the supplier's
-       places only the rest of it. */
     const chosen = new Map<string, StoredPlace>();
     const goodsOf = new Map<string, GoodsParts>();
     for (const [id, supplier] of supplierOfOpening) {
@@ -478,9 +441,6 @@ async function supplierPurposeSplits(
     }
   }
 
-  /* Each allocation, in the proportion of its document's own lines — exact
-     when the document is settled in full (rule A). Sen stay integers; the
-     rounding remainder rides on the largest line. */
   const proportion = (amount: number, parts: Split[]): Split[] => {
     const total = parts.reduce((s, p) => s + p.sen, 0);
     if (total <= 0 || parts.length === 0) return [];
@@ -536,7 +496,6 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   if (bankColumns.length === 0) return { ok: true, report: { from, to, byParty, columns: [], opening: {}, receipts: [], payments: [], totals: {}, entries: [], card: { takingsSen: 0, transitSen: 0, codes: [] }, autoCount: NO_AUTOCOUNT } };
   const loaded = await src.lines(bankColumns.map((a) => a.code), clearingCodes, from, to);
   if (!loaded.ok) return { ok: false, reason: loaded.reason };
-  /* The Card column shows once a clearing account has ever moved. */
   const cardOn = loaded.clearing.length > 0 && (wanted.length === 0 || wanted.includes(CARD_COLUMN));
   const columns = cardOn ? [...bankColumns, { code: CARD_COLUMN, name: CARD_COLUMN_NAME }] : bankColumns;
   const colSet = new Set(columns.map((a) => a.code));
@@ -551,9 +510,6 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   if (cardOn) for (const l of loaded.clearing) if (l.entry_date < from || isOpeningJournal(l)) opening[CARD_COLUMN] = (opening[CARD_COLUMN] ?? 0) + sen(l);
   const tradeFinance = new Set(allMoney.filter((a) => isTradeFinanceAccount(a.name)).map((a) => a.code));
 
-  /* Group the period by journal; keep the ones with a selected money leg. With the
-     Card column on, a journal's clearing-account lines are ONE leg of it (a move
-     between two clearing accounts nets to nothing). */
   const byJe = new Map<string, GlLine[]>();
   for (const l of loaded.period) byJe.set(l.je_no, [...(byJe.get(l.je_no) ?? []), l]);
   if (cardOn) {
@@ -577,7 +533,6 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   if (!orderFacts.ok) return { ok: false, reason: orderFacts.reason };
   const kinds = paymentKinds(orderFacts.facts);
   if (!splits.ok) return { ok: false, reason: splits.reason };
-  /* The tree, read before the rows: an opening bill's payment reads by where its supplier's accounts sit on it. */
   const laid = await src.layout();
   if (!laid.ok) return { ok: false, reason: laid.reason };
   const tree = laid.layout.blocks.accounts ?? [];
@@ -596,9 +551,6 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
     entries.push({ ...e, side, rowKey: key, column, sen: amount });
   };
 
-  /* The rows a leg was read as must move its column by exactly the leg. A gap no
-     bigger than one sen per row is the rounding of the shares: it goes onto the
-     leg's largest row. A bigger gap is not rounding and is left to show. */
   const settleRounding = (from: number, legSen: number, column: string): void => {
     const mine = entries.slice(from);
     if (mine.length === 0) return;
@@ -616,22 +568,17 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   for (const [jeNo, lines] of readable) {
     const moneyLegs = lines.filter((l) => colSet.has(l.account_code));
     if (moneyLegs.length === 0) continue;
-    if (lines.some(isOpeningJournal)) continue; // counted in Balance b/f above
+    if (lines.some(isOpeningJournal)) continue;
     const first = lines[0]!;
     const meta = { jeNo, entryDate: first.entry_date, sourceType: first.source_type, sourceDocNo: first.source_doc_no, narration: first.notes, party: null as string | null };
     const others = lines.filter((l) => !colSet.has(l.account_code));
     const base = String(first.source_type ?? '').replace(/_REVERSAL$/, '');
 
-    /* One money leg read as its rows. Each row's share is rounded on its own, so the
-       shares can miss the leg by a sen; settleRounding puts that sen back (owner
-       2026-11-05: 310-0060 read 5,708.18 against the ledger's 5,708.17). */
     const readLeg = (leg: GlLine): void => {
-      const legSen = sen(leg);              // > 0 money in, < 0 money out
+      const legSen = sen(leg);
       if (legSen === 0) return;
       const side: 'R' | 'P' = legSen > 0 ? 'R' : 'P';
       const magnitude = Math.abs(legSen);
-      /* The other money legs of this journal (a transfer): each is the other
-         side of THIS leg in proportion; the non-money lines share the rest. */
       const otherMoney = moneyLegs.filter((l) => l !== leg && Math.sign(sen(l)) !== Math.sign(legSen));
       const otherMoneyAbs = otherMoney.reduce((s, l) => s + Math.abs(sen(l)), 0);
       const unselectedMoney = others.filter((l) => moneySet.has(l.account_code));
@@ -646,7 +593,6 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         add(side, `XFER:${om.account_code}`, om.account_code, label.trim(), leg.account_code, amt, meta);
       }
 
-      /* A supplier payment read through what it settled (rule A). */
       const isSupplierPayment = base === 'PV' && counterparts.some((l) => apControls.has(l.account_code)) && !byParty;
       if (isSupplierPayment) {
         const split = splits.byPv.get(String(first.source_doc_no ?? '')) ?? [];
@@ -689,9 +635,6 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         return;
       }
 
-      /* A swipe into the Card column: the share its statement has paid into a bank by
-         the period's end (a payment no statement claims: none), and the rest, by whether
-         its report has matched it. */
       const swipe = leg.account_code === CARD_COLUMN && !settlementOwn(first);
       const payment = swipe && first.source_doc_no ? paymentKey(base, first.source_doc_no) : null;
       const bankShare = payment ? (inBank.get(payment) ?? 0) : 0;
@@ -702,18 +645,15 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         /* The party keys on its CODE where the line carries one (owner 2026-09-08:
            one customer, one code — two customers can share a name), the name
            still being what the row reads. */
-        /* A name keys the row case-blind: Finance's words are upper case from 2026-11-09, older lines are not. */
         const key = byParty && onControl ? `${l.account_code}:${l.party_code ?? partyNameKey(l.party_name) ?? '—'}` : l.account_code;
         const name = byParty && onControl ? `${l.party_name ?? '(no party)'} · ${l.account_name ?? l.account_code}` : String(l.account_name ?? l.account_code);
         const lineMeta = { ...meta, party: l.party_name ?? null };
         if (!byParty && l.account_code === roles.AR) {
-          /* A customer's money, always a receipt: money back out of the bank is a negative one. */
           const signed = side === 'R' ? amt : -amt;
           const kind = base === 'SOPAY' && first.source_doc_no ? kinds.get(first.source_doc_no) : undefined;
           const put = (part: string, partName: string, value: number, group?: RpRow['group'], to?: SplitTo) =>
             add('R', `${l.account_code}:${part}`, l.account_code, partName, leg.account_code, value, lineMeta, group, to);
           if (!kind) {
-            /* A refund is a deposit given back (his workbook: Sales returns/refunds under Deposit). */
             if (side === 'P') put(CUSTOMER_REFUND, '(-) Refund', signed, undefined, 'deposit');
             else put(CUSTOMER_OTHER, 'Other receipts (not order payments)', signed);
             continue;
@@ -763,10 +703,6 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   }
   entries.sort((a, b) => a.entryDate.localeCompare(b.entryDate) || a.jeNo.localeCompare(b.jeNo));
 
-  /* The card money the bank has not received (RpCard): the period's swipes are the
-     clearing accounts' movements that are not the settlement module's own — a
-     SETTLE fee, a SETTLEBANK payout, a SETTLEMOVE between the clearing accounts
-     — less their reversals; the transit is the accounts' balance at `to`. */
   const card: RpCard = {
     takingsSen: loaded.clearing.filter((l) => l.entry_date >= from && !settlementOwn(l)).reduce((s, l) => s + sen(l), 0),
     transitSen: loaded.clearing.reduce((s, l) => s + sen(l), 0),
@@ -792,7 +728,6 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
   return { ok: true, report: { from, to, byParty, columns, opening, receipts: receiptRows, payments: paymentRows, layout, totals, entries, card, autoCount } };
 }
 
-/* ── GET /accounting/reports/receipts-payments?from&to&accounts=a,b&party=1 ── */
 export const receiptsPaymentsReport = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);

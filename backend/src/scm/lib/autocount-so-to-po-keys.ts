@@ -71,8 +71,6 @@ export async function backfillSoToPoKeys(
   body: Record<string, unknown>,
   writeback: { table?: string; key?: string } | null | undefined,
 ): Promise<boolean> {
-  /* The guard lives HERE so the drain reads as one line. Only a so_to_po whose
-     keys are an EMPTY array is a `wait` that has been held long enough. */
   if (op !== 'so_to_po' || !Array.isArray(body.DtlKeys) || body.DtlKeys.length !== 0) return false;
   if (writeback?.table !== 'purchase_orders' || !writeback.key) return false;
   const poId = String(writeback.key);

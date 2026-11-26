@@ -25,11 +25,8 @@ export type CollectedPayment = {
 };
 
 export type CollectedOnOrder = {
-  /** Every payment row on the order, newest first. */
   payments: CollectedPayment[];
-  /** Their sum, in sen. */
   totalSen: number;
-  /** How many there are — so a caption never has to recount. */
   count: number;
 };
 

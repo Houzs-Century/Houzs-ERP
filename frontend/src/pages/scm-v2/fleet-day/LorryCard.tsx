@@ -97,7 +97,6 @@ function StopRow({ d, no, selected, hasRemark, leg, location, siteMin, plannedDe
     >
       <span className="pt-0.5"><StopNo no={no} look={circleLookOf(pill.state, location)} /></span>
       <span className="min-w-0">
-        {/* the name keeps at least ~8rem; on a narrow card it drops under the tags instead of shrinking to a letter */}
         <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
           <StopTag label={tag.label} bg={fam.bg} fg={fam.fg} />
           {d.draftDo && <StopTag label="DRAFT DO" bg="#fde8e8" fg="#b42318" />}
@@ -132,30 +131,20 @@ export function LorryCard({
   onFocus, onOpenDoc, onCrew, onRunSheet, onQr,
 }: {
   run: LorryRunVM;
-  /** The run by road from the lorry's home and back (Google); null when not worked out. */
   road: string | null;
-  /** Each order's drive from the stop before, by sales order number (server-worked). */
   legByRef: ReadonlyMap<string, string>;
-  /** Each order's pin number on the day map, by sales order number. */
   mapNoByRef: ReadonlyMap<string, number>;
-  /** Stops the map pinned at the postcode area / could not place (empty while the map is closed). */
   approxRefs: ReadonlySet<string>;
   unlocatedRefs: ReadonlySet<string>;
-  /** The clock the rows are read against (Malaysian day + now). */
   clock: { now: Date; day: string; today: string };
-  /** The viewer's "Hide done" preference — folds done rows away (search still shows them). */
   hideDone: boolean;
   onToggleHideDone: () => void;
   visibleDocs: DocRowVM[];
   filtersActive: boolean;
   searchActive: boolean;
-  /** True when the card is backed by a trip — map-focus, crew edit, run-sheet
-   *  and QR all need one. A no-trip lorry card is read-only (its drops still
-   *  open the drawer). */
   actionable: boolean;
   focused: boolean;
   selectedKey: string | null;
-  /** so_doc_no set of orders that carry >=1 remark — drives the REMARK pill. */
   remarkKeys: Set<string>;
   onFocus: () => void;
   onOpenDoc: (d: DocRowVM) => void;
@@ -166,8 +155,6 @@ export function LorryCard({
   const times = stopTimes(run.docs);
   const doneCount = visibleDocs.filter((d) => d.status === 'done').length;
   const foldDone = hideDone && !searchActive;
-  /* Run order 1..n, always: a done stop stays where it is in the run (greyed), it
-     is never moved below the stops still to go. */
   const rows = foldDone ? visibleDocs.filter((d) => d.status !== 'done') : visibleDocs;
   const plannedAt = run.trip?.planned_depart_at ?? null;
   const actualAt = run.trip?.clock_in_at ?? actualDepartOf(run.docs);
@@ -191,7 +178,6 @@ export function LorryCard({
       style={{ borderTop: `4px solid ${run.color}` }}
     >
       <div className="space-y-1 px-3.5 pb-3 pt-3">
-        {/* line 1: plate + status, trip no right */}
         <div className="flex min-w-0 items-center gap-2">
           {run.docs.length > 0
             ? <button type="button" onClick={onFocus} title="Focus this lorry on the map" className="shrink-0">{plate}</button>
@@ -201,7 +187,6 @@ export function LorryCard({
           <span className="flex-1" />
           {run.tripNo && <span className="truncate font-mono text-[11px] text-accent">{run.tripNo}</span>}
         </div>
-        {/* line 2: driver + phone */}
         <div className="flex min-w-0 items-center gap-3 text-[13.5px]">
           <span className="truncate font-bold text-ink" title={run.driverIc ? `IC ${run.driverIc}` : undefined}>{run.driverName ?? 'No driver assigned'}</span>
           {run.driverPhone && (
@@ -210,9 +195,7 @@ export function LorryCard({
             </a>
           )}
         </div>
-        {/* line 3: helpers */}
         {crewLine && <div className="truncate text-[12px] text-ink-secondary" title={crewLine}>{crewLine}</div>}
-        {/* line 4: progress left; depart / road right */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pt-1 text-[12px]">
           <span className="text-ink-secondary">
             {progress.map((t, i) => (
@@ -255,7 +238,6 @@ export function LorryCard({
         />
       ))}
 
-      {/* footer: Hide done (per viewer) + the run actions */}
       {(doneCount > 0 || actionable) && (
         <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle bg-surface-2 px-3.5 py-2">
           {doneCount > 0 && (

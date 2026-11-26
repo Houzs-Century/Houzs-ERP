@@ -3,8 +3,6 @@ import { AUTH_TOKEN_KEY } from "../../../lib/authToken";
 import { authedFetch, soHasPoMessage } from "./authed-fetch";
 import { registerDialogService, type ConfirmOpts } from "./dialog-service";
 
-/* 2990-0065: generating a PO for Sales Order lines that already sit on a live PO
-   must ask first, naming the PO, and the operator may continue or stop. */
 
 const soHasPo409 = () => new Response(JSON.stringify({
   error: "so_has_po",

@@ -23,7 +23,6 @@ const ctxFor = (user: AuthUser): NavFilterCtx => ({
   pageAccess: (): AccessLevel => (user.permissions.includes("*") ? "full" : "none"),
 });
 
-/** Every surviving Payment Requests entry, with where it sits and its badge. */
 function paymentRequestEntries(user: AuthUser): Array<{ section: string | undefined; badge: string | undefined }> {
   const filterTab = makeNavFilter(ctxFor(user));
   const out: Array<{ section: string | undefined; badge: string | undefined }> = [];

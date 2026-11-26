@@ -8,13 +8,11 @@ import { fairLabel, type FairOption, type FairPendingRow } from './fair-options-
 /** One choice: ONE booth — a brand at one event. */
 export type BoothChoice = { projectId: number; label: string; sameBrand: boolean };
 
-/** Case/space-insensitive, as every venue and brand compare on the server. */
 const norm = (v: string | null | undefined): string => (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const dayNo = (iso: string): number => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / 86_400_000;
 
-/** Days between the order's date and the fair's period: 0 inside it. */
 function daysFrom(o: Pick<FairOption, 'startDate' | 'endDate'>, soDate: string | null): number {
   if (!soDate || !ISO.test(soDate) || !ISO.test(o.startDate)) return 0;
   const d = dayNo(soDate);
@@ -58,8 +56,6 @@ export function boothChoices(
 
 type RankedBooth = { choice: BoothChoice; days: number; start: string; brand: string; samePlace: boolean };
 
-/** The booths of the events `keep` accepts, one per brand per event (the lowest
- *  id), with what they are ranked by. */
 function boothsOf(
   options: readonly FairOption[],
   order: Pick<FairPendingRow, 'venue' | 'branding' | 'so_date'>,

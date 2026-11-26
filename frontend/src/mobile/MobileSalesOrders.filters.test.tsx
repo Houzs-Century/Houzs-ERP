@@ -1,11 +1,3 @@
-/* The phone Sales Orders list reads its filters from the URL through the SHARED
- * state layer and sends them on every list request — so the order count, the
- * revenue / outstanding line and the status counts the sheet shows all come
- * back from a server that applied them. Applying in the sheet rewrites the URL
- * and re-queries.
- *
- * Drives the REAL screen and sheet. Faked: `authedFetch` (the requests are the
- * assertions) and `useAuth`. */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

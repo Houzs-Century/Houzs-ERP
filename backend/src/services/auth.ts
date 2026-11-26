@@ -18,8 +18,6 @@ import { sidFor, revokeSession } from "./session-revocation";
 import { positionGrantsWildcard } from "./positionPolicy";
 import { policyRowFromDb, type PositionPolicyRow } from "./positionPolicyRows";
 
-// ── Crypto helpers ────────────────────────────────────────
-// PBKDF2 via Web Crypto — built into Workers, no WASM needed.
 
 const PBKDF2_ITERATIONS = 100_000;
 const PBKDF2_HASH = "SHA-256";
@@ -75,7 +73,6 @@ export async function verifyPassword(password: string, stored: string): Promise<
   );
   const got = new Uint8Array(bits);
   if (got.length !== expected.length) return false;
-  // constant-time compare
   let diff = 0;
   for (let i = 0; i < got.length; i++) diff |= got[i] ^ expected[i];
   return diff === 0;
@@ -97,9 +94,6 @@ export function timingSafeEqualStr(a: string, b: string): boolean {
   return diff === 0;
 }
 
-// ── Token helpers ────────────────────────────────────────
-// 32 random bytes → URL-safe base64. Used for both session and
-// invitation tokens.
 export function generateToken(bytes = 32): string {
   const buf = crypto.getRandomValues(new Uint8Array(bytes));
   return bytesToB64(buf).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -109,8 +103,7 @@ export function isoIn(seconds: number): string {
   return new Date(Date.now() + seconds * 1000).toISOString();
 }
 
-// ── Session helpers ──────────────────────────────────────
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 /** "Remember me on this device" (owner 2026-09-02: "cant keep permanently?").
  *  A rolling window: the session lasts a year, and every request made with more
@@ -119,91 +112,13 @@ const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
  *  Permanent in practice, self-cleaning in the abandoned case — and still
  *  revocable, since disabling the user or changing the password deletes their
  *  session rows outright. */
-export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year, rolling
+export const REMEMBER_TTL_SECONDS = 60 * 60 * 24 * 365;
 
-// Bump whenever code changes the meaning/resolution of an AuthUser permission
-// envelope without a corresponding DB value changing. Including this revision
-// in the per-request fingerprint makes every pre-policy cache entry stale on
-// its first request after deploy instead of waiting for KV TTL.
-/* v2 (2026-08-22): the fingerprint components gained the position's
- * capability rows (position_capabilities) and SCM page overrides
- * (position_page_overrides, dropped in v4) — both editable in the Roles & Permissions
- * matrix, so an edit must bust every cached session of that position's
- * members on their next request. The bump re-hydrates every session once. */
-/* v3 (2026-09-16): the position's `position_policy` row (cohort / profile /
- * flags, Roles & Permissions › Titles) joins the fingerprint and rides the
- * envelope as `position_policy`; a cached v2 envelope has no such field, so
- * the bump rebuilds each session once rather than serving the name rule to a
- * Title whose row now says otherwise. */
-/* v4 (2026-09-16): the position_page_overrides layer is gone (table dropped,
- * never used in production); the fingerprint lost its override arm and the
- * envelope its override composition, so every cached v3 session rebuilds once. */
-/* v5 (2026-09-17): role_page_access is gone; the fingerprint lost its `page`
- * arm and a member with no Title resolves pages from the role's permission keys
- * alone, so every cached v4 session rebuilds once. */
-/* v6 (2026-10-19): role_page_access is back as the single source of page access
- * (RBAC rebuild, Option A). The fingerprint regains a `page` arm — the role's
- * role_page_access rows join the per-request component read — so a matrix edit
- * (PR2) busts every member of that role on their next request. The bump rebuilds
- * each cached v5 session once, which is also what re-reads the new resolution for
- * every member on deploy; a role with no rows still resolves to its previous
- * page access (memberPageAccess.ts fallback), so the rebuild changes nothing
- * until the seed runs. */
-/* v7 (2026-10-20): the Finance area splits into per-group page keys
- * (scm.finance.money_in / .money_out / .bank / .books / .reports / .forecast /
- * .setup — children of scm.finance.accounting). Each hydrated session's
- * page_access map gains those keys, so the bump rebuilds each cached v6 session
- * once to pick them up. The keys inherit their parent's resolved level, so the
- * rebuild changes no one's access (financeSubpageSplit.test.ts). */
-/* v8 (2026-10-21): the Transportation area splits into per-page page keys
- * (scm.transportation.overview / .planning / .dp_orders / .last_mile /
- * .lorry_map / .lorry_capacity / .crew_leave / .coverage — children of
- * scm.transportation.drivers). Each hydrated session's page_access map gains
- * those keys, so the bump rebuilds each cached v7 session once to pick them up.
- * The keys inherit their parent's resolved level, so the rebuild changes no
- * one's access (transportSubpageSplit.test.ts). */
-/* v9 (2026-10-21): the Team and Service areas split into per-page page keys. The
- * four Team children (team.members / .roles / .org_chart / .departments) leave
- * DORMANT and gain a new sibling team.mailboxes; service_cases.settings leaves
- * DORMANT onto the Service Maintenance tab. Each hydrated session's page_access
- * map gains team.mailboxes (the rest already hydrated), so the bump rebuilds each
- * cached v8 session once to pick it up. The wired keys resolve to exactly what
- * gated the same pages on v8 — team.* children equal their `team` parent and
- * every service_cases.manage holder keeps service_cases.settings — so the rebuild
- * changes no one's access (teamServiceSubpageSplit.test.ts). */
 export const AUTHZ_ENVELOPE_VERSION = 9;
 
-/* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
-   property of the person: the same salesperson simultaneously holds a 'pos'
-   session on the showroom tablet and an origin-less one on their own phone,
-   both for the SAME public.users row. That is precisely why the POS pricing
-   envelope (scm/routes/mfg-sales-orders.ts isPosTabletCaller) cannot be
-   derived from the user, their position, or their scm.staff role — only from
-   the session.
-
-   WHY IT IS UNFORGEABLE: the value is chosen server-side by whichever route
-   calls createSession, and stored on the session row. It never appears in a
-   request, so a caller can no more assert its origin than it can assert its
-   own user_id. Holding a 'pos' session requires passing the PIN gate at
-   /api/pos/pin-login; a client cannot opt OUT of one either, because omitting
-   something it never sent changes nothing. This is the property the
-   self-asserted `X-Client` header it replaced never had.
-
-   `undefined` (every non-POS door) stores NULL, which reads as not-POS — the
-   pre-migration behaviour, and the safe direction. Keep this a closed union:
-   a new origin must be a deliberate edit here, not a string a route invents. */
 export type SessionOrigin = "pos" | "field" | "password_change";
 export const SESSION_ORIGIN_POS: SessionOrigin = "pos";
-/* 'field' — minted ONLY at the crew PIN door (routes/fieldPinLogin.ts). The
-   auth gate (middleware/auth.ts) holds such a session to the field screens
-   (services/fieldPin.ts FIELD_API_PREFIXES), whatever the member's role. */
 export const SESSION_ORIGIN_FIELD: SessionOrigin = "field";
-/* 'password_change' — minted ONLY by a correct email + password sign-in for a
-   member whose users.password_change_required_at is set (an admin or the
-   require-password-change script flagged them). The auth gate refuses every
-   /api path outside /api/auth with it, so the only thing the holder can do is
-   change the password (POST /api/auth/me/password), read /me, or sign out.
-   Short-lived on purpose: it exists for the length of one form. */
 export const SESSION_ORIGIN_PASSWORD_CHANGE: SessionOrigin = "password_change";
 export const PASSWORD_CHANGE_SESSION_TTL_SECONDS = 30 * 60;
 
@@ -211,115 +126,30 @@ export interface AuthUser {
   id: number;
   email: string;
   name: string | null;
-  /** The member's outward Mail Center alias (users.email_alias, mig 0039). Lets
-   *  the member compose/reply FROM their own address in the Mail Center. null
-   *  when none assigned. */
   email_alias?: string | null;
   role_id: number;
   role_name: string;
-  /** Position = department×position org unit (mig 094). When set, page_access is
-   *  resolved from resolvePositionPolicy (services/positionPolicy.ts) at session
-   *  load — the single page-access source for a positioned user; the old 4-level
-   *  position_page_access matrix is NO LONGER read for them (see hydrateAuthUser
-   *  below). When null, the user falls back to the legacy role matrix during the
-   *  transition. */
   position_id: number | null;
   position_name: string | null;
-  /** The Title's stored policy row (`position_policy`, Roles & Permissions ›
-   *  Titles). When present it decided cohort / page access / money / config /
-   *  fleet at hydration; the name-keyed rule in positionPolicy.ts was used only
-   *  if this is null. Optional so pre-v3 literals still type-check. */
   position_policy?: PositionPolicyRow | null;
   status: string;
   permissions: string[];
-  /** O(1) lookup mirror of `permissions`. Hydrated once at session
-   *  load so every `requirePermission` middleware call is a Set hit
-   *  instead of a linear array scan. */
   permissions_set: Set<string>;
-  /** Who this user reports to. Drives project-level ACL when scope_to_pic=1. */
   manager_id: number | null;
-  /** Role flag — if true, project endpoints filter to pic_id IN (self, manager). */
   scope_to_pic: boolean;
-  /** Department membership — drives the brand allow-list below. */
   department_id: number | null;
-  /** Department NAME (departments.name via u.department_id). STABLE ORG FIELD
-   *  used by the code-keyed Sales access model (see services/pmsAccess.ts
-   *  isSalesUser) — matched case-insensitively on "sales" because prod names
-   *  the dept "Sales Department" while the seed is "Sales" (same rule as
-   *  salesTeam.syncSalesRepFromUser). Hydrated once per session alongside
-   *  position_name; null when the user has no department assigned. Optional so
-   *  hand-built AuthUser literals (tests, SERVICE_USER) don't need to set it. */
   department_name?: string | null;
-  /**
-   * Brand allow-list for scoped users — null when the role isn't
-   * scope_to_pic (admins, ops, finance). Empty array when the user is
-   * scoped but their department has no brands assigned — that user
-   * sees no projects until an admin configures the dept.
-   */
   brand_scope: string[] | null;
-  /**
-   * Per-page access map. Hydrated from `role_page_access` (mig 073) +
-   * fallback to `computeBackfillLevel` for any page without an explicit
-   * row. Drives the `requirePageAccess` middleware on gated routes and
-   * the frontend `usePageAccess` hook. Phase 1 wires Sales only; other
-   * pages migrate in follow-up slices.
-   */
   page_access: Record<string, AccessLevel>;
-  /**
-   * Operational capability keys granted to this user's POSITION — rows from
-   * `position_capabilities` (mig 0322), the editable Roles & Permissions
-   * matrix. Read by services/positionCapabilities.hasPositionCapability; a
-   * `*` caller passes every capability without rows. Empty for positionless
-   * users and for god positions (which bypass on the wildcard). Optional so
-   * hand-built AuthUser literals don't need to set it — absent means NONE.
-   */
   position_capabilities?: string[];
-  /**
-   * True iff this user's resolved page access explicitly configures an `scm*`
-   * area. For a positioned user this is `policy.scmConfigured` from
-   * resolvePositionPolicy (services/positionPolicy.ts); for a positionless user
-   * it means AT LEAST ONE explicit `scm*` row in role_page_access. Drives the
-   * SAFE L2 SCM write-gate rollout: a user with NO explicit SCM config is NOT
-   * enforced by `scmAreaGuard` and falls back to the coarse `scm.access`
-   * umbrella (allow), so no current SCM user is locked out before the matrix is
-   * configured. Only users WITH explicit SCM config get per-area enforcement.
-   * Owner (`*`) bypasses the guard entirely, so this stays false for them.
-   */
   scm_l2_configured: boolean;
-  /**
-   * Stable fingerprint of every DB value that shapes this cached authorization
-   * envelope. getUserBySession recomputes it from authoritative tables on every
-   * request, so permission/page/org/brand revocations do not wait for KV TTL or
-   * best-effort invalidation. Optional for pre-deploy KV entries and hand-built
-   * AuthUser test fixtures; a missing value is treated as stale.
-   */
   authz_fingerprint?: string;
-  /**
-   * Origin of the SESSION this user was loaded from — 'pos' or null (mig
-   * 0120, see SessionOrigin above). It rides AuthUser ONLY because AuthUser is
-   * what the per-token KV cache serialises; the cache is keyed by token, so
-   * this is cached at exactly the right granularity and never bleeds between a
-   * person's devices. It is NOT a fact about the user.
-   *
-   * DO NOT read this field to gate anything: inside /api/scm/* the SCM auth
-   * bridge overwrites `user` wholesale with a pinned system staff row, so it
-   * is not even reachable there. Read the `sessionOrigin` context var that
-   * middleware/auth republishes — that is the one channel the bridge leaves
-   * alone.
-   *
-   * Null on any AuthUser not built from a session row (getUserById, the
-   * SERVICE_USER literal) and on any session cached by a pre-0120 isolate —
-   * all of which read as not-POS, the safe direction. Optional so hand-built
-   * AuthUser literals don't need to set it.
-   */
   session_origin?: string | null;
   joined_at?: string | null;
   last_login_at?: string | null;
-  // Houzs Points (mig 055) — small per-user counters.
   points_balance?: number;
   gifting_balance?: number;
   current_streak?: number;
-  // Profile picture (mig 058) — R2 key inside POD_BUCKET.
   profile_pic_r2_key?: string | null;
 }
 
@@ -333,10 +163,6 @@ export async function createSession(
   userId: number,
   origin?: SessionOrigin,
   ttlSeconds: number = SESSION_TTL_SECONDS,
-  /** Seconds to roll the expiry forward by on use — "Remember me". Null (the
-   *  default) is a fixed session that runs out at `ttlSeconds` and is never
-   *  extended, which is every caller that does not opt in, the 1-hour
-   *  impersonation session included. */
   renewSeconds: number | null = null,
 ): Promise<string> {
   const token = generateToken();
@@ -349,16 +175,6 @@ export async function createSession(
   return token;
 }
 
-/**
- * Push a rolling session's expiry back to a full window, once it is more than
- * halfway spent. Returns the new expiry, or null when nothing was written.
- *
- * Called from the authenticated read path, so it must stay CHEAP and it must
- * never fail a request: at most one UPDATE per session per half-window (about
- * one write every six months on a 1-year window), and any error is swallowed —
- * a session that could not be extended is still valid until its stored expiry,
- * and the next request tries again.
- */
 async function renewRollingSession(
   env: Env,
   token: string,
@@ -368,7 +184,7 @@ async function renewRollingSession(
   if (!renewSeconds || renewSeconds <= 0 || !expiresAt) return;
   const remainingMs = Date.parse(expiresAt) - Date.now();
   if (!Number.isFinite(remainingMs)) return;
-  if (remainingMs > (renewSeconds * 1000) / 2) return; // still fresh — no write
+  if (remainingMs > (renewSeconds * 1000) / 2) return;
   try {
     await env.DB.prepare(`UPDATE sessions SET expires_at = ? WHERE token = ?`)
       .bind(isoIn(renewSeconds), token)
@@ -422,14 +238,7 @@ export async function mintSessionPassFor(
 
 export async function deleteSession(env: Env, token: string): Promise<void> {
   await env.DB.prepare(`DELETE FROM sessions WHERE token = ?`).bind(token).run();
-  // Void this session's SIGNED PASS. A pass verifies with no DB read, so
-  // deleting the session row does not log it out — the revocation board is what
-  // does. Best-effort; the pass also self-expires in 8h.
   await revokeSession(env, await sidFor(token), Date.now());
-  // Bust the cached user immediately so logout / forced-expiry takes effect now
-  // rather than waiting out the 60s TTL. Also forget the in-memory liveness
-  // fallback so a same-isolate logout cannot be re-served during a DB blip
-  // (cross-isolate entries are still bounded by the fallback TTL).
   await bustCachedUser(env, token);
   forgetSessionLiveness(token);
 }
@@ -442,9 +251,6 @@ interface SessionAuthority {
   status: string;
   expires_at: string | null;
   origin: string | null;
-  /** Rolling-session window in seconds ("Remember me"), or null/absent for a
-   *  fixed session. Read defensively: a database that predates migration 0345
-   *  answers undefined here and every session simply stays fixed. */
   renew_seconds?: number | null;
   role_id: number;
   position_id: number | null;
@@ -456,9 +262,6 @@ interface SessionAuthority {
   position_name: string | null;
   position_department_id: number | null;
   position_department_name: string | null;
-  /** The Title's position_policy row, joined on the authority read so an edit
-   *  on Roles & Permissions › Titles changes the fingerprint (and so busts the
-   *  cached envelope) without a further UNION arm — D1 caps compound SELECTs. */
   policy_cohort: string | null;
   policy_profile: string | null;
   policy_money: number | boolean | null;
@@ -478,8 +281,6 @@ interface AuthzComponent {
 function isExpiredSession(expiresAt: string | null): boolean {
   if (!expiresAt) return true;
   const expiresAtMs = Date.parse(expiresAt);
-  // A malformed expiry must fail closed. Treating it as live would turn bad
-  // data into an unbounded session.
   return !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now();
 }
 
@@ -487,9 +288,6 @@ function buildAuthzFingerprint(
   authority: SessionAuthority,
   components: AuthzComponent[],
 ): string {
-  // The query orders all collection rows. JSON is intentional here: this is a
-  // deterministic equality token, not a secret or a client-controlled value,
-  // so hashing would add CPU/async overhead without improving authorization.
   return JSON.stringify({
     version: AUTHZ_ENVELOPE_VERSION,
     identity: [
@@ -544,23 +342,11 @@ function cachedIdentityMatches(
     && cached.authz_fingerprint === authzFingerprint;
 }
 
-// Builds the AuthUser shape from the row returned by the SELECT below
-// + a follow-up brand fetch when the user is scoped.
-//
-// Brand allow-list is per-person via user_brands (mig 049). Effective
-// scope is the UNION of the user's own brands plus their direct
-// manager's brands — the same one-hop rule used for pic_ids. This
-// lets a Sales Director set brands once at their level and have their
-// reps inherit visibility automatically; a rep can still hold extra
-// brands directly if they specialise outside the manager's coverage.
 async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
   const scoped = !!row.scope_to_pic;
   const managerId: number | null = row.manager_id ?? null;
   const permissions = parsePermissions(row.role_permissions);
   const permissionsSet = new Set(permissions);
-  // The Title's policy row rides the same SELECT (LEFT JOIN position_policy);
-  // null when the Title has no row, which hands every rule below to its
-  // name-keyed fallback.
   const policyRow: PositionPolicyRow | null = policyRowFromDb({
     position_id: row.position_id,
     cohort: row.policy_cohort,
@@ -586,24 +372,6 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
   // more; it is left on the envelope as a vestigial null rather than reshaping
   // the signed-session claims contract in the same change.
   const brandScope: string[] | null = null;
-  // Page-access SOURCE (RBAC rebuild, Option A): the role is the single source of
-  // page access. role_page_access holds one level per (role, page_key), resolved
-  // here for EVERY member through the ONE resolver in memberPageAccess.ts:
-  //   - `*` wildcard            → fullAccessMap() (UNCHANGED — never narrowed), and
-  //                               the rows are not even read.
-  //   - any non-`*` member      → the role's rows when the role HAS them; when it
-  //                               has NONE, fall back to exactly the previous
-  //                               resolution (the position policy for a titled
-  //                               member, the permission backfill for a title-less
-  //                               one). An UNSEEDED table is therefore a no-op, so
-  //                               the cutover does not depend on the seed running
-  //                               before this code deploys.
-  // scm_l2_configured stays a NON-page output of the position policy for a titled
-  // member (NOT re-derived from the seeded rows — see memberPageAccess.ts on why
-  // re-deriving it would flip the full cohort and trip the area-guard).
-  //
-  // The rows load only for a non-`*` caller — `*` short-circuits to fullAccessMap
-  // and the position-capability load below skips the same way.
   let roleRows: Array<{ page_key: string; level: string }> = [];
   if (!permissionsSet.has("*")) {
     const pageRows = await env.DB.prepare(
@@ -655,17 +423,6 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     department_id: row.department_id ?? null,
     department_name: row.department_name ?? null,
     brand_scope: brandScope,
-    // Sales JD override composes over the resolved map. Since the fold, the
-    // positioned sales cohort ALREADY carries these SALES_JD levels from the
-    // policy, so this is now IDEMPOTENT for them (re-spreading the same values).
-    // It is retained for the ONE case the position policy cannot reach: a user in
-    // a Sales DEPARTMENT with no position_id, hydrated from the legacy role matrix
-    // just above — for whom this is still the sole source of the JD levels. No-op
-    // for `*` and for anyone outside the Sales cohort, so it stays safe on every
-    // non-`*` branch. The old operationJdAccess override is GONE (2026-07-18):
-    // under default-full the operation cohort is full anyway, and for the
-    // restricted Storekeeper / Supervisor it was WRONG — it granted warehouse-write
-    // edit the owner's manual denies them.
     page_access: applySalesJdOverride(pageAccess, {
       permissions: permissionsSet,
       position_name: row.position_name ?? null,
@@ -675,10 +432,6 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     position_capabilities: positionCapabilities,
     position_policy: policyRow,
     scm_l2_configured: scmL2Configured,
-    // sessions.origin — present only on the getUserBySession row (that SELECT
-    // already joins `sessions`, so this costs no extra round-trip). getUserById
-    // has no session, so `row.origin` is absent there and this lands null =
-    // not-POS.
     session_origin: row.origin ?? null,
     joined_at: row.joined_at ?? null,
     last_login_at: row.last_login_at ?? null,
@@ -690,35 +443,11 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
 }
 
 export async function getUserBySession(env: Env, token: string): Promise<AuthUser | null> {
-  // The bounded DB-outage liveness fallback is OFF unless SESSION_FALLBACK_ENABLED
-  // is "true" (see sessionCache.ts). Resolved ONCE here and used as the guard on
-  // every fallback site below, so with the switch off neither
-  // sessionLivenessFallback nor rememberSessionLiveness is called at all: a DB
-  // read failure fails closed exactly as it did before the fallback existed, and
-  // no per-isolate liveness state accumulates. forgetSessionLiveness stays
-  // UNGUARDED on purpose — it only ever removes state, so entries recorded while
-  // the switch was on are still dropped by an authoritative revocation after it
-  // is turned off.
   const fallbackEnabled = isSessionFallbackEnabled(env);
   const fallbackTtlMs = fallbackEnabled
     ? sessionFallbackTtlMs(env)
-    : 0; /* unused while disabled */
+    : 0;
 
-  // The KV value caches expensive permission/page/brand hydration, but is not
-  // authoritative for session validity or authorization. Pair it with two
-  // indexed DB reads so identity and every authz dependency are current on the
-  // next request, even when a best-effort KV bust fails or is delayed. Run all
-  // reads in parallel so a cache hit costs max(KV, DB), not KV + DB latency.
-  //
-  // allSettled, NOT all: `Promise.all` rejects the instant the FIRST input
-  // rejects and abandons the others still in flight. On the DB-outage path that
-  // is exactly what happens — the DB reads reject while the KV read is still
-  // pending, and the function returns from the bounded fallback below with a
-  // live KV operation left dangling. In workerd that op then settles outside the
-  // request that started it (in tests, outside the isolated-storage frame, which
-  // is what "Failed to pop isolated storage stack frame" reports). Settling all
-  // three keeps the same parallelism and the same max(KV, DB) latency while
-  // guaranteeing no storage promise outlives this call.
   const settled = Promise.allSettled([
     getCachedUser(env, token),
     env.DB.prepare(
@@ -745,8 +474,6 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
     )
       .bind(token)
       .first<SessionAuthority>(),
-    // One stable, cross-database result set captures collection-valued authz
-    // dependencies without PostgreSQL-only aggregation or a page×brand join.
     env.DB.prepare(
       `WITH principal AS (
          SELECT u.id AS user_id, u.role_id, u.manager_id, u.position_id
@@ -779,17 +506,8 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
       .all<AuthzComponent>(),
   ]);
 
-  // The two DB reads above are the AUTHORITATIVE session-validity check. If they
-  // THROW, the DB layer is unreachable (cold-start 503, Supavisor hiccup) — the
-  // session is not proven invalid. With the fallback switch ON, re-serve this
-  // token iff the DB most recently CONFIRMED it active within the TTL; with the
-  // switch OFF (the default) we never look, and fail closed. Only the two DB
-  // results gate that decision, so a cache-layer problem can never be mistaken
-  // for a DB outage.
   const [cachedResult, authorityResult, componentResult] = await settled;
 
-  // getCachedUser swallows its own errors and resolves null, so a rejection here
-  // is not expected; treat one as a cache miss rather than a session failure.
   const cached: AuthUser | null =
     cachedResult.status === "fulfilled" ? cachedResult.value : null;
 
@@ -807,8 +525,6 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
   const componentRows: D1Result<AuthzComponent> = componentResult.value;
 
   if (!authority) {
-    // Session row is gone — an authoritative revoke. Forget the fallback entry
-    // so a subsequent DB blip can never re-serve it.
     forgetSessionLiveness(token);
     await bustCachedUser(env, token);
     return null;
@@ -820,10 +536,6 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
     return null;
   }
 
-  // "Remember me" keeps rolling forward from here — after the session is proven
-  // live, so an expired or revoked token is never extended, and before the
-  // cached-envelope return below, so a cache HIT renews too (that is the common
-  // path for a daily user, and it is exactly the one that must not sign out).
   await renewRollingSession(env, token, authority.expires_at, authority.renew_seconds ?? null);
 
   const authzFingerprint = buildAuthzFingerprint(
@@ -832,26 +544,15 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
   );
 
   if (cached && cachedIdentityMatches(cached, authority, authzFingerprint)) {
-    // Session origin belongs to the authoritative row. Re-publish it so an
-    // old cache payload can never decide the request's origin.
     cached.session_origin = authority.origin;
-    // The DB just CONFIRMED this session active — record it so a later DB blip
-    // can re-serve it for up to the fallback TTL. Only while the switch is on;
-    // off means no state is accumulated at all.
     if (fallbackEnabled) rememberSessionLiveness(token, cached);
     return cached;
   }
 
   if (cached) {
-    // A role/org assignment changed while invalidation was unavailable. Do not
-    // grant the stale permission envelope; rebuild it below.
     await bustCachedUser(env, token);
   }
 
-  // The session/user could change between the authority read and hydration.
-  // This read runs only AFTER the authoritative validity reads above succeeded,
-  // but a transient DB failure here still gets the same bounded-fallback
-  // treatment rather than logging the caller out mid-blip.
   let row: any;
   try {
     row = await env.DB.prepare(
@@ -885,7 +586,6 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
     throw err;
   }
 
-  // Re-check the full row before caching it.
   if (!row) {
     forgetSessionLiveness(token);
     await bustCachedUser(env, token);
@@ -900,8 +600,6 @@ export async function getUserBySession(env: Env, token: string): Promise<AuthUse
   const user = await hydrateAuthUser(env, row);
   user.authz_fingerprint = authzFingerprint;
   await setCachedUser(env, token, user);
-  // Authoritatively hydrated + confirmed active — record for the bounded blip
-  // fallback, but only when the switch is on.
   if (fallbackEnabled) rememberSessionLiveness(token, user);
   return user;
 }

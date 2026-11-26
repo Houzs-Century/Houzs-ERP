@@ -21,12 +21,6 @@ import {
   type Announcement,
 } from "./announcementModel";
 
-/* ────────────────────────────────────────────────────────────────────────────
-   announcementModel — the pure rules the redesigned Announcements page runs on
-   (design handoff 2026-09-04). These pin the contracts the screens rely on:
-   which categories block, that SOP never archives, the ack-rate thresholds,
-   and how the inbox splits into pinned / recent / SOP Library.
-   ──────────────────────────────────────────────────────────────────────────── */
 
 const NOW = Date.parse("2026-09-05T09:00:00Z");
 

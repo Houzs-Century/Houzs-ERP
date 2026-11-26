@@ -1,20 +1,3 @@
-// ----------------------------------------------------------------------------
-// StockTransferNew — full-page form at /inventory/transfers/new.
-//
-// Mirrors PurchaseOrderNew chrome: back link + title + Cancel/Save in the
-// headerRow, header card with From/To/Date/Notes, items grid below with
-// SKU picker + live current-balance lookup against the From warehouse.
-// PR-DRAFT-removal (2026-05-27): Save creates as POSTED directly + writes
-// inventory_movements inline; routes to /inventory/transfers/:id afterward.
-//
-// HOUZS VENDOR — verbatim from apps/backend/src/pages/StockTransferNew.tsx.
-// Import boundary only: react-router → react-router-dom; ConfirmDialog/
-// NotifyDialog + useWarehouses ← vendored; balances/transfer hooks ←
-// vendored stock-queries; mfg-products-queries via vendored slice; css
-// colocated. Back/Cancel → list. Save → a result dialog: open the saved
-// transfer, or "New stock transfer", which REMOUNTS the form (FreshMount) so
-// the next transfer gets its own idempotency key (staff request 2026-09-14).
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -55,18 +38,8 @@ const blankLine = (): LineDraft => ({
   notes: '',
 });
 
-/* Humanise a variant_key ("fabriccode=bf-16|gap=16|legheight=2") into a compact
-   bucket label for the picker. '' = the unclassified / plain-SKU bucket, which
-   is a REAL pickable value, so it gets a word rather than a blank.
-
-   The rule itself moved to `vendor/scm/lib/variant-key-label.ts` on 2026-08-22:
-   the Stock Transfer and Stock Take PDFs print the same key, and a second
-   hand-written copy of a display rule is the drift `warehouse-label.ts` already
-   documents the cost of. */
 const humanizeVariantKey = (k: string): string => variantKeyLabel(k, '(unclassified)');
 
-// Sentinel for the "no bucket picked yet" option — distinct from '' (which is a
-// real, pickable unclassified bucket).
 const UNPICKED = '__UNPICKED__';
 
 // One transfer line. Owns its OWN inventory-bucket query so each line offers only
@@ -84,8 +57,6 @@ function TransferLineRow({
   canRemove: boolean;
 }) {
   const bucketsQ = useInventoryBuckets(line.itemCode || null, fromWarehouseId || null);
-  // The line stores only variant_key (the backend picks the batch FIFO), so sum
-  // the (variant_key, batch) buckets up to one row per variant_key.
   const variantBuckets = useMemo(() => {
     const m = new Map<string, number>();
     for (const b of (bucketsQ.data ?? [])) {
@@ -208,34 +179,22 @@ export const StockTransferNew = () => (
 const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
   const navigate = useNavigate();
   const create   = useCreateStockTransfer();
-  /* One key for the one transfer this form is open to raise (lib/idempotency.ts),
-     so the MOUNT is exactly one transfer. After a successful post the form
-     LOCKS (no Post button) and the only way to raise another is onStartNew,
-     which remounts this component and mints a fresh key — never a navigate to
-     this same route, which would keep the mount and replay transfer #1. Its
-     mobile twin (MobileStockTransferNew) does the same. */
   const idemKey  = useIdempotencyKey();
 
   const notify = useNotify();
   const [created, setCreated] = useState<{ id: string; transferNo: string } | null>(null);
   const [resultOpen, setResultOpen] = useState(false);
 
-  // ── Header state ─────────────────────────────────────────────────────
   const [fromWarehouseId, setFromWarehouseId] = useState<string>('');
   const [toWarehouseId,   setToWarehouseId]   = useState<string>('');
   const [transferDate,    setTransferDate]    = useState<string>(todayMyt());
   const [notes,           setNotes]           = useState<string>('');
 
-  // ── Lines ────────────────────────────────────────────────────────────
   const [lines, setLines] = useState<LineDraft[]>([blankLine()]);
 
-  // ── Data ─────────────────────────────────────────────────────────────
   const warehouses = useWarehouses();
   const allSkus    = useMfgProducts();
-  // Per-line variant buckets (available stock at the From warehouse) are pulled
-  // inside <TransferLineRow> so each line offers only its own SKU's real buckets.
 
-  // ── Helpers ──────────────────────────────────────────────────────────
   const skuByCode = useMemo(
     () => new Map((allSkus.data ?? []).map((p) => [p.code, p])),
     [allSkus.data],
@@ -250,23 +209,18 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
     setLine(key, {
       itemCode: code,
       productName: sku?.name ?? '',
-      // A new SKU invalidates any previously picked variant bucket.
       variantKey: undefined,
     });
   };
 
   const addLine    = () => setLines((cur) => [...cur, blankLine()]);
-  // Insert adds a line — disabled once the transfer is posted (form locked).
   useAddLineHotkey(addLine, created == null);
   const removeLine = (key: string) =>
     setLines((cur) => (cur.length <= 1 ? cur : cur.filter((l) => l._key !== key)));
 
-  // ── Validation ───────────────────────────────────────────────────────
   const sameWarehouse = Boolean(
     fromWarehouseId && toWarehouseId && fromWarehouseId === toWarehouseId,
   );
-  // A line is valid only once its variant BUCKET is picked (variantKey set).
-  // Transferring without it would move the unclassified bucket and desync stock.
   const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0 && l.variantKey !== undefined);
   const needsBucket = lines.some((l) => l.itemCode.trim() && l.qty > 0 && l.variantKey === undefined);
 
@@ -289,9 +243,6 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
       });
       return;
     }
-    // Over-quantity is enforced server-side per (product, variant_key) bucket —
-    // the OUT movement rejects taking more than that bucket holds — so the client
-    // no longer pre-checks an aggregate balance it no longer fetches.
 
     create.mutate(
       {
@@ -342,11 +293,8 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
         }
       />
 
-      {/* Posted: the fields stay readable but cannot be edited — there is no
-          Post left to press, so nothing typed here could ever be saved. */}
       <fieldset disabled={created != null} className="space-y-4" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
-      {/* ── Header card ──────────────────────────────────────────────── */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Transfer</h2>
@@ -421,7 +369,6 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
         </div>
       </section>
 
-      {/* ── Items card ──────────────────────────────────────────────── */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>

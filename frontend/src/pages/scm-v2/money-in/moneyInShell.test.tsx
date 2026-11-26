@@ -1,6 +1,3 @@
-// Money in's shell (the owner's Claude Design, batch 5 step 0): the ask banner
-// that replaces the modal confirms, where each document opens, and the words
-// and tones each document's status reads in.
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -110,7 +107,6 @@ describe('the status words and tones', () => {
     expect(noteTag('DRAFT')).toEqual({ text: 'Draft', tone: 'warn' });
     expect(noteTag('POSTED')).toEqual({ text: 'Posted', tone: 'calm' });
     expect(debtorTag(false)).toEqual({ text: 'Inactive', tone: 'late' });
-    // The sand hex in light mode; a dark-only variable carries the dark tint.
     expect(openRowStyle(true)).toEqual({ background: 'var(--hz-dk-warning-bg, #fcf7ec)' });
     expect(openRowStyle(false)).toBeUndefined();
   });

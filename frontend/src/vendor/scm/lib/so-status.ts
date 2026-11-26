@@ -1,10 +1,7 @@
-// Vendored VERBATIM from apps/backend/src/lib/so-status.ts — pure display
-// helper (no imports, no supabase). Drives the SO list + detail status pill.
 
 export type DeliveryState = 'none' | 'partial' | 'full';
 export type SoLifecycle = 'none' | 'delivered' | 'invoiced' | 'returned';
 
-/* Exported so the CO note gate (co-note-gate.ts) reads this ONE set instead of re-listing it. */
 export const TERMINAL: ReadonlySet<string> = new Set(['CANCELLED', 'CLOSED', 'ON_HOLD']);
 
 export type SoStatusDisplay = {

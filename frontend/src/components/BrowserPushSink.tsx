@@ -17,25 +17,17 @@ import { isBrowserPushEnabled } from "../lib/browserNotificationPreference";
  */
 export function BrowserPushSink() {
   const { feed } = useNotifications();
-  /* The heartbeat now comes from its own context — it changes every 30s by
-     design, and this component (which renders null) is the only thing that
-     should re-render on that timer. See useNotifications.tsx. */
   const lastTick = useNotificationsTick();
   const seenRef = useRef<Set<number>>(new Set());
   const primedRef = useRef(false);
 
   useEffect(() => {
-    // First tick after mount: treat everything we already have as
-    // "seen" so existing items don't replay as OS banners. From the
-    // next tick onward we only fire for genuinely-new rows.
     if (!primedRef.current && lastTick > 0) {
       primedRef.current = true;
       for (const item of feed) seenRef.current.add(item.id);
       return;
     }
     if (!isBrowserPushEnabled()) {
-      // Still mark as seen so they don't all fire the moment the user
-      // flips the toggle on with a large backlog.
       for (const item of feed) seenRef.current.add(item.id);
       return;
     }
@@ -51,8 +43,6 @@ export function BrowserPushSink() {
 
 function fireNotification(a: NotificationItem) {
   try {
-    // Per-company fallback title: HOUZS keeps the historic literal; another
-    // active company reads "<short name> ERP" from the branding cache.
     const title =
       a.project_name ||
       (getBrandingCompanyCode() === HOUZS_COMPANY_CODE
@@ -67,14 +57,12 @@ function fireNotification(a: NotificationItem) {
     });
     n.onclick = () => {
       window.focus();
-      // /projects/:id route is always the right landing.
       if (a.project_id) {
         window.location.href = `/projects/${a.project_id}`;
       }
       n.close();
     };
   } catch {
-    // If the browser withdrew permission between checks, fail quiet.
   }
 }
 

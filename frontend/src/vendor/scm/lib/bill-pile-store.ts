@@ -25,21 +25,13 @@ export type PickedFile = { rid: string; file: File; merged: boolean; page?: numb
 
 export type PileState = {
   picked: PickedFile[];
-  /** bills[i] = the files that form bill i (merged pages share an entry). */
   billGroups: string[][];
-  /** What the reader answered, by bill; null before a read. */
   results: ExtractedBill[] | null;
-  /** The read payload by bill — the document opened from a bill carries it. */
   billFiles: PvFilePayload[][];
-  /** Bills already opened as a document (by index), so the pile says which are done. */
   opened: number[];
-  /** The read under way. */
   progress: { done: number; total: number } | null;
-  /** Failed bills being read again. */
   rereading: number[];
-  /** Where each sent bill is on the scan queue until its answer lands (by index). */
   stages: Record<number, AiReadStage>;
-  /** The run a landing answer must belong to. */
   run: number;
 };
 

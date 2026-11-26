@@ -24,8 +24,6 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FairBoothRequest, FairBoothResponse, FairOptionsResponse } from '../vendor/scm/lib/fair-options-queries';
 
-/* Swappable per test: most cases use the 2026-09-13 list; the edit-mode cases use
-   the list production served for HC-SO-2609-071's own date. */
 const fixture = vi.hoisted(() => ({
   data: null as FairOptionsResponse | null,
   booth: null as FairBoothResponse | null,
@@ -47,11 +45,6 @@ const DATA: FairOptionsResponse = {
   ],
 };
 
-/* The list production served for Houzs Century on 2026-09-14, HC-SO-2609-071's
-   own date: production's project rows run through the server's buildFairOptions
-   on 2026-09-15, trimmed to the one row at MID VALLEY (the other 11 are at other
-   venues). NOTHING was running that day — the MID VALLEY row is the REX fair that
-   ended on the 13th. Venue ids are the live project_venues ids. */
 const DATA_2026_09_14: FairOptionsResponse = {
   date: '2026-09-14',
   running: [],
@@ -65,16 +58,6 @@ const DATA_2026_09_14: FairOptionsResponse = {
   ],
 };
 
-/* Three DIFFERENT fairs at ONE venue inside one four-week window, from
-   production: MID VALLEY, projects 363 (BIGHOME, 10-02), 2260 (HOMELOVE, 09-17)
-   and 313/314/316 (MLE, 09-25 — three brand booths that collapse to one row).
-   This is the shape a venue-only label erases: three rows that read identically
-   unless the organizer AND the dates are on them. Read on 2026-09-16 with
-   `select venue, organizer, start_date from public.projects where company_id = 1`;
-   the HOMELOVE and MLE dates are moved back into the window from their real
-   10-15 / 10-23, because an order dated 2026-10-08 is never offered a fair that
-   has not happened yet. Ordered as buildFairOptions returns them for that date:
-   nothing is running, so all three sit in `earlier`, NEWEST FIRST. */
 const DATA_2026_10_MID_VALLEY: FairOptionsResponse = {
   date: '2026-10-08',
   running: [],
@@ -125,12 +108,6 @@ describe('FairPicker — a row is a place plus an organizer', () => {
   });
 
   it('keeps two fairs at ONE venue apart — the case venue-only labels erased', () => {
-    /* Production at MID VALLEY: three fairs, three organizers (project 363
-       BIGHOME, 2260 HOMELOVE, 313/314/316 MLE), all inside one four-week window.
-       Nothing but the organizer and the dates tells them apart, which
-       the organizer repeat, so the organizer is the ONLY thing telling them
-       apart. Labelled by venue alone they were three identical "MID VALLEY" rows
-       and the sale landed in whichever fair's P&L the rep happened to hit. */
     fixture.data = DATA_2026_10_MID_VALLEY;
     renderPicker({ venue: null, organizer: null, startDate: null, endDate: null, day: null }, '2026-10-08');
     const fairs = fairOptionLabels().filter((l) => l.startsWith('MID VALLEY'));
@@ -156,8 +133,6 @@ describe('FairPicker — a row is a place plus an organizer', () => {
     expect(labels).toContain('IOI MALL PUTRAJAYA — SOLO (09/11 - 09/13)');
     expect(labels).toContain('MID VALLEY — REX (09/11 - 09/13)');
     expect(labels.some((l) => l.includes('MALL MGT'))).toBe(false);
-    /* Only the wording changed: the pick still carries the real organizer, which
-       is what the server resolves the project from. */
     fireEvent.change(fairSelect(), { target: { value: 'fair:ioi mall putrajaya|mall mgt|2026-09-11|2026-09-13' } });
     expect(onChange).toHaveBeenCalledWith({
       venue: 'IOI MALL PUTRAJAYA', organizer: 'MALL MGT',
@@ -174,7 +149,6 @@ describe('FairPicker — a row is a place plus an organizer', () => {
   it('shows the saved fair as selected when the order already has one', () => {
     renderPicker({ venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-09-11', endDate: '2026-09-13', day: null });
     expect(fairSelect().value).toBe('fair:mid valley|rex|2026-09-11|2026-09-13');
-    /* No second control while a real fair is picked. */
     expect(screen.queryByLabelText('Place')).toBeNull();
   });
 });
@@ -188,9 +162,6 @@ describe('FairPicker — Others is a PICK, never a text box', () => {
   });
 
   it('opens the venue master when the operator picks Others, keeping the place on the order', () => {
-    /* Until 2026-09-15 this list opened by itself for any place with no organizer —
-       which is every saved order — and the Fair field read "Others". The owner
-       ruled that state wrong: the list is something the operator OPENS. */
     const { onChange } = renderPicker({ venue: 'SUNWAY PYRAMID CONVENTION CENTRE', organizer: null, startDate: null, endDate: null, day: null });
     expect(screen.queryByLabelText('Place')).toBeNull();
     fireEvent.change(fairSelect(), { target: { value: '__others__' } });
@@ -198,24 +169,16 @@ describe('FairPicker — Others is a PICK, never a text box', () => {
     const place = screen.getByLabelText('Place') as HTMLSelectElement;
     expect(place.value).toBe('SUNWAY PYRAMID CONVENTION CENTRE');
     expect(screen.getByText('AUSTIN INTERNATIONAL CONVENTION CENTRE')).toBeTruthy();
-    /* The Fair field goes on naming the place while the list is open. */
     expect(shownText(fairSelect())).toBe('SUNWAY PYRAMID CONVENTION CENTRE');
   });
 
   it('KEEPS the place already on the order when switching to Others', () => {
-    /* "The list did not have my fair" is not "clear the venue". Clearing it here
-       would quietly drop the only thing the nightly reconcile has to work with. */
     const { onChange } = renderPicker({ venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-09-11', endDate: '2026-09-13', day: null });
     fireEvent.change(fairSelect(), { target: { value: '__others__' } });
-    /* The PERIOD goes with the organizer: Others means no event was chosen, and
-       a stale period would tell the server to match an occurrence the operator
-       has just rejected. */
     expect(onChange).toHaveBeenCalledWith({ venue: 'MID VALLEY', organizer: null, startDate: null, endDate: null, day: null });
   });
 
   it('still shows a venue the master no longer lists', () => {
-    /* An order written at a venue since renamed or deactivated must not lose its
-       place the moment someone opens the form. */
     renderPicker({ venue: 'A VENUE NOBODY MASTERS', organizer: null, startDate: null, endDate: null, day: null });
     expect(shownText(fairSelect())).toBe('A VENUE NOBODY MASTERS');
     fireEvent.change(fairSelect(), { target: { value: '__others__' } });
@@ -244,10 +207,6 @@ describe('FairPicker — Others is a PICK, never a text box', () => {
   });
 
   it('a blank form can reach the venue master through Others', () => {
-    /* Picking Others with no place yet sends {null, null} — the value the form
-       already holds — so nothing re-rendered into the place list and the select
-       fell back to "—". The one way to a place missing from the fair list was shut
-       on exactly the forms with no default venue. */
     const { onChange } = renderPicker({ venue: null, organizer: null, startDate: null, endDate: null, day: null });
     fireEvent.change(fairSelect(), { target: { value: '__others__' } });
     expect(onChange).toHaveBeenCalledWith({ venue: null, organizer: null, startDate: null, endDate: null, day: null });
@@ -262,10 +221,6 @@ describe('FairPicker — Others is a PICK, never a text box', () => {
     fireEvent.change(fairSelect(), { target: { value: '__others__' } });
     expect(screen.getByLabelText('Place')).toBeTruthy();
     fireEvent.change(fairSelect(), { target: { value: 'fair:mid valley|rex|2026-09-11|2026-09-13' } });
-    /* THE WHOLE ROW TRAVELS. The period is what lets the server match the exact
-       occurrence instead of re-deriving one from the order date — dropping it
-       here is what made an order written after its fair closed impossible to
-       attribute by any path in the system. */
     expect(onChange).toHaveBeenLastCalledWith({
       venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-09-11', endDate: '2026-09-13', day: null,
     });
@@ -276,8 +231,6 @@ describe('FairPicker — Others is a PICK, never a text box', () => {
 describe('FairPicker — a place already on the order IS the value (owner 2026-09-15)', () => {
   it('HC-SO-2609-071 in edit mode reads MID VALLEY, not "Others — pick a place instead"', () => {
     fixture.data = DATA_2026_09_14;
-    /* Exactly what SalesOrderDetail passes for an order with no fair link: the
-       stored venue, and organizer null. */
     renderPicker({ venue: 'MID VALLEY', organizer: null, startDate: null, endDate: null, day: null }, '2026-09-14');
     expect(fairSelect().value).not.toBe('__others__');
     expect(shownText(fairSelect())).toBe('MID VALLEY');
@@ -285,19 +238,12 @@ describe('FairPicker — a place already on the order IS the value (owner 2026-0
   });
 
   it('does not light up a fair the order is not linked to', () => {
-    /* The only MID VALLEY row ended the day before this order was written. Picking
-       it from the venue alone would attribute the sale to a fair that was not
-       running — the error the fair link exists to prevent. */
     fixture.data = DATA_2026_09_14;
     renderPicker({ venue: 'MID VALLEY', organizer: null, startDate: null, endDate: null, day: null }, '2026-09-14');
     expect(fairSelect().value).not.toBe('fair:mid valley|rex|2026-09-11|2026-09-13');
   });
 
   it('files a fair that already ended under "Recently closed", and can still pick it', () => {
-    /* The closed group is the rest of the four-week window — fairs that are over,
-       never ones still to come. For 071 its only row ended on the 13th, and the
-       whole point of the 2026-09-19 change is that such a row is a legitimate
-       answer rather than an unattributable order. */
     fixture.data = DATA_2026_09_14;
     const onChange = vi.fn();
     const { container } = render(
@@ -344,7 +290,6 @@ describe('FairPicker — a recorded pick reads back as its event', () => {
   });
 
   it('a linked event no longer in the list still reads back whole', () => {
-    /* e.g. archived since it was picked: the list leaves it out, the order keeps it. */
     fixture.data = DATA_2026_09_14;
     renderPicker({ venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-08-08', endDate: '2026-08-09', day: null }, '2026-09-14');
     expect(shownText(fairSelect())).toBe('MID VALLEY — MLE (08/08 - 08/09)');
@@ -378,7 +323,6 @@ describe('FairPicker — the DAY starts empty whenever the event changes', () =>
 });
 
 describe('FairPicker — the BOOTH only when the system cannot tell (rule 9, HC-0161)', () => {
-  /* HC-SO-2610-323: a pillow-only scan at MLE @ MID VALLEY, three booths. */
   const MLE: FairPickValue = { venue: 'MID VALLEY', organizer: 'MLE', startDate: '2026-09-25', endDate: '2026-09-27', day: '2026-09-26' };
   const ASK: FairBoothResponse = {
     ask: true,
@@ -458,7 +402,6 @@ describe('FairDayPicker — the second column', () => {
   });
 
   it('stops at the order date — a day that has not come yet is not offered', () => {
-    /* The list was built for 2026-09-13; this fair runs on to the 15th. */
     renderDays({ ...REX, startDate: '2026-09-12', endDate: '2026-09-15' });
     expect(dayLabels()).toEqual(['—', '09/12', '09/13']);
   });

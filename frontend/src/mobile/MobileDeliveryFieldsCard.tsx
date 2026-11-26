@@ -40,10 +40,8 @@ import { DateTimeField } from "../vendor/scm/components/DateTimeField";
 import { instantToMytLocal, mytLocalToInstant } from "../vendor/scm/lib/dates";
 import { formatDate } from "../lib/utils";
 
-// ── Shared presentational primitives (see the header note) ──
 export const EM = "—";
 
-// Time-of-day HH:MM from an ISO timestamp (for the tracking timeline).
 export const hhmm = (ts: string | null | undefined): string => {
   if (!ts) return "";
   const dt = new Date(ts);
@@ -53,8 +51,6 @@ export const hhmm = (ts: string | null | undefined): string => {
   ).padStart(2, "0")}`;
 };
 
-// pdRow — a canonical label:value row (.row / .row-l / .row-v). `last` drops
-// the divider (matches .row:last-child).
 export function pdRow(label: string, val: ReactNode, strong?: boolean, last?: boolean) {
   return (
     <div className="row" style={last ? { borderBottom: "none" } : undefined}>
@@ -64,16 +60,11 @@ export function pdRow(label: string, val: ReactNode, strong?: boolean, last?: bo
   );
 }
 
-// A YYYY-MM-DD date-ish string → the ISO value DateField takes.
 const toDateInput = (d: string | null | undefined): string =>
   d ? String(d).slice(0, 10) : "";
 
-// The desktop drawer's own option list — the two values HC records.
 const HOUSE_TYPES = ["New House", "Replacement"] as const;
 
-/* The row fields this card reads. Declared structurally rather than imported
-   from MobileDeliveryPlanning's `BoardRow` so the dependency stays one-way;
-   `BoardRow` satisfies it by shape. */
 export type DeliveryFieldsOrder = {
   so_doc_no: string;
   status: string | null;
@@ -93,15 +84,11 @@ export type DeliveryFieldsOrder = {
   delivery_substatus?: string | null;
 };
 
-/* The editor's draft — every field a string (or the one checkbox) so the diff
-   below is a plain comparison and blank collapses to null on the wire. */
 export type DeliveryFieldsForm = {
-  // SO-context
   possessionDate: string;
   houseType: string;
   referral: string;
   replacementDisposal: string;
-  // DO-execution
   timeRange: string;
   timeConfirmed: boolean;
   arrivalAt: string;
@@ -113,22 +100,12 @@ export type DeliveryFieldsForm = {
 };
 
 export type DeliveryFieldsPatch = {
-  /** The direct PATCH body — changed keys only. */
   body: Record<string, unknown>;
-  /** TRUE when the disposal change must be raised as an SO Amendment instead.
-      This is the flag to branch on: `amendmentDisposal` is null both when there
-      is no amendment AND when the amendment CLEARS the field. */
   disposalViaAmendment: boolean;
-  /** The value the amendment carries; null when the field is being cleared. */
   amendmentDisposal: string | null;
-  /** Nothing to send down either lane. */
   empty: boolean;
 };
 
-/* buildDeliveryFieldsPatch — the whole save DECISION, as a pure function.
-   Changed-only (mobile keeps its diff; the desktop drawer posts the full form),
-   plus the desktop drawer's two gates: DO-execution needs a DO, and a disposal
-   change on a locked order leaves the body and becomes an amendment. */
 export function buildDeliveryFieldsPatch(
   initial: DeliveryFieldsForm,
   form: DeliveryFieldsForm,
@@ -136,22 +113,17 @@ export function buildDeliveryFieldsPatch(
 ): DeliveryFieldsPatch {
   const body: Record<string, unknown> = {};
 
-  // ── SO-context: always eligible, DO or no DO ──
   if (form.possessionDate !== initial.possessionDate)
     body.possessionDate = form.possessionDate || null;
   if (form.houseType !== initial.houseType) body.houseType = form.houseType || null;
   if (form.referral !== initial.referral) body.referral = form.referral || null;
 
-  /* Disposal is compared TRIMMED on both sides so re-saving the same text with
-     stray spaces is not a "change" the backend would 409 (its own genuineChange
-     test compares the stored value). */
   const disposalNow = form.replacementDisposal.trim() || null;
   const disposalWas = initial.replacementDisposal.trim() || null;
   const disposalDirty = disposalNow !== disposalWas;
   const disposalViaAmendment = opts.procLocked && disposalDirty;
   if (disposalDirty && !disposalViaAmendment) body.replacementDisposal = disposalNow;
 
-  // ── DO-execution: only once a DO exists (the fields live on it) ──
   if (opts.hasDo) {
     if (form.timeRange !== initial.timeRange) body.timeRange = form.timeRange || null;
     if (form.timeConfirmed !== initial.timeConfirmed) body.timeConfirmed = form.timeConfirmed;
@@ -189,18 +161,11 @@ export function DeliveryFieldsCard({
   saving: boolean;
   onEdit: () => void;
   onCancel: () => void;
-  /* `amendment` is REQUIRED and nullable, never optional: it DECIDES whether a
-     second write happens, and an optional argument every caller can forget is
-     how a decision silently defaults (CLAUDE.md, optional-param-noop). */
   onSave: (
     body: Record<string, unknown>,
     amendment: { disposal: string | null } | null,
   ) => void;
 }) {
-  /* The same predicate the SO editor and the desktop drawer use. `po_locked`
-     arrives on the board payload — it cannot be derived here, the feed carries
-     no PO linkage — and absent (Houzs, or a pre-deploy cache) reads as false,
-     so the gate degrades to the date rule alone. */
   const procLocked = procLockActive({
     processing_date: order.processing_date,
     status: order.status,
@@ -225,8 +190,6 @@ export function DeliveryFieldsCard({
     [order],
   );
   const [form, setForm] = useState(initial);
-  // Re-seed the draft each time the editor is (re)opened so a fresh board fetch
-  // isn't shadowed by a stale draft.
   const startEdit = () => {
     setForm(initial);
     onEdit();
@@ -294,8 +257,6 @@ export function DeliveryFieldsCard({
       </div>
       {editing ? (
         <div className="card-b">
-          {/* ── Order context — saved on the SO, so editable with or without a
-              DO. Mirrors the desktop drawer's always-editable group. ── */}
           <div style={groupStyle}>Order context</div>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Move-in date</span>
@@ -337,8 +298,6 @@ export function DeliveryFieldsCard({
               onChange={(e) => set("replacementDisposal", e.target.value)}
               style={inputStyle}
             />
-            {/* Shown whenever the order is locked, not only once the field is
-                dirty — the driver should know the cost before typing. */}
             {procLocked && (
               <span
                 style={{
@@ -355,7 +314,6 @@ export function DeliveryFieldsCard({
             )}
           </label>
 
-          {/* ── Delivery execution — these columns live on the DO. ── */}
           <div style={{ ...groupStyle, marginTop: 16 }}>
             Delivery execution {hasDo ? "" : "(needs a DO)"}
           </div>
@@ -433,9 +391,6 @@ export function DeliveryFieldsCard({
               </label>
             </>
           ) : (
-            /* Eight disabled inputs is a lot of dead space on a phone, so the
-               group is replaced by the reason rather than greyed out (the
-               desktop drawer has the room to disable a fieldset instead). */
             <div style={hintStyle}>
               No delivery order yet — create one to record the time window,
               shipout, port and delivery status.
@@ -483,10 +438,6 @@ export function DeliveryFieldsCard({
         </div>
       ) : (
         <>
-          {/* Of the four SO-context fields only the disposal gets a read row
-              here: move-in date, house type and referral already have one on
-              this same screen (the Delivery card and the document card), and a
-              second copy would just be noise. */}
           {pdRow("Replacement / disposal", disposal || EM, true, !hasDo)}
           {hasDo && (
             <>

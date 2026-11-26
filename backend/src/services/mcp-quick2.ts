@@ -1,12 +1,3 @@
-// ---------------------------------------------------------------------------
-// mcp-quick2.ts — round-3 quick answers of the AI Connector (services/mcp-round3.ts):
-// outlet_sales, pos_sales, after_sales_summary, attendance_today.
-//
-// Pure functions over the JSON of the ERP endpoints the pages themselves read
-// (each read goes through routes/mcp.ts readValue as the person, so their
-// permissions, company scope and the money redaction already applied).
-// Money comes in as sen and goes out as RM (2 dp).
-// ---------------------------------------------------------------------------
 import { ATTENDANCE_STATUSES } from "../scm/shared/hr-attendance";
 import { rm } from "./mcp-quick";
 
@@ -30,7 +21,6 @@ export function daysBetween(day: string, today: string): number | null {
 
 export const monthStartOf = (today: string): string => `${today.slice(0, 7)}-01`;
 
-// ── outlet_sales ────────────────────────────────────────────────────────────
 
 /**
  * Today and month-to-date by showroom from ONE read of the Sales Report's
@@ -71,7 +61,6 @@ export function summariseOutletSales(fair: unknown, today: string) {
   };
 }
 
-// ── pos_sales ───────────────────────────────────────────────────────────────
 
 export const POS_EVENTS_MAX = 5;
 
@@ -123,7 +112,6 @@ export function summarisePosSales(events: ReturnType<typeof summarisePosEvent>[]
   };
 }
 
-// ── after_sales_summary ─────────────────────────────────────────────────────
 
 export const AGE_BUCKETS = [
   { label: "0-7 days", max: 7 },
@@ -183,9 +171,7 @@ export function summariseAfterSales(summary: unknown, openRows: readonly Obj[], 
   };
 }
 
-// ── attendance_today ────────────────────────────────────────────────────────
 
-/** Away for (part of) the day: the HR vocabulary's statuses other than present, absent and rest day (scm/shared/hr-attendance.ts). */
 const NOT_LEAVE = new Set(["PRESENT", "ABSENT", "REST_DAY"]);
 const LEAVE = new Set(ATTENDANCE_STATUSES.map((x) => x.value as string).filter((v) => !NOT_LEAVE.has(v)));
 const WORDS: Record<string, string> = Object.fromEntries(ATTENDANCE_STATUSES.map((x) => [x.value, x.label]));

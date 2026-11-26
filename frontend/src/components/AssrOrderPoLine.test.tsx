@@ -6,14 +6,6 @@ import { AssrOrderPoLine } from "./AssrOrderPoLine";
 import { AssrExchangePoLine } from "./AssrExchangePoLine";
 import { assrMergedPos, assrMergedPoText, assrOrderPoHref, assrOrderPos, assrOrderPoText, assrExchangePos, assrExchangePoText } from "../vendor/scm/lib/assr/case-fields";
 
-/* "Order PO" on a service case — the supplier purchase orders raised from the
- * case's SALES ORDER (server field `order_pos`, backend services/assrOrderPos.ts).
- *
- * Staff reported "create service case no have PO no record in the column".
- * The case's own `po_no` is a different fact — the SERVICE purchase order that
- * generate-po mints and costing reads — so it stays exactly as it was, and the
- * order's purchase orders get their own read-only line beside it. Desktop list,
- * desktop detail and the phone read the same field through one reader. */
 
 const HOUZS_CASE = {
   company_id: 1,
@@ -43,16 +35,11 @@ describe("assrOrderPos / assrOrderPoText", () => {
   });
 
   test("the link opens the PO in the CASE's company", () => {
-    // Service Cases are cross-company; the PO page is scoped to the tab's
-    // active company, so the link seeds a new window with the case's company.
     expect(assrOrderPoHref({ id: "0b6c-po-1", po_number: "X" }, 2)).toBe("/scm/purchase-orders/0b6c-po-1?company=2");
     expect(assrOrderPoHref({ id: "a/b", po_number: "X" }, null)).toBe("/scm/purchase-orders/a%2Fb");
   });
 });
 
-/* The desktop list column "PO" is ONE value: the order POs and the service PO
- * (po_no) shown together, deduped so a service PO hand-typed as the order PO
- * without its company prefix does not double up. The data stays two fields. */
 describe("assrMergedPos / assrMergedPoText", () => {
   test("order POs first, then the service PO when they differ", () => {
     const row = { order_pos: [{ id: "a", po_number: "2990-PO-2608-014" }], po_no: "APO/2609-001" };
@@ -60,7 +47,6 @@ describe("assrMergedPos / assrMergedPoText", () => {
   });
 
   test("a service PO typed without its company prefix collapses into the order PO", () => {
-    // HC-PO-009918 (order) and PO-009918 (hand-typed po_no) are the same PO.
     const row = { order_pos: [{ id: "a", po_number: "HC-PO-009918" }], po_no: "PO-009918" };
     expect(assrMergedPos(row)).toEqual([{ id: "a", po_number: "HC-PO-009918" }]);
     expect(assrMergedPoText(row)).toBe("HC-PO-009918");
@@ -90,7 +76,6 @@ describe("AssrOrderPoLine (desktop case detail)", () => {
     expect(a?.getAttribute("href")).toBe("/scm/purchase-orders/0b6c-po-1?company=1");
     expect(a?.getAttribute("target")).toBe("_blank");
     expect(screen.getByText("HC-PO-008790").closest("a")?.getAttribute("href")).toBe("/scm/purchase-orders/0b6c-po-2?company=1");
-    // The service PO is not repeated here.
     expect(screen.queryByText("SVC-PO-0042")).toBeNull();
   });
 
@@ -101,10 +86,6 @@ describe("AssrOrderPoLine (desktop case detail)", () => {
   });
 });
 
-/* "Exchange PO" — the REAL purchase orders raised FROM a case for a one-to-one
- * exchange (server field `exchange_pos`, scm.purchase_orders.assr_case_id). A
- * third, distinct fact from order_pos and po_no, read through the same shared
- * reader and the entry into PO -> GRN -> purchase return / purchase invoice. */
 const EXCHANGE_CASE = {
   company_id: 1,
   exchange_pos: [
@@ -125,7 +106,6 @@ describe("assrExchangePos / assrExchangePoText", () => {
     expect(assrExchangePos({ exchange_pos: null })).toEqual([]);
     expect(assrExchangePos(null)).toEqual([]);
     expect(assrExchangePos({ exchange_pos: [{ id: "a" }, { po_number: "no-id" }, "junk"] })).toEqual([]);
-    // never confused with order_pos or po_no
     expect(assrExchangePoText({ order_pos: [{ id: "a", po_number: "HC-PO-1" }], po_no: "SVC-1" })).toBe("");
   });
 });
@@ -144,11 +124,8 @@ describe("AssrExchangePoLine (desktop case detail)", () => {
   });
 });
 
-/* The two screens are 8,800 and 3,400 lines and cannot be mounted without a
- * router, a query client and the whole detail fetch — same reason as
- * case-fields.canonical.test.ts. What must hold is WHERE they read it. */
 const code = (rel: string): string =>
-  readFileSync(resolve(process.cwd(), rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  readFileSync(resolve(process.cwd(), rel), "utf8").replace(/(?<![\w"'/])\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 describe("where Order PO appears", () => {
   const desktop = code("src/pages/ServiceCases.tsx");
@@ -163,7 +140,6 @@ describe("where Order PO appears", () => {
     expect(block).toContain('label: "PO"');
     expect(block).toContain("filterable: true");
     expect(block).toContain("assrMergedPoText(r)");
-    // the list no longer carries the two separate PO columns
     expect(desktop).not.toContain('key: "order_pos"');
     expect(desktop).not.toContain('key: "po_no"');
   });

@@ -49,10 +49,6 @@ const ICON = { size: 15, strokeWidth: 1.75 } as const;
  *  refusal is real), it just cannot offer the one-press continue. */
 export type SoVersionConflict = { serverVersion: number | null };
 
-/** The error codes that mean "your CAS baseline is behind", each of which the
- *  backend answers with a `currentVersion`. `so_version_required` and
- *  `so_version_invalid` are the same dead end reached with a missing or
- *  unparseable token rather than a stale one. */
 const VERSION_CONFLICT_CODES = new Set([
   'so_version_conflict',
   'so_version_required',

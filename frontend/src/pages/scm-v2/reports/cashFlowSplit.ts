@@ -56,7 +56,6 @@ export function splitLines(merged: StatementLine[], months: StatementColumn[]): 
       const cell = l.cells[m.key];
       const settle = splitKey(m.key, 'S');
       if (cell?.sd) {
-        /* A nil share has no figure: the cell stays blank, as his workbook leaves it. */
         if (cell.sd.settlementSen !== 0) cells[settle] = { amountSen: cell.sd.settlementSen, pct: null };
         if (cell.sd.depositSen !== 0) cells[splitKey(m.key, 'D')] = { amountSen: cell.sd.depositSen, pct: null };
         continue;
@@ -72,7 +71,6 @@ export function splitLines(merged: StatementLine[], months: StatementColumn[]): 
   for (const l of merged) {
     if (l.kind === 'block') { out.push({ ...l, cells: {} }); continue; }
     out.push(place(l, true));
-    /* His "Net operation surplus": the subtotal split, then its two figures added up. */
     if (l.kind === 'net' && periods.some((m) => l.cells[m.key]?.sd)) {
       const whole = Object.fromEntries(Object.entries(l.cells).map(([k, c]) => [k, c && { amountSen: c.amountSen, pct: null }]));
       out.push(place({ id: `${l.id}:sum`, label: SPLIT_SUM_LABEL, kind: 'memo', depth: l.depth + 1, cells: whole }, false));

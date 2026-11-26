@@ -23,7 +23,6 @@ const GOOD = {
     {
       itemCode: 'Y103-(Q)',
       group: 'bedframe',
-      // spec facts are the PROCEED gate's business, not this gate's
     },
   ],
 };
@@ -128,7 +127,6 @@ describe('collectSoConfirmProblems', () => {
       venueId: null,
       lines: [
         { itemCode: '', group: 'others' },
-        // spec-incomplete, and deliberately NOT a problem here
         { itemCode: 'Y103-(Q)', group: 'bedframe' },
       ],
     });
@@ -151,10 +149,6 @@ describe('collectSoConfirmProblems', () => {
   });
 });
 
-/* ── IO wrapper: loads the header + non-cancelled lines + catalog membership,
-   scoped to the SO's OWN company. Mock supabase in the house style.
-   `broken` names tables whose read answers with a PostgREST error — resolved,
-   not thrown, exactly as supabase-js reports a failure. */
 type Row = Record<string, unknown> & { _table: string };
 const makeSb = (rows: Row[], broken: string[] = []) => ({
   from(table: string) {
@@ -193,7 +187,6 @@ describe('soConfirmProblemsForDoc', () => {
       item_code: 'CANCELLED-1', item_group: 'bedframe', variants: null,
       description: null, line_no: 2, cancelled: true,
     },
-    // FOREIGN-1 exists ONLY in the other company's catalog.
     { _table: 'mfg_products', code: 'FOREIGN-1', company_id: 2 },
   ];
 
@@ -212,16 +205,6 @@ describe('soConfirmProblemsForDoc', () => {
     expect(await soConfirmProblemsForDoc(makeSb(withOwn), 'HC-SO-2607-013', 'HOUZS')).toEqual([]);
   });
 
-  /* ── A GATE THAT COULD NOT LOOK DOES NOT SAY "ALL CLEAR" ─────────────────
-     An EMPTY problem list is what the caller spends as permission to confirm
-     the draft and enqueue it to AutoCount (mfg-sales-orders.ts, the
-     DRAFT→CONFIRMED transition: `if (confirmProblems.length > 0) return 422`).
-
-     The lines read was the dangerous one: `items ?? []` turned a failed query
-     into an order with NO lines, every per-line rule then had nothing to object
-     to, and the gate returned []. These tests make each read REJECT and assert
-     the gate returns a PROBLEM. If the error binding is dropped again they
-     fail — the lines case with a bare [], which is the bug itself. */
   const clean: Row[] = [
     {
       _table: 'mfg_sales_orders', doc_no: 'HC-SO-2607-013',
@@ -258,8 +241,6 @@ describe('soConfirmProblemsForDoc', () => {
 
   it('an unreadable HEADER read refuses, and says so rather than blaming the salesperson', async () => {
     const problems = await soConfirmProblemsForDoc(makeSb(clean, ['mfg_sales_orders']), 'HC-SO-2607-013', 'HOUZS');
-    // It always refused (an empty header reads as "no salesperson"); what
-    // changed is that it now names what actually happened.
     expect(codes(problems)).toEqual(['so_confirm_check_failed']);
     expect(codes(problems)).not.toContain('salesperson_required');
   });

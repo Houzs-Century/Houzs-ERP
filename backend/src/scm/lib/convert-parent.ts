@@ -68,7 +68,6 @@ export const sourceGrnIdsForPi = (sb: Sb, piId: string): Promise<string[]> =>
    a parent", not a second one that can disagree with it.
    -------------------------------------------------------------------------- */
 
-/** The conversions whose parent can be re-read from the child's own lines. */
 const RERESOLVE: Record<string, { parents: (sb: Sb, id: string) => Promise<string[]>; table: 'purchase_orders' | 'grns' }> = {
   po_to_gr: { parents: sourcePoIdsForGrn, table: 'purchase_orders' },
   gr_to_pi: { parents: sourceGrnIdsForPi, table: 'grns' },

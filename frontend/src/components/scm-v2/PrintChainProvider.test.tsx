@@ -64,7 +64,6 @@ describe("printing a chain document does not leave the page", () => {
   test("the dialog is headed by the document PICKED, not the row it came from", async () => {
     mount();
     await userEvent.click(screen.getByText("trigger"));
-    // TRANSFER_DOC's words, and the related document's own number.
     expect(await screen.findByText("Delivery Order")).toBeTruthy();
     expect(screen.getByText("HC-DO-2608-003")).toBeTruthy();
   });
@@ -99,15 +98,11 @@ describe("Print now renders the PDF", () => {
     await userEvent.click(await screen.findByText("View full PDF"));
     await waitFor(() => expect(renderPrintBundle).toHaveBeenCalled());
     expect(renderPrintBundle.mock.calls.at(-1)![2]).toBe("preview");
-    // A preview leaves the dialog open — the operator looked, now he prints.
     await userEvent.click(screen.getByText("Download PDF"));
     await waitFor(() => expect(renderPrintBundle.mock.calls.length).toBe(2));
     expect(renderPrintBundle.mock.calls.at(-1)![2]).toBe("save");
   });
 
-  /* A dead click is the "failure that reaches nobody" shape this repo keeps
-     paying for. Print now clicked while the card still says Loading must WAIT
-     for the document, not quietly do nothing. */
   test("Print now clicked before the document has loaded still prints it", async () => {
     let release: (v: unknown) => void = () => {};
     fetchPrintBundle.mockReturnValue(new Promise((res) => { release = res; }));
@@ -128,7 +123,6 @@ describe("a failure reaches the operator", () => {
     await userEvent.click(screen.getByText("trigger"));
     await waitFor(() => expect(notify).toHaveBeenCalled());
     expect(notify.mock.calls[0]![0]).toMatchObject({ tone: "error", body: "Delivery order not found." });
-    // No dialog left open over nothing.
     expect(screen.queryByText("Print preview")).toBeNull();
   });
 
@@ -144,17 +138,12 @@ describe("a failure reaches the operator", () => {
 
 describe("the hook refuses to be used outside the provider", () => {
   test("it throws rather than silently doing nothing", () => {
-    /* A context default of `() => {}` would make every right-click Print a dead
-       entry on any page that forgot the provider, with no signal at all. */
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(() => render(<Harness />)).toThrow(/PrintChainProvider/);
     spy.mockRestore();
   });
 });
 
-/* A right-click print that hit a chunk the deploy deleted: chunkActionRecovery
-   reloads the tab and stores WHAT was being printed. The list must reopen that
-   document's preview on the load that follows, once, on the same URL only. */
 describe("a print interrupted by a stale-build reload reopens on the next load", () => {
   const RESUME_KEY = "chunk-print-resume";
   const SO_TARGET: PrintTarget = { doc: "so", docNo: "HC-SO-012016", key: "HC-SO-012016" };

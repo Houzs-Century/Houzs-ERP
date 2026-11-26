@@ -14,7 +14,6 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 const NOW = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 7);
 
-/* ── What the server answers ────────────────────────────────────────────── */
 const official = (over: Record<string, unknown>) => ({
   id: 5, or_number: 'HCDraftOR-2611-002', status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p2', doc_no: 'HC-SO-013400',
   customer_name: 'TAN MEI LING', method: 'transfer', amount_sen: 150_000, paid_at: `${NOW}-04`, channel_account_code: null,
@@ -64,7 +63,6 @@ const RECEIPTS = { month: NOW, receipts: [
     submittedAt: 'x', checkedAt: 'y', approvedAt: null, bills: [{ billId: 'b1', no: 'HC-ODB-2611-001', amountSen: 30_000 }] },
   { kind: 'CUSTOMER', id: 'p1', number: 'HC-SO-013400', date: `${NOW}-04`, payer: 'Customer deposit', moneyAccount: 'transfer', totalSen: 150_000, status: 'RECEIVED' },
 ] };
-/* The draft's own read, for Edit (GET /other-debtors/receipts/:id). */
 const DR1_DETAIL = {
   receipt: { id: 'dr1', receipt_number: 'HC-ODR-2611-001', debtor_id: 'd1', receipt_date: `${NOW}-06`, bank_account_code: '310-0010', total_sen: 20_000, status: 'DRAFT',
     submitted_at: null, submitted_by: null, checked_at: null, checked_by: null, approved_at: null, approved_by: null, posted_at: null, notes: null },
@@ -90,8 +88,6 @@ const DEBTOR_D1 = {
   ],
   receipts: [],
 };
-/* ONE stable object per read, as react-query hands back — a fresh literal per
-   render would re-derive the rows and re-report them forever. */
 const ACCOUNTS = { data: { accounts: [
   { account_code: '310-0010', account_name: 'MAYBANK', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true },
   { account_code: '700-0000', account_name: 'Other Income', account_type: 'INCOME', parent_code: null, is_active: true, acc_money: false },
@@ -122,7 +118,6 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
 const pdfMock = vi.fn(async (_list: unknown, _opts: unknown) => {});
 vi.mock('../../vendor/scm/lib/receipt-pdf', () => ({ generateReceiptsPdf: (l: unknown, o: unknown) => pdfMock(l, o) }));
 
-/* Who is looking: by default everything; a test narrows it. */
 const PERMS = { value: new Set<string>(['*']) };
 vi.mock('../../auth/AuthContext', () => ({
   useAuth: () => ({
@@ -160,24 +155,20 @@ describe('one list: the official receipts beside the money-in list', () => {
     await waitFor(() => expect(screen.getByText('HCDraftOR-2611-002', { selector: 'a' })).toBeTruthy());
     expect(receiptsAsked[0]).toBe(NOW);
     expect(calls).toContain(`GET /accounting/receipts?month=${NOW}`);
-    /* 4 official + 1 sundry + 2 debtor in All; the customer payment only in its own segment. */
     expect(segment(/^All/).textContent).toBe('All7');
     expect(segment(/^Official receipts/).textContent).toBe('Official receipts4');
     expect(segment(/^Sundry income/).textContent).toBe('Sundry income1');
     expect(segment(/^Other debtor/).textContent).toBe('Other debtor2');
     expect(segment(/^Customer payments/).textContent).toBe('Customer payments1');
     expect(screen.queryByText('HC-SO-013400', { selector: 'a' })?.closest('tr')?.textContent ?? '').not.toContain('Customer deposit');
-    /* Each kind says what it was for and how it came. */
     expect(within(row('HC-RCT-2611-001')).getByText('车险赔偿')).toBeTruthy();
     expect(within(row('HC-RCT-2611-001')).getByText('MAYBANK')).toBeTruthy();
     expect(within(row('HC-ODR-2611-001')).getByText('HC-ODB-2611-001').getAttribute('href')).toBe('/scm/ar-invoices/bills/b1');
     expect(within(row('HCDraftOR-2611-002')).getByText('HC-SO-013400').getAttribute('href')).toBe('/scm/sales-orders/HC-SO-013400');
     expect(row('HCDraftOR-2611-002').textContent).toContain('Bank transfer / DuitNow');
-    /* Numbers open their own pages. */
     expect(screen.getByText('HCDraftOR-2611-002', { selector: 'a' }).getAttribute('href')).toBe('/scm/receipts/official/5');
     expect(screen.getByText('HC-RCT-2611-001', { selector: 'a' }).getAttribute('href')).toBe('/scm/receipts/sundry/g1');
     expect(screen.getByText('HC-ODR-2611-001', { selector: 'a' }).getAttribute('href')).toBe('/scm/receipts/debtor/dr1');
-    /* A cancelled receipt: struck, its amount a dash, its reason under its tag, not counted. */
     const cancelled = row('HCHOR-2611-007');
     expect(screen.getByText('HCHOR-2611-007', { selector: 'a' }).className).toContain('dt-cancel-strike');
     expect(cancelled.textContent).toContain('Payment on HC-SO-013398 deleted');
@@ -250,7 +241,6 @@ describe('the steps', () => {
     expect(bar.textContent).toContain('3 ticked');
     expect(bar.textContent).toContain('RM 2,200.00');
     expect(bar.textContent).toContain('Confirming turns each draft formal and gives it its official number, in payment-date order.');
-    /* Print goes through the print dialog, the A5 paper named (batch 5 step 10). */
     fireEvent.click(within(bar).getByRole('button', { name: /Print 3/ }));
     const preview = screen.getByRole('dialog', { name: 'Print preview' });
     expect(preview.textContent).toContain('Print 3 receipts');
@@ -260,7 +250,6 @@ describe('the steps', () => {
     expect(pdfMock.mock.calls[0]![1]).toEqual({ action: 'print' });
     failFormaliseOn = '5';
     fireEvent.click(within(bar).getByRole('button', { name: 'Confirm money · 2' }));
-    /* The 2nd paid first, so it is numbered first; the 4th refused stops the run. */
     await waitFor(() => expect(calls.filter((c) => c.endsWith('/formalise'))).toEqual(['POST /accounting/receipts/6/formalise', 'POST /accounting/receipts/5/formalise']));
     await waitFor(() => expect(screen.getByText(/has no series letter yet/)).toBeTruthy());
     expect(screen.getByText('HCDraftOR-2611-001 is formal · HCTOR-2611-006')).toBeTruthy();
@@ -292,8 +281,6 @@ describe('the steps', () => {
     expect(within(screen.getByRole('menu', { name: 'HC-ODR-2611-002 menu' })).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open', 'Print', 'Reject…']);
   });
 
-  /* Batch 5 step 6 (c5): a Draft or a Prepared one changes in place — Debtor
-     maintenance's form, which keeps the stage and posts nothing. */
   test("an other debtor's Draft changes in place from its ⋯ — Edit keeps its stage; a checked one has no Edit", async () => {
     draw('?kind=debtor');
     await waitFor(() => expect(screen.getByText('HC-ODR-2611-001', { selector: 'a' })).toBeTruthy());

@@ -33,8 +33,6 @@ export function RebankReceiptsDialog({ targetName, defaultFrom, today, onClose }
   const q = useRebankCandidates(range);
   const move = useRebankMove();
   const [busy, setBusy] = useState(false);
-  /* The list as it stood when Move was pressed: the re-read after it comes back
-     without the moved ones, and each one's outcome must stay on screen. */
   const [moving, setMoving] = useState<RebankRow[] | null>(null);
 
   const rows: RebankRow[] = moving ?? q.data?.rows ?? [];

@@ -11,9 +11,6 @@ import { DataTable, type Column } from "./DataTable";
 
 type Row = { id: number; name: string; date: string | null };
 
-// Mirrors the board's two date-grouping columns: by DAY (amended_delivery_date)
-// and by MONTH (delivery_month), each formatted in the app's YYYY/MM(/DD) order,
-// null -> "No date" (which sorts last: "N" > a digit).
 const dayValue = (d: string | null) => (d ? d.replaceAll("-", "/") : "No date");
 const monthValue = (d: string | null) => (d ? d.slice(0, 7).replace("-", "/") : "No date");
 
@@ -27,7 +24,7 @@ const rows: Row[] = [
   { id: 1, name: "a", date: "2026-10-15" },
   { id: 2, name: "b", date: "2026-10-20" },
   { id: 3, name: "c", date: "2026-11-01" },
-  { id: 4, name: "d", date: null }, // not yet delivered -> trailing "No date"
+  { id: 4, name: "d", date: null },
 ];
 
 const groupHeaders = () =>
@@ -55,9 +52,8 @@ afterEach(cleanup);
 describe("DataTable user-controlled grouping + fold-all", () => {
   it("defaults to UNGROUPED when no column has been picked", () => {
     render(<DataTable tableId="g-off" groupBanner columns={columns} rows={rows} getRowKey={(r) => r.id} />);
-    expect(groupHeaders()).toEqual([]); // no group rows
-    expect(dataRowCount()).toBe(4); // flat
-    // The empty banner invites grouping instead of forcing it.
+    expect(groupHeaders()).toEqual([]);
+    expect(dataRowCount()).toBe(4);
     expect(screen.getByText(/Drag a column header here to group/)).toBeTruthy();
   });
 
@@ -87,7 +83,7 @@ describe("DataTable user-controlled grouping + fold-all", () => {
     render(<DataTable tableId="g-one" groupBanner columns={columns} rows={rows} getRowKey={(r) => r.id} />);
     expect(dataRowCount()).toBe(4);
     fireEvent.click(screen.getByText("Delivery Month: 2026/10").closest("tr")!);
-    expect(dataRowCount()).toBe(2); // only Oct's 2 rows hidden
+    expect(dataRowCount()).toBe(2);
   });
 
   it("collapse-all folds every group to its header; expand-all opens them", () => {
@@ -96,8 +92,8 @@ describe("DataTable user-controlled grouping + fold-all", () => {
     expect(dataRowCount()).toBe(4);
 
     fireEvent.click(screen.getByRole("button", { name: /Collapse all/ }));
-    expect(dataRowCount()).toBe(0); // every bucket folded to its header
-    expect(groupHeaders().length).toBe(3); // the three month headers remain
+    expect(dataRowCount()).toBe(0);
+    expect(groupHeaders().length).toBe(3);
 
     fireEvent.click(screen.getByRole("button", { name: /Expand all/ }));
     expect(dataRowCount()).toBe(4);

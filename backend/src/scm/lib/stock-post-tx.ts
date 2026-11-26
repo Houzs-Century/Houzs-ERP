@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// scm/lib/stock-post-tx — a stock write's core in ONE database transaction.
-//
-// Posting a GRN (status -> POSTED, stock IN, PO received recount, landed-cost
-// allocation) and shipping a DO (status -> LOADED, stock OUT) used to be a row of
-// separate PostgREST calls, each committed on its own. A failure part-way left a
-// POSTED GRN with no stock (HC-GRN-2609-118) or a shipped DO with no OUT
-// (HC-DO-2610-319). This runs the core over one postgres.js transaction, the
-// runScmPgCommand pattern (pgTransactionSupabase over sql.begin): it commits when
-// the work answers ok and rolls everything back when the work answers !ok or a
-// statement throws. The FIFO trigger fires on the movement insert, so it runs in
-// the same transaction.
-//
-// THE SWITCHES (wrangler.toml [vars]): GRN_POST_MODE, DO_SHIP_MODE,
-// DELIVERY_RETURN_MODE (lib/delivery-return-stock.ts), PURCHASE_RETURN_MODE
-// (lib/purchase-return-stock.ts)
-//   "atomic"   the default; absent or any other value means this too
-//   "two-step" the old path, each write committed on its own. Kept for one
-//              release as the rollback switch; remove once atomic has run clean.
-// ----------------------------------------------------------------------------
 
 import type { Sql } from 'postgres';
 import { getSql, resolveDatabaseUrl } from '../../db/pg';
@@ -67,8 +47,6 @@ export function stockTxOver(sql: Sql): StockTx {
       return await sql.begin(async (tx) => {
         const t = tx as unknown as Sql;
         const out = await work(pgTransactionSupabase(t));
-        /* The last statement's RELEASE must be answered before COMMIT: a COMMIT
-           on an aborted transaction rolls back and still reports success. */
         await settleScmStatements(t);
         if (!out.ok) throw new Rollback(out);
         return out;
@@ -97,7 +75,6 @@ export function stockTxFor(env: EnvLike, key: StockPostSwitch): StockTx | null {
     if (!url) {
       return { ok: false, reason: STOCK_TX_UNAVAILABLE, status: 503, rolledBack: true, detail: 'the PostgreSQL transaction service is not configured' };
     }
-    /* One client for the whole request: db/pg.ts builds one socket per request. */
     over ??= stockTxOver(getSql(url));
     return over(work);
   };

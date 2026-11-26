@@ -1,8 +1,3 @@
-/* The four consignment list drawers added alongside the CO / CN ones. Rendered
-   with a fake row and a stubbed detail query, because production holds no
-   returns or purchase-consignment documents to click on. Each case checks the
-   header, the party, one line and the footer action so a renamed field or a
-   wrong hook shows up here rather than on a blank drawer. */
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PoHeaderRow } from '../../vendor/scm/lib/suppliers-queries';

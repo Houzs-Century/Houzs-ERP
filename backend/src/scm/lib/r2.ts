@@ -44,15 +44,6 @@ export interface PresignArgs {
   contentType?: string;
 }
 
-// Cloudflare R2 supports presigned URLs only via the S3-compatible API,
-// not the native Workers binding. Sign manually with Web Crypto to avoid
-// bundling the AWS SDK.
-//
-// 2026-07-04 — the payment-slip flow NO LONGER uses presign: it was converted
-// to a Worker-proxy upload + binding-served reads (routes/slips.ts,
-// mfg-sales-orders.ts slip-url routes) because the R2 S3 creds were never
-// provisioned. presign() remains ONLY for the SO-item-photo signed GET URLs
-// below (soItemPhotoBindings), which still need those creds.
 export async function presign(args: PresignArgs): Promise<string> {
   const { bucket, accessKeyId, secretAccessKey, endpoint, key, method, expiresInSeconds } = args;
   const url = new URL(`${endpoint}/${bucket}/${encodeURI(key)}`);
@@ -123,15 +114,6 @@ export async function presign(args: PresignArgs): Promise<string> {
   return url.toString();
 }
 
-// ── Task #92 — SO item photo signed-URL helpers ──────────────────────
-//
-// The slip flow uses presigned PUTs (browser → R2 direct upload). The
-// SO item photo flow goes the other direction: upload still proxies
-// through the Worker (multipart parse), but READS hand out short-lived
-// signed GET URLs so thumbnail rendering doesn't pay an N² Worker cost.
-//
-// We sign with the account-wide R2 access key (R2_ACCESS_KEY_ID +
-// R2_SECRET_ACCESS_KEY) scoped to the SO photo bucket by name.
 
 export interface SoItemPhotoBindings {
   bucketName: string;
@@ -141,8 +123,6 @@ export interface SoItemPhotoBindings {
 }
 
 export interface SoItemPhotoEnv {
-  // Optional so the route's c.env (Houzs Env) is assignable; soItemPhotoBindings
-  // below guards each (throws if unset) for a clear runtime error.
   SO_ITEM_PHOTOS_BUCKET_NAME?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;
@@ -164,16 +144,11 @@ export function soItemPhotoBindings(env: SoItemPhotoEnv): SoItemPhotoBindings {
   };
 }
 
-// Default TTL for SO item photo signed URLs. 1 hour matches the
-// browser cache-control on the legacy proxy and stays well under R2's
-// 7-day SigV4 maximum. Long enough that a coordinator browsing an SO
-// won't have URLs expire mid-session; short enough that a leaked URL
-// rotates quickly.
 export const SO_PHOTO_URL_TTL_SECONDS = 60 * 60;
 
 export interface SignedPhotoUrl {
   signedUrl: string;
-  expiresAt: string; // ISO-8601, when the URL stops working
+  expiresAt: string;
 }
 
 export async function signSoItemPhotoUrl(
@@ -206,7 +181,3 @@ export async function r2Delete(bucket: R2Bucket, key: string): Promise<void> {
   await bucket.delete(key);
 }
 
-// (r2HeadViaS3 — the S3-API HEAD used to verify browser presigned PUTs —
-// was deleted 2026-07-04 with the proxy-upload conversion. Both /upload and
-// /confirm now go through the SLIPS binding, so dev Miniflare and prod hit
-// the same backend by construction.)

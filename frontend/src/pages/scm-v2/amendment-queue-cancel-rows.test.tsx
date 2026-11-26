@@ -41,7 +41,6 @@ const rejectSo = vi.fn(async (_v: unknown) => ({ request: {} }));
 const withdrawSo = vi.fn(async (_v: unknown) => ({ request: {} }));
 const cancelSo = vi.fn(async (_v: unknown) => ({}));
 const confirm = vi.fn(async (_o: unknown) => true);
-/* The approve dialog: the approver's optional remark, '' when left blank. */
 const approveDialog = vi.fn(async (_o: unknown): Promise<string | null> => '');
 const refreshBadges = vi.fn();
 
@@ -102,7 +101,6 @@ describe('desktop SO Amendment queue', () => {
     expect(row.textContent).toContain('Amy');
     expect(row.textContent).toContain('Customer no longer wants it');
     expect(row.textContent).toMatch(/level-1 approval/);
-    // The amendment rows are untouched by the merge.
     expect(rowFor(container, 'HC-SO-000001').textContent).toContain('Purchaser');
   });
 
@@ -118,7 +116,6 @@ describe('desktop SO Amendment queue', () => {
     const { container } = desktop();
     const row = rowFor(container, 'HC-SO-000002');
     expect(within(row).queryByText(/Approve/)).toBeNull();
-    // An approver may still refuse it or pull it back.
     expect(within(row).getByText('Reject')).toBeTruthy();
   });
 

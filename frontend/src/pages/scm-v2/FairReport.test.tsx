@@ -1,12 +1,3 @@
-/* The Sales report (fair report) in the owner's Claude Design (batch 6 step 14):
-   the stage tabs a reader may open (a Sales Director the Sales Orders only),
-   the tiles from the stage's own summary, an SO number opening the order's
-   quick view and a double-click the order itself; the P&L without a fair
-   picked — every fair with orders in the period, a click opening its own P&L
-   with All fairs to go back, the overhead's card spelled out; a fair with no
-   order in the dates offering its own dates; Excel drawing the stage as shown;
-   and an address from before the shared range opening on the range it meant.
-   The server half is backend/tests/fairPnl.route.test.ts. */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -193,10 +184,8 @@ describe('the Sales report', () => {
     expect(within(kl).getByText('2026/07/03 – 2026/07/06')).toBeTruthy();
     expect(within(kl).getByText('330.00')).toBeTruthy();
     expect(within(kl).getByText('28.0%')).toBeTruthy();
-    /* A fair with no card shows a dash for its overhead, and says so below. */
     expect(screen.getByText(/No cost-rate card for this fair’s brand, so the overhead is a dash and net profit equals gross profit: Penang Fair\./)).toBeTruthy();
     expect(screen.getByText(/1 order in the period carries no fair \(300\.00\)/)).toBeTruthy();
-    /* No column groups on the every-fair view. */
     expect(screen.queryByRole('button', { name: /Three-way cost/ })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'KL Fair' }));
@@ -271,7 +260,6 @@ describe('how the dates pick the rows (owner 2026-11-03: both)', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Delivery Orders' }));
     expect(asked.calls.at(-1)).toMatchObject({ stage: 'do', filters: { dateBasis: 'stage', dateFrom: '2026-07-01', dateTo: '2026-07-31' } });
     expect(screen.getByText(/^Deliveries dated in the period — the day delivered, else the DO’s own date/)).toBeTruthy();
-    /* Back to the default: the address loses it. */
     fireEvent.click(within(screen.getByRole('group', { name: 'Dates by' })).getByRole('button', { name: 'SO date' }));
     expect(params().has('dates')).toBe(false);
     expect(screen.getByText(/^The same orders once delivered/)).toBeTruthy();

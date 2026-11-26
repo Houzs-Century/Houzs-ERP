@@ -60,9 +60,6 @@ export type SoEditLeaseRefusal = 'held' | 'expired' | 'missing';
  * stricter answer and the only safe reading of "we do not know whose this is".
  */
 export function soEditLeaseTakeoverAllowed(
-  /* `bigint` reaches the driver as a STRING, so both shapes are accepted here
-     rather than cast at each call site - a cast is where one of them gets
-     forgotten and the takeover silently stops working. */
   holderUserId: number | string | null | undefined,
   callerUserId: number | string | null | undefined,
 ): boolean {
@@ -91,8 +88,6 @@ export const soCallerUserId = (c: { get: (k: string) => any }): number | null =>
 
 export const soEditLeaseRefusal = (reason: SoEditLeaseRefusal) => ({
   error: 'so_edit_lease_conflict',
-  /* The CODE stays one string. Screens, tests and the mobile surface all branch
-     on `error`, and splitting it would be a wire change for a message fix. */
   reason,
   message: MESSAGE[reason],
 } as const);

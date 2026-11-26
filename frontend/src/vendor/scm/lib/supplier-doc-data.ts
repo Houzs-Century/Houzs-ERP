@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// supplier-doc-data — print-time lookups for SUPPLIER-FACING purchasing docs
-// (PO / GRN / PI / PR PDFs).
-//
-// Owner's rule (Commander): the supplier must see THEIR codes (they can only
-// act on their own), and our internal codes stay visible too — BOTH on every
-// purchasing document. Fabric/colour must show the SUPPLIER's colour code with
-// our internal code alongside.
-//
-// Data sources (REUSED, no new backend routes):
-//   • supplier_material_bindings — via GET /suppliers/:id (the SupplierDetail
-//     page endpoint, returns { supplier, bindings }) → item_code →
-//     supplier_sku for material_kind='mfg_product'. Main binding wins.
-//   • fabric_trackings — via GET /fabric-tracking (the FabricTracking page
-//     endpoint) → fabric_code (internal) → supplier_code.
-//
-// All loaders are DEFENSIVE: any fetch failure returns an empty map so PDF
-// generation never dies on a lookup hiccup — the doc just falls back to '—' /
-// our internal codes.
-// ----------------------------------------------------------------------------
 
 import { buildVariantSummary, withFabricSupplierCode } from '@2990s/shared';
 import { authedFetch } from './authed-fetch';
@@ -51,9 +31,6 @@ export type SupplierRecord = {
   payment_terms?: string | null;
 };
 
-/* The variant keys that can carry an INTERNAL fabric/colour code. SO-keyed
-   lines use fabricCode/colorCode; GRN/PI/PR editors store fabricColor (see
-   buildVariantSummary in packages/shared). */
 const FABRIC_VARIANT_KEYS = ['fabricCode', 'colorCode', 'fabricColor'] as const;
 
 /* ── Shared fabric catalog cache (PERF, owner "Print PDF very slow" 2026-07-15) ─
@@ -92,7 +69,7 @@ async function loadFabricCatalog(): Promise<FabricCatalogRow[]> {
       fabricCatalogCache = { at: Date.now(), rows };
       return rows;
     } finally {
-      fabricCatalogInflight = null; // failures don't poison the cache
+      fabricCatalogInflight = null;
     }
   })();
   return fabricCatalogInflight;
@@ -115,7 +92,7 @@ export async function loadFabricSupplierMap(fabricCodes: string[]): Promise<Map<
     }
     return map;
   } catch {
-    return new Map(); // lookup failure must never block the PDF
+    return new Map();
   }
 }
 
@@ -138,7 +115,7 @@ export async function loadFabricDescriptionMap(fabricCodes: string[]): Promise<M
     }
     return map;
   } catch {
-    return new Map(); // lookup failure must never block the PDF
+    return new Map();
   }
 }
 
@@ -171,7 +148,6 @@ export function skuMapFromBindings(
     .filter((b) => b.material_kind === 'mfg_product'
       && (!wanted || wanted.has(b.item_code))
       && (b.supplier_sku ?? '').trim() !== '')
-    // Main binding first; first writer wins below.
     .sort((a, b) => Number(b.is_main_supplier) - Number(a.is_main_supplier));
   const map = new Map<string, string>();
   for (const b of candidates) {
@@ -241,8 +217,6 @@ export async function loadSupplierDocData(
   fabricDescMap: Map<string, string>;
   supplier: SupplierRecord | null;
 }> {
-  // Binding lookup only for lines that never snapshotted a supplier_sku
-  // (PI/PR lines have no supplier_sku column at all → all of them).
   const missing = items
     .filter((it) => !(it.supplier_sku ?? '').trim())
     .map((it) => it.item_code);
@@ -282,8 +256,6 @@ export function docVariantLine(
   item: { item_group?: string | null; variants?: Record<string, unknown> | null },
   fabricExtMap: Map<string, string>,
   fabricDescMap: Map<string, string>,
-  /* labelled — prefix the fabric segment with "Fabric: " on supplier-facing
-     docs (PO / GRN / PI / PR). Default off → customer docs unchanged. */
   opts?: { labelled?: boolean },
 ): string {
   const v = item.variants;
@@ -294,8 +266,8 @@ export function docVariantLine(
     const raw = v[key];
     if (typeof raw === 'string' && raw.trim()) {
       const code = raw.trim();
-      const ext = fabricExtMap.get(code);   // supplier external colour code
-      const desc = fabricDescMap.get(code);  // our fabric description
+      const ext = fabricExtMap.get(code);
+      const desc = fabricDescMap.get(code);
       if (ext || desc) {
         if (mapped === v) mapped = { ...v };
         // Owner format ruling 2026-07-24: customer PDFs print the SAME final
@@ -311,7 +283,6 @@ export function docVariantLine(
           ? desc.slice(code.length).trim()
           : desc;
         mapped[key] = `${code}${cleanDesc ? ` ${cleanDesc}` : ''}`;
-        // The fresh lookup wins over a stamp saved on the line (2990-0067).
         if (ext && !stamped) { mapped = withFabricSupplierCode(mapped, ext); stamped = true; }
       }
     }

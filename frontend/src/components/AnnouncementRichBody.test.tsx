@@ -58,7 +58,7 @@ describe("AnnouncementRichBody", () => {
     expect(img.getAttribute("data-att")).toBe(KEY);
     await waitFor(() => expect(img.getAttribute("src")).toBe("blob:served"));
     expect(fetchBlobUrl).toHaveBeenCalledWith(`/api/announcements/ann-1/attachments/${KEY}`);
-    expect(fetchBlobUrl).toHaveBeenCalledTimes(1); // no .thumb probe
+    expect(fetchBlobUrl).toHaveBeenCalledTimes(1);
   });
 
   test("imageSrc (composer preview) wins over the route; no annId = no fetch", async () => {

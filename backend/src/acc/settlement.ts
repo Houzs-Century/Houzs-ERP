@@ -56,9 +56,7 @@ export type AcquirerRow = {
   fee_method: string | null;
   date_tolerance_days: number;
   column_map: Record<string, string> | null;
-  /** Row label on which the statement states what it is actually paying. */
   total_net_label?: string | null;
-  /** For a statement whose fee is stated once, in its own summary table. */
   summary_totals?: { rowLabel: string; fee?: string; net?: string } | null;
   is_active: boolean;
   /** The OTHER names the sales team keys this merchant as on a payment —
@@ -110,10 +108,6 @@ export async function expenseLeafAccounts(
 
 const isoDay = (v: unknown): string => String(v ?? '').slice(0, 10);
 
-/** The window read and the by-reference read overlap by design — a payment
-    inside the window that also carries a statement reference arrives in both.
-    One payment must reach the matcher once, or it would be offered twice and
-    could be double-claimed. */
 const dedupeById = (rows: Array<Record<string, any>>): Array<Record<string, any>> => {
   const seen = new Set<string>();
   const out: Array<Record<string, any>> = [];
@@ -261,9 +255,6 @@ export async function loadPaymentCandidates(
   const belongs = (r: Record<string, any>): boolean => (opts.online
     ? String(r.method) === 'transfer'
     : couldBeAcquirers(String(r.method), r.merchant_provider as string | null, names));
-  /* Deduplicated and blank-free: a statement of 300 lines shares a handful of
-     references, and an empty one would ask the database for every payment that
-     has no approval code at all. */
   const wanted = opts.online ? [] : [...new Set(refs.map((r) => String(r ?? '').trim()).filter(Boolean))];
 
   /* The window is read WHOLE and filtered here, not by `.eq('merchant_provider',
@@ -275,16 +266,11 @@ export async function loadPaymentCandidates(
      three months, so a single read stopped in late September and every October
      card payment was simply absent (owner 2026-10-21: 为什么看没有10月的
      payment). Every read below pages (paginateAll) or chunks (chunkIn). */
-  /* Run together; each failure is still reported, in the order it always was. */
   const [soAll, soByRef, siAll, siByRef, previous] = await Promise.all([
     paginateAll<Record<string, any>>((f, t) => sb
       .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
       .eq('company_id', companyId).gte('paid_at', lo).lte('paid_at', hi)
       .order('id').range(f, t)),
-    /* The same payments again, by reference, with no date bound. A read that
-       FAILS is a failure, not "no references matched" — a silently empty result
-       here would put the module back where it started, with the payment present
-       and the screen saying it is not. */
     wanted.length === 0 ? Promise.resolve({ data: [] as Array<Record<string, any>>, error: null }) : chunkIn<Record<string, any>>(wanted, (batch, f, t) => sb
       .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
       .eq('company_id', companyId).in('approval_code', batch)
@@ -297,7 +283,7 @@ export async function loadPaymentCandidates(
       .from('sales_invoice_payments').select(PAYMENT_COLUMNS_SI)
       .eq('company_id', companyId).in('approval_code', batch)
       .order('id').range(f, t)),
-    loadPreviousKeys(sb, companyId), // a payment the owner marked a previous record is nobody's candidate
+    loadPreviousKeys(sb, companyId),
   ]);
   if (!previous.ok) return previous;
   if (soAll.error) return { ok: false, reason: `SO payments: ${soAll.error.message}` };
@@ -337,18 +323,13 @@ export async function loadPaymentCandidates(
      never somebody else's. */
   const staffOfDoc = new Map<string, string>();
   const staffName = new Map<string, string>();
-  /* The invoices' names are read while the orders' are. */
   const siRead = siIds.length === 0 ? null : chunkIn<{ id: string; invoice_number: string | null; debtor_name: string | null }>(siIds, (batch, f, t) => sb
     .from('sales_invoices').select('id, invoice_number, debtor_name')
     .eq('company_id', companyId).in('id', batch).order('id').range(f, t));
   if (soDocs.length > 0) {
-    /* Chunked: a busy window names hundreds of orders, and one IN list of them
-       outgrows the request line before it outgrows the row cap. */
     const { data, error } = await chunkIn<{ doc_no: string; debtor_name: string | null; status?: string | null; salesperson_id?: string | null }>(soDocs, (batch, f, t) => sb
       .from('mfg_sales_orders').select('doc_no, debtor_name, status, salesperson_id') // debtor_name — docs/bugs/0655
       .eq('company_id', companyId).in('doc_no', batch).order('doc_no').range(f, t));
-    /* Failed is not "nameless": a blank customer column across the whole
-       screen reads as data, so the read fails like its siblings above. */
     if (error) return { ok: false, reason: `SO customers: ${error.message}` };
     for (const r of data) {
       if (r.debtor_name) customerOf.set(`SO:${r.doc_no}`, r.debtor_name);
@@ -399,8 +380,6 @@ export async function loadPaymentCandidates(
     payments.push({
       source: 'SIPAY',
       id: String(r.id),
-      /* The invoice NUMBER when it can be resolved — the id is a uuid, and a
-         uuid on screen is not a document reference to anybody. */
       docNo: customerOf.get(`SI#:${String(r.sales_invoice_id ?? '')}`) ?? String(r.sales_invoice_id ?? ''),
       paidOn: isoDay(r.paid_at),
       amountSen: Number(r.amount_sen ?? 0),
@@ -475,12 +454,9 @@ export async function clearOrphanBatch(
 
 export type FoundPayment = PaymentCandidate & {
   method: string;
-  /** The exact gross of the line — the system's own guess, ranked first. */
   possible: boolean;
 };
 
-/* What a merchant report can be explained by: card, instalment, and the
-   migration-era rows AutoCount carried with no method of their own. */
 export const CARD_METHODS = new Set(['merchant', 'installment', 'imported']);
 
 /* A DuitNow QR line (owner 2026-11-09: 这个hlbb merchant 的0000PP 是qr direct
@@ -489,15 +465,12 @@ export const CARD_METHODS = new Set(['merchant', 'installment', 'imported']);
 export const QR_CHANNEL = 'QR';
 const ONLINE_METHODS = new Set(['transfer']);
 
-/** Money typed as money ("2865", "2,865.00", "RM 2865") → sen; null when the
-    text is not a number. */
 const senOfText = (q: string): number | null => {
   const t = q.replace(/^rm\s*/i, '').replace(/[,\s]/g, '');
   if (!/^\d+(\.\d{1,2})?$/.test(t)) return null;
   return Math.round(Number(t) * 100);
 };
 
-/* The shape both payment tables answer the search with. */
 type CardPaymentRow = {
   id: string; so_doc_no?: string | null; sales_invoice_id?: string | null; paid_at: string | null;
   amount_sen: number | null; approval_code: string | null; method: string | null; merchant_provider: string | null;
@@ -524,9 +497,6 @@ export async function findPaymentsForRow(
   if (!settled.ok) return { ok: false, status: 'load_failed', reason: settled.reason };
   if (!previous.ok) return { ok: false, status: 'load_failed', reason: previous.reason };
 
-  /* EVERY payment of the kind, paged: `.limit(3000)` asked for more than
-     PostgREST's 1000-row ceiling, which answers with the newest 1000 and no
-     error — so an older sale could not be found by any search. */
   const soRes = await paginateAll<CardPaymentRow>((f, t) => sb
     .from('mfg_sales_order_payments').select(PAYMENT_COLUMNS_SO)
     .eq('company_id', companyId).in('method', methods)
@@ -550,17 +520,11 @@ export async function findPaymentsForRow(
     siRows = siRows.filter((r) => !held.keys.has(`SIPAY:${String(r.id)}`));
   }
 
-  /* The customer, off the document — read in chunks, because the name is one
-     of the things a person searches by. A read that fails is a refusal. */
   const nameOf = new Map<string, string>();
   const invoiceNoOf = new Map<string, string>();
-  /* The order's customer reference, which a person may search by too (owner
-     2026-09-25) — an invoice's through its so_doc_no. */
   const orderOfSi = new Map<string, string>();
   const refsOf = new Map<string, string[]>();
   const siIds = [...new Set(siRows.map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
-  /* chunkIn sizes each IN list by its bytes (200 uuids is ~7.8 KB of URL) and
-     pages each chunk. */
   const siDocs = await chunkIn<{ id: string; invoice_number: string | null; debtor_name: string | null; so_doc_no: string | null }>(siIds, (batch, f, t) => sb
     .from('sales_invoices').select('id, invoice_number, debtor_name, so_doc_no')
     .eq('company_id', companyId).in('id', batch).order('id').range(f, t));
@@ -612,9 +576,6 @@ export async function findPaymentsForRow(
     })),
   ];
 
-  /* The search: a document number, the order's reference, a customer's name, an
-     approval code, or an amount — whichever the person has in front of them.
-     Empty lists everything. */
   const needle = q.trim().toLowerCase();
   const sen = senOfText(q.trim());
   const hit = needle === ''
@@ -704,7 +665,6 @@ export async function linesAlreadyOnFile(
   return { ok: true, kept, alreadyOn };
 }
 
-/* Which payments a report line or a bank movement already took (acc/settled-keys). */
 export { loadSettledKeys, loadSettledKeysFor } from './settled-keys';
 
 /**
@@ -736,10 +696,6 @@ export async function postStatementCharge(
 
   const posted = await postJournal(sb, {
     companyId,
-    /* Dated by the statement, because the statement is the document that makes
-       the charge (§2.5: the document's own date, not today's). It is not dated
-       by a payout — the payout is a separate event this batch may not have had
-       yet, and the charge is real the moment the acquirer states it. */
     entryDate: isoDay(batch.period_to) || isoDay(new Date().toISOString()),
     sourceType: 'SETTLEADJ',
     sourceDocNo: `SETTLEADJ-${batchId}`,
@@ -766,7 +722,6 @@ export async function postStatementCharge(
 export type ConfirmInput = {
   companyId: number;
   rowId: number;
-  /** The payments this settlement line covers. One line may cover several. */
   payments: Array<{ source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null; amountSen: number }>;
   matchReason: 'ref' | 'amount+date' | 'manual';
   userName: string | null;
@@ -828,9 +783,6 @@ async function moveUntaggedBooking(
     .filter((e) => e.reversed !== true && chosen.some((p) => p.id === e.source_doc_no && p.source === e.source_type));
   if (live.length === 0) return nothing;
 
-  /* Every clearing account money could have been keyed onto: the generic one
-     and each acquirer's own. A debit on any of them but the merchant's own is
-     money to move. */
   const { data: acqRaw, error: acqErr } = await sb
     .from('acc_acquirers')
     .select('transit_account_code')
@@ -872,10 +824,8 @@ async function moveUntaggedBooking(
 type ChosenPayment = { source: 'SOPAY' | 'SIPAY'; id: string; docNo: string | null; amountSen: number; method: string; provider: string | null; sheet: string | null };
 type SettlementAcquirer = Extract<Awaited<ReturnType<typeof loadAcquirer>>, { ok: true }>['acquirer'];
 
-/** The payments a person picked, read back from the books (see the comment inside). */
 async function readChosenPayments(
   sb: any, companyId: number, asked: ConfirmInput['payments'],
-  /** 'online' for a QR line: only Online money explains it. */
   kind: 'card' | 'online' = 'card',
 ): Promise<{ ok: true; chosen: ChosenPayment[] } | { ok: false; status: string; reason: string }> {
   /* READ THE CHOSEN PAYMENTS BACK. The amount the screen sent is what the
@@ -913,9 +863,6 @@ async function readChosenPayments(
       });
     }
   }
-  /* Taken in by a bank movement on Bank Recon (acc/bank-card-settled): its money is
-     in the bank already, so no report line may clear it a second time. Refused
-     before any tag is stamped. */
   const banked = await loadBankCardKeys(sb, companyId, chosen);
   if (!banked.ok) return { ok: false, status: 'load_failed', reason: banked.reason };
   const taken = chosen.find((p) => banked.keys.has(`${p.source}:${p.id}`));
@@ -925,7 +872,6 @@ async function readChosenPayments(
   return { ok: true, chosen };
 }
 
-/** The merchant's name on each picked payment (see the comment inside). */
 async function stampMerchantTags(
   sb: any, companyId: number, acquirer: SettlementAcquirer, acquirerCode: string, chosen: ChosenPayment[], userName: string | null,
 ): Promise<{ ok: true } | { ok: false; status: string; reason: string }> {
@@ -940,10 +886,6 @@ async function stampMerchantTags(
      account. Done BEFORE anything posts, so a failure here stops a clean
      confirm instead of unwinding one; done twice it writes nothing. */
   const tag = acquirer.display_name;
-  /* Keyed under one of this merchant's OWN names — its display name, or a name
-     the sales team uses for it (Pinelabs is AEON's terminal, Public is PBB) —
-     is not the wrong bank: the payment keeps what the till typed, and its
-     order's history gets no "corrected" line for a correction nobody needed. */
   const ownNames = merchantNamesOf(acquirer);
   for (const p of chosen) {
     if (keyedAs(p.provider, ownNames)) continue;
@@ -974,17 +916,10 @@ async function stampMerchantTags(
   return { ok: true };
 }
 
-/** One line's fee entry (see the comment inside). Keyed SETTLE-<row id>, so a second press books once. */
 async function postRowFee(
   sb: any, companyId: number, acquirer: SettlementAcquirer,
   row: { id: number; acquirer_code: string; txn_date: string; ref: string | null; fee_sen: number }, chosen: ChosenPayment[],
 ) {
-  /* Confirming books the FEE and nothing else, dated by the transaction (§2.5).
-     No bank leg: the money is still with the acquirer on this day, and saying
-     otherwise in the ledger would be a lie the bank statement then contradicts.
-     A fee-free line — some instalment plans, most refunds — books nothing at
-     all, and that is right: nothing has been lost yet, the whole gross is still
-     owed, and the payout entry will clear it. */
   const feeSen = Number(row.fee_sen);
   const posted = feeSen === 0
     ? { ok: true as const, status: 'nothing_to_post', jeNo: null as string | null, jeId: null as string | null }
@@ -1010,11 +945,9 @@ async function postRowFee(
   return posted;
 }
 
-/* What confirming a QR line books and moves: nothing (see confirmSettlementRow). */
 const BOOKS_NOTHING = { ok: true as const, status: 'nothing_to_post' as const, jeNo: null as string | null, jeId: null as string | null };
 const MOVES_NOTHING = { ok: true as const, movedSen: 0, jeNo: null as string | null };
 
-/** The card payments' Official Receipts turn formal (see the comment inside). Never fails the confirm. */
 async function formaliseQuietly(sb: any, companyId: number, acquirer: SettlementAcquirer, chosen: ChosenPayment[], userName: string | null): Promise<void> {
   /* 对账确认 = 钱确定到手:the card payments' Official Receipts turn FORMAL
      on the acquirer's payout bank (GL redesign item 9 — 卡款 merchant recon
@@ -1135,10 +1068,6 @@ export async function confirmSettlementGroup(sb: any, input: ConfirmGroupInput):
     if (!stamped.ok) return stamped;
   }
 
-  /* The links, once, on the lead. A line already holding a payment was matched
-     on its own (by its reference, at upload) and is not this group's to take;
-     the lead holding exactly this selection is an earlier press of this group,
-     resumed — its own links are not somebody else's settlement. */
   const { data: existingLinks, error: exErr } = await sb.from('acc_settlement_matches')
     .select('settlement_row_id, payment_source, payment_id, doc_no').eq('company_id', companyId).in('settlement_row_id', ids);
   if (exErr) return { ok: false, status: 'link_read_failed', reason: exErr.message };
@@ -1171,9 +1100,6 @@ export async function confirmSettlementGroup(sb: any, input: ConfirmGroupInput):
     }
   }
 
-  /* Each line's own fee, dated by its own transaction. A refusal before any
-     fee posted lets the links go, as the one-line confirm does; after one has
-     posted, the links stay and a second press finishes (each fee books once). */
   const fees = new Map<number, { jeNo: string | null; jeId: string | null }>();
   for (const r of rows) {
     const posted = qr ? BOOKS_NOTHING : await postRowFee(sb, companyId, acq.acquirer, r, chosen);
@@ -1190,7 +1116,6 @@ export async function confirmSettlementGroup(sb: any, input: ConfirmGroupInput):
   const moved = qr ? MOVES_NOTHING : await moveUntaggedBooking(sb, companyId, acq.acquirer, lead, chosen);
   if (!moved.ok) return { ok: false, status: moved.status, reason: `${moved.reason} (the fees DID post — press confirm again to finish)` };
 
-  /* Members first, the lead last: the lead's stamp is what says the group is done. */
   const now = new Date().toISOString();
   for (const r of [...members.filter((m) => !m.confirmed_at), lead]) {
     const fee = fees.get(r.id)!;
@@ -1262,8 +1187,6 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
   const read = await readChosenPayments(sb, companyId, asked, qr ? 'online' : 'card');
   if (!read.ok) return read;
   const chosen = read.chosen;
-  /* The sum must be the gross, to the sen. A difference here IS the thing this
-     layer exists to catch, so it is named and refused, never absorbed. */
   const chosenTotal = chosen.reduce((s, p) => s + Number(p.amountSen || 0), 0);
   if (chosenTotal !== Number(row.gross_sen)) {
     return {
@@ -1281,9 +1204,6 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     if (!stamped.ok) return stamped;
   }
 
-  /* A previous attempt may have linked and posted but failed on the final
-     stamp. Resuming must not read its own links as "someone else already
-     settled this money" — so the links are written only if this row has none. */
   const { data: existingLinks, error: exErr } = await sb
     .from('acc_settlement_matches')
     .select('id')
@@ -1314,8 +1234,6 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
 
   const posted = qr ? BOOKS_NOTHING : await postRowFee(sb, companyId, acq.acquirer, row, chosen);
   if (!posted.ok) {
-    /* The entry did not post, so the links must not survive — otherwise the
-       payments are marked settled with nothing in the ledger behind them. */
     await sb.from('acc_settlement_matches').delete().eq('settlement_row_id', row.id);
     return { ok: false, status: posted.status, reason: posted.reason ?? 'the entry was refused by the posting gate' };
   }
@@ -1342,8 +1260,6 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     })
     .eq('id', row.id);
   if (upErr) {
-    /* The ledger is right and the links are right; only the row's stamp failed.
-       Say so loudly — a retry is a no-op through the gate's idempotency. */
     return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (the entry ${posted.jeNo ?? '(none — no fee to book)'} DID post — press confirm again to finish stamping the line)` };
   }
 
@@ -1381,7 +1297,6 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
  */
 export type ReceiptInput = {
   receivedOn: string;
-  /** This credit. Omitted = whatever the statement still has outstanding. */
   amountSen?: number | null;
   bankRef?: string | null;
   note?: string | null;
@@ -1437,7 +1352,6 @@ export async function unconfirmSettlementRow(
   if (!row.confirmed_at) {
     return { ok: false, status: 'not_confirmed', reason: 'This line is not in the ledger — there is nothing to take back.' };
   }
-  /* A line matched TOGETHER with others (option B) is taken back with them. */
   const leadId = row.matched_with_row_id != null ? Number(row.matched_with_row_id) : Number(row.id);
   const { data: memberRaw, error: memberErr } = await sb.from('acc_settlement_rows')
     .select('id').eq('company_id', companyId).eq('matched_with_row_id', leadId);
@@ -1480,9 +1394,6 @@ export async function unconfirmSettlementRow(
   });
   if (!movedBack.ok) return { ok: false, status: movedBack.status, reason: movedBack.reason ?? 'the move reversal was refused' };
 
-  /* Links go AFTER the reversal held: releasing the payments while the fee
-     entry still stands would let the same money confirm twice against one
-     booked fee. */
   const { error: delErr } = await sb.from('acc_settlement_matches').delete().eq('settlement_row_id', row.id);
   if (delErr) {
     return { ok: false, status: 'unlink_failed', reason: `${delErr.message} (the entry WAS reversed — press undo again to finish releasing the payments)` };
@@ -1498,9 +1409,6 @@ export async function unconfirmSettlementRow(
   return { ok: true, status: 'unconfirmed' };
 }
 
-/** Take back a group matched together (option B): every line's fee, the lead's
-    clearing move, the lead's links, and each line's stamp. Refused while money
-    is recorded received against any of their statements, as one line is. */
 async function unconfirmSettlementGroup(
   sb: any, companyId: number, leadId: number, memberIds: number[],
 ): Promise<{ ok: true; status: 'unconfirmed'; jeNo?: string } | { ok: false; status: string; reason: string }> {
@@ -1521,9 +1429,6 @@ async function unconfirmSettlementGroup(
       reason: 'Money is already recorded received against one of these statements. Undo those credits on the bank side first, then take these lines back.',
     };
   }
-  /* Every line's fee, stamped or not: a press that stopped before the lead's
-     stamp left the lead's fee posted with nothing on the row to say so. A line
-     that booked no fee reverses nothing. */
   for (const r of rows) {
     const reversed = await reverseJournal(sb, {
       sourceType: 'SETTLE', sourceDocNo: `SETTLE-${r.id}`, companyId, entryDate: isoDay(r.txn_date),
@@ -1604,9 +1509,6 @@ export async function releaseSettlementRow(
   if (released.length === 0) {
     return { ok: false, status: 'nothing_matched', reason: 'This line holds no payment — there is nothing to release.' };
   }
-  /* A released link sends the line back to be chosen. A turned-down guess only
-     adds to the memory: the line's own pile (to choose, no sale) stays its own —
-     unless it was filed as MATCHED, which no line without its link is. */
   const backToChoose = links.length > 0 || row.bucket === 'MATCHED';
   const { error: upErr } = await sb.from('acc_settlement_rows').update({
     ...(backToChoose ? { bucket: 'NEEDS_CONFIRM', match_reason: null } : {}),
@@ -1614,7 +1516,6 @@ export async function releaseSettlementRow(
     updated_at: new Date().toISOString(),
   }).eq('id', row.id).eq('company_id', companyId);
   if (upErr) return { ok: false, status: 'update_failed', reason: upErr.message };
-  /* A guess held no link: the memory is the whole of it. */
   if (links.length === 0) return { ok: true, released };
   const { error: delErr } = await sb.from('acc_settlement_matches').delete()
     .eq('company_id', companyId).eq('settlement_row_id', row.id);
@@ -1648,8 +1549,6 @@ export async function loadBatchReceipts(
     .eq('company_id', companyId)
     .eq('batch_id', batchId);
   if (dErr) return { ok: false, reason: dErr.message };
-  /* …and what an acquirer kept off a CREDIT when it sends no advice (owner
-     2026-09-30, GHL) — the same settling, carried on the receipt itself. */
   const chargedSen = ((dayRaw ?? []) as Array<Record<string, any>>).reduce((s, r) => s + Number(r.charge_sen ?? 0), 0)
     + receipts.reduce((s, r) => s + Number(r.charge_sen ?? 0), 0);
   return { ok: true, receipts, receivedSen: receipts.reduce((s, r) => s + Number(r.amount_sen ?? 0), 0), chargedSen };
@@ -1709,15 +1608,10 @@ export async function postBatchReceipt(
     };
   }
 
-  /* Told nothing, take the rest: the ordinary case is one credit for the whole
-     payout, and the operator should not have to retype a number the statement
-     already knows. */
   const amountSen = input.amountSen == null ? outstanding : Math.round(Number(input.amountSen));
   if (!Number.isFinite(amountSen) || amountSen === 0) {
     return { ok: false, status: 'bad_amount', reason: 'Give the amount of this credit, as it reads on the bank statement.' };
   }
-  /* Past what the statement promised — refused with both numbers, never
-     absorbed. Same sign test both ways so a clawback batch behaves. */
   if (Math.abs(amountSen) > Math.abs(outstanding) || Math.sign(amountSen) !== Math.sign(outstanding)) {
     return {
       ok: false,
@@ -1749,16 +1643,6 @@ export async function postBatchReceipt(
   const acq = await loadAcquirer(sb, companyId, batch.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
 
-  /* WHICH BANK. Three sources, in order of how much they know:
-       1. the STATEMENT this credit is being booked from — an observed fact,
-          and it beats any configuration. An acquirer set up to pay into Hong
-          Leong whose credit appears on the Maybank statement really is money
-          in Maybank, and booking it to Hong Leong leaves Maybank's
-          reconciliation permanently short by that amount;
-       2. the acquirer's configured receiving bank, for the manual path where
-          nobody is holding a statement;
-       3. the company default, which says so loudly rather than choosing in
-          silence. */
   const roles = await resolveRoles(sb, companyId);
   let bankAccount = input.bankAccountCode || acq.acquirer.bank_account_code;
   if (!bankAccount) {
@@ -1767,10 +1651,6 @@ export async function postBatchReceipt(
     console.error(`[acc/settlement] ${batch.acquirer_code} has no receiving bank account configured — payout booked to ${bankAccount}; fill in the acquirer setup`);
   }
 
-  /* The row first, so the entry can be keyed on it: two credits of the same
-     amount on the same day are a real thing (two terminals, one merchant), and
-     keying the entry on the batch would make the second one look like a repeat
-     of the first and silently book nothing. */
   const { data: rowRaw, error: insErr } = await sb.from('acc_settlement_receipts').insert({
     batch_id: batchId,
     company_id: companyId,
@@ -1786,8 +1666,6 @@ export async function postBatchReceipt(
 
   const posted = await postJournal(sb, {
     companyId,
-    /* The bank's date, never the statement's: this entry exists because the
-       bank says the money is there on this day. */
     entryDate: receivedOn,
     sourceType: 'SETTLEBANK',
     sourceDocNo: `SETTLEBANK-${batchId}-${receiptId}`,
@@ -1798,8 +1676,6 @@ export async function postBatchReceipt(
     ),
   });
   if (!posted.ok) {
-    /* The entry did not post, so the credit must not survive as a row that
-       says money arrived with nothing in the ledger behind it. */
     await sb.from('acc_settlement_receipts').delete().eq('id', receiptId);
     return { ok: false, status: posted.status, reason: posted.reason ?? 'the posting gate refused the entry' };
   }
@@ -1813,9 +1689,6 @@ export async function postBatchReceipt(
     return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (entry ${posted.jeNo} DID post — the credit is recorded, only its entry number is missing)` };
   }
 
-  /* The charge kept off it, booked with it: dated the statement's settlement
-     day as an advice charge is. A charge that cannot post takes the credit back
-     with it — half of what the bank did is not a record of it. */
   if (charge) {
     const kept = await postReceiptCharge(sb, companyId, {
       receiptId, acquirerCode: batch.acquirer_code, transitAccountCode: acq.acquirer.transit_account_code,
@@ -1839,11 +1712,6 @@ export async function postBatchReceipt(
   return {
     ok: true,
     status: 'posted',
-    /* The row this wrote. Layer 4 books a credit off the BANK statement and
-       has to be able to point its own line at the receipt that resulted —
-       without it, undoing from the bank screen would have to find the receipt
-       again by date and amount, which is exactly the guess this module exists
-       to avoid. */
     receiptId,
     jeNo: posted.jeNo,
     amountSen,

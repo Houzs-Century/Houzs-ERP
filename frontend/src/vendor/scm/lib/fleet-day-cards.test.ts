@@ -26,8 +26,6 @@ describe('slotMinutes — parse a free-text window', () => {
     expect(slotMinutes('10 AM-1 PM')).toEqual({ start: 600, end: 780 });
   });
   test('one-sided and empty', () => {
-    // A single numeric token is a one-sided start; prose with no numeric lead
-    // ("after 3pm") does not parse, which is fine — slotKindOf still calls it CUSTOM.
     expect(slotMinutes('3pm')).toEqual({ start: 900, end: null });
     expect(slotMinutes('after 3pm')).toEqual({ start: null, end: null });
     expect(slotMinutes('')).toEqual({ start: null, end: null });
@@ -71,13 +69,13 @@ describe('slotSortKey — order a lorry\'s drops by delivery time', () => {
     expect(slotSortKey('2pm-4pm')).toBe(14 * 60);
     expect(slotSortKey('am')).toBe(0);
     expect(slotSortKey('pm')).toBe(12 * 60);
-    expect(slotSortKey('call first')).toBe(BIG); // non-empty but unreadable → last
+    expect(slotSortKey('call first')).toBe(BIG);
     expect(slotSortKey(null)).toBe(BIG);
     expect(slotSortKey('')).toBe(BIG);
   });
   test('reads the start through the office\'s "TIME AROUND …" wording (not treated as untimed)', () => {
-    expect(slotSortKey('TIME AROUND 9AM TO 11AM')).toBe(9 * 60);   // morning drop, shown as the "AM" tag
-    expect(slotSortKey('TIME AROUND 2PM TO 4PM')).toBe(14 * 60);   // must NOT sink to the end
+    expect(slotSortKey('TIME AROUND 9AM TO 11AM')).toBe(9 * 60);
+    expect(slotSortKey('TIME AROUND 2PM TO 4PM')).toBe(14 * 60);
     expect(slotSortKey('TIME AROUND 12:30PM TO 2:30PM')).toBe(12 * 60 + 30);
   });
   test('the keys put a day in earliest-first order', () => {
@@ -186,7 +184,7 @@ describe('history grouping + presets', () => {
       r({ day: '2026-10-30', plate: 'B', hasPod: false, amountSen: 20000 }),
       r({ day: '2026-10-28', plate: 'A', hasPod: true, amountSen: 5000 }),
     ]);
-    expect(days.map((d) => d.day)).toEqual(['2026-10-30', '2026-10-28']); // latest first
+    expect(days.map((d) => d.day)).toEqual(['2026-10-30', '2026-10-28']);
     expect(days[0]).toMatchObject({ drops: 2, lorries: 2, withPod: 1, podPct: 50, totalSen: 30000 });
     expect(days[1]).toMatchObject({ drops: 1, lorries: 1, podPct: 100, totalSen: 5000 });
   });

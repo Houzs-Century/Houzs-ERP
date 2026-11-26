@@ -21,22 +21,16 @@ export type SpendKind = 'petrol' | 'upkeep' | 'instalment' | 'roadtax' | 'other'
 
 export type SpendLine = {
   lineId: string; kind: SpendKind; accountCode: string; day: string;
-  /** The PV or JV that posted it; the journal entry's number when the ledger names none. */
   docNo: string | null;
   notes: string | null;
   amountSen: number;
-  /** How many months the P&L spreads it over (1 for a line it does not spread). */
   months: number;
-  /** Its part in each month shown, as the P&L counts it. */
   byMonth: Record<string, number>;
-  /** Another plate its description names when it names none of its account's own. */
   otherPlate: string | null;
 };
 
 export type LorrySpend = {
-  /** Canonical plate; null = the lines that name no lorry. */
   plate: string | null;
-  /** One of our lorries in the lorry master. */
   ours: boolean;
   lines: SpendLine[];
   byMonth: Record<string, number>;
@@ -63,7 +57,6 @@ export function lorrySpend(input: {
   lines: readonly InHouseLine[];
   spreads: readonly SpreadRow[];
   range: readonly string[];
-  /** The chart's account names (where a lorry account names its plate); a line's own name when absent. */
   accountNames: ReadonlyMap<string, string | null>;
   ourPlates: ReadonlySet<string>;
 }): LorrySpend[] {
@@ -109,7 +102,6 @@ export function lorrySpend(input: {
     });
   }
   for (const e of byPlate.values()) e.lines.sort((x, y) => x.day.localeCompare(y.day) || x.lineId.localeCompare(y.lineId));
-  /* Our lorries by plate, then any other plate, then the lines that name no lorry. */
   const rank = (e: LorrySpend) => (e.plate == null ? 2 : e.ours ? 0 : 1);
   return [...byPlate.values()].sort((a, b) => rank(a) - rank(b) || (a.plate ?? '').localeCompare(b.plate ?? ''));
 }

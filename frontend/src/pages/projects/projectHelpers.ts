@@ -1,9 +1,3 @@
-// Default project-name format used by the create form.
-//   "{state} [{brand}] {organizer | SOLO} @ {venue}"
-// A picked organizer always fills the slot — solo events included (owner
-// 2026-08-17, IOI Mall Damansara: the calendar said SOLO while the Excel
-// organizer column said MALL MGMT). "SOLO" appears only when no organizer is
-// chosen. Mirrors deriveProjectName in backend/src/services/project-naming.ts.
 export function composeDefaultProjectName(p: {
   state?: string | null;
   brand?: string | null;
@@ -32,10 +26,6 @@ export function composeDefaultProjectName(p: {
   return `${left} @ ${venue}`;
 }
 
-// Event labels show the STATE in all-caps ("KUALA LUMPUR [AKEMI] …", owner
-// 2026-07-29). Stored names composed after the 2026-07-22 canonical-state
-// migration lead with a Title-Case state ("Kuala Lumpur"), so uppercase that
-// leading state on render. No-op when the name doesn't begin with the state.
 export function upcaseLeadingState(name: string, state?: string | null): string {
   const s = (state || "").trim();
   if (s && name.toLowerCase().startsWith(s.toLowerCase())) {
@@ -44,10 +34,6 @@ export function upcaseLeadingState(name: string, state?: string | null): string 
   return name;
 }
 
-// The browser MIME for a file the user should be able to VIEW inline (PDF,
-// image, video). Used to re-type octet-stream blobs before window.open so a
-// "View" actually renders instead of downloading. Returns null for types the
-// browser can't render inline (docx/xlsx) — those fall through to download.
 export function viewableMime(name: string): string | null {
   const m = /\.([a-z0-9]+)$/i.exec(name || "");
   if (!m) return null;
@@ -62,10 +48,6 @@ export function viewableMime(name: string): string | null {
   return null;
 }
 
-// ── Google Calendar URL ──────────────────────────────────────
-// Uses the public /calendar/render?action=TEMPLATE endpoint — no OAuth,
-// opens Google Calendar with the event pre-filled. User still has to
-// click "Save" in Google.
 
 export function googleCalendarUrl(p: {
   name: string;
@@ -78,7 +60,6 @@ export function googleCalendarUrl(p: {
 }): string {
   const fmt = (d: string) => d.replace(/-/g, "");
   const start = p.start_date ? fmt(p.start_date) : "";
-  // Google wants end date exclusive for all-day events, so +1 day
   const endRaw = p.end_date || p.start_date || "";
   const endDate = endRaw ? new Date(endRaw) : null;
   if (endDate) endDate.setUTCDate(endDate.getUTCDate() + 1);

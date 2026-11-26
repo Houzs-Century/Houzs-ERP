@@ -82,63 +82,34 @@ export function drawSofaLayout(
   y: number,
   maxW: number,
   maxH: number,
-  /** The module artwork keyed by module code ("2A(RHF)" → PNG data-URL) —
-   *  the SAME files POS Custom Builder tiles from, already cropped to their
-   *  silhouette by sofa-compartment-art.ts. A code with no art (or a failed
-   *  fetch, or one of the SVG-only power variants) falls back to the drawn
-   *  schematic, so this is safe to omit and safe to pass partially. Optional
-   *  because ABSENCE = draw the schematic = the prior behaviour. */
   photos?: Record<string, string>,
 ): number {
   if (!Array.isArray(cells) || cells.length === 0) return 0;
 
-  // Union bbox in cm (rotation-aware footprints). Null = no measurable cell.
   const bbox = cellsBbox(cells, depth);
   if (!bbox || !(bbox.w > 0) || !(bbox.h > 0)) return 0;
 
-  // Reserve a small block under the sofa for the TV marker + the up-triangle.
-  const TV_BLOCK = 6;   // mm — gap + triangle + TV rect + "TV" label
+  const TV_BLOCK = 6;
 
   const usableH = maxH - TV_BLOCK;
   if (usableH <= 1) return 0;
 
-  // Scale so the sofa + TV block fit the box. cm → mm.
   const scale = Math.min(maxW / bbox.w, usableH / bbox.h);
   if (!(scale > 0) || !Number.isFinite(scale)) return 0;
 
   const sofaW = bbox.w * scale;
   const sofaH = bbox.h * scale;
 
-  // Centre the sofa horizontally within maxW.
   const ox = x + Math.max(0, (maxW - sofaW) / 2);
   const oy = y;
 
-  /* ── A CORNER IS ONE SHAPE, NOT THREE TILES ──────────────────────────────
-     POS's rule, ported with it: "A corner sofa (corner + 2/3-seater + 1-seater
-     chaise) has NO single composite PNG, and tiling the three per-module PNGs
-     leaves a STEP + an INTERNAL ARM." On a supplier's sheet that step reads as a
-     real gap and that arm as a real arm — on the one document whose job is to
-     stop the sofa being built in the wrong pieces.
-
-     Detection returns null for anything that is not a clean three-piece L, so
-     every other arrangement falls through to the per-module path below and
-     nothing that used to work changes. */
   const corner = cornerCompositeFromCells(cells, depth);
   if (corner) {
-    /* The detector reports the group's rotation and POS CSS-rotates the SVG for
-       it; here a quarter turn simply swaps the box the natural-frame drawing is
-       scaled into, which is the same thing for a shape drawn from its own
-       geometry rather than from a bitmap. */
     const quarter = ((Math.round(corner.rot / 90) % 4) + 4) % 4;
     const swap = quarter === 1 || quarter === 3;
     drawCornerSofa(doc, corner.geo, ox, oy, swap ? sofaH : sofaW, swap ? sofaW : sofaH);
   } else {
-  /* The artwork is drawn unrotated, so a sofa with any turned piece (an L or U
-     leg, a right-hand corner) is drawn as the schematic throughout rather than
-     as sideways art or a mix of the two. */
   const artOk = cells.every((c) => ((Number(c.rot) || 0) % 360) === 0);
-  // Arms go on each SEPARATE sofa's outer ends, not just the whole drawing's:
-  // a 2S in front of a wider 1A + Console + 1A is flush with neither edge.
   const sofaBbox = new Map<Cell, { x: number; w: number }>();
   try {
     for (const g of groupSofas(cells, depth)) {
@@ -146,7 +117,6 @@ export function drawSofaLayout(
       if (gb) for (const c of g) sofaBbox.set(c, gb);
     }
   } catch {
-    /* malformed cells: arms fall back to the whole drawing's ends */
   }
   // ── Cells: each module = a cream SEAT with a tan BACKREST strip on its back
   //    edge (the side away from the TV — the whole sofa faces the TV at the
@@ -164,11 +134,6 @@ export function drawSofaLayout(
     const py = oy + (c.y - bbox.y) * scale;
     const w = fp.w * scale;
     const h = fp.h * scale;
-    // Real compartment photo when one exists for this module code; the drawn
-    // schematic below is the fallback, so a compartment with no uploaded photo
-    // (or a failed image) still renders and a newly-uploaded photo appears
-    // automatically. addImage can throw on a malformed data-URL — swallow it and
-    // fall through to the schematic rather than aborting the whole PDF.
     /* THE MODULE'S OWN ART, placed the way POS places it (2026-08-28, owner:
        「跟着 POS 系统的做法做」). Two details are load-bearing and both come from
        apps/pos/src/components/SofaCellsPreview.tsx:
@@ -192,24 +157,16 @@ export function drawSofaLayout(
         doc.addImage(art, px, py, w, h);
         continue;
       } catch {
-        /* fall through to the drawn schematic */
       }
     }
-    // Seat — cream fill + thin border.
     doc.setLineWidth(0.2);
     doc.setDrawColor(120);
     doc.setFillColor(244, 238, 226);
     doc.rect(px, py, w, h, 'FD');
-    // Backrest + outer ARMS — tan strips forming a U-frame (back on top, arms on
-    // the sofa's exposed outer left/right edges), open at the FRONT (toward the
-    // TV). Arms only land on outer edges (a cell flush with the union's min/max
-    // x), so an L-shape and LHF/RHF read correctly.
-    const t = Math.max(0.8, Math.min(h * 0.26, 2.4)); // strip thickness (mm)
-    const eps = 0.5; // cm tolerance
-    doc.setFillColor(196, 162, 110); // tan
+    const t = Math.max(0.8, Math.min(h * 0.26, 2.4));
+    const eps = 0.5;
+    doc.setFillColor(196, 162, 110);
     if ((Number(c.rot) || 0) % 360 !== 0) {
-      /* A turned piece (L / U leg, right-hand corner): strip every edge the
-         module's own edge map calls back or arm, rotated with it. */
       const [ew, en, ee, es] = cellEdges(c);
       const solid = (e: string | undefined) => e === 'back' || e === 'arm';
       if (solid(ew)) doc.rect(px, py, t, h, 'F');
@@ -217,15 +174,11 @@ export function drawSofaLayout(
       if (solid(ee)) doc.rect(px + w - t, py, t, h, 'F');
       if (solid(es)) doc.rect(px, py + h - t, w, t, 'F');
     } else {
-      doc.rect(px, py, w, t, 'F'); // backrest (top / back)
+      doc.rect(px, py, w, t, 'F');
       const sb = sofaBbox.get(c) ?? bbox;
-      if (Math.abs(c.x - sb.x) < eps) doc.rect(px, py, t, h, 'F'); // left arm
-      if (Math.abs((c.x + fp.w) - (sb.x + sb.w)) < eps) doc.rect(px + w - t, py, t, h, 'F'); // right arm
+      if (Math.abs(c.x - sb.x) < eps) doc.rect(px, py, t, h, 'F');
+      if (Math.abs((c.x + fp.w) - (sb.x + sb.w)) < eps) doc.rect(px + w - t, py, t, h, 'F');
     }
-    /* BUG-42 (Sim 2026-09-30, HC-PO-2609-318): a power seat drew as a plain
-       seat, so the supplier could not tell 1A(P) from 1A on the plan while the
-       item photos beside it showed the "P". Stamp the letter the POS art
-       carries — these codes have no PNG, so they always land here. */
     const mark = motionMark(c.moduleId);
     if (mark) {
       doc.setFont('helvetica', 'bold');
@@ -237,25 +190,20 @@ export function drawSofaLayout(
   }
   }
 
-  // ── TV marker BELOW the sofa (greater y = front / viewing direction) ─
-  // Small filled triangle pointing UP (toward the sofa), then a dark TV rect
-  // centred under the sofa, then the "TV" label.
   const sofaBottom = oy + sofaH;
   const cx = ox + sofaW / 2;
 
-  // Up-pointing triangle just below the sofa front edge.
   const triH = 1.8;
   const triHalf = 1.4;
-  const triTopY = sofaBottom + 0.8;            // apex (points up toward sofa)
+  const triTopY = sofaBottom + 0.8;
   doc.setFillColor(60, 60, 60);
   doc.triangle(
-    cx, triTopY,                                // apex (up)
-    cx - triHalf, triTopY + triH,               // bottom-left
-    cx + triHalf, triTopY + triH,               // bottom-right
+    cx, triTopY,
+    cx - triHalf, triTopY + triH,
+    cx + triHalf, triTopY + triH,
     'F',
   );
 
-  // Dark TV rect centred under the sofa.
   const tvW = Math.min(sofaW * 0.45, 14);
   const tvH = 2.4;
   const tvX = cx - tvW / 2;
@@ -263,13 +211,11 @@ export function drawSofaLayout(
   doc.setFillColor(60, 60, 60);
   doc.rect(tvX, tvY, tvW, tvH, 'F');
 
-  // "TV" label centred inside the dark rect (white text).
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(5);
   doc.setTextColor(255);
   doc.text('TV', cx, tvY + tvH - 0.7, { align: 'center' });
   doc.setTextColor(0);
 
-  // Total drawn height: top of sofa → TV block bottom (no dims caption).
   return (tvY + tvH) - oy + 0.5;
 }

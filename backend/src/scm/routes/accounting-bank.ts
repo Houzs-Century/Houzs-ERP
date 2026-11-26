@@ -51,9 +51,6 @@ import { bankName } from '../../acc/finance-todo';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
-/* Exported so the month view (accounting-bank-months) guards on exactly this
-   and not on a copy of it: two spellings of one permission rule are one
-   refactor away from being two different rules. */
 export const bankGuard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
     return c.json({ error: "You don't have permission to reconcile bank statements." }, 403);
@@ -79,9 +76,6 @@ async function refuseIfLocked(
 ): Promise<Response | null> {
   const sb = c.get('supabase');
   const held = await loadLiveMonthLock(sb, companyId, accountCode, lockMonthOf(isoDate));
-  /* A LOCK THAT CANNOT BE READ IS A REFUSAL, not a pass. The one failure mode
-     worth spending a 500 on is writing into a closed month because the check
-     itself broke quietly. */
   if (!held.ok) {
     return c.json({
       error: 'lock_check_failed',
@@ -106,8 +100,6 @@ export async function refuseIfLineLocked(
       message: 'Whether this month is closed could not be checked, so nothing was changed. Try again.',
     }, 500);
   }
-  /* Not found here is not a refusal — the handler's own 404 is the better
-     message, and it is one line further down. */
   if (!where.found) return null;
   const held = await loadLiveMonthLock(sb, companyId, where.accountCode, where.month);
   if (!held.ok) {
@@ -121,8 +113,6 @@ export async function refuseIfLineLocked(
   return c.json(lockedRefusal(held.lock, what), 409);
 }
 
-/** The same fingerprint layer 3 uses: one file is one statement, and a second
-    upload of it loses to the UNIQUE rather than doubling the movements. */
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -130,7 +120,6 @@ async function sha256Hex(text: string): Promise<string> {
 
 export const userName = (c: Ctx) => (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
 
-/* ── GET /bank/setup — which accounts can take a statement ────────────────── */
 
 export const bankSetup = guard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -141,10 +130,6 @@ export const bankSetup = guard(async (c) => {
   if (!cfgs.ok) return c.json({ error: 'load_failed', reason: cfgs.reason }, 500);
   if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
 
-  /* The names the Bank statements cards print (redesign batch 3): the bank as
-     people say it, and the account's own name off the chart — three Maybank
-     accounts are three cards, and only their names tell them apart. An
-     account with no name on the chart prints its code. */
   const codes = cfgs.configs.map((cfg) => cfg.account_code);
   const names = new Map<string, string>();
   if (codes.length > 0) {
@@ -164,20 +149,12 @@ export const bankSetup = guard(async (c) => {
       account_no: cfg.account_no,
       statement_format: cfg.statement_format,
       is_active: cfg.is_active,
-      /* The reader carries built-in headings for every role (bank-parse.ts
-         DEFAULT_HEADINGS), so a config that names nothing still reads a
-         file captioned the way banks caption them; a file it cannot read is
-         refused at upload with its own headings quoted. */
       ready: true,
     })),
-    /* Which acquirers this system can recognise on a statement at all. An
-       acquirer missing here is one whose money will read as "not a card
-       payout" for ever, so the screen has to be able to say so. */
     recognises: [...new Set(rules.rules.map((r) => r.acquirerCode))],
   });
 });
 
-/* ── POST /bank/statements — upload one ───────────────────────────────────── */
 
 export const bankUpload = guard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -198,11 +175,6 @@ export const bankUpload = guard(async (c) => {
     return c.json({ error: 'account_inactive', message: `${accountCode} is switched off for this company.` }, 400);
   }
 
-  /* THE ONE MISTAKE HERE THAT PRODUCES A CLEAN-LOOKING WRONG ANSWER is
-     reconciling a statement against the wrong account: every number computes,
-     every total balances, and the answer is about somebody else's money. So if
-     the config knows the account number and the file names a different one, it
-     is refused by name. */
   /* A STATEMENT PDF arrives as the text pdf.js read off it, with positions
      (docs/bugs/0869); the bank's layout is read in acc/bank-parse-pdf. Told
      apart by what the body says it is AND by the content's own marker — a
@@ -217,8 +189,6 @@ export const bankUpload = guard(async (c) => {
   const expectNo = (cfg.config.account_no ?? '').replace(/\D/g, '');
   if (expectNo) {
     const digits = pdf ? pdfDigits(pdf) : content.slice(0, 20000).replace(/\D/g, '');
-    /* The CSV export pads the number with zeros (0000564418610346); the
-       statement PDF prints it bare (564418610346). Both name the account. */
     const bare = expectNo.replace(/^0+/, '');
     if (!digits.includes(expectNo) && !(bare && digits.includes(bare))) {
       return c.json({
@@ -285,12 +255,6 @@ export const bankUpload = guard(async (c) => {
     }
   }
 
-  /* A CLOSED MONTH TAKES NO NEW MOVEMENTS. Checked here, after the file has been
-     read and before a single row is written, because the answer depends on the
-     DATES the file turned out to carry — a file is refused for the months it
-     lands in, not for the month somebody meant it for. Both ends are checked:
-     one file can straddle a close, and a September that is shut must refuse a
-     28 Aug – 3 Sep export even though August is open. */
   for (const edge of new Set([periodFrom, periodTo])) {
     const shut = await refuseIfLocked(
       c, co.companyId, accountCode, edge,
@@ -372,9 +336,6 @@ export const bankUpload = guard(async (c) => {
   const { error: linesErr } = decisions.length === 0 ? { error: null } : await sb.from('acc_bank_statement_lines').insert(
     decisions.map((raw, idx) => {
       const already = alreadyRecorded[idx];
-      /* Named, not silently dropped: a movement that looks identical is not
-         PROVEN identical, and the person who uploaded the file is the one who
-         can say. What the screen owes him is the truth about why it is here. */
       const d = already
         ? { ...raw, kind: REPEAT_KIND, clue: repeatNote(already) }
         : raw;
@@ -408,13 +369,7 @@ export const bankUpload = guard(async (c) => {
       acquirer_code: d.acquirerCode,
       trading_date: d.tradingDate,
       merchant_no: d.merchantNo,
-      /* The decision itself, not just the reasoning. Without it the screen has
-         to pick a statement back out of the candidate list, and "the first one
-         of that acquirer" is a different answer from "the one whose trading day
-         and amount agreed". */
       matched_batch_id: d.batchId,
-      /* And the SPLIT, when several statements add up to it — Public Bank pays
-         three trading days with one advice, so this is ordinary. */
       split: d.split.length > 0 ? d.split : null,
       note: d.clue,
       };
@@ -447,9 +402,6 @@ export const bankUpload = guard(async (c) => {
     lines: movements.length,
     joinedPairs: parsed.lines.length - movements.length,
     skippedLines: parsed.skippedLines,
-    /* Said on the upload itself, not only findable inside the statement: a
-       re-upload that quietly settles half its own lines is a surprise, even
-       when every one of them is right. */
     alreadyRecorded: counts.DUPLICATE ?? 0,
     /* Matched by amount and name on the way in (docs/bugs/0814), and the
        merchant money its report already agrees with (owner 2026-11-17). */
@@ -479,7 +431,6 @@ export const bankUpload = guard(async (c) => {
 export type FreshDecision = {
   kind: string; acquirer_code: string | null; trading_date: string | null; merchant_no: string | null;
   matched_batch_id: number | null; split: Array<{ batchId: number; amountSen: number }> | null; note: string | null;
-  /** The acquirer's payment advice made this decision (acc/bank-match byAdvice). */
   by_advice: boolean;
 };
 export function freshDecisions(
@@ -525,7 +476,6 @@ export function withQrSales<T extends Record<string, unknown>>(
       rules, reports, claimed, accountCode,
     );
     if (!qr) return l;
-    /* The line's own row with the QR answer laid over it — `qr_sales` rides along. */
     return { ...l, kind: 'QR', note: qr.clue, matched_batch_id: null, split: null, qr_sales: qr } as T;
   });
 }
@@ -588,7 +538,6 @@ async function applyObviousMatches(
 
   const [ledger, elsewhere] = await Promise.all([
     loadAccountLedger(sb, companyId, statement.account_code, String(statement.period_to).slice(0, 10)),
-    /* Every statement's claims, this one's included. */
     loadClaimedElsewhere(sb, companyId, statement.account_code, null),
   ]);
   if (!ledger.ok) return { ok: false, reason: ledger.reason };
@@ -618,11 +567,6 @@ async function applyObviousMatches(
   return { ok: true, matched: jeNos.length, jeNos, contraPairs: pairs.length };
 }
 
-/** The Draft numbers the open lines name, read through to the formal number
-    each voucher took at Checked — the voucher's CHECK row in the audit trail
-    (scm.entity_audit_log, field_changes pv_number Draft → formal). Asked only
-    of the vouchers the books could pay those lines with: unheld, of a line's
-    amount. Keyed with and without the company prefix. */
 async function loadDraftVoucherNumbers(
   sb: Parameters<typeof loadAccountLedger>[0],
   open: ReadonlyArray<{ amount_sen: number; description: string | null; reference: string | null }>,
@@ -677,7 +621,6 @@ export async function matchBankLinesNamingVoucher(
   const statements = (stmtRes.data ?? []) as Array<{ id: number; account_code: string; period_to: string }>;
   if (statements.length === 0) return { ok: true, matched: 0, jeNos: [] };
 
-  /* The numbers it answers to: its own, and each Draft number it carried. */
   const { data: audit, error: auditErr } = await sb.from('entity_audit_log')
     .select('field_changes').eq('entity_type', 'PAYMENT_VOUCHER').eq('entity_doc_no', pvNumber);
   if (auditErr) return { ok: false, reason: auditErr.message };
@@ -710,8 +653,6 @@ export async function matchBankLinesNamingVoucher(
   return { ok: true, matched: jeNos.length, jeNos };
 }
 
-/* POST /bank/statements/:id/auto-match — the same rule, for a statement
-   uploaded before it existed (owner: June was already up). */
 export const bankStatementAutoMatch = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -824,7 +765,6 @@ export async function applyMerchantAgreedMatches(
     const bookedOn = String(line.booked_on).slice(0, 10);
     const named = `line ${String(line.line_no ?? a.lineId)} (${rm(Number(line.amount_sen))})`;
 
-    /* A closed month is never touched; a month that cannot be read is treated as closed. */
     const held = await loadLiveMonthLock(sb, companyId, accountCode, lockMonthOf(bookedOn));
     if (!held.ok || held.lock) { done.left.push(`${named}: ${held.ok ? 'its month is closed' : `its month could not be checked (${held.reason})`}`); continue; }
 
@@ -844,7 +784,6 @@ export async function applyMerchantAgreedMatches(
       continue;
     }
 
-    /* QR: the entries by what the ledger says they are, and the two sides equal to the sen. */
     let movements = ledgers.get(accountCode);
     if (!movements) {
       const ledger = await loadAccountLedger(sb, companyId, accountCode, '9999-12-31');
@@ -861,11 +800,6 @@ export async function applyMerchantAgreedMatches(
     if (!claims.ok) return { ok: false, reason: claims.reason };
     const here = claims.live.find((m) => m.accountCode === accountCode);
     if (here) { done.left.push(`${named}: ${claimedHere(here.jeNo, accountCode)}`); continue; }
-    /* A write refused for ONE credit leaves that credit for a person and says
-       why; the run goes on to the rest (2026-11-17: the database refused
-       "qr+report" until its check knew the word, and the first QR credit
-       stopped every match after it). A match row left on a line still OPEN is
-       nobody's claim and is cleared the next time (liveClaimsOn's dead rows). */
     if (claims.dead.length > 0) {
       const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', companyId).in('id', claims.dead.map((m) => m.id));
       if (dErr) { done.left.push(`${named}: not matched — ${dErr.message}`); continue; }
@@ -929,7 +863,6 @@ export const bankStatementRepeats = guard(async (c) => {
   const mine = all.lines.filter((l) => l.statementId === id && found.has(l.id));
   const leftOut: number[] = [];
   for (const l of mine) {
-    /* Only while still OPEN: a movement decided in the meantime stays decided. */
     const { data: done, error: upErr } = await sb.from('acc_bank_statement_lines')
       .update({ kind: REPEAT_KIND, state: 'IGNORED', note: repeatNote(found.get(l.id)!), updated_at: new Date().toISOString() })
       .eq('id', l.id).eq('company_id', co.companyId).eq('state', 'OPEN').select('id').maybeSingle();
@@ -990,7 +923,6 @@ export const bankStatementPeriod = guard(async (c) => {
   return c.json({ ok: true, periodFrom: window.from, periodTo: window.to });
 });
 
-/* ── GET /bank/statements — the list ──────────────────────────────────────── */
 
 export const bankStatements = guard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -1005,11 +937,6 @@ export const bankStatements = guard(async (c) => {
   const statements = (stmtRaw ?? []) as Array<Record<string, any>>;
   if (statements.length === 0) return c.json({ statements: [] });
 
-  /* Derived, never stored: how much of each statement is still undecided is a
-     live question, and a column would answer yesterday's. Read in full — the
-     unpaged read this replaced stopped at PostgREST's 1,000 rows and showed
-     too few open lines once a company passed that — and a failed read is an
-     error on the screen, never 0 open. */
   const tallies = await loadOpenTallies(sb, co.companyId, () => openTallySql(c.env, co.companyId));
   if (!tallies.ok) return c.json(readFailure('bank_open_lines', tallies.error, { companyId: co.companyId }), 500);
   const openBy = tallies.byStatement;
@@ -1022,7 +949,6 @@ export const bankStatements = guard(async (c) => {
   });
 });
 
-/* ── GET /bank/statements/:id — one, with its reconciliation ──────────────── */
 
 export const bankStatementDetail = guard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -1037,9 +963,6 @@ export const bankStatementDetail = guard(async (c) => {
   if (!stmt) return c.json({ error: 'not_found' }, 404);
   const statement = stmt as Record<string, any>;
 
-  /* The matches are read for THIS statement's lines, as soon as they are in —
-     the screen shows no other line's. This was every match the company holds,
-     paged, on every open. */
   const linesP = paginateAll<Record<string, any>>((lo, hi) => (sb as Parameters<typeof loadAccountLedger>[0]).from('acc_bank_statement_lines').select('*').eq('statement_id', id).eq('company_id', co.companyId)
     .order('line_no').order('id').range(lo, hi));
   const [linesRes, matchRes, ledger, batches, elsewhere, rules, payouts, qrReports] = await Promise.all([
@@ -1049,7 +972,6 @@ export const bankStatementDetail = guard(async (c) => {
       : loadLineMatches(sb, co.companyId, (r.data ?? []).map((l) => Number(l.id)), 'id, bank_line_id, je_no, amount_sen, match_reason'))),
     loadAccountLedger(sb, co.companyId, String(statement.account_code), String(statement.period_to)),
     loadPayableBatches(sb, co.companyId),
-    /* Only what was claimed by the statement's own last day: a later payment of an earlier entry leaves it waiting here. */
     loadClaimedElsewhere(sb, co.companyId, String(statement.account_code), id, String(statement.period_to).slice(0, 10)),
     loadRecognitionRules(sb),
     loadPayoutAdvices(sb, co.companyId),
@@ -1121,9 +1043,6 @@ export const bankStatementDetail = guard(async (c) => {
     .filter((l) => !claimed.has(l.jeNo))
     .filter((l) => l.entryDate >= String(statement.period_from) || !claimedElsewhere.has(l.jeNo))
     .map((l) => ({ ...l, carried: l.entryDate < String(statement.period_from) }));
-  /* The day's QR money is matched to its sales, not booked as a payout. Only a
-     real claim — a POSTED bank line holding the entry — stands in its way; the
-     books-start rule in claimedSetFor is the reconciliation's, not a match. */
   const decided = withQrSales(lines, rules.rules, qrReports.reports,
     new Set<string>([...elsewhere.claimed, ...claimed].filter((n): n is string => typeof n === 'string')), String(statement.account_code));
 
@@ -1133,18 +1052,9 @@ export const bankStatementDetail = guard(async (c) => {
     lines: decided.map((l) => ({
       ...l,
       matches: liveMatches(l),
-      /* Which statements this line COULD settle, recomputed live: a batch that
-         was paid since the upload must not still be offered. */
       candidates: String(l.kind).startsWith('PAYOUT')
         ? batches.batches.filter((b) => b.acquirerCode === l.acquirer_code)
         : [],
-      /* And which LEDGER ENTRY it could be — the answer for the rest of the
-         statement, which is most of it. Offered only while the movement is
-         still open; a posted one already has its entry. Ranked and filtered by
-         acc/bank-match, and drawn from the WHOLE period's ledger rather than
-         the unmatched list above, because that list is windowed to the
-         statement and an entry posted two days after it ends is exactly the
-         cheque this is for. */
       entryCandidates: String(l.state) === 'OPEN'
         ? entryCandidatesFor(
           { bookedOn: String(l.booked_on).slice(0, 10), amountSen: Number(l.amount_sen ?? 0) },
@@ -1157,7 +1067,6 @@ export const bankStatementDetail = guard(async (c) => {
   });
 });
 
-/* ── POST /bank/lines/:id/receipt — this credit paid that statement ───────── */
 
 export const bankLineReceipt = guard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -1214,10 +1123,6 @@ export const bankLineReceipt = guard(async (c) => {
     return c.json({ error: 'bad_amount', message: 'Every share must be an amount.' }, 400);
   }
 
-  /* The shares must add up to the credit, TO THE SEN — the same discipline the
-     merchant side applies to a swipe covering two orders. A leftover is a
-     difference, and a difference is the thing this module exists to surface,
-     never to absorb. */
   const allocated = allocations.reduce((s, a) => s + a.amountSen, 0);
   if (allocated !== Number(line.amount_sen)) {
     return c.json({
@@ -1246,8 +1151,6 @@ export const bankLineReceipt = guard(async (c) => {
     }
   }
 
-  /* The booking itself is shared with the gated repair that books a gross-and-fee
-     pair joined after its upload (acc/bank-receive.ts). */
   const booked = await postBankCredit(
     sb, co.companyId,
     { id: lineId, booked_on: String(line.booked_on), reference: (line.reference as string | null) ?? null, statement_id: Number(line.statement_id) },
@@ -1260,13 +1163,10 @@ export const bankLineReceipt = guard(async (c) => {
     ok: true,
     status: 'posted',
     jeNo: posted.map((p) => p.jeNo).filter(Boolean).join(', '),
-    /* Per statement, because a split has no single outstanding figure and the
-       operator wants to know which of them is now clear. */
     results: posted.map((p) => ({ batchId: p.batchId, jeNo: p.jeNo ?? null, outstandingSen: p.outstandingSen, chargeSen: p.chargeSen })),
   });
 });
 
-/* ── POST /bank/lines/:id/undo — take it back ─────────────────────────────── */
 
 export const bankLineUndo = guard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -1289,14 +1189,8 @@ export const bankLineUndo = guard(async (c) => {
   if (!lineRaw) return c.json({ error: 'not_found' }, 404);
   const line = lineRaw as Record<string, any>;
 
-  /* An IGNORED line has no entry to reverse — putting it back is just a state
-     change, and saying so is cheaper than a refusal the operator has to
-     interpret. */
   if (String(line.state) === 'OPEN') return c.json({ ok: true, status: 'already_open' });
 
-  /* ALL of them: a split payout wrote one receipt per statement, and undoing
-     the movement means undoing every one. Read from the receipt side, which is
-     where the link lives precisely because there can be several. */
   const { data: mine, error: rErr } = await sb.from('acc_settlement_receipts')
     .select('id').eq('bank_line_id', lineId).eq('company_id', co.companyId);
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
@@ -1304,9 +1198,6 @@ export const bankLineUndo = guard(async (c) => {
   const stuck: string[] = [];
   for (const r of (mine ?? []) as Array<{ id: number }>) {
     const undone = await undoBatchReceipt(sb, co.companyId, Number(r.id));
-    /* Keep going rather than stopping at the first refusal: leaving the rest
-       booked because one would not come back is the worse of the two states,
-       and every failure is named below. */
     if (!undone.ok) stuck.push(`receipt ${r.id}: ${undone.reason}`);
   }
   if (stuck.length > 0) {
@@ -1316,8 +1207,6 @@ export const bankLineUndo = guard(async (c) => {
         + ' The rest were reversed; this movement is left as posted so nothing is hidden.',
     }, 409);
   }
-  /* Card payments this movement took in itself (acc/bank-card-settle): their
-     journal is reversed and they go back to waiting for a report. */
   const cards = await undoCardSettlement(sb, co.companyId, lineId);
   if (!cards.ok) {
     return c.json({ error: 'undo_incomplete', message: `The card payments this movement took in could not be put back — ${cards.reason}. The movement is left as posted so nothing is hidden.` }, 409);
@@ -1362,8 +1251,6 @@ export const bankLineUndo = guard(async (c) => {
 
   const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
     state: 'OPEN', posted_je_no: null, posted_je_id: null,
-    /* The pairing's words come off with the pairing; a reopened line saying
-       "reversed by the bank" would be the screen contradicting itself. */
     ...(twin != null ? { note: null, contra_line_id: null } : {}),
     updated_at: new Date().toISOString(),
   }).in('id', ids).eq('company_id', co.companyId);
@@ -1372,7 +1259,6 @@ export const bankLineUndo = guard(async (c) => {
   return c.json({ ok: true, status: 'undone', linesReopened: ids.length });
 });
 
-/* ── POST /bank/lines/:id/ignore — none of our business ───────────────────── */
 
 export const bankLineIgnore = guard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -1402,8 +1288,6 @@ export const bankLineIgnore = guard(async (c) => {
       message: 'This movement has an entry behind it. Undo that first — ignoring it would leave the entry with nothing explaining it.',
     }, 409);
   }
-  /* A reason, required. An ignored line leaves the reconciliation for ever and
-     the next person to look has only this sentence to go on. */
   if (!note) {
     return c.json({ error: 'no_reason', message: 'Say why this movement is not ours to reconcile — it leaves the difference permanently.' }, 400);
   }
@@ -1462,8 +1346,6 @@ export async function accountOfStatement(sb: any, companyId: number, statementId
   return { ok: true, accountCode: String((data as { account_code?: string } | null)?.account_code ?? '') };
 }
 
-/** Does this entry have a leg on this bank account? (Its other bank has
-    already claimed it; this bank may claim only the leg that is its own.) */
 async function entryOnAccount(sb: any, companyId: number, accountCode: string, jeNo: string): Promise<{ ok: true; found: boolean } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('v_gl_entries')
     .select('je_no').eq('company_id', companyId).eq('account_code', accountCode).eq('je_no', jeNo).limit(1);
@@ -1476,7 +1358,6 @@ export const claimedHere = (jeNo: string, accountCode: string): string =>
 const noLegHere = (jeNo: string, accountCode: string): string =>
   `${jeNo} has no line on ${accountCode}, so no movement of this bank can be it — it is reconciled on the bank it does touch.`;
 
-/* ── POST /bank/lines/:id/match — this movement is that entry ─────────────── */
 
 export const bankLineMatch = guard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -1524,7 +1405,6 @@ export const bankLineMatch = guard(async (c) => {
       if (!leg.ok) return c.json({ error: 'load_failed', reason: leg.reason }, 500);
       if (!leg.found) return c.json({ error: 'not_this_account', message: noLegHere(jeNo, account.accountCode) }, 409);
     }
-    /* Rows an older undo left behind, and this line's own earlier claim (a re-match). */
     const dead = [...held.dead, ...held.live.filter((m) => m.bankLineId === lineId)].map((m) => m.id);
     if (dead.length > 0) {
       const { error: dErr } = await sb.from('acc_bank_statement_matches').delete().eq('company_id', co.companyId).in('id', dead);
@@ -1540,8 +1420,6 @@ export const bankLineMatch = guard(async (c) => {
     match_reason: 'manual',
   });
   if (insErr) {
-    /* The database's own guarantee, surfaced as a sentence: one entry cannot
-       account for two bank movements, and the second one to claim it loses. */
     const twice = String(insErr.code ?? '') === '23505' || /duplicate key/i.test(String(insErr.message ?? ''));
     return c.json({
       error: twice ? 'already_matched' : 'save_failed',
@@ -1607,7 +1485,6 @@ export const bankLinesMatchGroup = guard(async (c) => {
   if (accounts.length !== 1) return c.json({ error: 'mixed_accounts', message: 'The movements ticked are on statements of different bank accounts.' }, 400);
   const accountCode = accounts[0]!;
 
-  /* The entries, by what the ledger says they are — never the screen's amount. */
   const ledger = await loadAccountLedger(sb, co.companyId, accountCode, '9999-12-31');
   if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
   const entries = jeNos.map((n) => ledger.movements.find((m) => m.jeNo === n) ?? null);
@@ -1640,9 +1517,6 @@ export const bankLinesMatchGroup = guard(async (c) => {
     }, 409);
   }
 
-  /* Rows: several movements → one entry carry each movement's amount; one
-     movement → several entries carry each entry's amount. Either way the rows
-     of an entry sum to what it is, and the rows of a movement to what it is. */
   const rows = lineIds.length > 1
     ? lines.map((l) => ({ bank_line_id: Number(l.id), company_id: co.companyId, je_no: jeNos[0]!, amount_sen: Number(l.amount_sen), match_reason: 'manual' }))
     : found.map((e) => ({ bank_line_id: lineIds[0]!, company_id: co.companyId, je_no: e.jeNo, amount_sen: e.debitSen - e.creditSen, match_reason: 'manual' }));

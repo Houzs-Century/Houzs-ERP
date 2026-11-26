@@ -52,16 +52,11 @@ export type FeedHeadRow = {
   customer_country: string | null;
   venue: string | null;
   status: string;
-  /** Board-owned, pushed to the sheets' col A / Houzs Remark 2 (ERP -> sheet). */
   delivery_message_status: string | null;
   dp_remark: string | null;
   do_numbers: string | null;
-  /** The latest non-cancelled delivery order's DO date — the sheet's SHIPOUT DATE. */
   shipout_date: string | null;
-  /** The latest non-cancelled DO's CTN (board-owned, pushed to the sheets). */
   ctn: string | null;
-  /** The latest non-cancelled DO's EM delivery status (ESB-owned; carried only to
-   *  gate the BS feed on "TO BRIGHTSUN" — never written back to the sheet). */
   em_delivery_status: string | null;
   po_numbers: string | null;
   last_modified_text: string;
@@ -102,19 +97,12 @@ export type DeliverySheetRecord = {
   InvAddr4: string | null;
   Attention: string | null;
   SOUDF_VENUE: string | null;
-  /** The sheet's "SHIPOUT DATE = DO date" — the latest non-cancelled DO's date. */
   ShipoutDate: string | null;
-  /** Board-owned, pushed ERP -> sheet: col A "EM Order Shipment Status",
-   *  "Houzs Remark 2", and "CTN" respectively. */
   DeliveryMessageStatus: string | null;
   DpRemark: string | null;
   Ctn: string | null;
-  /** ESB-owned EM delivery status (latest DO) — carried only so the BS feed can
-   *  gate on "TO BRIGHTSUN"; never written back to a sheet. */
   EmDeliveryStatus: string | null;
   Status: string;
-  /** Remarks 2 says READY / READY (PARTIAL) — the owner's gate for a NEW row
-   *  on the sheet (2026-09-17). Decided here so the Apps Script has no copy. */
   Ready: boolean;
   Region: "WEST" | "EAST" | "SG" | null;
   LastModified: string;
@@ -126,12 +114,6 @@ export const FEED_MAX_LIMIT = 1000;
 export const FEED_EPOCH = "2000-01-01 00:00:00";
 export const UPDATES_MAX = 300;
 
-/**
- * The checkpoint the sheet sends back is the `LastModified` text of the last
- * row it wrote — Postgres's own `timestamptz::text` (microseconds and offset),
- * or the old script's `yyyy-MM-dd HH:mm:ss`. Anything else is refused so a
- * malformed value fails the request instead of reaching `::timestamptz`.
- */
 const SINCE_RE =
   /^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?$/;
 
@@ -147,20 +129,6 @@ export function parseLimit(raw: string | undefined | null): number {
   return Math.min(n, FEED_MAX_LIMIT);
 }
 
-/**
- * Binds, in order: ?1 company_id, ?2 since (timestamptz text), ?3 limit.
- *
- * `LastModified` is the LATEST of the header's own `updated_at`, the newest
- * payment and the newest delivery order — measured 2026-09-15, 116 of 2,958
- * Houzs orders had a payment newer than `updated_at` (POST /:docNo/payments
- * never touches the header), so a feed keyed on `updated_at` alone would never
- * tell the sheet a balance was collected.
- *
- * DRAFT and CANCELLED orders are not sent, as on the delivery board. A row the
- * sheet already carries keeps its last state when its order is cancelled.
- */
-/** The head rows every feed reads, for ONE company (`?1`), live orders only.
- *  Each feed wraps this and adds its own outer predicate and order. */
 const FEED_BASE_SQL = `
   SELECT so.doc_no, so.linked_ac_docno,
          so.so_date::text AS so_date, so.ref, so.customer_so_no, so.branding, so.debtor_name, so.phone,
@@ -206,11 +174,6 @@ WHERE t.last_modified > ?2::timestamptz
 ORDER BY t.last_modified, t.doc_no
 LIMIT ?3`;
 
-/* "The goods have left" is SO_DELIVERED_OR_BEYOND (so-deliverable-states.ts,
-   the one home) and "undelivered" is deliberately NOT a second list: the base
-   SELECT already drops DRAFT and CANCELLED (SO_NOT_AN_ORDER), so an undelivered
-   order is simply one not in that set — held orders included, which is why
-   so-delivery-sync.ts's DELIVERABLE_FROM (the auto-advance rule) is not reused. */
 const inList = (xs: Iterable<string>) => [...xs].sort().map((s) => `'${s}'`).join(", ");
 
 /**
@@ -633,9 +596,6 @@ export function toSheetRecord(row: FeedHeadRow, lines: ReadonlyArray<FeedLineRow
     ErpDocNo: row.doc_no,
     TransferTo: blankToNull(row.do_numbers),
     DocDate: row.so_date,
-    // The sheet's Ref = the ERP's "Reference", which frontend customerRefOf reads
-    // as ref || customer_so_no: a native ERP order has ref NULL and carries its
-    // reference in customer_so_no, so ref alone left every native order blank.
     Ref: blankToNull(row.ref) ?? blankToNull(row.customer_so_no),
     SOUDF_BRANDING: blankToNull(row.branding),
     DebtorName: blankToNull(row.debtor_name),

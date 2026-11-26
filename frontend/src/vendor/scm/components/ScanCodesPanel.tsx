@@ -16,7 +16,6 @@ type PoLine = { poItemId: string; poNumber: string; itemCode: string; materialNa
 type CodesResp = { data?: { supplierKnown?: boolean; rows?: CodeRow[]; poLines?: PoLine[] } };
 type SaveResp = { data?: { saved?: number; draft?: string | null } };
 
-// One choice per item on each PO: picking any of its identical lines teaches the same code.
 function itemChoices(lines: PoLine[]): Array<{ value: string; label: string }> {
   const seen = new Map<string, { value: string; label: string; owed: number }>();
   for (const l of lines) {
@@ -38,7 +37,6 @@ export function ScanCodesPanel({ jobId, jobsQueryKey }: { jobId: string; jobsQue
   const rows = data?.data?.rows ?? [];
   const lines = data?.data?.poLines ?? [];
   const lineById = new Map(lines.map((l) => [l.poItemId, l]));
-  // A suggested line is the first of its item; map it onto the choice for that item.
   const choiceFor = (poItemId: string | null): string => {
     const l = poItemId ? lineById.get(poItemId) : undefined;
     if (!l) return '';

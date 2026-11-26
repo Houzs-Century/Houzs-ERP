@@ -25,8 +25,6 @@ const CASE: AssrAckCase = {
   phone: '+60123456789', refNo: 'HC12774', companyCode: 'HOUZS', deliveryOrder: null,
 };
 
-/** The resolver writes do_numbers (a DO) or leaves it null. Persistent (not a
- *  one-shot) so an early-return test can't leak a queued impl into a later one. */
 function resolverFinds(hasDo: boolean) {
   vi.mocked(attachDeliveryOrders).mockImplementation(async (_e, rows: Record<string, unknown>[]) => {
     for (const r of rows) r.do_numbers = hasDo ? 'DO-010831 · DO-010845' : null;

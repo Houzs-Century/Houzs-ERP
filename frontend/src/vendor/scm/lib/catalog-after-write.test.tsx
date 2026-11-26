@@ -1,7 +1,3 @@
-// BUG-85: /mfg-products and /product-models answer with a 60s private max-age.
-// A refetch that follows a write must skip that browser cache, or the SKU just
-// made is missing and the stale list is then held as fresh. authed-fetch is
-// mocked at the module seam (the accounting-queries-gl.test.tsx pattern).
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
@@ -52,7 +48,6 @@ describe('useMfgProducts — the catalogue after a write', () => {
 
     await waitFor(() => expect(callsTo('/mfg-products')).toHaveLength(2));
     expect(initOf(callsTo('/mfg-products')[1])?.cache).toBe('no-cache');
-    // The Modular list (SKU count) is refetched too, also past the cache.
     await waitFor(() => expect(callsTo('/product-models').filter(([p]) => p === '/product-models')).toHaveLength(2));
     const modelReads = callsTo('/product-models').filter(([p]) => p === '/product-models');
     expect(initOf(modelReads[1])?.cache).toBe('no-cache');

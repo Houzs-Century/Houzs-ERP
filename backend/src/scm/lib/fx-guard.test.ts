@@ -1,11 +1,3 @@
-// Unit tests for the R2 foreign-rate write-boundary guards (fx-guard.ts) — both the
-// POST boundary (create) and, since 2026-07-30, the PATCH boundary (a currency FLIP
-// on an existing document, which the POST guard never saw).
-// Audit: docs/inventory-costing-integrity-audit.md, R2. The predicates are pure so
-// the bulk of the coverage is DB-free; a minimal fake PostgREST client drives the
-// DB-aware assert* helpers over the currencies master read. Route-level coverage is
-// not possible in this repo's harness (scm rides Supabase Postgres, which the vitest
-// pool does not stand up) — staging validation remains.
 import { describe, it, expect } from 'vitest';
 import {
   isPositiveFiniteRate,
@@ -19,8 +11,6 @@ import {
 
 type Row = Record<string, unknown>;
 
-/** Minimal chainable, awaitable PostgREST stand-in for the single
- *  currencies.select().eq().maybeSingle() read the guard performs. */
 function fakeSb(currencies: Row[]) {
   class Q {
     rows: Row[];
@@ -32,7 +22,6 @@ function fakeSb(currencies: Row[]) {
   return { from: (_table: string) => new Q(currencies) };
 }
 
-/** An sb whose read always throws — exercises the readMasterRateRaw catch. */
 function throwingSb() {
   return {
     from: () => ({
@@ -94,9 +83,7 @@ describe('isUnratedForeignPost — the R2 predicate', () => {
   });
 
   it('keys on the MASTER being unset, not on the effective rate being 1 — a deliberate operator 1 is honoured', () => {
-    // operator deliberately typed 1 (e.g. a currency they treat as par) → allowed
     expect(isUnratedForeignPost({ currency: 'SGD', operatorRate: 1, masterRate: null })).toBe(false);
-    // no operator rate + master unset (defaults to 1) → blocked
     expect(isUnratedForeignPost({ currency: 'SGD', operatorRate: undefined, masterRate: null })).toBe(true);
   });
 });
@@ -109,11 +96,6 @@ describe('foreignRateBlockBody', () => {
     expect(b.doc).toBe('GRN');
   });
 
-  /* The message names all THREE ways out, and the payment one on purpose: Houzs
-     pays its China suppliers before the goods and the invoice arrive, so the true
-     rate is usually already knowable from a bank transfer, and recording that
-     voucher is better than typing a rate — its rate is adopted by the invoice it
-     settles and re-costs the GRN (lib/pv-rate-adoption.ts). */
   it('names the currency master, the document field, AND recording the payment', () => {
     const m = foreignRateBlockBody('rmb', 'GRN').message;
     expect(m).toContain('currency master');
@@ -182,11 +164,6 @@ describe('assertForeignRatePostable — DB-aware POST-boundary check', () => {
   });
 });
 
-/* ── The EDIT-path hole (2026-07-30) ───────────────────────────────────────────
-   The POST guard above closed the create boundary; PATCH /grns/:id and
-   PATCH /purchase-invoices/:id both accept `currency` and neither consulted the
-   master. Flip an MYR document to RMB with no rate and exchange_rate stays at the 1
-   it held for being ringgit — the R2 mis-cost reached by editing. */
 
 describe('isUnratedForeignCurrencyFlip — the EDIT predicate', () => {
   const base = { fromCurrency: 'MYR', toCurrency: 'RMB', operatorRate: undefined, masterRate: null };
@@ -196,8 +173,6 @@ describe('isUnratedForeignCurrencyFlip — the EDIT predicate', () => {
   });
 
   it('does NOT fire when the patch does not touch the currency at all', () => {
-    // The single most important case: editing notes / warehouse / supplier on an
-    // existing foreign document must never be refused.
     expect(isUnratedForeignCurrencyFlip({ ...base, fromCurrency: 'RMB', toCurrency: undefined })).toBe(false);
     expect(isUnratedForeignCurrencyFlip({ ...base, toCurrency: null })).toBe(false);
   });

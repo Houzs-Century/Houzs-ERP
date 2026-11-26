@@ -24,8 +24,6 @@ import { newLineTargetOf } from './autocount-line-keys';
 import { fakeSb, type Row } from './fake-postgrest';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
 
-/* A real cutover code: the composer resolves every ERP code against the map and
-   REFUSES what it cannot find, so an invented SKU would test that instead. */
 const ERP_A = 'AKEMI APEX MATT (SP)';
 const ERP_B = 'AKEMI ARISTOI MATT (SP)';
 const SO_DOC = 'HC-SO-013394';
@@ -35,12 +33,9 @@ const soHeader = (): Row => ({
   salesperson_id: 'staff-1', sales_location: 'KL', branding: null, venue: null,
   address1: null, address2: null, address3: null, address4: null,
   phone: null, ref: null, po_doc_no: null, internal_expected_dd: null,
-  /* It IS in AutoCount - an edit is only ever composed for a document that is. */
   linked_ac_docno: 'SO-013394', company_id: 1,
 });
 
-/* SEVEN keyed, ONE not - the shape the live document is actually in. The keyless
-   one is what makes a keyed edit impossible and a rebuild the only way through. */
 const soItems = (): Row[] => ([
   { id: 'row-1', doc_no: SO_DOC, item_code: ERP_A, description: 'M', qty: 1, unit_price_sen: 100, cancelled: false, warehouse_id: null, linked_ac_dtlkey: 917137 },
   { id: 'row-2', doc_no: SO_DOC, item_code: ERP_B, description: 'M', qty: 1, unit_price_sen: 200, cancelled: false, warehouse_id: null, linked_ac_dtlkey: null },
@@ -77,8 +72,6 @@ describe('an edit that was held back can be re-sent, as a rebuild', () => {
     expect(r.outcome).toBe('requeued');
     const [row] = queued(sb);
     expect(row, 'nothing was queued').toBeTruthy();
-    /* The PAYLOAD, not the verdict text. What reaches the host is the only thing
-       that decides whether the book ends up matching the ERP. */
     expect((row.payload as { body: Record<string, unknown> }).body.Rebuild).toBe(true);
   });
 
@@ -156,16 +149,12 @@ describe('a rebuilt line is a NEW line, so it must carry its item code', () => {
     }
   });
 
-  /* THE HALF THAT MUST NOT MOVE. An ordinary keyed edit still omits ItemCode -
-     that strip is the only thing standing between an edit and 194 silently
-     re-pointed lines, and this fix must not have widened it. */
   test('an ordinary keyed edit still sends no ItemCode at all', async () => {
     const sb = fakeSb({
       app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
       autocount_outbox: [],
       staff: [{ id: 'staff-1', name: 'Nurul Hidayah' }],
       mfg_sales_orders: [soHeader()],
-      /* Every line KEYED, so the edit composes instead of refusing. */
       mfg_sales_order_items: soItems().map((r) => ({ ...r, linked_ac_dtlkey: r.linked_ac_dtlkey ?? 917138 })),
       supplier_material_bindings: [],
     });
@@ -196,10 +185,6 @@ describe('after a rebuild the ERP has to learn the reissued keys', () => {
     }
   });
 
-  /* And the reader has to agree with the writer: on a rebuild EVERY line counts
-     as new and NOT ONE key the payload carried is still known, or
-     persistNewLineKeys would filter a genuinely fresh key out as "already had
-     it" and then bail on the count mismatch. */
   test('newLineTargetOf treats a rebuild as all-new with no known keys', async () => {
     const sb = world();
     await requeueOneRow(sb as never, editSkip() as never, { apply: true, resendingThisRow: false });
@@ -211,9 +196,6 @@ describe('after a rebuild the ERP has to learn the reissued keys', () => {
     expect(target?.knownKeys).toEqual([]);
   });
 
-  /* THE HALF THAT MUST NOT MOVE. An ordinary edit still stores only what the
-     route DECLARED new - reading every line back would repoint keys the book
-     already owns. */
   test('an ordinary edit still names nothing new', async () => {
     const sb = fakeSb({
       app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
@@ -229,20 +211,6 @@ describe('after a rebuild the ERP has to learn the reissued keys', () => {
   });
 });
 
-// ----------------------------------------------------------------------------
-// ONE REBUILD PER DOCUMENT, however many times it was refused.
-//
-// HC-SO-012312 was saved twenty-one times while its Description 2 was over
-// AutoCount's 100 characters, so the queue holds twenty-one refused edits of one
-// sales order. Once the composer accepted it, the sweep climbed the ladder
-// twenty-one times and answered `would-requeue 21` — which APPLY would have made
-// twenty-one InternalSaves against a live licensed account book, each one
-// destroying and reissuing every DtlKey on the document.
-//
-// A rebuild does not accumulate. It lays down the ERP's lines AS THEY STAND, so
-// the first one already carries what all twenty-one saves added up to, and the
-// other twenty are the same instruction sent again.
-// ----------------------------------------------------------------------------
 describe('a document refused many times is re-queued ONCE', () => {
   const manySkips = (n: number): Row[] => Array.from({ length: n }, (_, i) => editSkip({
     id: `skip-${i + 1}`,
@@ -256,15 +224,10 @@ describe('a document refused many times is re-queued ONCE', () => {
     expect(results).toHaveLength(21);
     expect(results.filter((r) => r.outcome === 'requeued')).toHaveLength(1);
     expect(results.filter((r) => r.outcome === 'already-queued')).toHaveLength(20);
-    /* The measurement that matters is not the verdict, it is the QUEUE. */
     expect(queued(sb)).toHaveLength(1);
   });
 
   test('the DRY RUN predicts the same one, not twenty-one', async () => {
-    /* The dry run writes no pending row, so the database guard cannot answer
-       for it. Without the sweep's own memory an operator would read
-       `would-requeue 21` for a run that lands 1 — and this file's promise is
-       that a dry run can only disagree with APPLY about whether the row lands. */
     const sb = world(manySkips(21));
     const results = await requeueSkipped(sb as never, { docNo: SO_DOC });
 
@@ -285,10 +248,6 @@ describe('a document refused many times is re-queued ONCE', () => {
   });
 
   test('a SENT edit in the document\'s history does NOT refuse it', async () => {
-    /* The rung this mirrors is `row-pending`, not `already-sent`. A document the
-       write-back has succeeded on carries a `sent` edit row for every save it
-       ever made — vetoing on those would refuse every document that has ever
-       worked. */
     const sb = world([
       editSkip(),
       { ...editSkip({ id: 'old-1' }), status: 'sent', last_error: null },
@@ -328,9 +287,6 @@ describe('a document refused many times is re-queued ONCE', () => {
 
 describe('the outcomes that mean a document is on its way', () => {
   test('every re-queue verdict is in the set the sweep dedupes on', () => {
-    /* Forgetting one is silent: the document is simply re-queued a second time,
-       which is the whole defect. `requeued-with-parent` is the one that reads
-       like a special case and would be the one left out. */
     expect([...REQUEUE_PUTS_IT_ON_ITS_WAY].sort()).toEqual([
       'requeued', 'requeued-as-recorded', 'requeued-with-parent', 'would-requeue',
     ]);

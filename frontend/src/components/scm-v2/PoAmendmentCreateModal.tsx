@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// PoAmendmentCreateModal — the PO amendment CREATE-request flow. A self-contained
-// modal that raises an amendment against ONE live Purchase Order via
-// POST /po-amendments (useCreatePoAmendment).
-//
-// Unlike the SO amendment (which reuses the full SO editor in "amendment mode"),
-// the PO amendment create is a focused diff editor: it loads the PO's current
-// lines, lets the buyer change qty / unit cost / per-line delivery date or mark a
-// line REMOVED, edit the header delivery date + notes, and give a reason. It
-// diffs the edits against the loaded PO and submits only the genuine changes — so
-// the "N changes" the approver sees is honest.
-//
-// Kept OUT of the big PO editor (PurchaseOrderDetail.tsx) on purpose: that file is
-// large and under concurrent edit, and the amendment create needs none of its
-// pricing / line-add machinery. Adding a brand-new line and changing the supplier
-// are backend-supported but deferred here (they need the product / supplier
-// pickers the editor owns) — this covers the common amendment: qty, cost,
-// delivery, remove, plus the header delivery date + notes.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from "react";
 import { FilePenLine, Trash2, RotateCcw } from "lucide-react";
@@ -38,15 +19,11 @@ import { DateField } from "../../vendor/scm/components/DateField";
 import { parseMoneyToSen } from "../../lib/money";
 import { useIdempotencyKey } from "../../lib/idempotency";
 
-/* Prices are in centi (1/100 MYR); the editor works in whole MYR for the buyer
-   then converts back to centi on submit. */
 const centiToMyr = (centi: number | null | undefined): string =>
   centi == null ? "" : (Number(centi) / 100).toFixed(2);
 const dateOnly = (iso: string | null | undefined): string =>
   iso ? String(iso).replace(/T.*$/, "") : "";
 
-/* Per-line editable draft. `removed` marks a REMOVE; the other fields are the
-   requested new values, seeded from the current PO line. */
 type LineDraft = {
   qty: string;
   unitPriceMyr: string;
@@ -83,8 +60,6 @@ export function PoAmendmentCreateModal({
   const notify = useNotify();
   const detail = usePurchaseOrderDetail(poId);
   const create = useCreatePoAmendment();
-  /* One key for this attempt, kept across presses: a retry after a lost reply
-     must reach the server as the same request, or it is a second amendment. */
   const idempotencyKey = useIdempotencyKey();
 
   const header = detail.data?.purchaseOrder ?? null;
@@ -95,12 +70,10 @@ export function PoAmendmentCreateModal({
   const [notes, setNotes] = useState<string | null>(null);
   const [reason, setReason] = useState("");
 
-  // Seed drafts + header fields once the PO detail lands.
   const seeded = useMemo(() => {
     if (!header) return false;
     return true;
   }, [header]);
-  // Lazy seed: build the effective draft for a line (falls back to its seed).
   const draftOf = (l: PoItemRow): LineDraft => drafts[l.id] ?? seedDraft(l);
   const setDraft = (l: PoItemRow, patch: Partial<LineDraft>) =>
     setDrafts((prev) => ({ ...prev, [l.id]: { ...draftOf(l), ...patch } }));
@@ -108,8 +81,6 @@ export function PoAmendmentCreateModal({
   const effectiveExpectedAt = expectedAt ?? dateOnly(header?.expected_at);
   const effectiveNotes = notes ?? (header?.notes ?? "");
 
-  /* Build the amendment payload — only genuine deltas become lines / header
-     changes, so a no-op submit is impossible (the backend also 400s empty). */
   const buildPayload = (): { lines: CreatePoAmendmentLine[]; headerChanges: PoAmendmentHeaderChanges; error: string | null } => {
     const lines: CreatePoAmendmentLine[] = [];
     for (const l of items) {
@@ -134,8 +105,6 @@ export function PoAmendmentCreateModal({
       const priceChanged = newSen !== Number(l.unit_price_sen ?? 0);
       const deliveryChanged = (newDelivery ?? null) !== (dateOnly(l.delivery_date) || null);
       if (!qtyChanged && !priceChanged && !deliveryChanged) continue;
-      // A single line can move qty + cost + delivery together; the backend applies
-      // whatever new_* fields are present. Classify by the dominant field.
       const changeType = priceChanged && !qtyChanged && !deliveryChanged ? "PRICE"
         : deliveryChanged && !qtyChanged && !priceChanged ? "DELIVERY"
         : "QTY";
@@ -232,7 +201,6 @@ export function PoAmendmentCreateModal({
             Purchase Order keeps a snapshot of its prior revision.
           </p>
 
-          {/* Line editor */}
           <div className="space-y-2">
             {items.map((l) => {
               const d = draftOf(l);
@@ -300,7 +268,6 @@ export function PoAmendmentCreateModal({
             )}
           </div>
 
-          {/* Header changes */}
           <div className="grid grid-cols-2 gap-2 border-t border-border-subtle pt-3">
             <label className="block">
               <span className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">PO delivery date</span>
@@ -318,7 +285,6 @@ export function PoAmendmentCreateModal({
             </label>
           </div>
 
-          {/* Reason */}
           <label className="block">
             <span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Reason (optional)</span>
             <input
@@ -330,7 +296,6 @@ export function PoAmendmentCreateModal({
             />
           </label>
 
-          {/* Money summary — round, honest total of the requested lines. */}
           <div className="flex items-center justify-between border-t border-border-subtle pt-3 text-[12px]">
             <span className="text-ink-muted">Current PO total</span>
             <span className="font-money font-semibold text-ink">{fmtMoneySen(header.total_sen)}</span>

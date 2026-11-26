@@ -25,11 +25,6 @@
 import { COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont, fmtDocDate, fmtDocStamp, safeName, type PdfAction } from './pdf-common';
 import { PDF_COMPRESS } from './pdf-options';
 
-/* One changed line on the amendment. `kind` drives the tint semantics: a CHANGE
-   shows before (red) -> after (green); an ADD has no before; a REMOVE has no
-   after. `field` is a human label ("Quantity", "Unit price", "Delivery date",
-   "Spec", "Line"). `department` is the routing label (amendment-routing.ts) for
-   the field this row changed — printed in the Dept column for accountability. */
 export type AmendmentChangeRow = {
   item: string;
   field: string;
@@ -39,14 +34,9 @@ export type AmendmentChangeRow = {
   department?: string | null;
 };
 
-/* The amendment TYPE + department-routing summary (amendment-routing.ts), folded
-   by the mapper so the PDF template stays presentation-only. Drives the type
-   badge row and the department-routing block. */
 export type AmendmentPdfRouting = {
-  /** Type labels to badge, e.g. ['Processing', 'Delivery / Commercial']. */
   typeLabels: string[];
   isMixed: boolean;
-  /** Each responsible department against the field labels it owns. */
   departments: Array<{ department: string; fields: string[] }>;
 };
 
@@ -55,15 +45,12 @@ export type AmendmentPdfInput = {
   amendmentNo: string;
   issueDate: string | null;
   status: string;
-  /** Original document number the amendment revises. */
   docNo: string;
-  /** 'Customer' for an SO amendment, 'Supplier' for a PO amendment. */
   partyLabel: string;
   partyName: string | null;
   revisionFrom: number;
   revisionTo: number;
   changes: AmendmentChangeRow[];
-  /** Type badges + department routing (advisory accountability, not a gate). */
   routing?: AmendmentPdfRouting | null;
   reason?: string | null;
   requestedBy?: string | null;
@@ -72,9 +59,6 @@ export type AmendmentPdfInput = {
   approvedAt?: string | null;
 };
 
-// Owner-approved tints (match the change-table mockup): a light red wash on the
-// BEFORE value, a light green wash on the AFTER value, each with a darker,
-// readable ink. Kept muted so a mono printer still renders them as clean greys.
 const RED_FILL: [number, number, number] = [252, 226, 226];
 const RED_INK: [number, number, number] = [153, 27, 27];
 const GREEN_FILL: [number, number, number] = [220, 244, 226];
@@ -92,8 +76,6 @@ export async function generateAmendmentPdf(
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
 
-  // CJK-safe: a China supplier's name or a Chinese item description is the likely
-  // non-WinAnsi text here. No-op / no fetch for a pure-Latin document.
   await ensurePdfCjkFont(doc, [
     input.partyName, input.reason, input.requestedBy, input.approvedBy,
     ...input.changes.flatMap((r) => [r.item, r.field, r.before, r.after]),
@@ -102,7 +84,6 @@ export async function generateAmendmentPdf(
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
 
-  // ── Header: letterhead + title + meta ────────────────────────────────────
   let y = drawHeader(doc, {
     docTitle: titleFor(input.kind).toUpperCase(),
     rightMeta: [
@@ -112,9 +93,6 @@ export async function generateAmendmentPdf(
     ],
   });
 
-  // ── Amendment TYPE badge(s) ───────────────────────────────────────────────
-  // Processing (WHAT is made) vs Delivery / Commercial (WHEN + terms). A mixed
-  // amendment shows both. Advisory classification — it does not gate the apply.
   const routing = input.routing ?? null;
   if (routing && routing.typeLabels.length > 0) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
@@ -139,7 +117,6 @@ export async function generateAmendmentPdf(
     y += 6;
   }
 
-  // ── Reference block: original doc, party, revision old -> new ─────────────
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   doc.text('REFERENCE', margin, y);
   doc.text('REVISION', pageW / 2, y);
@@ -156,7 +133,6 @@ export async function generateAmendmentPdf(
   doc.setDrawColor(200); doc.line(margin, y, pageW - margin, y);
   y += 6;
 
-  // ── Change table: item | field | before (red) | after (green) ────────────
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   doc.text('REQUESTED CHANGES', margin, y);
   y += 2;
@@ -167,7 +143,6 @@ export async function generateAmendmentPdf(
 
   autoTable(doc, {
     startY: y + 2,
-    // Dept = the responsible department this changed field routes to (accountability).
     head: [['Item', 'Field', 'Before', 'After', 'Dept']],
     body,
     /* The house table (pdf-common DOC_TABLE_*), like every other printed
@@ -186,9 +161,6 @@ export async function generateAmendmentPdf(
       3: { cellWidth: 'auto' },
       4: { cellWidth: 34 },
     },
-    // BEFORE tinted red, AFTER tinted green — per the owner's mockup. An ADD has
-    // no before (muted dash); a REMOVE's after reads "Removed". Dept column reads
-    // muted — it labels responsibility, it is not part of the before/after delta.
     didParseCell: (data: any) => {
       if (data.section !== 'body') return;
       const row = input.changes[data.row.index];
@@ -205,13 +177,8 @@ export async function generateAmendmentPdf(
     },
   });
 
-  // autotable stashes the final Y on the doc.
   y = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 8;
 
-  // ── Department routing block ──────────────────────────────────────────────
-  // Each responsible department against the fields it owns in this amendment —
-  // the owner's 3-dept routing concept. Advisory: it shows WHO is accountable for
-  // WHAT, it does not split the apply into per-department signatures.
   if (routing && routing.departments.length > 0) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
     doc.text('DEPARTMENT ROUTING', margin, y);
@@ -229,7 +196,6 @@ export async function generateAmendmentPdf(
     y += 4;
   }
 
-  // ── Reason / remark ───────────────────────────────────────────────────────
   if (input.reason && input.reason.trim()) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
     doc.text('REASON', margin, y);
@@ -240,7 +206,6 @@ export async function generateAmendmentPdf(
     y += wrapped.length * 5 + 4;
   }
 
-  // ── Approval block ────────────────────────────────────────────────────────
   doc.setDrawColor(200); doc.line(margin, y, pageW - margin, y);
   y += 6;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
@@ -258,10 +223,6 @@ export async function generateAmendmentPdf(
   approvalLines.forEach((l, i) => doc.text(l, margin, y + i * 5));
   y += approvalLines.length * 5 + 3;
 
-  // Single-signature accountability: ONE approver applies the WHOLE amendment,
-  // so record that this approval covers every routed department. The routing
-  // block above says which fields each department owns; this says the approver
-  // signed for all of them.
   if (input.approvedBy && routing && routing.departments.length > 0) {
     doc.setFontSize(8.5); doc.setTextColor(120);
     const depts = routing.departments.map((d) => d.department).join(', ');
@@ -274,7 +235,6 @@ export async function generateAmendmentPdf(
     y += 5;
   }
 
-  // ── Footer: supersedes + generated stamp ──────────────────────────────────
   doc.setFontSize(8); doc.setTextColor(120);
   doc.text(
     `Supersedes revision ${input.revisionFrom}.    Generated ${fmtDocStamp()}    ${COMPANY.name}`,
@@ -282,7 +242,5 @@ export async function generateAmendmentPdf(
   );
   doc.setTextColor(0);
 
-  // Was a private copy of the old ASCII-only scrub; the shared helper keeps a
-  // non-Latin amendment number readable instead of underscoring it away.
   deliverPdf(doc, `${safeName(input.amendmentNo || `${input.kind}-amendment`, 40)}.pdf`, opts?.action);
 }

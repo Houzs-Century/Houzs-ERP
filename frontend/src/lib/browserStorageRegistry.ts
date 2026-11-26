@@ -64,9 +64,6 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "scm-list-return", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.scmListReturn.v1 (per-section last filtered list URL, for detail Back)", matches: exact("houzs.scmListReturn.v1") },
   { id: "event-commission-view", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.eventCommission.v1 (Event Commission's view, brand and open fairs, kept for Back)", matches: exact("houzs.eventCommission.v1") },
   { id: "scm-list-focus", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.scmListFocus.v1 (per-section row last opened from a list, scrolled back to on return)", matches: exact("houzs.scmListFocus.v1") },
-  // Peter 2026-10-14: the desktop Projects list saves <main>'s scrollTop when a
-  // row opens and restores it on detail Back — same detail-Back shape as
-  // scm-list-return above. Written then consumed; no identity/company data.
   { id: "projects-list-scroll", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "projects:listScroll (desktop list scroll position, for detail Back)", matches: exact("projects:listScroll") },
   { id: "return-scroll", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "houzs.returnScroll.v1 (where a page was scrolled when a document was opened from it, per address, taken once on return; last 20, 30 minutes)", matches: exact("houzs.returnScroll.v1") },
   // Owner 2026-11-10 (bank reconciliation: 点开后也可以返回这里): the movement ids and
@@ -94,55 +91,23 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "pending-reminder-acks", classification: "TRANSIENT", storage: ["localStorage"], keyFamily: "pending-reminder:u<user>:c<company>:<YYYY-MM-DD>", matches: (key) => /^pending-reminder:u\d+:c\d+:\d{4}-\d{2}-\d{2}$/.test(key) },
   { id: "identity-preferences", classification: "IDENTITY_PREF", storage: ["localStorage"], keyFamily: "<approved preference base>:u<user>:c<company>", matches: identityPreference },
   { id: "pwa-dismissals", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "pwa:<surface>:dismissed-at", matches: prefix("pwa:") },
-  // Native-app opt-ins, per DEVICE and per install. Currently just the
-  // biometric-session flag (native:biometric-session) that gates unlocking a
-  // Keychain-held session with Face ID. NOT identity data: it stores whether the
-  // feature is on for this handset, never who is signed in — the session itself
-  // lives in the iOS Keychain, not here.
   { id: "native-app-opt-ins", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "native:<feature>", matches: prefix("native:") },
-  // The Finance report opened last in this tab (batch 6 §1.1): the sidebar's one
-  // Reports entry goes back to it. The report's sidebar address, no identity data.
   { id: "finance-report-last", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "fin-reports-last", matches: exact("fin-reports-last") },
-  // The Finance report list pinned open (owner's redesign, batch 6 §4.1; the
-  // design's own key) — '1'/'0', a per-device layout preference.
   { id: "finance-report-list-pin", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-reports-rail-pinned", matches: exact("fin-reports-rail-pinned") },
-  // HR · Employees & Attendance redesign: the secondary sidebar's width and
-  // collapsed/open state — a per-device layout preference, no identity data.
   { id: "hr-subnav", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "hr-subnav-w (width 200-420) + hr-subnav-open ('1'/'0')", matches: (key) => key === "hr-subnav-w" || key === "hr-subnav-open" },
-  // The last date range picked on a Finance report in this tab (batch 6 §4.3):
-  // a report opened with no dates in its address follows it. {from,to} ISO days.
   { id: "finance-report-range", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "fin-report-range", matches: exact("fin-report-range") },
-  // The statement column widths a person dragged, per view (batch 6 §4.1; the
-  // design's own key) — px for the account column, Total and the periods.
   { id: "finance-statement-widths", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-reports-colw-v2", matches: exact("fin-reports-colw-v2") },
   // A Finance table's layout a person set (owner 2026-11-05, FinanceGrid): column
   // widths, order, hidden and frozen columns, one key per table. No identity data.
   { id: "finance-grid-layout", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-grid-v1:<table>", matches: prefix("fin-grid-v1:") },
   { id: "mobile-language", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs.mobile.lang", matches: exact("houzs.mobile.lang") },
   { id: "theme", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs.theme (light / dark / system, read before first paint by index.html too)", matches: exact("houzs.theme") },
-  // Floating Assistant panel size — a per-device layout preference (width/height
-  // of the draggable chat card), no identity/company data, same class as the
-  // ResizableDrawer panel widths.
   { id: "assistant-panel-size", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "houzs:assistant-panel-w | houzs:assistant-panel-h", matches: (key) => key === "houzs:assistant-panel-w" || key === "houzs:assistant-panel-h" },
   { id: "data-table-layout", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dt:<part>:<table family>", matches: prefix("dt:") },
-  // Option B delivery side map (2026-08-08): whether the map panel is open or
-  // collapsed on each arrangement page — a per-device layout preference, same
-  // class as the panel- widths. No identity/company data (the value is '0'/'1').
   { id: "delivery-map-open", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dmap-open.<page>.v1", matches: prefix("dmap-open.") },
-  // Option B compact-columns DEFAULT (2026-08-08 amendment): whether the board
-  // auto-narrows to the essential columns while the side map is open — a
-  // per-device layout preference the user can toggle off (and any explicit
-  // Columns-panel choice switches it off). Same class as dmap-open; '0'/'1'.
   { id: "delivery-map-compact-columns", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "dmap-compact.<page>.v1", matches: prefix("dmap-compact.") },
-  // Last Mile lorry cards: whether done stops are folded away ("Hide done") — a
-  // per-viewer layout preference (true/false), no identity/company data.
   { id: "fleet-day-hide-done", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fleet-day.hide-done.v1", matches: exact("fleet-day.hide-done.v1") },
-  // Meetings calendar: what the colours mean for this viewer (room / company / me).
-  // A per-device display preference, no identity/company data.
   { id: "meetings-color-by", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "meetings.colorBy", matches: exact("meetings.colorBy") },
-  // The Finance grids' dragged column widths (owner's redesign, batch 6 §1.3:
-  // Journal entries, General ledger, Merchant charges, Collection) — an array
-  // of px per column. A layout preference; no identity/company data.
   { id: "finance-column-widths", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-<grid>-cw", matches: (key) => /^fin-[a-z]+-cw$/.test(key) },
   {
     id: "grid-and-panel-layout",
@@ -178,8 +143,6 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/AndroidInstallGuide.tsx",
   "components/announcementLocalAcks.ts",
   "components/AssistantLauncher.tsx",
-  // Floating Assistant panel: persists ONLY its own width/height (DEVICE_PREF,
-  // assistant-panel-size family) — a layout preference, no identity/company data.
   "components/AssistantPanel.tsx",
   "components/assistantLauncherPosition.ts",
   "components/DataTable.tsx",
@@ -190,27 +153,12 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "components/IosInstallGuide.tsx",
   "components/PwaBanners.tsx",
   "components/pwaDismissal.ts",
-  // Generic resizable slide-over: persists ONLY its chosen width (a DEVICE_PREF
-  // under the panel- family) per caller-supplied storageKey. No identity/company
-  // data — the key is a layout preference, same class as the DataGrid layouts.
   "components/ResizableDrawer.tsx",
-  // Shared CHROME for the SCM record detail drawers (SO/PO/GRN/PI/DO/DR/PR/SI):
-  // persists ONLY the one shared drawer width under panel-scm-detail-drawer.v1,
-  // same DEVICE_PREF layout class as ResizableDrawer above.
   "components/ResizableDetailDrawer.tsx",
-  // Option B delivery side map: persists ONLY its open/collapsed flag and the
-  // compact-columns default per page (dmap-open.<page>.v1 /
-  // dmap-compact.<page>.v1, both DEVICE_PREF) — layout preferences, no
-  // identity or company data, same class as the ResizableDrawer widths.
   "components/scm-v2/DeliveryMapPanel.tsx",
   "components/RouteFallback.tsx",
-  // The banner's local-ack memo moved into the shared hook (desktop + mobile
-  // pop-ups answer "have I seen this?" the same way); AnnouncementBanner.tsx is
-  // presentation only and no longer touches storage.
   "components/useAnnouncementBanner.ts",
   "hooks/useIdentityPreference.ts",
-  // Mobile calendar's non-URL filters (brand/section/organizer): sessionStorage
-  // under the shared filters: family, 1h idle TTL (list-filters rule).
   "hooks/useIdleSessionFilter.ts",
   "hooks/useLocalStorage.ts",
   "hooks/usePendingReminder.ts",
@@ -218,31 +166,15 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "lib/activeCompany.ts",
   "lib/authToken.ts",
   "lib/browserNotificationPreference.ts",
-  // chunk-action-reload + chunk-print-resume (sessionStorage, TRANSIENT): the
-  // cooldown and the print to reopen after a stale-build reload.
   "lib/chunkActionRecovery.ts",
-  // Native app: reads/writes ONLY the per-device biometric opt-in flag
-  // (native:biometric-session, DEVICE_PREF). The session it unlocks lives in the
-  // iOS Keychain, never in browser storage — this file touches localStorage for
-  // the on/off switch and nothing else.
   "lib/nativeSession.ts",
-  // native:push-token — the APNs device token last registered from this phone,
-  // remembered ONLY so logout can delete the server row. Same native:<feature>
-  // family; not a secret (an APNs token is useless without our provider key).
   "lib/nativePush.ts",
   "lib/query-persist.ts",
   "lib/rememberedEmail.ts",
   "lib/assrListFilter.ts",
   "lib/scmHandoffStorage.ts",
   "lib/scmListReturn.ts",
-  // One-shot cleanup of the dt:sort:* keys a bug made permanent (2026-08-05).
-  // Only REMOVES those, plus its own marker so it never runs twice; it writes no
-  // preference of its own and reads nothing else.
   "lib/staleSortReset.ts",
-  // Server-stored column layouts. Writes the SAME dt:* device-pref keys
-  // DataTable owns (plus a dt:sync:* marker in that family) so a table renders
-  // the account's saved layout on the first paint. Column keys only — no
-  // identity data, and the company comes from the request, never from storage.
   "lib/tableLayouts.ts",
   // Light / dark / auto, per browser (owner 2026-11-11 dark mode).
   "lib/theme.ts",
@@ -252,37 +184,19 @@ export const PRODUCTION_STORAGE_CALLERS = [
   "mobile/useIsMobile.ts",
   "pages/MailCenter/mail-local.ts",
   "pages/MailCenter/mail-prefs.ts",
-  // Meetings: the "Colours show" choice (meetings.colorBy), a display preference.
   "pages/Meetings/index.tsx",
-  // Projects list scroll memory for detail Back (projects-list-scroll family).
   "pages/Projects.tsx",
-  // Project Overview: where the page and its project table were scrolled when a
-  // project was opened, given back on Back (project-overview-scroll, owner
-  // 2026-10-21). Scroll offsets only; the choices themselves live in the URL.
   "pages/projects/projectOverviewView.ts",
   // Return scroll (return-scroll, owner 2026-10-21): where a page was scrolled
   // when an order was opened from it, so its Back lands on the same spot.
   "lib/returnScroll.ts",
-  // Composer draft autosave (2026-09-05): "announcements:draft:u<user>",
-  // written debounced while a notice is being written, cleared on post. A
-  // half-written notice surviving a closed modal / reload is the point; the
-  // key is per user so a shared browser never shows one person's draft to the
-  // next. Reviewed with the announcements redesign.
   "pages/announcements/ComposerModal.tsx",
-  // Finance grid column widths (finance-column-widths, fin-<grid>-cw): reads,
-  // writes and removes its own key only — px per column, no identity data.
   "pages/scm-v2/finance/useColumnWidths.ts",
-  // The report opened last (finance-report-last), for the sidebar's Reports entry.
   "pages/scm-v2/reports/lastReport.ts",
-  // Event Commission's view, brand and open fairs (event-commission-view), kept
-  // for Back: reads and writes its own sessionStorage key only, no identity data.
   "pages/scm-v2/EventCommission.tsx",
   "pages/scm-v2/ProductModels.tsx",
   "pages/scm-v2/SoFromProducts.tsx",
   "pages/scm-v2/SupplierDetail.tsx",
-  // The Finance reports' own memory (finance-report-list-pin, finance-report-
-  // range, finance-statement-widths): the list's pin, the last range picked and
-  // the statement column widths — no identity data.
   "pages/scm-v2/reports/reportPrefs.ts",
   "vendor/scm/components/dataGridLayoutStorage.ts",
 ] as const;

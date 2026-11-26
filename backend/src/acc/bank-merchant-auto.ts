@@ -39,7 +39,6 @@ export type AgreedLine = {
   kind: string;
   matchedBatchId: number | null;
   split: AgreedShare[] | null;
-  /** The acquirer's payment advice made the decision (acc/bank-match byAdvice). */
   byAdvice: boolean;
   qr: { ready: boolean; jeNos: string[] } | null;
 };
@@ -76,7 +75,6 @@ export function merchantAgreedActions(lines: readonly AgreedLine[], batches: rea
   return out;
 }
 
-/** The reports a payout pays and each one's share — or null when a person must say. */
 function payoutShares(l: AgreedLine, batchOf: ReadonlyMap<number, AgreedBatch>): AgreedShare[] | null {
   const split = l.split ?? [];
   if (l.kind === 'PAYOUT' && l.matchedBatchId != null && split.length === 0) {

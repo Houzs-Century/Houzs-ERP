@@ -3,7 +3,6 @@ import {
   conditionDateRange, conditionToken, dateMatchesPreset, looksLikeDateColumn, presetRange, rowMatchesCondition,
 } from "./dataTableConditionFilters";
 
-// 2026-11-06, a Friday, 10:00 in Malaysia.
 const NOW = Date.parse("2026-11-06T02:00:00Z");
 
 describe("a date column gets the date filter by itself", () => {
@@ -41,7 +40,6 @@ describe("a server-paged list asks the server for the range", () => {
 });
 
 describe("a row is judged by its Malaysian day (owner 2026-11-09)", () => {
-  // 2026-11-10 09:00 in Malaysia.
   const MORNING = Date.parse("2026-11-10T01:00:00Z");
   const at = (v: string) => ({ v });
   const col = { getValue: (r: { v: string }) => r.v };

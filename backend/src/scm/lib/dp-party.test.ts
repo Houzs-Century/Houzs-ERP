@@ -30,7 +30,6 @@ describe('which master a job type draws its party from', () => {
   });
 
   it('an empty snapshot still carries the right party type', () => {
-    // A manual order with no source document is still a warehouse/workshop job.
     expect(emptySnapshot('TRANSFER').party_type).toBe('WAREHOUSE');
     expect(emptySnapshot('LORRY_SERVICE').party_type).toBe('WORKSHOP');
     expect(emptySnapshot('TRANSFER').party_name).toBeNull();
@@ -176,8 +175,6 @@ describe('snapshotFromWorkshop — where a lorry service goes', () => {
 
 describe('snapshotFromWorkshopName — a work order whose workshop was never linked', () => {
   it('keeps the name a driver can act on rather than showing a blank party', () => {
-    // Mig 0241 deliberately did not backfill workshop_id from the free-text
-    // `workshop` column, so older work orders know only the name.
     const snap = snapshotFromWorkshopName('T FORCE AUTO SERVICES');
     expect(snap.party_type).toBe('WORKSHOP');
     expect(snap.party_name).toBe('T FORCE AUTO SERVICES');

@@ -44,44 +44,30 @@ import {
 import { canSelfTuneConfig } from "./agents/governance";
 import { familyDataQuality } from "./agents/data-quality";
 
-// Structural bounds — an agent can never talk itself past these.
 const HARD_MAX_RUNS_PER_DAY = 6;
 const HARD_MIN_GAP_HOURS = 1;
 
 export interface AgentCadence {
-  /** MYT hour (fraction ok) before which the daily first run won't fire. */
   firstRunHour: number;
   minGapHours: number;
   maxRunsPerDay: number;
 }
 
 export interface AgentRunContext {
-  /** True on the day's first run — the only run that gets an LLM key. */
   firstOfDay: boolean;
-  /** Why the scheduler fired this run (lands in the run summary). */
   reason: string;
-  /** ANTHROPIC key when firstOfDay + monthly budget has headroom, else undefined. */
   llmKey: string | undefined;
-  /** Report Anthropic token usage so the console shows real spend. */
   addTokens: (tokensIn: number, tokensOut: number) => void;
 }
 
 export interface RegisteredAgent {
   family: AgentFamily;
-  /** agent_runs task id, e.g. "delivery-run" / "document-run". */
   task: string;
-  /** Cadence defaults; per-task overrides live in app_settings['agents.schedule'][task]. */
   cadence: AgentCadence;
-  /**
-   * OPTIONAL event-driven trigger past the day's first run: given the last
-   * run time, decide whether business activity justifies an extra run.
-   * Pure reads only — the decision pass never writes.
-   */
   shouldRunExtra?: (
     db: D1Database,
     sinceIso: string,
   ) => Promise<{ fire: boolean; reason: string }>;
-  /** Execute one run. Return the console summary line. */
   run: (env: Env, ctx: AgentRunContext) => Promise<string>;
 }
 
@@ -129,7 +115,6 @@ export async function loadCadence(
 export interface AgentRunDecision {
   task: string;
   reason: string;
-  /** True on the first run of the day — the only run that spends LLM tokens. */
   firstOfDay: boolean;
 }
 
@@ -143,21 +128,6 @@ interface TaskStats {
   runsToday: number;
 }
 
-/**
- * Last run + runs-so-far-today for one task.
- *
- * `today` is bucketed by the UTC instant range the MYT day covers, NOT by
- * substr(started_at, 1, 10): started_at is UTC, todayMyt is the Malaysian date,
- * and the two disagree from 16:00 UTC onward. PMS (07:00 MYT) and DELIVERY
- * (07:30 MYT) fire inside that gap, so their runs were stamped with the
- * previous UTC date and counted as zero — and since decideAgentRuns treats
- * runsToday === 0 as "first run of the day" without ever reaching the min-gap
- * check, they re-fired every beat until 08:00 MYT, each one burning an LLM key.
- *
- * status <> 'error' stays: a live 'running' row is the de-facto mutex that
- * stops two overlapping heartbeats firing one agent twice. It must keep
- * counting; only the reaper retires it (see reapStaleAgentRuns).
- */
 async function taskStats(
   db: D1Database,
   task: string,
@@ -248,7 +218,7 @@ export async function decideAgentRuns(
       });
       continue;
     }
-    const since = st.lastRunIso ?? `${todayMyt}T00:00:00+08:00`; // Malaysian midnight, not 08:00
+    const since = st.lastRunIso ?? `${todayMyt}T00:00:00+08:00`;
     try {
       const extra = await reg.shouldRunExtra(db, since);
       if (extra.fire) {
@@ -301,8 +271,6 @@ export async function executeAgentTask(
          procurement path). canSelfTuneConfig refuses at Stage 1 / on RED, so the
          flag is no longer an ungoverned blanket — behaviour-preserving for the
          normal green case. */
-      /* The REAL data-quality signal now (was hard-coded GREEN, which made the
-         §10.2 gate inert). Computed from this family's own run history. */
       const dq = await familyDataQuality(db, reg.task, reg.cadence.minGapHours);
       const gate = canSelfTuneConfig({ stage: cfgStage, dataQuality: dq.status });
       if (gate.ok) {

@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// Purchase Consignment Return query hooks — a faithful clone of the Purchase
-// Return hooks in flow-queries.ts, repointed at the parallel backend route
-// mounted at `/purchase-consignment-returns` (which mirrors `/purchase-returns`
-// 1:1: same create body, same detail shape, same header + line item endpoints).
-//
-// Numbering on the backend is `PCT-…`. The request/response shapes are kept
-// identical to the PR hooks so the cloned PurchaseConsignmentReturnNew /
-// PurchaseConsignmentReturnDetail / PurchaseConsignmentReturns pages render
-// exactly like the PR ones with only the endpoint + query key swapped.
-//
-// Query key namespace: ['pc-return'] (+ '-detail') so purchase-consignment
-// cache invalidation never collides with the PR cache.
-//
-// ── HOUZS VENDOR NOTES ──────────────────────────────────────────────────────
-//   - All reads/writes route through the vendored authedFetch (→ /api/scm/...),
-//     NOT 2990's supabase REST. The supabase import is dropped (it was unused by
-//     these hooks anyway — every call already went through authedFetch).
-//   - serviceNotify is the vendored dialog bridge (in-app notify, no window.*).
-// ----------------------------------------------------------------------------
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { serviceNotify } from './dialog-service';
@@ -26,7 +6,6 @@ import { writeFailed } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
-/* ── List ────────────────────────────────────────────────────────────── */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const usePurchaseConsignmentReturns = (status?: string) => useQuery({
   queryKey: ['pc-return', 'list', status ?? 'all'],
@@ -36,7 +15,6 @@ export const usePurchaseConsignmentReturns = (status?: string) => useQuery({
   retryDelay: 800,
 });
 
-/* ── Detail ──────────────────────────────────────────────────────────── */
 export const usePurchaseConsignmentReturnDetail = (id: string | null) => useQuery({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   queryKey: ['pc-return-detail', id],
@@ -44,7 +22,6 @@ export const usePurchaseConsignmentReturnDetail = (id: string | null) => useQuer
   enabled: Boolean(id), staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
 });
 
-/* ── Returnable PC Receive lines (From-Receive multi-picker) ──────────── */
 export type ReturnablePcReceiveLine = {
   receiveItemId: string;
   pcReceiveId: string;
@@ -73,12 +50,6 @@ export const useReturnablePcReceiveLines = () => useQuery({
   retry: retryUnlessClientError,
 });
 
-/* ── Create + post ───────────────────────────────────────────────────── */
-/* `idempotencyKey` is OPTIONAL and must be destructured OUT of the body — the
-   rest-spread would otherwise post it as a return field. Pass one per return
-   intent (see lib/idempotency.ts): the middleware replays the first response —
-   the SAME returnNumber — instead of returning the consigned goods twice.
-   Omitting it is exactly today's behaviour (the middleware no-ops). */
 export const useCreatePurchaseConsignmentReturn = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -116,7 +87,6 @@ export const useCancelPurchaseConsignmentReturn = () => {
   });
 };
 
-/* ── Header update ───────────────────────────────────────────────────── */
 export const useUpdatePurchaseConsignmentReturnHeader = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -134,7 +104,6 @@ export const useUpdatePurchaseConsignmentReturnHeader = () => {
   });
 };
 
-/* ── Line items ──────────────────────────────────────────────────────── */
 export const useUpdatePurchaseConsignmentReturnItem = () => {
   const qc = useQueryClient();
   return useMutation({

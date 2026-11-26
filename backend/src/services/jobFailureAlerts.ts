@@ -1,14 +1,3 @@
-// Background-job failure alerts. Hourly (index.ts, job "job-alerts"): every job
-// is classified exactly as the System Health "Background jobs" panel classifies
-// it — readJobs() in healthMeasures.ts, the panel's own read — and a job whose
-// verdict is critical (last run failed, missed its slot, or never finished)
-// gets ONE notice to the IT-page holders per incident.
-//
-// Incident = from the alert until the job next runs ok. No new table: the
-// notices themselves are the record. A job is alerted again only after it has
-// had an ok run since its last alert (it recovered, then broke again) AND the
-// cool-down has passed, so a job that flaps every five minutes cannot ring
-// every hour.
 
 import { sql } from "drizzle-orm";
 import type { Env } from "../types";

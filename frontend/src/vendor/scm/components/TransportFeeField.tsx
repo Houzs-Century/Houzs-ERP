@@ -16,13 +16,9 @@ export interface TransportFeeFieldProps<L> {
   country: string | null;
   lines: L[];
   setLines: Dispatch<SetStateAction<L[]>>;
-  /** The line's identity and amount in sen. */
   read: (l: L) => { itemCode: string; description: string; itemGroup: string; amountSen: number };
-  /** The line re-priced to what was typed. */
   priced: (l: L, sen: number, text: string) => L;
-  /** A new TRANSPORTATION CHARGES line at what was typed (code, group and name are set here). */
   make: (sen: number, text: string) => L;
-  /** Each form's own field styling. */
   classes: { field?: string; label?: string; input?: string };
   style?: React.CSSProperties;
 }

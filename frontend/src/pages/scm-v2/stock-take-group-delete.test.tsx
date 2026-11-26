@@ -89,7 +89,6 @@ describe('Stock Take detail — HC-0158 model delete', () => {
     fireEvent.click(screen.getByRole('button', { name: 'FENRIR-(Q)' }));
     expect(screen.getByText('HC-PO-009630')).toBeTruthy();
     expect(screen.getByText('1 without PO')).toBeTruthy();
-    // 55 POs on one unbreakable row pushed the Qty columns off screen.
     expect(screen.getByTestId('source-po-note').style.flexWrap).toBe('wrap');
   });
 

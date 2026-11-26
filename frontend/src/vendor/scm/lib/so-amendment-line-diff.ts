@@ -44,24 +44,9 @@ export type AmendmentOldSnapshot = {
   unitPriceSen?: number;
   description2?: string | null;
   variants?: unknown;
-  /* The line's item GROUP, stamped server-side at create time from the SO item
-     row (mfg_sales_order_items.item_group). buildVariantSummary BRANCHES on it —
-     bedframe reads divanHeight / gap / totalHeight / colourLabel, everything else
-     reads seatHeight / legHeight — so rendering a bedframe blob without it drops
-     three real axes off the Requesting side. Absent on rows created before that
-     stamp; resolveVariantGroup recovers it from the blob rather than guessing.
-     `item_group` is accepted too: so-revision's ADD path already reads that key. */
   itemGroup?: string | null;
   item_group?: string | null;
-  /* The line's REMARK before the request (mig 0280), stamped server-side from
-     mfg_sales_order_items.remark for the same reason the group is: the "was"
-     side is the approver's evidence and must come from the record, not from the
-     browser asking to change it. Absent on rows raised before 0280 and on ADD
-     lines (which have no before). */
   remark?: string | null;
-  /* The line's DISCOUNT in sen before the request (mig 0317), stamped
-     server-side from mfg_sales_order_items.discount_sen. Absent on rows raised
-     before 0317 and on lines carrying no discount — both read as 0. */
   discountSen?: number | null;
 };
 
@@ -73,12 +58,7 @@ export type DiffableAmendmentLine = {
   new_variants?: unknown;
   new_qty?: number | null;
   new_unit_price_sen?: number | null;
-  /* mig 0280 — the requested line REMARK. null/absent = the request does not
-     touch it (true of every row raised before 0280); '' = clear it. */
   new_remark?: string | null;
-  /* mig 0317 — the requested DISCOUNT in sen. null/absent = the request does
-     not touch it; 0 = clear it. The lever a derived price (the delivery fee)
-     is reduced with, so without this field a fee reduction cannot ride. */
   new_discount_sen?: number | null;
   old_snapshot?: unknown;
 };
@@ -119,13 +99,8 @@ const EVERYTHING: AmendmentLineChangedFields = {
    summaries on both sides, so the line scored as no-change and was dropped by
    visibleAmendmentLines — the approver never saw the request at all. */
 
-/* The axes buildVariantSummary reads ONLY on its bedframe branch. A blob that
-   carries any of them is a bedframe blob: this is read off the data, not
-   guessed, and it is exactly the set the non-bedframe branch would silently
-   drop. Keep in sync with buildVariantSummary. */
 const BEDFRAME_ONLY_AXES = ['divanHeight', 'gap', 'totalHeight', 'colourLabel'] as const;
 
-/* The axes the NON-bedframe branch reads and the bedframe branch does not. */
 const SOFA_ONLY_AXES = ['seatHeight', 'depth'] as const;
 
 const asBag = (v: unknown): Record<string, unknown> | null =>
@@ -180,8 +155,6 @@ export const unrenderedVariantAxes = (group: string, variants: unknown): string[
   return dropped.filter((k) => bag[k] != null && String(bag[k]).trim() !== '');
 };
 
-/** Render one variant blob the way the surfaces do, under the group BOTH sides
-    of this line share (see resolveVariantGroup). */
 const summaryOf = (group: string, v: unknown): string =>
   buildVariantSummary(group, asBag(v)).trim();
 
@@ -194,12 +167,6 @@ export const amendmentVariantSummaries = (
 ): { from: string; to: string } => {
   const group = resolveVariantGroup(l);
   const old = amendmentOldSnapshot(l);
-  /* Prefer rendering the RAW old blob under the resolved group over the stored
-     description2. Both are the same string when the stamp is right, but only the
-     re-render is guaranteed to be formatted by the SAME rule as the Requesting
-     side — and a Was/Requesting pair formatted by two different rules is exactly
-     what made a colour-only change look like a wiped spec. description2 stays as
-     the fallback for a legacy row that recorded no raw blob. */
   const from = old.variants != null
     ? summaryOf(group, old.variants)
     : (old.description2 ?? '').trim();
@@ -219,29 +186,10 @@ export const amendmentUnrenderedAxes = (
   };
 };
 
-/**
- * Did the request actually move the variants?
- *
- * Both blobs go through the SAME formatter, rather than comparing the new
- * summary against the stored description2. That symmetry is the whole point —
- * it cancels the two ways an unchanged line can look changed:
- *   * description2 was stamped with the line's real item group, while the new
- *     side is rendered with ''. buildVariantSummary BRANCHES on the group
- *     (bedframe reads DIVAN/GAP/T.Heights, everything else SEAT/LEG), so an
- *     untouched BEDFRAME line would otherwise diff purely on formatting.
- *   * new_variants is draftFromItem's CANONICALISED blob while
- *     old_snapshot.variants is the RAW item blob, so a POS-vocabulary line
- *     (depth / sofaLegHeight) would otherwise diff purely on key names — and
- *     the formatter reads both vocabularies (seatHeight || depth,
- *     legHeight || sofaLegHeight), so it collapses that too.
- * A raw JSON compare fixes neither. What survives both is a real spec change.
- */
 const variantsChanged = (l: DiffableAmendmentLine): boolean => {
   const old = amendmentOldSnapshot(l);
   const group = resolveVariantGroup(l);
   const to = summaryOf(group, l.new_variants);
-  // No raw blob recorded (legacy row) — the stamped summary is the only signal
-  // left, so fall back to it rather than guess.
   if (old.variants == null) return (old.description2 ?? '').trim() !== to;
   return summaryOf(group, old.variants) !== to;
 };
@@ -271,26 +219,13 @@ export function amendmentLineChangedFields(
     };
   }
   return {
-    /* `?? old` mirrors what every surface renders on the Requesting side: an
-       omitted new value falls back to the old one, so it READS as unchanged and
-       must not be flagged as a change. */
     itemCode: (l.new_item_code ?? old.itemCode ?? null) !== (old.itemCode ?? null),
     qty:      (l.new_qty ?? old.qty ?? null) !== (old.qty ?? null),
-    /* A null price is not a requested price — the apply keeps the line's stored
-       price, and the surfaces render that stored price, unchanged, on the
-       Requesting side (amendmentRequestedUnitPriceSen is what sends null). */
     unitPrice: l.new_unit_price_sen != null
       && l.new_unit_price_sen !== (old.unitPriceSen ?? null),
     variants: variantsChanged(l),
-    /* mig 0280. Same shape as the price test: a null new_remark is NOT a
-       requested remark (it is every pre-0280 row, and every line whose remark
-       did not move), so it can never render as a change. '' against a non-empty
-       before IS one — clearing an instruction is a real request. */
     remark: l.new_remark != null
       && l.new_remark.trim() !== (old.remark ?? '').trim(),
-    /* mig 0317. Unlike the remark, an absent before-side discount is not
-       unknown — a line with no discount HAS one, of zero — so the compare
-       falls back to 0 rather than refusing to flag. */
     discount: l.new_discount_sen != null
       && Math.round(l.new_discount_sen) !== Math.round(old.discountSen ?? 0),
   };
@@ -356,7 +291,6 @@ export const amendmentVariantsKey = (v: unknown): string => {
   const rest = amendmentVariants(v);
   if (!rest) return 'null';
   delete rest.totalHeight;
-  // Display-only supplier-code stamp (2990-0067), as the server ignores it.
   delete rest.fabricSupplierCode;
   delete rest.fabricSupplierCodeOf;
   if (typeof rest.legHeight === 'string' && DEFAULT_LEG_RE.test(rest.legHeight)) delete rest.legHeight;
@@ -380,27 +314,6 @@ export const amendmentLineSig = (d: AmendmentSigDraft): string => JSON.stringify
   discountSen:  Math.round(d.discountSen ?? 0),
 });
 
-/* ── amendmentRequestedUnitPriceSen ── the price an amendment line ASKS for ──
-
-   HC-SO-013490 (2026-10-13): a SPEC swap to a SKU with no catalogue sell price
-   seeds the editor's price box with 0 and `priceAuthored: false` (SoLineCard
-   pickProduct, the phone's product pick). Both builders sent that 0 as
-   `newUnitPriceSen` on every changed line, and the apply, holding an approval,
-   read it as the approved price: the line was billed RM 0. 11 lines on 10
-   orders went that way in a month.
-
-   The direct line-edit road already refuses the same 0: zeroPriceClaim sends
-   `zeroPriceIntended` only for an AUTHORED 0, and an unclaimed 0 keeps the
-   stored price (unitAfterLineEdit). This is the amendment road's half of that
-   rule. An unauthored 0 is "I have no price", so the line requests NONE: the
-   builders omit `newUnitPriceSen`, so_amendment_lines records null, and
-   applySoAmendment keeps the stored price (`clientUnit = row.unit_price_sen`)
-   on native and migrated orders alike. A typed 0 (`priceAuthored` true, or an
-   existing line's persisted 0 carried through draftFromItem / lineFromItem)
-   is still a real request for RM 0.
-
-   `priceAuthored` is read as `=== true`, like every zeroPriceClaim call site:
-   an absent flag is NOT an authored price. */
 export const amendmentRequestedUnitPriceSen = (
   d: { unitPriceSen: number; priceAuthored?: boolean },
 ): number | null => (d.unitPriceSen === 0 && d.priceAuthored !== true ? null : d.unitPriceSen);
@@ -436,12 +349,7 @@ export const amendmentLineFieldKinds = (l: DiffableAmendmentLine): AmendmentFiel
   if (f.variants) kinds.push('VARIANT');
   if (f.qty) kinds.push('QTY');
   if (f.unitPrice) kinds.push('PRICE');
-  /* A free-text remark is not routable on its own — it is an instruction to
-     whoever executes the line, so it routes LINE (Production / Design), exactly
-     as amendment-routing's LABEL_TO_KIND already maps a 'notes' field. */
   if (f.remark) kinds.push('LINE');
-  /* A discount changes what the customer pays — money routes exactly as a
-     price change does. */
   if (f.discount) kinds.push('PRICE');
   return kinds;
 };

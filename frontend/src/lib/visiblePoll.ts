@@ -1,25 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────
-// visiblePoll — the ONE timer behind every header / sidebar poll.
-//
-// Why not React Query's own `refetchInterval`: it runs one timer PER OBSERVER,
-// and its refetch ignores staleTime. The banner had three readers mounted on a
-// desktop page (pop-up, bell, dashboard card), so one shared cache entry was
-// fetched three times per interval — and with `refetchIntervalInBackground` it
-// kept doing so in a hidden tab all day. Production, 7 days: 51,424 banner
-// calls, 95,445 GET /api/presence against 20,773 heartbeats.
-//
-// The rules here:
-//   - nothing is fetched while the tab is hidden;
-//   - on return to the tab, anything older than RETURN_REFRESH_MIN_AGE_MS is
-//     refetched once;
-//   - however many components read a key, it is fetched once per interval: a
-//     key is due when its last answer (success OR failure) is older than its
-//     interval, so an invalidation that just refetched it resets the clock
-//     instead of doubling up.
-//
-// Freshness: a key is checked every POLL_TICK_MS, so while visible its answer
-// is never older than interval + POLL_TICK_MS (60s badges -> at most ~70s).
-// ─────────────────────────────────────────────────────────────────────────
 
 import { useEffect } from "react";
 import { hashKey, type QueryClient, type QueryKey } from "@tanstack/react-query";
@@ -33,7 +11,6 @@ export const RETURN_REFRESH_MIN_AGE_MS = 15_000;
 interface Entry {
   key: QueryKey;
   client: QueryClient;
-  /** One per registration; the shortest wins. */
   intervals: number[];
 }
 
@@ -49,7 +26,6 @@ function refreshIfOlderThan(e: Entry, minAgeMs: number, now: number): void {
   if (state?.fetchStatus === "fetching") return;
   const settledAt = state ? Math.max(state.dataUpdatedAt, state.errorUpdatedAt) : 0;
   if (now - settledAt < minAgeMs) return;
-  // `active` skips a key whose readers are all disabled (signed out, no permission).
   void e.client.refetchQueries({ queryKey: e.key, exact: true, type: "active" });
 }
 
@@ -130,7 +106,6 @@ export function useVisiblePoll(
   useEffect(() => {
     if (!enabled || intervalMs === false) return;
     return registerVisiblePoll(queryKey, intervalMs, client);
-    // `id` stands for queryKey's content; a new array of the same key is the same poll.
   }, [id, intervalMs, enabled, client]);
 }
 

@@ -28,9 +28,6 @@ export function useShareSalesOrder() {
         method: "POST",
         body: JSON.stringify({ staffIds: [staffId], docNos: [docNo], mode }),
       });
-      /* A 200 with the order in `skipped` is still a refusal for this screen:
-         the operator asked about exactly one order, so say why it did not
-         change rather than showing a success that did not happen. */
       const skip = (res.skipped ?? []).find((s) => s.docNo === docNo);
       if (skip) throw new Error(skip.reason);
       return res;

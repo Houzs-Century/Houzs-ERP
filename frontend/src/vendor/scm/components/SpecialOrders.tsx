@@ -44,7 +44,6 @@ import styles from './SpecialOrders.module.css';
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
-/** variants.specials (string[] | legacy singular string) -> trimmed code list. */
 const specialsList = (v: unknown): string[] => {
   if (Array.isArray(v)) return v.map(String).filter(Boolean);
   if (typeof v === 'string' && v) return [v];
@@ -52,36 +51,14 @@ const specialsList = (v: unknown): string[] => {
 };
 
 export type SpecialOrdersProps = {
-  /** Active special_addons rows for THIS line's category, already intersected
-   *  with the Model's allowed_options.specials pool by the caller (SO restricts;
-   *  the cost docs pass the plain category list). */
   options: SpecialAddonRow[];
-  /** The line's variant bag — reads specials / specialChoices / extraAddonNote /
-   *  extraAddonAmountRM (+ legacy singular `special`). */
   variants: Record<string, unknown>;
-  /** Merge a patch into the line's variants. The component owns the
-   *  specials / specialChoices / specialLabels / extra* shapes; the caller only
-   *  splices `{ ...line.variants, ...patch }` back onto its draft. */
   onPatch: (patch: Record<string, unknown>) => void;
-  /** Show the SELLING surcharge on each add-on + the Custom / other extra-charge
-   *  field. The SO passes isAdminLevel (a non-admin only DESCRIBES); the cost
-   *  documents (PO / GRN / PI / PR / adjustment) pass false — the selling
-   *  surcharge is not theirs to show or set. */
   showPrices: boolean;
-  /** Hard lock — whole document locked, or a read-only View. */
   disabled?: boolean;
-  /** Optional external accordion control. SoLineCard shares one open-state
-   *  across its bedframe/sofa/mattress panels; other callers omit it and the
-   *  block manages its own (defaulting open when the line already carries data
-   *  so a carried special order is visible without a click). */
   open?: boolean;
   onToggle?: () => void;
-  /** Source-linked documents (PO from SO, GRN from PO, ...). When set, the block
-   *  defaults to READ-ONLY carrying the parent's values, with an explicit
-   *  Override so the special order is never silently re-entered. A manual line
-   *  (no parent) passes false and is immediately editable. */
   sourceLinked?: boolean;
-  /** Parent-doc name for the linked banner, e.g. "Sales Order". */
   sourceLabel?: string;
 };
 
@@ -115,15 +92,11 @@ export const SpecialOrders = ({
 
   const [customOpen, setCustomOpen] = useState(hasCustom);
 
-  // Read-mostly override for source-linked docs; a manual line is always live.
   const [overridden, setOverridden] = useState(false);
   const locked = disabled || (sourceLinked && !overridden);
 
   const labelFor = (code: string) => options.find((o) => o.code === code)?.label ?? code;
 
-  /* Tick/untick writes specials (codes) + specialChoices (required option groups
-     default to their first choice, like the POS picker) + specialLabels (display
-     snapshot) in one patch — the SAME shape SoLineCard.toggleSpecial produced. */
   const toggleCode = (code: string) => {
     const has = picked.includes(code);
     const nextPicked = has ? picked.filter((c) => c !== code) : [...picked, code];
@@ -150,7 +123,6 @@ export const SpecialOrders = ({
     onPatch({ specialChoices: { ...choicesMap, [code]: entry } });
   };
 
-  /* Effective selling surcharge for one add-on = base + Σ chosen extras. */
   const effectiveSen = (o: SpecialAddonRow): number => {
     let sen = o.sellingPriceSen;
     (choicesMap[o.code] ?? []).forEach((label, i) => {
@@ -160,18 +132,6 @@ export const SpecialOrders = ({
     return sen;
   };
 
-  /* Codes retired/renamed in Special Add-ons (or pre-takeover legacy strings)
-     still show as removable rows — invisible-but-stuck picks were how the old
-     editor leaked RM 0 specials onto orders. */
-  /* A CATALOGUE WE DO NOT HAVE CANNOT CALL ANYTHING RETIRED. `retired` means
-     "this code is gone from Special Add-ons, untick it" — a claim only an
-     options list can support. The cost documents (PO / GRN / PI / PR /
-     adjustment) render this block for categories they carry no pool for, so
-     with `options` empty EVERY carried pick would have been labelled dead and
-     offered for removal, which is the opposite of the truth: those picks came
-     from the sales order and are what the factory is building.
-     With no pool the picks still SHOW — read-only, under their own caption —
-     because hiding them would be worse than mislabelling them. */
   const retired = options.length > 0 ? picked.filter((c) => !options.some((o) => o.code === c)) : [];
   const carriedWithoutPool = options.length === 0 ? picked : [];
   const selectedCount = picked.length + recorded.length + (hasCustom ? 1 : 0);
@@ -269,7 +229,6 @@ export const SpecialOrders = ({
               </div>
             </label>
           ))}
-          {/* Follow-up choice pickers for ticked add-ons with option groups. */}
           {options.filter((o) => picked.includes(o.code) && o.optionGroups.length > 0).map((o) =>
             o.optionGroups.map((g, gi) => (
               <label key={`${o.code}-${gi}`} className={styles.variantField} style={{ gridColumn: '1 / -1' }}>
@@ -294,7 +253,6 @@ export const SpecialOrders = ({
             )),
           )}
 
-          {/* ── Custom / other (unified free-text special order) ───────────── */}
           <div className={styles.customSpecial}>
             <div
               className={styles.customHead}
@@ -339,8 +297,6 @@ export const SpecialOrders = ({
                     />
                   </label>
                 )}
-                {/* Clear hidden from non-admin sales when a price they can't see
-                    is set — they must not silently wipe an admin-priced order. */}
                 {hasCustom && !locked && (showPrices || extraAmountRM <= 0) && (
                   <button
                     type="button"

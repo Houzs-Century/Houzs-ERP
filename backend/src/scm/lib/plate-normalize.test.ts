@@ -90,7 +90,6 @@ describe('findRenames — a rename is NOT a merge', () => {
   });
 
   it('excludes rows that are part of a duplicate group', () => {
-    // Renaming 'AKF 8100' to 'AKF8100' here would violate the UNIQUE index.
     expect(findRenames([
       row({ id: 'a', plate: 'AKF 8100' }),
       row({ id: 'b', plate: 'AKF8100' }),

@@ -1,8 +1,3 @@
-// ---------------------------------------------------------------------------
-// AI Usage — what the Anthropic API cost each month, by feature and by company.
-// IT pages only (ItPagesGuard + the server's requireItPages). Every number comes
-// from GET /api/admin/ai-usage; the page only lays it out. Desktop only.
-// ---------------------------------------------------------------------------
 import { useSearchParams } from "react-router-dom";
 import { RefreshCw, Sparkles } from "lucide-react";
 import { PageHeader } from "../components/Layout";

@@ -1,15 +1,3 @@
-// Vendored from apps/backend/src/lib/delivery-planning-queries.ts — Delivery
-// Planning queries (STAGE 4 of the Delivery / TMS module). Reads the planning
-// board (GET /delivery-planning) + the per-doc schedule date. Cloned from the
-// drivers / lorries query pattern (TanStack Query + authedFetch). Rows are
-// snake_case as the API emits them; consumers dual-read camelCase where the pg
-// driver would camelCase a column.
-//
-// NOTE: the "delivery leg" (multi-hop / dual-trip) hooks were REMOVED — China-PO
-// transit flow, not in use yet; re-add later.
-//
-// HOUZS VENDOR NOTE: the source has NO `import { supabase } from './supabase'`
-// to drop (it only used authedFetch). Everything else is copied verbatim.
 
 import { rememberSavedCrew, withSavedCrew, type CrewSnapshot } from './saved-crew';
 import { useRef } from 'react';
@@ -33,13 +21,6 @@ export const DELIVERY_STATE_LABEL: Record<DeliveryState, string> = {
   DELIVERED: 'Delivered',
 };
 
-/* The value the board's "Sales Exemption Expiry Date" column shows. Owner
-   2026-10-22: it must hold the ORIGINAL delivery date, the SAME value the SO list
-   shows in its column of that name — so the two surfaces agree. An SO row therefore
-   uses soExemptionExpiryOf (frozen original -> AutoCount book -> current delivery
-   date), exactly the SO-list rule. A service case (ASSR) has no SO, so it shows its
-   own SERVICE date (customer_delivery_date) and leaves "Delivery Date" blank for
-   admin to propose. DP / project synthetic rows keep their book value (null). */
 export const sxeDateOf = (o: PlanningOrder): string | null => {
   if (o.row_type === 'assr') return o.customer_delivery_date ?? null;
   if (o.row_type === 'so') return soExemptionExpiryOf(o) ?? null;
@@ -116,39 +97,19 @@ export const AMEND_REASONS = [
   'Unforeseen production constraints',
 ] as const;
 
-// A region is a CONFIG-DRIVEN bucket code (migration 0053) derived from the
-// customer's STATE (not the line warehouse). The live buckets are the geographic
-// regions KL/SEL · Northern · Southern · East Coast · EM (East Malaysia:
-// Sabah/Sarawak/Labuan) — Singapore folds into Southern — but the owner can add
-// more in the Delivery Regions master, so a region code is an OPEN string (not a
-// fixed union). 'ALL' is the no-filter param; the rest are bucket codes.
 export type RegionCode = string;
 export type RegionKey = 'ALL' | RegionCode;
 
-/* A board row is either a Sales-Order delivery (the original rows) or a
-   Service-Case (ASSR) job. row_type discriminates; it defaults to 'so' for the
-   long-standing SO rows (the backend now stamps it explicitly on every row). */
 export type PlanningRowType = 'so' | 'assr' | 'dp' | 'project';
-/* ASSR job kind (only meaningful when row_type === 'assr'). */
 export type AssrJobKind = 'customer_pickup' | 'delivery' | 'inspection';
 
 export type PlanningOrder = {
-  /* SO rows: 'so' (default). ASSR (service-case) rows: 'assr'. DP-Order jobs
-     (manual setup / dismantle / supplier-pickup, no source SO) : 'dp'. */
   row_type: PlanningRowType;
-  /* DP-only. The DP job type (DELIVERY/PICKUP/SERVICE/SETUP/DISMANTLE/
-     SUPPLIER_PICKUP) and the minted DP number (null until scheduled). Null on
-     SO/ASSR rows. */
   dp_job_type?: string | null;
   dp_no?: string | null;
-  /* A TRANSFER DP job's origin (dp_orders.from_name); null when not recorded and on other rows. */
   dp_from_name?: string | null;
-  /* ASSR-only. The service case's NUMERIC id (drives the /assr/:id detail route)
-     and its human ref (= assr_no, shown in the SO No. cell). null on SO rows. */
   assr_id: number | null;
   ref: string | null;
-  /* ASSR-only. Whether the job is a customer pickup or a delivery. null on SO
-     rows. */
   job_kind: AssrJobKind | null;
   so_doc_no: string;
   debtor_code: string | null;
@@ -173,12 +134,9 @@ export type PlanningOrder = {
   disposal_request: string | null;
   dp_remark: string | null;
   balance_sen: number;
-  /* Live balance (= local_total − Σpayments, from the SO-list payment-totals
-     view); null when the view has no row → fall back to balance_sen. */
   balance_sen_live: number | null;
   local_total_sen: number;
   so_date: string | null;
-  /* The customer's ORIGINAL delivery date — never overwritten (migration 0199). */
   customer_delivery_date: string | null;
   /* The REAL AutoCount sales-exemption expiry (public.sales_orders.expiry_date,
      keyed by linked_ac_docno), server-derived for SO rows; null off-book and on
@@ -190,16 +148,9 @@ export type PlanningOrder = {
      Expiry Date" value the SO list shows (owner 2026-10-22). Null off-book / on
      synthetic (ASSR / DP / project) rows. */
   sales_exemption_expiry?: string | null;
-  /* Amendment dates (migration 0199): the customer's requested NEW date and the
-     date WE confirmed (the proposed/amended delivery date). effective = amended ??
-     original, what Days Left / OVERDUE actually use. */
   amend_date_from_customer: string | null;
   amended_delivery_date: string | null;
-  /* HC "Amend Client Date Reason" (migration 0201) — OUR reason for moving the
-     date (the AMEND_REASONS presets, printed by the Postpone notice). */
   amend_reason: string | null;
-  /* The CUSTOMER's reason for asking to move it (the WhatsApp amend tap:
-     "Renovation Delay" / "Date Unavailable"). Read-only on the board. */
   amend_reason_from_customer?: string | null;
   effective_delivery_date: string | null;
   processing_date: string | null;
@@ -209,11 +160,9 @@ export type PlanningOrder = {
      change into an amendment instead of a direct save. */
   po_locked: boolean | null;
   days_left: number | null;
-  /* HC delivery-sheet address columns. */
   address: string | null;
   postcode: string | null;
   building_type: string | null;
-  /* HC SO-context raw-data fields (migration 0197), always editable. */
   possession_date: string | null;
   house_type: string | null;
   replacement_disposal: string | null;
@@ -229,8 +178,6 @@ export type PlanningOrder = {
   /* PO No. (owner 2026-09-15) — the purchase orders RAISED from this SO, the
      SO list's raised-PO chips. SO rows only; absent on ASSR / DP / project rows. */
   po_nos?: string[];
-  /* HC DO-execution raw-data fields (migration 0197), from the latest DO;
-     null when this SO has no DO yet (editable only once a DO exists). */
   time_range: string | null;
   time_confirmed: boolean | null;
   arrival_at: string | null;
@@ -239,8 +186,6 @@ export type PlanningOrder = {
   customer_delivered_date: string | null;
   eta_arriving_port: string | null;
   delivery_substatus: string | null;
-  /* EM-region cross-border transit-warehouse arrival date (migration 0199),
-     from the latest DO; null when no DO. */
   arrives_em_warehouse_date: string | null;
   /* EM cross-border transport status (owner 2026-09-23) — the ESB sea-freight
      leg + the BS last-mile leg, back-filled by the two 3PL transporters. From
@@ -254,44 +199,23 @@ export type PlanningOrder = {
   bs_remarks: string | null;
   ctn: string | null;
   em_delivered_date: string | null;
-  /* The latest DO's OWN document date (delivery_orders.do_date); null when this
-     SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" grid column. */
   do_date: string | null;
-  /* POD (proof of delivery) off the latest DO. has_pod is true when the driver
-     left evidence (a photo or a GPS fix) — it separates a REAL driver POD from
-     an evidence-free "mark delivered" (office advance / QR scan), which is the
-     "No POD" flag on the board. delivered_at is the real delivered instant (vs
-     the manually-typed customer_delivered_date). The signature/photo themselves
-     are viewed on the DO detail, not carried on the row. Absent on synthetic
-     (service / project / manual) rows that have no DO. */
   has_pod?: boolean;
   delivered_at?: string | null;
   pod_r2_key?: string | null;
   pod_lat?: number | null;
-  /* A STATUS: 'READY' | 'PENDING' only. There is no third value — the string
-     "READY (PARTIAL)" was removed on 2026-08-16 because the board grouped by
-     this field and produced a header that contradicted every row under it. */
   stock_status: string;
-  /* The LABEL: '' | 'READY' | 'PARTIAL' | a '/'-joined list of the groups that
-     ARE in ('BEDFRAME', 'MATTRESS/ACC'). Names what IS ready — blank means
-     nothing is, including an accessory-only order whose accessory is short. */
   stock_remark: string;
-  /* VACUOUSLY true when the SO has no main line — do not gate shipping on it. */
   is_main_ready: boolean;
-  /* THE ship gate. Use this, not is_main_ready, to ask "can this leave". */
   is_ship_ready: boolean;
-  /* Multi-company: readable company code for the SHARED cross-company queue
-     (e.g. 'HOUZS' / '2990'). null on ASSR rows or when unresolved. */
   company_code?: string | null;
-  /* A project row of a company the caller is not granted: listed (shared fleet), but its Remarks cannot be saved. */
   remark_locked?: boolean;
-  region: RegionCode;   // the order's primary bucket (from customer_state)
-  regions: RegionCode[];  // primary + any leg buckets
+  region: RegionCode;
+  regions: RegionCode[];
   warehouse_id: string | null;
   warehouse_code: string | null;
   warehouse_name: string | null;
   customer_state: string | null;
-  // Country — present on SO rows; lets the Last Mile surfaces keep Singapore off.
   customer_country?: string | null;
   delivered_qty: number;
   remaining_qty: number;
@@ -301,8 +225,6 @@ export type PlanningOrder = {
     driver_2_name: string | null;
     helper_1_name: string | null; helper_2_name: string | null;
     lorry_plate: string | null;
-    /** True when the driver was only TYPED on the DO form: no fleet record, so no
-     *  IC / phone. The board asks for the real driver to be picked. */
     driver_1_typed?: boolean;
   } | null;
   delivery_orders: Array<{ id: string; do_number: string; status: string }>;
@@ -317,21 +239,13 @@ export type PlanningOrder = {
      null outside Pending Schedule. Optional (`?`) so a cached pre-upgrade
      payload still typechecks; a missing field degrades to the un-split view. */
   arrangement_stage?: ArrangementStage | null;
-  /* The live trip the order sits on (via its DO's DELIVERY stop; CANCELLED
-     trips excluded). null when not on a trip. */
   trip_id?: string | null;
   trip_no?: string | null;
   trip_date?: string | null;
-  /* Time-of-run keys (2026-08-08) — the stop's sequence and ETA offset on its
-     live trip; null off-trip. The arrangement comparator's TIME key. */
   trip_stop_no?: number | null;
   trip_eta_offset_s?: number | null;
 };
 
-/* ── Arrangement-pipeline vocabulary (mirrors backend lib/arrangement-stage.ts).
-   The date-side and time-side views are each a 2-way split per the owner's
-   spec; PENDING_TIME is the SAME order read from both sides of the hand-off
-   (date arranged / awaiting a time). */
 export type ArrangementStage = 'PENDING_DATE' | 'PENDING_TIME' | 'TIME_ARRANGED';
 
 export const ARRANGEMENT_STAGE_LABEL: Record<ArrangementStage, string> = {
@@ -346,9 +260,6 @@ export const DATE_ARRANGEMENT_LABEL: Record<DateArrangement, string> = {
   DATE_ARRANGED: 'Date arranged',
 };
 
-/* Date-side view of a row's stage. `undefined` stage (a cached pre-upgrade
-   payload) falls back to PENDING_DATE so nothing silently disappears from the
-   Date Arrangement queue; null (out of pipeline) stays null. */
 export function dateArrangementOf(o: Pick<PlanningOrder, 'arrangement_stage'>): DateArrangement | null {
   const stage = o.arrangement_stage;
   if (stage === undefined) return 'PENDING_DATE';
@@ -357,10 +268,6 @@ export function dateArrangementOf(o: Pick<PlanningOrder, 'arrangement_stage'>): 
 }
 
 export type TimeArrangement = 'PENDING_TIME' | 'TIME_ARRANGED';
-/* Time-side view. `undefined` stage falls back to PENDING_TIME — the Trips
-   inbox then degrades to the old show-everything "To schedule" panel rather
-   than blanking. PENDING_DATE / out-of-pipeline rows are not the Time page's
-   yet (null). */
 export function timeArrangementOf(o: Pick<PlanningOrder, 'arrangement_stage'>): TimeArrangement | null {
   const stage = o.arrangement_stage;
   if (stage === undefined) return 'PENDING_TIME';
@@ -368,7 +275,6 @@ export function timeArrangementOf(o: Pick<PlanningOrder, 'arrangement_stage'>): 
   return null;
 }
 
-/* Board-column label for a row's stage — '—' for rows outside the pipeline. */
 export function arrangementStageLabel(o: Pick<PlanningOrder, 'arrangement_stage'>): string {
   const stage = o.arrangement_stage;
   if (stage == null) return '';
@@ -381,7 +287,6 @@ export type PlanningResponse = {
   orders: PlanningOrder[];
   counts: PlanningCounts;
   regions: Array<{ key: RegionKey; label: string }>;
-  /** Only on state=OPEN (no Delivered rows): Delivered count per region key. */
   delivered_by_region?: Record<string, number>;
 };
 
@@ -404,24 +309,15 @@ export function filterOrdersByRegion<T extends { regions: RegionCode[] }>(
   return orders.filter((o) => o.regions.includes(region));
 }
 
-/* State-tab counts (+ ALL) for a board slice. Computed over the REGION-filtered,
-   state-UNfiltered set so the badges reflect the active region exactly as the
-   server's region-scoped counts used to. */
 export function planningCountsFrom(
   orders: readonly Pick<PlanningOrder, 'delivery_state'>[],
 ): PlanningCounts {
-  // Build the zeroed tally from DELIVERY_STATES (the one home of the state
-  // vocabulary) rather than re-listing the states — a second literal set of
-  // them would be a duplicated decision (audit:duplicated-decisions).
   const counts = { ALL: orders.length } as PlanningCounts;
   for (const s of DELIVERY_STATES) counts[s] = 0;
   for (const o of orders) counts[o.delivery_state] += 1;
   return counts;
 }
 
-/* The board. region = ALL | KL | NORTHERN | SOUTHERN | EAST_COAST | EM; state = DeliveryState | 'ALL'.
-   Counts come back scoped to the active region (not the state) so the 4 state
-   tab badges stay stable as the operator switches between state tabs. */
 export function useDeliveryPlanning(opts: { region?: string; state?: string }) {
   const region = opts.region ?? 'ALL';
   const state = opts.state ?? 'ALL';
@@ -434,17 +330,12 @@ export function useDeliveryPlanning(opts: { region?: string; state?: string }) {
       const qs = params.toString();
       return authedFetch<PlanningResponse>(`/delivery-planning${qs ? `?${qs}` : ''}`);
     },
-    // Switching region / state tabs keeps the previous board on screen while the
-    // next slice loads, instead of flashing an empty table (keepPreviousData).
     placeholderData: (prev) => prev,
     select: withSavedCrew,
     staleTime: 30_000,
   });
 }
 
-/* One expand-row line item, as GET /delivery-planning/:docNo/lines emits it
-   (snake_case, no transform). Mirrors the SO-detail item columns the board's
-   drill-down consumes (group / code / description / variants / cancelled). */
 export type PlanningLineItem = {
   id: string;
   doc_no: string | null;
@@ -462,11 +353,6 @@ export type PlanningLineItem = {
   cancelled: boolean | null;
 };
 
-/* Expand-row lines for one SO on the SHARED cross-company board. Uses the
-   dedicated /delivery-planning/:docNo/lines endpoint (scoped to the caller's
-   ALLOWED companies) instead of the PER-COMPANY SO detail — so expanding a
-   cross-company (e.g. 2990) row while browsing as Houzs no longer 404s. Lazy
-   (enabled only when a docNo is set) + cached by docNo. */
 export function useDeliveryPlanningLines(docNo: string | null | undefined) {
   return useQuery({
     queryKey: ['delivery-planning', 'lines', docNo],
@@ -479,29 +365,23 @@ export function useDeliveryPlanningLines(docNo: string | null | undefined) {
   });
 }
 
-/* HC "Remark 4" delivery sub-status — the known values (must mirror the API
-   whitelist). Blank ('') is always allowed (clears it). */
 export const HC_SUBSTATUS_VALUES = [
   'Pending Pickup', 'Done Shipout', 'Arrives EM Warehouse',
   'Done Delivered', 'Confirm', 'House Not Ready', 'Request Hold',
 ] as const;
 export type HcSubstatus = (typeof HC_SUBSTATUS_VALUES)[number];
 
-/* The editable HC fields (migration 0197), split by where they're owned. The
-   SO-context fields always save; the DO-execution fields need a DO to land on. */
 export type HcFieldsPatch = {
-  // SO-context (→ mfg_sales_orders)
   possessionDate?: string | null;
   houseType?: string | null;
   replacementDisposal?: string | null;
   referral?: string | null;
-  deliveryMessageStatus?: string | null;  // one of MESSAGE_STATUSES, or '' / null to clear
+  deliveryMessageStatus?: string | null;
   disposalRequest?: string | null;
   dpRemark?: string | null;
   amendReason?: string | null;
-  // DO-execution (→ delivery_orders, when a DO exists)
   timeRange?: string | null;
-  jobKind?: AssrJobKind;  // service-case leg a timeRange write targets
+  jobKind?: AssrJobKind;
   timeConfirmed?: boolean | null;
   arrivalAt?: string | null;
   departureAt?: string | null;
@@ -526,30 +406,9 @@ export type HcFieldsResult = {
   written: { so: boolean; do: boolean };
   do_id: string | null;
   so_doc_no: string | null;
-  /* Set when DO-execution fields were submitted but no DO exists yet. */
   no_do_hint: string | null;
 };
 
-/* ── Coalesced board refresh (perf, 2026-10-23) ───────────────────────────────
-   Every inline cell edit (status / date / driver / lorry / HC field / crew) used
-   to fire an immediate full refetch of the whole board (~1.4k rows + DOs + crew +
-   trips) the moment it settled. onMutate already patches the edited row across
-   every cached board, so the visible cell is correct at once; the settle-refetch
-   only reconciled the SERVER-DERIVED fields the optimistic patch can't know
-   (delivery_state transitions, arrangement_stage, the top-tab counts, days_left).
-   Landing that large refetch after every commit was the board's main stutter,
-   worst when it arrived mid-edit. We keep the reconcile but COALESCE it: the first
-   settle arms a short timer, each further settle inside the window resets it, and a
-   single invalidation runs once the operator stops. Net: no per-edit refetch; at
-   most one refetch per burst; the board reconciles within ~BOARD_REFRESH_MS of the
-   last edit, the optimistic patch (+ onError rollback) holding the edited cells
-   correct meanwhile.
-
-   Keys are UNIONED across the hooks that share a burst (schedule / fields / crew),
-   each still naming exactly the query roots it always invalidated — so the flush
-   invalidates no root a hook did not ask for. The timer is module-level so it
-   survives the editing component unmounting (navigating away mid-edit) and the
-   reconcile still lands. Refresh ONLY the roots, never the whole cache. */
 export const BOARD_REFRESH_MS = 500;
 let boardRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let boardRefreshQc: QueryClient | null = null;
@@ -570,10 +429,6 @@ export function scheduleBoardRefresh(qc: QueryClient, keys: readonly (readonly u
   }, BOARD_REFRESH_MS);
 }
 
-/* Save the HC raw-data fields for an order. type = 'so' | 'do'; id = SO doc_no
-   or DO id. Calls PATCH /delivery-planning/:type/:id/fields and invalidates the
-   planning board. The result's no_do_hint tells the UI when DO-execution fields
-   were skipped because there's no DO. */
 const SO_FIELD_COLUMNS = [
   ['possessionDate', 'possession_date'],
   ['houseType', 'house_type'],
@@ -621,24 +476,13 @@ export function useUpdateDeliveryFields() {
     onError: (_err, _vars, ctx) => {
       for (const [key, prev] of ctx?.snapshots ?? []) qc.setQueryData(key, prev);
     },
-    // An SO row re-reads just itself (board-row-refresh.ts); a DO edit still re-reads the board.
     onSuccess: (_res, vars) => (vars.type === 'so'
       ? scheduleRowRefresh(qc, [vars.id])
       : scheduleBoardRefresh(qc, [['delivery-planning']])),
   });
 }
 
-/* The DP job-type vocabulary — the SINGLE source of truth for the set the whole
-   Delivery Planning surface uses. Mirrors the `scm.trip_stop_type` enum (mig 0053
-   + SUPPLIER_PICKUP in 0128), ORDERED as the enum declares them so the create
-   dropdown and any future list read the same order. Both the New-DP-Order dropdown
-   AND the board's Type chip resolve their label from DP_JOB_TYPE_LABEL below, so
-   the value a user PICKS is byte-identical to what the board SHOWS — they can no
-   longer drift (owner: the dropdown type must equal the type we normally show). */
 export const DP_JOB_TYPES = [
-  /* INSPECTION has been on scm.trip_stop_type since mig 0165. It was missing
-     here, so an inspection DP order rendered through the defensive prettifier
-     rather than the canonical label. */
   'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION',
   /* Job types 8 and 9, from the owner's 2026-08-03 list (mig 0250). Listed here
      so the board LABELS them; what the create drawer offers is
@@ -655,8 +499,6 @@ export const DP_JOB_TYPE_LABEL: Record<DpJobType, string> = {
   DISMANTLE: 'Dismantle',
   SUPPLIER_PICKUP: 'Supplier Pickup',
   INSPECTION: 'Inspection',
-  /* The owner's own words for these two ("Transfer item", "Lorry service"), not
-     a Title-Cased enum value — the label is what he reads on the board. */
   TRANSFER: 'Transfer Item',
   LORRY_SERVICE: 'Lorry Service',
 };
@@ -715,15 +557,6 @@ export const DP_CREATABLE_JOB_TYPES = DP_ENTRY_MENU
   .filter((e): e is Extract<DpEntry, { mode: 'create' }> => e.mode === 'create')
   .map((e) => e.jobType);
 
-/* What each ASSR leg is CALLED. One map, read by the board's Type chip and its
-   search / group / export values, which each carried their own inline copy of
-   this ternary until the 2026-08-03 rename made four copies three too many.
-
-   'delivery' → "Service" is that rename: the leg has always been the trip that
-   returns a repaired item to the customer, and the owner's nine-job-type list
-   calls it ASSR - Service. The stored value (assr_cases.do_date, jobKind
-   'delivery') is untouched — this is what the operator reads, not what the
-   database holds. */
 export const ASSR_JOB_KIND_LABEL: Record<AssrJobKind, string> = {
   customer_pickup: 'Pickup',
   inspection: 'Inspection',
@@ -732,10 +565,6 @@ export const ASSR_JOB_KIND_LABEL: Record<AssrJobKind, string> = {
 export const assrJobKindLabel = (kind: AssrJobKind | null | undefined): string =>
   ASSR_JOB_KIND_LABEL[(kind ?? 'delivery') as AssrJobKind] ?? 'Service';
 
-/* The label the board / dropdown show for a DP job type. Reads the canonical map;
-   falls back to a Title-Cased prettify for any value not in the set (defensive —
-   the board's Type chip previously prettified inline, so unknown/legacy stored
-   values keep rendering rather than blanking). */
 export const dpJobTypeLabel = (value: string | null | undefined): string => {
   const key = (value ?? '').toUpperCase();
   if (key in DP_JOB_TYPE_LABEL) return DP_JOB_TYPE_LABEL[key as DpJobType];
@@ -745,24 +574,14 @@ export const dpJobTypeLabel = (value: string | null | undefined): string => {
     .replace(/\b\w/g, (m) => m.toUpperCase());
 };
 
-/* Create a DP Order (delivery-planning job). The server auto-fills the party from
-   whichever source ref is given (SO / supplier / project / service case); manual
-   `overrides` win over the auto-fill. POST /dp-orders, then the board refreshes. */
 export type DpOrderCreate = {
   jobType: DpJobType;
   soDocNo?: string;
   supplierId?: string;
   projectId?: number;
   assrCaseId?: number;
-  /* LORRY_SERVICE (migs 0250/0251): the lorry being SERVICED — the job's subject,
-     and the one taken off the road when this is scheduled — plus the workshop it
-     goes to, which is the party the address snapshot comes from. */
   lorryId?: string;
   workshopId?: string;
-  /* TRANSFER (migs 0250/0251): the stock-transfer document being driven, when
-     there is one, and the DESTINATION warehouse — which is the party, and the
-     address the fleet actually goes to. The owner asked for both paths: pick a
-     transfer, or enter an ad-hoc move with no document. */
   stockTransferId?: string;
   warehouseId?: string;
   /* TRANSFER to an OUTSOURCED warehouse (owner 2026-11-02): the destination is a
@@ -833,22 +652,18 @@ export function useUpdateDpOrder() {
       }),
     onSuccess: () => Promise.all([
       qc.invalidateQueries({ queryKey: ['delivery-planning'] }),
-      // The job drawer (JobDetailPanel) reads the job and its row on their own keys.
       qc.invalidateQueries({ queryKey: ['dp-order'] }),
       qc.invalidateQueries({ queryKey: ['delivery-job'] }),
     ]),
   });
 }
 
-/* Cancel a DP Order (and drop its trip stop, backend-side). */
 export function useCancelDpOrder() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
       authedFetch<{
         stopRemoved?: { failed?: boolean; reason?: string };
-        /* LORRY_SERVICE only: giving the lorry back. A failure here keeps a free
-           lorry off the board indefinitely, so it is reported like stopRemoved. */
         lorryUnblocked?: { removed?: boolean; failed?: boolean; reason?: string };
       }>(
         `/dp-orders/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) },
@@ -857,26 +672,11 @@ export function useCancelDpOrder() {
   });
 }
 
-/* Schedule a DP Order onto a lorry + date — this MINTS its DP number (from the
-   lorry plate + date) and, when a trip is given, appends it as a stop on that
-   trip. POST /dp-orders/:id/schedule. The endpoint has always existed; this is
-   the first UI caller (P0 of docs/delivery-planning-jobtypes-spec.md), so setup /
-   dismantle / supplier-pickup jobs can finally leave "Pending Schedule".
-
-   `tripStop.failed` is surfaced so the caller can tell "scheduled but the stop
-   never attached" from a clean success — a wiring failure must never look like a
-   plain success (the #720 lesson the endpoint documents). A header-only schedule
-   (no tripId) is valid: the number is minted, no stop is written. */
 export type ScheduleDpOrderVars = { id: string; lorryId: string; tripDate: string; tripId?: string; driverId?: string };
 export type ScheduleDpOrderResult = {
   dpOrder: unknown;
   dp_no: string | null;
   tripStop: { id: string | null; failed: boolean; reason?: string };
-  /* LORRY_SERVICE only: the availability window that takes the serviced lorry
-     off the road for that day. Reported, never silent — a failure here leaves a
-     lorry looking bookable on the day it sits in a workshop, so the caller must
-     say so out loud (same rule as tripStop.failed). Absent for every other job
-     type, and for a service job whose subject lorry was never set. */
   lorryBlocked?: { blocked: boolean; failed: boolean; reason?: string };
 };
 export function useScheduleDpOrder() {
@@ -888,7 +688,6 @@ export function useScheduleDpOrder() {
         body: JSON.stringify({ lorryId, tripDate, ...(tripId ? { tripId } : {}), ...(driverId ? { driverId } : {}) }),
       }),
     onSuccess: () => {
-      // Refresh the board AND the trips views — a new stop landed on a trip.
       qc.invalidateQueries({ queryKey: ['delivery-planning'] });
       qc.invalidateQueries({ queryKey: ['scm-trips'] });
       qc.invalidateQueries({ queryKey: ['scm-trip'] });
@@ -914,25 +713,12 @@ export function useDpCrew() {
         method: 'POST', body: JSON.stringify(seat),
       }),
     onSuccess: () => {
-      // The run + its number may have changed — reconcile the board and the trips
-      // views (coalesced, like the other inline crew edits).
       scheduleBoardRefresh(qc, [['delivery-planning'], ['scm-trips'], ['scm-trip'], ['fleet-day']]);
     },
   });
 }
 
-/* ── DP Orders list (GET /dp-orders) ──────────────────────────────────────────
-   The raw dp_orders registry, straight off the table (snake_case, newest first,
-   backend-capped at 500). This is the /scm/dp-orders LIST page's feed — distinct
-   from the board union, which deliberately SUPPRESSES any dp_order carrying a
-   source ref (the anti-double-count guard) and shows nothing once a job is
-   cancelled. The list is where those hidden/terminal rows stay reachable.
-
-   Query key extends the board's ['delivery-planning'] prefix ON PURPOSE: every
-   existing create / cancel / schedule mutation invalidates that prefix, so the
-   list refreshes with zero changes to the mutations. */
 export type DpOrderRow = {
-  /** "Delivery (no SO)": the typed sales amount, sen (mig 20261120T2000); null otherwise. */
   sales_amount_sen?: number | string | null;
   id: string;
   dp_no: string | null;
@@ -994,11 +780,6 @@ export function useDpOrders() {
   });
 }
 
-/* ── WhatsApp (Seampify) sends — the board's "Send Message" action ────────────
-   One WhatsApp per CUSTOMER PHONE bundling all their selected orders (the
-   sheet-era BulkSend shape). The backend groups by phone; the caller just posts
-   the SO doc numbers. While the Seampify secrets are unset the endpoint answers
-   503 not_configured — surfaced to the operator via the thrown error message. */
 export type SendDeliveryMessagesResult = {
   sent: Array<{ phone: string; docNos: string[]; httpCode: number }>;
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
@@ -1007,7 +788,6 @@ export type SendDeliveryMessagesResult = {
      "Done X" (HC-0164) - e.g. 'lease' while someone has the SO open in the editor. */
   statusNotMoved?: Array<{ docNo: string; reason: string }>;
 };
-/* Mirrors backend scm/lib/delivery-message-kinds.ts MESSAGE_KINDS. */
 export type SendMessageKind =
   | 'delivery' | 'amend'
   | 'reminder_1' | 'reminder_2' | 'reminder_3'
@@ -1019,7 +799,6 @@ export type SendDeliveryMessagesBody = {
   kind?: SendMessageKind;
   driverInfo?: { driverName: string; driverContact: string; driverIc: string; carPlate: string; deliveryTime: string };
 };
-/* An ASSR leg's board row key, `<assr_no>#<leg>` (backend parseAssrRowKey). */
 const ASSR_ROW_KEY_RE = /#(customer_pickup|inspection|delivery)$/;
 export function useSendDeliveryMessages() {
   const qc = useQueryClient();
@@ -1028,8 +807,6 @@ export function useSendDeliveryMessages() {
       authedFetch<SendDeliveryMessagesResult>(`/delivery-messages/send`, {
         method: 'POST', body: JSON.stringify(body),
       }),
-    // The send moved each sent order's Delivery Message Status server-side;
-    // re-read just those rows so the board shows it.
     onSuccess: (res, body) => {
       void qc.invalidateQueries({ queryKey: ['delivery-messages'] });
       const sent = res.sent.flatMap((s) => s.docNos);
@@ -1055,11 +832,6 @@ export function useSendDeliveryMessages() {
   });
 }
 
-/* Sync to Connect — push the selected orders' FULL field set into each customer's
-   Connect contact (Reference No. / Brand / Purchase Venue / Sales Person / House
-   Type / …) WITHOUT sending a WhatsApp. The contact panel only ever filled the
-   fields a prior message used; this fills the rest. One Connect upsert per (phone,
-   company); `synced` mirrors a send's `sent`. */
 export type SyncContactsResult = {
   synced: Array<{ phone: string; docNos: string[]; httpCode: number }>;
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
@@ -1074,9 +846,6 @@ export function useSyncDeliveryContacts() {
   });
 }
 
-/* Latest send status per SO doc — drives the board's "Message" column. POST
-   (not GET) because a full board is ~2,000 doc numbers, far past URL limits.
-   The endpoint takes at most STATUS_BATCH per call, so the list is split. */
 export type DeliveryMessageStatus = { success: boolean; http_code: number | null; created_at: string };
 export const STATUS_BATCH = 1000;
 export function batchDocNos(docNos: string[]): string[][] {
@@ -1099,70 +868,29 @@ export function useDeliveryMessageStatuses(docNos: string[]) {
   });
 }
 
-/* Set the concrete schedule date (+ optional manual delivery_state override,
-   + optional driver / lorry trip-wiring) on an SO or DO. type = 'so' | 'do';
-   id = SO doc_no or DO id.
-
-   NOTE (Delivery Planning inline-edit, 2026-07): the board's inline cells write
-   through THIS hook. The backend schedule endpoint already accepts driverId /
-   lorryId / tripId / tripDate / warehouseId (it find-or-creates a trip and
-   appends a stop); the previous frontend signature dropped them, so we widen it
-   here to forward driverId / lorryId. The `*Optimistic` fields are DISPLAY-ONLY
-   values (driver name / lorry plate / the effective delivery date) used purely
-   for the optimistic cache patch — they are NOT sent to the API. */
 export type ScheduleDeliveryVars = {
-  /* 'so' | 'do' are the original SO/DO schedule paths. 'assr' schedules a
-     service-case job (Delivery Planning ASSR rows) — the backend now accepts it;
-     for ASSR the id is the service case's id and jobKind carries the row's kind.
-     'dp' writes a DP (manual job) row's date (scm.dp_orders.requested_date, and
-     the trip's date when it rides one); its id is the dp_order's id. */
   type: 'so' | 'do' | 'assr' | 'dp';
   id: string;
   scheduleDate?: string | null;
   deliveryState?: DeliveryState | null;
   driverId?: string | null;
   lorryId?: string | null;
-  /* Fleet A2: the helper crew the assigner (or a dispatcher override) paired to
-     the trip. Persisted onto scm.trips helper_1_id / helper_2_id on a trip
-     CREATE, via the same schedule path (additive — omitted = unchanged). */
   helper1Id?: string | null;
   helper2Id?: string | null;
-  /* ASSR-only: forwarded so the backend knows which job (pickup vs delivery) is
-     being scheduled. Ignored for 'so' | 'do'. */
   jobKind?: AssrJobKind | null;
-  /* ASSR-only: the leg status dropdown — delivered / cancelled / pending (owner
-     2026-11-06). Writes the leg's actual_* / cancelled_* marker; leg-only, never
-     closes the case. Cancelled drops the leg off the board. */
   assrLegStatus?: 'delivered' | 'cancelled' | 'pending';
-  /* Trip wiring: the origin warehouse for a find-or-created trip, or an explicit
-     trip to append to. warehouseId lets the Phase 3 drawer pin the trip origin to
-     the routed depot; both were already accepted by the backend schedule schema. */
   warehouseId?: string | null;
   tripId?: string | null;
   tripDate?: string | null;
-  /* Phase 3 "Propose times + route" apply: the stop's 1-based position in the
-     proposed sequence + its ETA (seconds from the trip's depart) + leg metrics,
-     so the stop lands in order with its computed times. Optional — a normal
-     schedule omits them and behaves exactly as before. */
   stopNo?: number;
   etaOffsetS?: number | null;
   legDistanceM?: number | null;
   legDurationS?: number | null;
-  /* Fleet A3: the captured cost (integer sen) when the chosen lorry is a 3PL
-     carrier (OUTSOURCE). Written on a trip CREATE; ignored for an own-fleet
-     lorry. This is the seam Module C's rate-card will compute against. */
   threePlCostSen?: number | null;
-  /* Display-only, for optimistic UI (never posted). */
   driverNameOptimistic?: string | null;
   lorryPlateOptimistic?: string | null;
 };
 
-/* The schedule endpoint's wire shape. `trip` is WIRED (the trip the order landed
-   on) or null (NOT_REQUESTED — no lorry given — or FAILED). `tripWiring` is
-   present ONLY on a FAILED wiring: the header date IS stored (still 200), but the
-   find-or-create-a-trip step blew up, so a caller must be able to tell that apart
-   from a clean "no trip asked for". REPORT, don't REPAIR — mirrors the backend's
-   `tripFieldsFor` (delivery-planning.ts:1940). */
 export type ScheduleDeliveryResult = {
   ok: true;
   trip?: { id: string; trip_no: string } | null;
@@ -1173,8 +901,6 @@ export function useScheduleDelivery() {
   const qc = useQueryClient();
   return useMutation<ScheduleDeliveryResult, Error, ScheduleDeliveryVars, { snapshots: Array<[readonly unknown[], PlanningResponse]> }>({
     mutationFn: ({ type, id, scheduleDate, deliveryState, assrLegStatus, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS, threePlCostSen }) => {
-      /* Only include keys the caller actually set, so an unrelated field is never
-         nulled out by an inline single-field edit. */
       const body: Record<string, unknown> = {};
       if (scheduleDate !== undefined) body.scheduleDate = scheduleDate;
       if (deliveryState !== undefined) body.deliveryState = deliveryState;
@@ -1196,8 +922,6 @@ export function useScheduleDelivery() {
         method: 'PATCH', body: JSON.stringify(body),
       });
     },
-    /* Optimistic patch — reflect the edit immediately on every cached planning
-       board (all region/state keys), then invalidate on settle for the truth. */
     onMutate: async (vars) => {
       await qc.cancelQueries({ queryKey: ['delivery-planning'] });
       const entries = qc.getQueriesData<PlanningResponse>({ queryKey: ['delivery-planning'] });
@@ -1208,10 +932,6 @@ export function useScheduleDelivery() {
         qc.setQueryData<PlanningResponse>(key, {
           ...prev,
           orders: prev.orders.map((o) => {
-            /* Match by the row's identity: ASSR rows key on the numeric case id
-               (vars.id is that id as a string); DP rows key on their bare
-               dp_order id (the board row's so_doc_no is `DP:<id>`); SO/DO rows
-               key on so_doc_no. */
             const matches = vars.type === 'assr'
               ? o.row_type === 'assr' && String(o.assr_id ?? '') === vars.id && (vars.jobKind == null || o.job_kind === vars.jobKind)
               : vars.type === 'dp'
@@ -1220,8 +940,6 @@ export function useScheduleDelivery() {
             if (!matches) return o;
             const next: PlanningOrder = { ...o };
             if (vars.deliveryState !== undefined && vars.deliveryState !== null) next.delivery_state = vars.deliveryState;
-            // Leg status dropdown: Delivered → Delivered tab; pending → back to pending.
-            // Cancelled drops the leg off the board — left to the invalidate on settle.
             if (vars.assrLegStatus === 'delivered') next.delivery_state = 'DELIVERED';
             else if (vars.assrLegStatus === 'pending') next.delivery_state = 'PENDING_DELIVERY';
             if (vars.scheduleDate !== undefined) next.amended_delivery_date = vars.scheduleDate;
@@ -1238,28 +956,14 @@ export function useScheduleDelivery() {
       return { snapshots };
     },
     onError: (err, _vars, ctx) => {
-      /* Roll every board back to its pre-edit snapshot. */
       for (const [key, prev] of ctx?.snapshots ?? []) qc.setQueryData(key, prev);
-      /* The rollback is silent on its own, and this board is a scheduling
-         surface: the coordinator sees the job land on a date/driver/lorry, then
-         quietly jump back, with no way to tell a rejected save from a stale
-         render. Assigning a delivery that was never persisted strands a real
-         job. Same ambiguity class as the schedule endpoint that answered
-         `ok: true, trip: null` for both "no trip wanted" and "the wiring blew
-         up" — a failure must never be indistinguishable from a success. */
       serviceNotify({
         title: 'Schedule not saved',
         body: err instanceof Error ? err.message : 'Something went wrong.',
         tone: 'error',
       });
     },
-    /* Reconcile server-derived fields (state / arrangement_stage / counts /
-       days_left) after the operator stops editing — coalesced so a burst of cell
-       commits no longer fires a full board refetch each, and none lands mid-edit.
-       The onMutate optimistic patch (+ onError rollback above) keeps the edited
-       cells correct in the gap. */
     onSettled: (_res, _err, vars) => {
-      // An SO row re-reads just itself (board-row-refresh.ts): the whole board took 2-12 s.
       if (vars.type === 'so') {
         scheduleRowRefresh(qc, [vars.id]);
         scheduleBoardRefresh(qc, [['fleet-day'], ['scm-trips']]);
@@ -1297,75 +1001,28 @@ export function useAssignDoCrew() {
         method: 'PUT', body: JSON.stringify(body),
       }),
     onSuccess: (res, vars) => {
-      // Keep what the server saved on screen, even if the slow board reload
-      // times out or comes back stale (saved-crew.ts).
       if (res.crew) {
         rememberSavedCrew(vars.doId, res.crew);
         qc.setQueriesData<PlanningResponse>({ queryKey: ['delivery-planning'] }, (d) => withSavedCrew(d));
         qc.setQueriesData<PlanningResponse>({ queryKey: ['mobile-delivery-planning'] }, (d) => withSavedCrew(d));
       }
-      // The run and its other DOs follow a DO crew edit (server side). Coalesced
-      // so a run of seat edits reconciles once the operator stops, not per seat;
-      // the picker's own local state shows the chosen crew immediately meanwhile.
       scheduleBoardRefresh(qc, [['delivery-planning'], ['mfg-delivery-orders'], ['fleet-day'], ['scm-trips']]);
     },
   });
 }
 
-/* ── Convert SO → DO from the Delivery Planning board ──────────────────────────
-   REUSES the existing line-level converter POST /delivery-orders-mfg/from-sos
-   (the variant-carry fix already lives there). That endpoint is LINE-level —
-   it takes picks: [{ soItemId, qty }] and creates ONE DO from those lines,
-   MERGING into one DO when picks span >1 SO. To keep "one DO per Sales Order"
-   semantics here (single + multi-select), we resolve each SO's still-deliverable
-   lines and call from-sos ONCE PER SO (sequential with a small concurrency
-   limit), never one merged call.
-
-   The already-has-DO guard is intrinsic: from-sos only converts the line-level
-   REMAINING (qty − delivered + returned), so an SO with every line fully
-   delivered yields zero deliverable lines → it is reported as `skipped`
-   (already_delivered) and never double-converted. */
 
 type DeliverablePickLine = { soItemId: string; docNo: string; remaining: number };
 
 export type ConvertSoResult = {
-  /** SOs that produced a new DO. */
   converted: Array<{ docNo: string; doNumber: string }>;
-  /** SOs with nothing left to deliver (no remaining lines) — not converted. */
   skipped: Array<{ docNo: string; reason: 'already_delivered' }>;
-  /** SOs the endpoint rejected (e.g. sofa no-batch / short-stock / race). */
   failed: Array<{ docNo: string; message: string }>;
 };
 
-/* Resolve still-deliverable lines for the given SOs, then convert one DO per SO
-   by reusing from-sos. Concurrency capped so a large bulk select doesn't fan out
-   into a burst of Worker subrequests. */
 export function useConvertSosToDo() {
   const qc = useQueryClient();
 
-  /* ONE IDEMPOTENCY KEY PER SALES ORDER, held across the whole mount.
-     Cutting a DO is a stock write, so a double-fire is a double shipment — the
-     shape of the SO-2606-019 double-ship already on record. Mobile's identical
-     call carries a key; this one did not, and it is fired from BOTH a single-row
-     action and a 4-at-a-time bulk bar.
-
-     Keyed by DOC NO, not by mount, and that is not a variation on mobile's
-     scheme — it is what mobile's own comment instructs. Its key is per-mount
-     only because MobileDeliveryPlanning renders StopDetail behind an early
-     return, so a mount is exactly one stop: "If that early return is ever
-     replaced ... this key MUST move onto the order identity". This board is
-     precisely that case — one mount converts many SOs — so the identity is the
-     SO. A single per-mount key here would post SO #2 under SO #1's claim with a
-     different payload and be answered `idempotency_key_reused`, converting the
-     first order and failing the rest of the bulk selection.
-
-     Minted lazily on first use and NEVER rotated for the life of the mount, per
-     the module's rule that a key is retired by the INTENT ending, not by the
-     write succeeding: the two halves of a double-click must find the same key,
-     so the retry replays the first DO instead of cutting a second. A genuine
-     later re-convert of the same SO (its DO was cancelled, restoring remaining)
-     carries a different payload and is refused rather than silently replayed —
-     the safe direction, and a board refresh mints fresh keys. */
   const keys = useRef(new Map<string, string>());
   const keyFor = (docNo: string): string => {
     const existing = keys.current.get(docNo);
@@ -1381,8 +1038,6 @@ export function useConvertSosToDo() {
       const out: ConvertSoResult = { converted: [], skipped: [], failed: [] };
       if (wanted.length === 0) return out;
 
-      // 1. One batched read of the deliverable (remaining > 0) lines for every
-      //    selected SO, grouped by doc_no.
       const qs = wanted.map((d) => encodeURIComponent(d)).join(',');
       const { lines } = await authedFetch<{ lines: DeliverablePickLine[] }>(
         `/delivery-orders-mfg/deliverable-so-lines?docNos=${qs}`,
@@ -1395,12 +1050,10 @@ export function useConvertSosToDo() {
         picksByDoc.set(l.docNo, arr);
       }
 
-      // 2. SOs with no deliverable lines → already fully delivered (or no lines).
       for (const docNo of wanted) {
         if (!picksByDoc.has(docNo)) out.skipped.push({ docNo, reason: 'already_delivered' });
       }
 
-      // 3. Convert one DO per SO, capped concurrency (4 at a time).
       const jobs = [...picksByDoc.entries()];
       const LIMIT = 4;
       for (let i = 0; i < jobs.length; i += LIMIT) {
@@ -1420,7 +1073,6 @@ export function useConvertSosToDo() {
       return out;
     },
     onSuccess: () => {
-      // The new DO(s) + their DO-execution data must appear on the planning rows.
       qc.invalidateQueries({ queryKey: ['delivery-planning'] });
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders'] });
       qc.invalidateQueries({ queryKey: ['mfg-delivery-orders', 'deliverable-so-lines'], refetchType: 'all' });

@@ -1,6 +1,3 @@
-/* HR · Leave desktop page. Reuses the self-service leave API; this pins the
- * desktop behaviour: my-request list + counts + filter, the approver pending
- * queue, and that approve / reject / cancel hit the right endpoints. */
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -44,7 +41,7 @@ describe("HR Leave desktop page", () => {
     expect(screen.getByText("family trip")).toBeTruthy();
     expect(screen.getByText("fever")).toBeTruthy();
     expect(screen.getByText("Rejected: short-staffed that week")).toBeTruthy();
-    expect(screen.getAllByText("Approved").length).toBeGreaterThanOrEqual(1); // card + pill
+    expect(screen.getAllByText("Approved").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows the approver pending queue and approves to the review endpoint", async () => {
@@ -56,24 +53,24 @@ describe("HR Leave desktop page", () => {
 
   it("rejects a pending request with a reason", async () => {
     render(<LeavePage />);
-    fireEvent.click(screen.getByRole("button", { name: "Reject" })); // open the reject modal
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     fireEvent.change(screen.getByPlaceholderText("e.g. short-staffed that week"), { target: { value: "no cover" } });
-    fireEvent.click(screen.getAllByRole("button", { name: "Reject" }).at(-1)!); // modal submit
+    fireEvent.click(screen.getAllByRole("button", { name: "Reject" }).at(-1)!);
     await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/api/attendance/leave/9/review", { decision: "reject", reason: "no cover" }));
   });
 
   it("cancels my pending request through the delete endpoint", async () => {
     render(<LeavePage />);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" })); // the only Cancel is the pending row's
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(apiDel).toHaveBeenCalledWith("/api/attendance/leave/2"));
   });
 
   it("filters my requests by status", () => {
     render(<LeavePage />);
     fireEvent.change(screen.getByLabelText("Filter by status"), { target: { value: "PENDING" } });
-    expect(screen.getByText("fever")).toBeTruthy(); // the pending one stays
-    expect(screen.queryByText("family trip")).toBeNull(); // approved hidden
-    expect(screen.queryByText("Rejected: short-staffed that week")).toBeNull(); // rejected hidden
+    expect(screen.getByText("fever")).toBeTruthy();
+    expect(screen.queryByText("family trip")).toBeNull();
+    expect(screen.queryByText("Rejected: short-staffed that week")).toBeNull();
   });
 
   it("applies for leave to the create endpoint", async () => {
@@ -84,23 +81,23 @@ describe("HR Leave desktop page", () => {
 
   it("shows who reviewed a reviewed request", () => {
     render(<LeavePage />);
-    expect(screen.getAllByText("Sana Khan").length).toBeGreaterThanOrEqual(1); // reviewer name on approved/rejected rows
+    expect(screen.getAllByText("Sana Khan").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows team history for approvers", () => {
     render(<LeavePage />);
     expect(screen.getByText("Team history")).toBeTruthy();
-    expect(screen.getByText("Ravi Kumar")).toBeTruthy(); // the team member whose reviewed leave shows
-    expect(screen.getByText("HCFW0005")).toBeTruthy(); // their emp no, only in the team-history row
+    expect(screen.getByText("Ravi Kumar")).toBeTruthy();
+    expect(screen.getByText("HCFW0005")).toBeTruthy();
   });
 
   it("toggles between the list and calendar views", () => {
     render(<LeavePage />);
-    expect(screen.getByText("My requests")).toBeTruthy(); // list view by default
+    expect(screen.getByText("My requests")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Calendar" }));
-    expect(screen.getByText("Sun")).toBeTruthy(); // a weekday header — the calendar rendered
-    expect(screen.queryByText("My requests")).toBeNull(); // list is hidden
+    expect(screen.getByText("Sun")).toBeTruthy();
+    expect(screen.queryByText("My requests")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "List" }));
-    expect(screen.getByText("My requests")).toBeTruthy(); // back to the list
+    expect(screen.getByText("My requests")).toBeTruthy();
   });
 });

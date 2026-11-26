@@ -1,24 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────
-// amendment-raised-effects — the two things that happen once an SO amendment
-// row has LANDED: its request is written to the Sales Order's history, and the
-// people it now waits on are told.
-//
-// Both are per-raise side effects of the same event, and neither belongs in the
-// create route's body: that route (mfg-sales-orders.ts POST /:docNo/amendments)
-// is 300 lines of guards, lane classification and inserts, and the file it
-// lives in is over the size ceiling — new behaviour has to arrive as its own
-// module or not at all.
-//
-// ORDERING IS NOT AN ACCIDENT. The audit row is written per lane INSIDE the
-// insert loop (a rolled-back half must not leave a history row behind); the
-// notice fires AFTER every half has landed, because announcing a split
-// submission before its second document exists tells one desk their work is
-// already someone else's problem.
-//
-// Neither function throws for its own reasons: recordSoAudit is the existing
-// audit sink, and notifySoAmendmentRaised swallows its failures by design —
-// a notification outage must never turn a created amendment into a 500.
-// ─────────────────────────────────────────────────────────────────────────
 
 import { recordSoAudit } from './so-audit';
 import { resolveUserIdByStaffId } from './salesScope';
@@ -45,9 +24,6 @@ export async function recordAmendmentRequested(
     actorId: string;
     actorName: string | null;
     reason?: string | null;
-    /** This lane's requested header keys, their new values, and the SO values
-     *  they replace — mapped to audit rows here so the route does not carry a
-     *  second copy of the payloadKey -> column vocabulary. */
     headerKeys: string[];
     headerChanges: Record<string, string | null>;
     oldHeaderSnapshot: Record<string, string | null>;

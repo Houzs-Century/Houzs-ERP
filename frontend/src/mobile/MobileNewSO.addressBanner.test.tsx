@@ -44,9 +44,6 @@ afterEach(cleanup);
 
 const DOC = "HC-SO-2609-777";
 
-/* A future Processing Date makes the address required (addressRequired = true)
-   without tripping the processing-date lock (which fires only on a PAST date),
-   so the address card stays editable and the banner logic is exercised. */
 const baseHeader = {
   doc_no: DOC, status: "CONFIRMED", so_date: "2026-09-01", debtor_name: "Goh", phone: "+60123456789",
   email: "g@h.c", address1: "268, Lorong Permata 10,", address2: "PERMATA HILL PARK",

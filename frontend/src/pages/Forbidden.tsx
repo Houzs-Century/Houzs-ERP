@@ -19,11 +19,7 @@ export function Forbidden({
   reason,
 }: {
   kind?: "forbidden" | "not-found";
-  /** Page key the guard rejected (e.g. "projects.finances"). Rendered
-   *  as muted detail so admins can debug a misconfigured role from a
-   *  screenshot. */
   page?: string;
-  /** Optional override for the body copy. */
   reason?: string;
 }) {
   const navigate = useNavigate();
@@ -64,7 +60,6 @@ export function Forbidden({
             variant="secondary"
             icon={<ArrowLeft size={14} />}
             onClick={() => {
-              // If we have history, go back; otherwise fall through to /
               if (window.history.length > 1) navigate(-1);
               else navigate("/", { replace: true });
             }}

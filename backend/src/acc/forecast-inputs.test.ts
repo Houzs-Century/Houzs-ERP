@@ -1,10 +1,3 @@
-/* The Cash Flow's Capex & financing table (step 3 of the Hookka forecast port;
-   Hookka tests/cashflow-forecast.test.mjs, the keyed-inputs cases, ported).
-   Pinned: the accounts offered are the funding block's active leaves, trade
-   finance and accumulated depreciation aside, each once, grouped by the
-   categories that place it; a save names its first bad cell, drops a zero
-   and refuses an account no longer offered; an amount is forecast money on
-   its own account, + in and − out; the accounts left to clear. Made-up names. */
 import { describe, expect, it } from 'vitest';
 import { keyableAccounts, keyedInputLegs, keyedNotOffered, validateKeyedInputs, KEYED_PARTY } from './forecast-inputs';
 import type { LayoutItem } from './report-layout';
@@ -39,7 +32,6 @@ describe('the accounts the table offers', () => {
       ['460-0008', 'LOAN & HP DRAWDOWN / LOAN & HP REPAYMENT'],
       ['360-0020', 'LOAN & HP REPAYMENT'],
     ]);
-    /* No funding block on the layout (the chart's own tree): nothing offered. */
     expect(keyableAccounts([TREE[0]!], CHART)).toEqual([]);
   });
 });
@@ -49,7 +41,6 @@ describe('a save', () => {
   it('keeps the map as sent, months in order, a zero dropped and a month left empty gone', () => {
     expect(validateKeyedInputs({ '2026-12': { '460-0001': -150_000, '202-1000': 0 }, '2026-11': { '202-1000': -2_000_000, '460-0001': 50_000_000 }, '2027-01': { '202-1000': 0 } }, OFFERED))
       .toEqual({ ok: true, months: { '2026-11': { '202-1000': -2_000_000, '460-0001': 50_000_000 }, '2026-12': { '460-0001': -150_000 } } });
-    /* A cleared cell of an account no longer offered is no refusal. */
     expect(validateKeyedInputs({ '2026-12': { '999-0000': 0 } }, OFFERED)).toEqual({ ok: true, months: {} });
   });
 

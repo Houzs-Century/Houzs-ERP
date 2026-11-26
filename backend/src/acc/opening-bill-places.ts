@@ -33,7 +33,6 @@ export type OpeningPlace = ({ kind: 'account' } & PlaceAccount) | { kind: 'categ
 export type StoredPlace = { account: string | null; category: string | null };
 
 type Fail = { ok: false; reason: string };
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 const failed = (e: unknown): string => String((e as { message?: string }).message ?? e);
 

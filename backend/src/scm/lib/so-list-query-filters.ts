@@ -1,23 +1,3 @@
-// The second-level Sales Order list filters, as PostgREST predicates.
-//
-// The model (fields, operators, validation, date presets) lives in
-// scm/shared/so-list-filter-model.ts and is shared byte-for-byte with the
-// frontend. This file only answers "which column, which operator" for each row,
-// so the list handler can apply ONE function to the page query, the money
-// aggregate and the status counts — the three reads that must filter the same
-// set, or the header totals and the pill counts disagree with the rows.
-//
-// Every value reaches PostgREST as a bound query parameter through supabase-js;
-// nothing here builds SQL. The two places a value is interpolated into an
-// `.or()` string pass it through escapeForOr first, the same guard the list's
-// free-text search uses.
-//
-// "Created by is me": `created_by` on a native order holds the SCM bridge's
-// pinned SYSTEM staff uuid, not the person (scm/middleware/auth.ts sets
-// user.id = SCM_SYSTEM_STAFF_ID and the create path writes created_by: user.id),
-// so filtering on it would match every native order or none. The order's person
-// is its salesperson — the same fact the row-level sales scope keys on — so
-// both "Created by" and "Salesperson" read `salesperson_id`.
 
 import {
   soDateFilterWindow,
@@ -38,9 +18,6 @@ const MATCH_NOTHING_STAFF_ID = '00000000-0000-0000-0000-000000000000';
 const SO_VIEW = 'mfg_sales_orders_with_payment_totals';
 const SO_TABLE = 'mfg_sales_orders';
 
-/* Header columns only — every one exists on the base table and on the
-   payment-totals view (mig 20260911T1500 enumerates them), except the two
-   view-computed money columns noted below. */
 const TEXT_COLUMN: Record<string, string> = {
   branding: 'branding',
   venue: 'venue',
@@ -65,8 +42,6 @@ const TIMESTAMP_COLUMN: Record<string, string> = {
   createdDate: 'created_at',
   lastChangeDate: 'updated_at',
 };
-/* balance_sen_live / paid_total_sen are COMPUTED by the view (Σ payments), so
-   they do not exist on the base table — see soListCountSource. */
 const MONEY_COLUMN: Record<string, string> = {
   balance: 'balance_sen_live',
   total: 'local_total_sen',
@@ -78,10 +53,7 @@ const OUT_OF_DOOR = '(SHIPPED,DELIVERED,INVOICED,CLOSED,CANCELLED)';
 const KL_MIDNIGHT = (ymd: string) => `${ymd}T00:00:00+08:00`;
 
 export interface SoListFilterContext {
-  /** The caller's own staff ids, for "is me". Resolve with resolveOwnStaffIds
-   *  when soListFiltersNeedMe is true; pass [] otherwise. */
   myStaffIds: readonly string[];
-  /** Today in Kuala Lumpur (soTodayYmd), for presets and "overdue". */
   todayYmd: string;
 }
 
@@ -94,9 +66,6 @@ function applyOne(q: any, f: SoListFilter, ctx: SoListFilterContext): any {
       return f.op === 'me'
         ? q.in('salesperson_id', ctx.myStaffIds.length > 0 ? [...ctx.myStaffIds] : [MATCH_NOTHING_STAFF_ID])
         : q.eq('salesperson_id', f.value);
-    /* The three line/amendment questions read the computed fields added by
-       migrations-pg 20260914T1600 (functions over the view's row), so they are
-       one more WHERE term on the same page / money / count query. */
     case 'warehouse':
       return q.overlaps('so_line_warehouse_ids', [f.value]);
     case 'text': {

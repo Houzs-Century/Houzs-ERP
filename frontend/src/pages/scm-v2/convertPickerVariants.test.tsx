@@ -40,9 +40,6 @@ afterEach(() => {
 
 const loaded = (rows: unknown[]) => ({ data: rows, isLoading: false, isError: false });
 
-/* The variant bag a sofa module carries on a consignment line: fabric code +
-   colour, seat height, leg height. buildVariantSummary renders it as
-   `PC151-01 Pearl / SEAT 24" / LEG 6"`. */
 const SOFA_VARIANTS = {
   fabricCode: "PC151-01",
   colourLabel: "Pearl",
@@ -50,8 +47,6 @@ const SOFA_VARIANTS = {
   legHeight: '6"',
 };
 
-/* Two modules of ONE sofa model. Same material name on purpose — that is the
-   whole point: without the variant line these two rows are indistinguishable. */
 const lhf = (over: Record<string, unknown> = {}) => ({
   itemCode: "9028-1A(LHF)",
   materialName: "9028 SOFA",
@@ -92,9 +87,7 @@ describe("PC Receive ← PC Order picker", () => {
       </MemoryRouter>,
     );
 
-    // The shared name is on both rows and therefore identifies neither.
     expect(screen.getAllByText("9028 SOFA").length).toBe(2);
-    // The variant summaries are what tell the two modules apart.
     expect(screen.getByText('PC151-01 Pearl / SEAT 24" / LEG 6"')).toBeTruthy();
     expect(screen.getByText('PC151-01 Pearl / SEAT 28" / LEG 6"')).toBeTruthy();
   });

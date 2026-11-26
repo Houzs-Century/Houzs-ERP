@@ -1,22 +1,6 @@
-// ─────────────────────────────────────────────────────────────────────────
-// orgScope.ts — full-chain reporting-line visibility (owner spec, 2026-07).
-//
-// "A reports to B, B reports to C → C sees B's AND A's records": the caller
-// plus their ENTIRE subtree in the public.users.manager_id tree, any depth.
-// This is the SO / Service Case scoping rule (full downline chain). It is
-// unrelated to project visibility, which is no longer PIC/brand-scoped at all
-// (the one-hop projectAcl rule was removed 2026-08-19).
-//
-// Implementation: iterative breadth-first expansion over users.manager_id
-// (works identically on the D1 shim and Postgres — no WITH RECURSIVE
-// portability concerns), with a visited-set cycle guard and a hard depth
-// cap so a manager_id loop in the data can never hang a request.
-// ─────────────────────────────────────────────────────────────────────────
 
 import type { Env } from "../types";
 
-/** Hard ceiling on reporting-chain depth. Real org charts are < 10 deep;
- *  the cap only exists to bound a pathological manager_id cycle. */
 const MAX_CHAIN_DEPTH = 10;
 
 /**
@@ -44,7 +28,7 @@ export async function subtreeUserIds(
       const id = Number(r.id);
       if (!Number.isFinite(id)) continue;
       if (!seen.has(id)) {
-        seen.add(id); // visited-set doubles as the cycle guard
+        seen.add(id);
         next.push(id);
       }
     }
@@ -79,8 +63,8 @@ export async function uplineUserIds(
       .bind(currentId)
       .first<{ manager_id: number | null }>();
     const managerId: number = Number(row?.manager_id ?? NaN);
-    if (!Number.isFinite(managerId)) break; // reached the root (no manager)
-    if (seen.has(managerId)) break; // cycle guard
+    if (!Number.isFinite(managerId)) break;
+    if (seen.has(managerId)) break;
     seen.add(managerId);
     currentId = managerId;
   }
@@ -90,7 +74,6 @@ export async function uplineUserIds(
 /** One ancestor in a reporting chain, with its DISTANCE from the leaf. */
 export interface UplineStep {
   userId: number;
-  /** 1 = the leaf's direct manager, 2 = that manager's manager, … */
   level: number;
 }
 
@@ -129,8 +112,8 @@ export async function uplineChainSteps(
       .bind(currentId)
       .first<{ manager_id: number | null }>();
     const managerId: number = Number(row?.manager_id ?? NaN);
-    if (!Number.isFinite(managerId)) break; // reached the root (no manager)
-    if (seen.has(managerId)) break; // cycle guard — also stops self-management
+    if (!Number.isFinite(managerId)) break;
+    if (seen.has(managerId)) break;
     seen.add(managerId);
     steps.push({ userId: managerId, level: depth });
     currentId = managerId;
@@ -207,7 +190,7 @@ export async function scopeSalesReportsForUser<
   canSeeAll: boolean,
 ): Promise<T[]> {
   if (canSeeAll) return rows;
-  if (userId == null) return []; // fail closed, never open
+  if (userId == null) return [];
   const visible = new Set(await subtreeUserIds(env, Number(userId)));
   return rows.filter(
     (r) => r.uploaded_by != null && visible.has(Number(r.uploaded_by)),

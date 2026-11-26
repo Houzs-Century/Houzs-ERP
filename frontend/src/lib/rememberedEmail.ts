@@ -17,7 +17,6 @@ export function readRememberedEmail(): string {
       return legacy;
     }
   } catch {
-    // Login still works when storage is unavailable.
   }
   return "";
 }
@@ -29,6 +28,5 @@ export function writeRememberedEmail(email: string | null): void {
     else localStorage.removeItem(KEY);
     for (const key of LEGACY_KEYS) localStorage.removeItem(key);
   } catch {
-    // Remembering an email is best-effort and never blocks authentication.
   }
 }

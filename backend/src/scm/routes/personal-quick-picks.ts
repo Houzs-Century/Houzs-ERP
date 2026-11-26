@@ -49,7 +49,7 @@ type Row = {
   owner_user_id: number;
   base_model: string;
   label: string | null;
-  modules: ComboSlots;   // jsonb string[][]
+  modules: ComboSlots;
   depth: string;
   layout: Record<string, unknown> | null;
   sort_order: number;
@@ -74,17 +74,11 @@ function rowToWire(r: Row) {
   };
 }
 
-/** The REAL Houzs caller's integer id, or null when unresolved. */
 function ownerId(c: AppContext): number | null {
   const id = c.get('houzsUser')?.id;
   return typeof id === 'number' && Number.isFinite(id) ? id : null;
 }
 
-/** Same validation/canonicalisation as sofa-quick-picks: accept string[][]
- *  (OR-set slots) or a legacy flat string[] (each code → a singleton slot).
- *  Returns null on a malformed payload. A Quick Pick is a LAYOUT — preserve the
- *  built left-to-right slot order (combos alphabetically sort, which moved a
- *  middle Console to the end on render). */
 function validateModules(v: unknown): ComboSlots | null {
   if (!Array.isArray(v) || v.length === 0) return null;
   for (const entry of v) {
@@ -97,8 +91,6 @@ function validateModules(v: unknown): ComboSlots | null {
   return canonicalizeLayoutModulesForStorage(v);
 }
 
-// ── GET / ──────────────────────────────────────────────────────────────
-// The caller's active picks for one base model, within the active company.
 personalQuickPicks.get('/', async (c) => {
   const uid = ownerId(c);
   if (uid == null) return c.json({ error: 'unauthorized' }, 401);
@@ -124,16 +116,10 @@ personalQuickPicks.get('/', async (c) => {
   return c.json({ picks: rows.map(rowToWire) });
 });
 
-// ── POST / ─────────────────────────────────────────────────────────────
-// Save one of the caller's picks. body: { baseModel, modules, depth, label?, sortOrder? }.
 personalQuickPicks.post('/', async (c) => {
   const uid = ownerId(c);
   if (uid == null) return c.json({ error: 'unauthorized' }, 401);
 
-  // scm.personal_quick_picks.company_id is NOT NULL with NO default (mig 0102,
-  // created after the 0091 default backfill), so an insert with an unresolved
-  // company_id (Hyperdrive cold-start negative-cache, up to 30s) would 500 on the
-  // NOT NULL constraint. Guard up front with a clean 409 — mirrors sales-analysis.
   if (activeCompanyId(c) == null) {
     return c.json({ error: 'company_unresolved' }, 409);
   }
@@ -181,14 +167,6 @@ personalQuickPicks.post('/', async (c) => {
     .single();
 
   if (error) {
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501' || /permission denied/i.test(error.message)) {
       return c.json({ error: 'forbidden', reason: error.message }, 403);
     }
@@ -197,9 +175,6 @@ personalQuickPicks.post('/', async (c) => {
   return c.json(rowToWire(data as unknown as Row), 201);
 });
 
-// ── DELETE /:id ────────────────────────────────────────────────────────
-// Soft-delete one of the caller's picks. The owner_user_id + company filters
-// ensure a salesperson can only delete their own.
 personalQuickPicks.delete('/:id', async (c) => {
   const uid = ownerId(c);
   if (uid == null) return c.json({ error: 'unauthorized' }, 401);

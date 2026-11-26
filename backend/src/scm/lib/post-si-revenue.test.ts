@@ -1,18 +1,3 @@
-// Sales Invoice -> General Ledger posting: the only thing standing between one
-// delivery and two bookings of its revenue. It auto-posts on every SI create
-// and every confirm, which makes it the hottest money path in the system, and
-// it shipped with no test of any kind.
-//
-// BUG-HISTORY records the twin: #690 hardened exactly this guard on the PURCHASE
-// invoice side and left the SI original — the file the PI docblock says it
-// "mirrors". Every case below asserts a DECISION and has been inverted in the
-// source to confirm it fails.
-//
-// The fake answers like PostgREST: a column the table does not have fails the
-// WHOLE query with 42703 and a null body. That is how a "the read did not
-// answer" is simulated here, and it is the shape that matters — supabase-js
-// does NOT throw, so `?? []` folds "we could not ask" into "there is nothing
-// there", which does not degrade an idempotency guard, it DEFEATS it.
 
 import { describe, it, expect } from 'vitest';
 import { fakeSb, type Row } from './fake-postgrest';
@@ -24,11 +9,9 @@ type World = {
   invoices?: Row[];
   /** The invoice's lines — their product group decides the sales account (docs/bugs/0829). */
   items?: Row[];
-  /** scm.acc_item_group_accounts for company 1. */
   binds?: Row[];
   jes?: Row[];
   jeLines?: Row[];
-  /** columns the query planner must not find — drives a 42703 on that read. */
   missing?: Record<string, string[]>;
 };
 
@@ -83,8 +66,6 @@ describe('postSiRevenue — booking the revenue once', () => {
   });
 
   it('credits one line per product group (case-folded), and the header total is the law — the remainder lands on the largest group', async () => {
-    /* Two sofa lines and one mattress line; a header discount of 1 sen makes
-       the total one short of the lines, and the sen comes off the largest. */
     const sb = world({
       invoices: [{ id: 'si-1', invoice_number: INV, invoice_date: '2026-08-01', debtor_code: 'C-001', debtor_name: 'Ah Meng Furnishing', total_sen: 388799, company_id: 1, status: 'ISSUED' }],
       items: [
@@ -122,8 +103,6 @@ describe('postSiRevenue — booking the revenue once', () => {
   });
 
   it('a SECOND call books nothing — one invoice, one revenue entry', async () => {
-    // The double-billing case in its simplest form: create then confirm, or a
-    // retry after a timeout. Both reach this function with the same invoice.
     const sb = world();
     const first = await postSiRevenue(sb, INV);
     const second = await postSiRevenue(sb, INV);
@@ -135,10 +114,6 @@ describe('postSiRevenue — booking the revenue once', () => {
   });
 
   it('a FAILED idempotency read aborts and posts NOTHING', async () => {
-    // The whole class, stated once: `?? []` on this read means "we could not ask"
-    // arrives as "no entry exists yet", and the second Dr AR / Cr Sales is booked
-    // against an invoice that already has one. Nothing is written before this
-    // point, so aborting strands nothing — the next call posts it once.
     const sb = world({ missing: { journal_entries: ['reversed'] } });
     const out = await postSiRevenue(sb, INV);
     expect(out.ok).toBe(false);
@@ -148,9 +123,6 @@ describe('postSiRevenue — booking the revenue once', () => {
   });
 
   it('a REVERSED entry does NOT block a fresh post', async () => {
-    // resyncSiRevenue voids the stale entry and re-posts at the new total, so
-    // treating any historical SI row as "already posted" would leave an edited
-    // invoice with no revenue at all — the opposite error, equally expensive.
     const sb = world({
       jes: [{ id: 'je-old', je_no: 'JE-2608-0001', source_type: 'SI', source_doc_no: INV, reversed: true, total_debit_sen: 100000, posted: true }],
     });
@@ -183,7 +155,6 @@ describe('reverseSiRevenue — voiding it once', () => {
     expect(reversals).toHaveLength(1);
     expect(siJes(sb)[0]).toMatchObject({ reversed: true, reversed_by_je: reversals[0]!.id });
 
-    // Debit and credit swapped against the SAME accounts — a faithful contra.
     const revLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === reversals[0]!.id);
     expect(revLines.map((l) => [l.account_code, l.debit_sen, l.credit_sen])).toEqual([
       ['300-0000', 0, 388800],
@@ -201,9 +172,6 @@ describe('reverseSiRevenue — voiding it once', () => {
   });
 
   it('re-reverses nothing when the reversal exists but the flag never stuck', async () => {
-    // A crash between "insert the contra" and "flag the original" leaves exactly
-    // this state. Without the reversed_by_je guard the retry writes a SECOND
-    // contra and the cancellation is over-reversed — revenue goes negative.
     const sb = world({
       jes: [
         { id: 'je-1', je_no: 'JE-2608-0001', source_type: 'SI', source_doc_no: INV, reversed: false, entry_date: '2026-08-01', total_debit_sen: 388800, total_credit_sen: 388800, company_id: 1, posted: true },
@@ -217,9 +185,6 @@ describe('reverseSiRevenue — voiding it once', () => {
   });
 
   it('a FAILED read of the original leaves the books alone and says so', async () => {
-    // This used to answer { ok: true, nothing_to_reverse }: the caller cancels
-    // the invoice, believes the GL was squared, and a live revenue entry stays
-    // posted against a cancelled invoice with nothing scheduled to revisit it.
     const sb = world({
       jes: [{ id: 'je-1', je_no: 'JE-2608-0001', source_type: 'SI', source_doc_no: INV, reversed: false, entry_date: '2026-08-01', total_debit_sen: 388800, company_id: 1 }],
       missing: { journal_entries: ['reversed'] },
@@ -251,8 +216,6 @@ describe('resyncSiRevenue — keeping the GL equal to the invoice', () => {
   });
 
   it('a DRAFT invoice never posts revenue', async () => {
-    // Posting happens on confirm. Editing a draft's lines must not leak revenue
-    // into the GL for an invoice nobody has issued.
     const sb = world({ invoices: [{ id: 'si-1', invoice_number: INV, invoice_date: '2026-08-01', debtor_code: 'C', debtor_name: 'C', total_sen: 388800, company_id: 1, status: 'DRAFT' }] });
     expect(await resyncSiRevenue(sb, INV)).toMatchObject({ ok: true, status: 'not_posted' });
     expect(sb.tables.journal_entries).toHaveLength(0);
@@ -265,9 +228,6 @@ describe('resyncSiRevenue — keeping the GL equal to the invoice', () => {
   });
 
   it('a FAILED invoice read does NOT reverse the live entry', async () => {
-    // The most destructive read in the file, and it reads as a lookup: a blip
-    // left `si` null, the total folded to 0, and a healthy invoice lost its
-    // revenue on a line edit while the caller was told it succeeded.
     const sb = world({ missing: { sales_invoices: ['status'] } });
     const posted = await postSiRevenue(sb, INV);
     expect(posted.ok).toBe(true);

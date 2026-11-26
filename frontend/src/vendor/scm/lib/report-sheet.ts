@@ -21,39 +21,27 @@ export type SheetRowKind = 'block' | 'category' | 'row' | 'unassigned' | 'total'
 export type SheetColumn = {
   label: string;
   kind: 'amount' | 'pct' | 'text';
-  /** A % column that rides BESIDE the amount column before it (By month in
-      amounts mode): two cells in Excel, one printed cell on paper. */
   beside?: boolean;
   /** The 累计 column — a rule after it, as on the screen. */
   edge?: boolean;
-  /** A heading the column shares with the columns beside it (the Cash Flow's month over
-      Settlement | Deposit): side by side, the same heading prints once, above them all. */
   group?: string;
   /** Read left to right — a name, a date, a note: heading and cells flush left (the
       Event Commission's order lists, owner 2026-11-13: 「export 出来…做好看一点」).
       Right when absent, as every figure. */
   align?: 'left' | 'right';
-  /** Its width in Excel characters where an amount's is too narrow (a fair's name);
-      never narrower than the column already is. */
   width?: number;
 };
 /** sen for an amount column, one-decimal % for a pct column, a string for text; null prints a dash. */
 export type SheetValue = number | string | null;
 export type SheetRow = {
   kind: SheetRowKind; depth: number; label: string; cells: SheetValue[];
-  /** A group's own Total name (layout totalLabel). */
   totalLabel?: string;
-  /** Cells that run across columns: the cell's index → how many columns it covers (the
-      covered cells are null). A Cash Flow line not split, across a month's two columns. */
   spans?: Partial<Record<number, number>>;
 };
 export type SheetTable = {
   columns: SheetColumn[];
   rows: SheetRow[];
-  /** A section's own title, on a row above its header — one sheet holding several
-      tables reads which is which. Absent: the header is the table's first row. */
   title?: string;
-  /** The name column's heading ("Order"); blank when absent. */
   labelHeader?: string;
 };
 
@@ -84,11 +72,9 @@ export const sheetWithTotalsBelow = <S extends { tables: SheetTable[] }>(sheet: 
 export type ReportSheet = {
   title: string;
   subtitle: string;
-  /** The letterhead's right-hand lines (Period, Rows …); Printed is added on paper. */
   meta: Array<{ label: string; value: string }>;
   tables: SheetTable[];
   notes?: string[];
-  /** The report's money dress; fmtSenPlain when absent. */
   fmt?: (sen: number) => string;
 };
 
@@ -99,7 +85,6 @@ export const sheetText = (col: SheetColumn, v: SheetValue, fmt: (sen: number) =>
 export const AMOUNT_COLUMN = (label = 'Amount'): SheetColumn => ({ label, kind: 'amount' });
 export const PCT_COLUMN = (label: string): SheetColumn => ({ label, kind: 'pct' });
 
-/* ── The single-period statements (P&L, Balance Sheet) ───────────────────── */
 
 /** A statement's lines — pnlLines / balanceSheetLines, already folded to what
     the screen shows — as rows of amount and %. A block title carries no figure. */
@@ -109,14 +94,11 @@ export const statementRows = (lines: FlatLine[]): SheetRow[] =>
 export const statementTable = (lines: FlatLine[], pctTitle: string): SheetTable =>
   ({ columns: [AMOUNT_COLUMN(), PCT_COLUMN(pctTitle)], rows: statementRows(lines) });
 
-/* ── The Cash Flow, one period ───────────────────────────────────────────── */
 
 export type CashFlowSheetOptions = {
-  /** The account columns ticked on the screen, before Total. */
   columns?: string[];
   level?: number | 'all';
   open?: Record<string, boolean>;
-  /** The % beside Total, as the screen shows it (on unless switched off). */
   pct?: boolean;
 };
 
@@ -168,7 +150,6 @@ export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions = {}): She
   return { columns, rows };
 }
 
-/* ── The Performance P&L, one period ─────────────────────────────────────── */
 
 export type PerformanceSheetOptions = { level?: number | 'all'; open?: Record<string, boolean> };
 
@@ -191,7 +172,6 @@ export function performanceTables(r: PerformanceReport, opts: PerformanceSheetOp
   return { tables: [groups, summary], notes: performanceNotes(r) };
 }
 
-/* ── By month ────────────────────────────────────────────────────────────── */
 
 /** The monthly grid as shown: 累计 then the months, each an amount with its %
     beside it — or the % alone on the % toggle; the lines folded to the level. */
@@ -226,7 +206,6 @@ export function statementColumnsTable(
       ? [{ label: c.label, kind: 'amount', ...group }, { label: '%', kind: 'pct', beside: true, edge: c.edge, ...group }]
       : [{ label: c.label, kind: 'amount', edge: c.edge, ...group }];
   });
-  /* Where each screen column's cells start on the sheet, and how wide a run of them is. */
   const width = (c: { pct: boolean }): number => (c.pct ? 2 : 1);
   const starts = columns.map((_, i) => columns.slice(0, i).reduce((n, c) => n + width(c), 0));
   const spansOf = (l: MonthlyLine): SheetRow['spans'] => {

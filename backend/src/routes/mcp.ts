@@ -73,7 +73,6 @@ import { CACHEABLE_TOOLS, isRound3Tool, mcpXlsxDownload, ROUND3_INSTRUCTIONS, RO
 type HonoEnv = { Bindings: Env };
 const app = new Hono<HonoEnv>();
 
-// The whole app, for in-process tool calls; set by index.ts (importing it here would be circular).
 type FetchApp = { fetch: (req: Request, env: Env, ctx?: unknown) => Response | Promise<Response>; routes: RouteInfo[] };
 let appRef: FetchApp | null = null;
 export function setMcpApp(a: FetchApp): void {
@@ -107,7 +106,6 @@ const originOf = (c: Context<HonoEnv>): string =>
 
 export const isMcpAdmin = (u: AuthUser): boolean => hasPermission(u.permissions_set, MCP_ADMIN_PERMISSION);
 
-// ── discovery ───────────────────────────────────────────────────────────────
 
 export function protectedResourceMetadata(origin: string) {
   return { resource: `${origin}/api/mcp`, authorization_servers: [origin], bearer_methods_supported: ["header"], scopes_supported: ["erp.read"], resource_name: "Houzs ERP" };
@@ -133,7 +131,6 @@ mcpWellKnown.get("/oauth-protected-resource/*", (c) => c.json(protectedResourceM
 mcpWellKnown.get("/oauth-authorization-server", (c) => c.json(authorizationServerMetadata(originOf(c))));
 mcpWellKnown.get("/oauth-authorization-server/*", (c) => c.json(authorizationServerMetadata(originOf(c))));
 
-// ── OAuth ───────────────────────────────────────────────────────────────────
 
 app.post("/oauth/register", async (c) => {
   let body: { client_name?: unknown; redirect_uris?: unknown };
@@ -175,7 +172,6 @@ app.get("/oauth/authorize", async (c) => {
   if (q("response_type") !== "code") return plain("Only response_type=code is supported.");
   if (!q("code_challenge") || q("code_challenge_method") !== "S256") return plain("This app must use PKCE (S256).");
   const id = await createAuthRequest(c.env.DB, { clientId, redirectUri, state: q("state"), codeChallenge: q("code_challenge") });
-  // The SPA signs the person in (or uses their session) and shows Allow / Cancel.
   return c.redirect(`${originOf(c)}/ai-connect?request=${encodeURIComponent(id)}`, 302);
 });
 
@@ -222,7 +218,6 @@ app.post("/oauth/token", async (c) => {
   );
 });
 
-// ── MCP endpoint ────────────────────────────────────────────────────────────
 
 export type McpIdentity = { tokenId: string; clientId: string; user: AuthUser };
 type Identity = McpIdentity;
@@ -419,7 +414,6 @@ type ReadValue =
   | { ok: true; status: number; value: unknown; removed: string[]; target: string }
   | { ok: false; status: number; message: string; note: string; target: string };
 
-/** Read one endpoint as the person (gate, in-process GET, credential strip). Shared by erp_get, the quick answers, search and fetch. */
 async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, query: Record<string, unknown> | undefined, company: string | null): Promise<ReadValue> {
   const d = classifyPath(rawPath);
   if (!d.ok) return { ok: false, status: 400, message: d.reason, note: "blocked path", target: rawPath };
@@ -449,7 +443,6 @@ async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, qu
     return { ok: false, status: res.status, message: `The ERP answered: ${msg}`, note: msg.slice(0, 120), target };
   }
   const { value: noSecrets, removed } = redactSecrets(body);
-  // Cost / margin / profit by the ERP's own cohorts (services/mcp-access.ts redactMoney).
   const who = recallVerified<McpIdentity>(token, Date.now())?.user ?? (await mcpIdentity(c.env, token))?.user ?? null;
   const sight = { finance: !!who && isFinanceViewer(who), productCost: !!who && isProductCostViewer(who) };
   const money = redactMoney(noSecrets, sight);
@@ -480,13 +473,11 @@ export async function readEndpoint(
   return { result: text((notes.length ? notes.join(" ") + "\n" : "") + out), status: r.status, note: "", target: r.target, body: r.value, removed: r.removed };
 }
 
-/** The X-Company-Id pick passed through; companyContext admits only a company this person holds. */
 const companyArg = (args: Record<string, unknown>): string | null =>
   typeof args.company === "string" && /^[A-Za-z0-9]{1,12}$/.test(args.company) ? args.company : null;
 
 type Outcome = { result: ToolResult; status: number; note: string; target: string };
 
-/** A quick answer: the summary as JSON, or the main read's refusal / error in plain words. */
 function quick(target: string, main: ReadValue, summary: () => unknown): Outcome {
   if (!main.ok) return { result: text(main.message, true), status: main.status, note: main.note, target };
   return { result: text(JSON.stringify(summary())), status: 200, note: "", target };
@@ -497,12 +488,10 @@ const BAD_WINDOW = "Give period as YYYY-MM, YYYY-Qn or YYYY (not in the future),
 
 async function salesSummary(c: Context<HonoEnv>, token: string, w: Window, company: string | null): Promise<Outcome> {
   const fair = (r: { from: string; to: string }) => readValue(c, token, "/api/scm/reports/fair-report", { stage: "so", date_from: r.from, date_to: r.to }, company);
-  // Top models come from the Sales Analysis, which takes one month; for a longer window only its trend is used.
   const month = singleMonth(w);
   const [cur, prev, analysis] = await Promise.all([fair(w), fair(w.prev), readValue(c, token, "/api/scm/sales-analysis", { period: month ?? w.to.slice(0, 7) }, company)]);
   const a = valueOf(analysis);
   const trendOnly = { monthly: (a as { monthly?: unknown } | null)?.monthly };
-  // Only the window itself must succeed; the comparison and the Sales Analysis are extras.
   return quick(`sales:${w.from}..${w.to}`, cur, () => summariseSales(w, valueOf(cur), valueOf(prev), month ? a : trendOnly, w.to.slice(0, 7)));
 }
 
@@ -546,7 +535,6 @@ async function fetchTool(c: Context<HonoEnv>, token: string, rawId: unknown, com
   return { result: text(JSON.stringify(doc)), status: 200, note: "", target };
 }
 
-// ── document flow ───────────────────────────────────────────────────────────
 
 const FLOW_ENRICH_MAX = 15;
 const FLOW_ENRICH_PARALLEL = 5;
@@ -564,7 +552,6 @@ async function documentFlowTool(c: Context<HonoEnv>, token: string, q: string, c
   const r = await readValue(c, token, `/api/scm/document-flow/${anchor.type}/${encodeURIComponent(anchor.id)}`, undefined, company);
   if (!r.ok) return { result: text(r.message, true), status: r.status, note: r.note, target };
 
-  // Date and amount come from each document's own detail read, as the person (money stripped by cohort there too).
   const nodes = (Array.isArray((r.value as { nodes?: unknown }).nodes) ? (r.value as { nodes: Record<string, unknown>[] }).nodes : []).filter((n) => {
     const spec = flowSpec(String(n.type));
     return !!spec?.fetch && typeof n.id === "string" && /^[A-Za-z0-9._-]{1,80}$/.test(n.id);
@@ -589,7 +576,6 @@ async function documentFlowTool(c: Context<HonoEnv>, token: string, q: string, c
   return { result: text(JSON.stringify(out).slice(0, MAX_RESULT_CHARS)), status: 200, note: "", target };
 }
 
-// ── print / PDF ─────────────────────────────────────────────────────────────
 
 async function getPdfTool(c: Context<HonoEnv>, id: Identity, token: string, type: string, docId: string, company: string | null): Promise<Outcome> {
   const target = `pdf:${type}:${docId}`.slice(0, 200);
@@ -597,7 +583,6 @@ async function getPdfTool(c: Context<HonoEnv>, id: Identity, token: string, type
   const kind = fetchKind(type);
   if (!spec || !kind) return { result: text(`get_pdf does not know "${type}". Use a type from search, e.g. sales_order, delivery_order, sales_invoice, purchase_order, assr_case, project.`, true), status: 400, note: "", target };
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(docId)) return { result: text("Give the document id from search.", true), status: 400, note: "", target };
-  // Never weaker than opening the document: read it as the person first.
   const seen = await readValue(c, token, kind.api(docId), undefined, company);
   if (!seen.ok) return { result: text(seen.message, true), status: seen.status, note: seen.note, target };
   const page = originOf(c) + kind.page(docId);
@@ -627,7 +612,6 @@ async function getPdfTool(c: Context<HonoEnv>, id: Identity, token: string, type
   };
 }
 
-// ── actions: propose, confirm, cancel ───────────────────────────────────────
 
 async function proposeTool(c: Context<HonoEnv>, id: Identity, token: string, kind: ActionKind, args: Record<string, unknown>, company: string | null): Promise<Outcome> {
   let target = `propose ${kind}`;
@@ -638,7 +622,6 @@ async function proposeTool(c: Context<HonoEnv>, id: Identity, token: string, kin
     if (!boot.ok) return { result: text(boot.message, true), status: boot.status, note: boot.note, target };
     p = proposeMeeting(args, readBootstrap(boot.value), Date.now());
   } else {
-    // Mail Center is never READ through the connector; this asks only which mailboxes the person may send from.
     const res = await innerGet(c, token, "/api/mail-center/compose/senders", company);
     if (res.status === 401 || res.status === 403) return { result: text("Not available to your role: you may not send email from the Mail Center.", true), status: res.status, note: "no permission", target };
     const body = (await jsonOrNull(res, "senders")) as { senders?: unknown } | null;
@@ -656,7 +639,6 @@ async function proposeTool(c: Context<HonoEnv>, id: Identity, token: string, kin
   };
 }
 
-/** A reply's JSON, or null when it is not JSON (logged; the caller words the status). */
 async function jsonOrNull(res: Response, what: string): Promise<unknown> {
   try {
     return await res.json();
@@ -713,7 +695,6 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
   const company = companyArg(args);
   const tag = company ? `[${company}] ` : "";
   try {
-    // Per-person limits (services/mcp-ratelimit.ts); a refusal is a normal tool result, never a 500.
     const overLimit = await rateLimitRefusal(c.env.DB, id.user.id, t0);
     const cacheKey = CACHEABLE_TOOLS.has(name) ? answerCacheKey(id.user.id, company, name, args) : "";
     if (overLimit) {
@@ -837,8 +818,6 @@ app.post("/", async (c) => {
       "WWW-Authenticate": `Bearer realm="houzs-erp", resource_metadata="${originOf(c)}/.well-known/oauth-protected-resource/api/mcp"${token ? ', error="invalid_token"' : ""}`,
     });
   }
-  // The inner GETs of this request reuse this check instead of repeating it
-  // (middleware/auth.ts recallVerified): one token check per lookup, not two.
   rememberVerified(token, id, Date.now());
   let body: unknown;
   try {
@@ -856,10 +835,6 @@ app.post("/", async (c) => {
   return c.json(Array.isArray(body) ? out : out[0]);
 });
 
-// A get_pdf printout: the ERP's own print HTML, stored for 15 minutes under an
-// unguessable key (R2 mcp-exports/). The key is the permission: it was made only
-// after the person's own read of the document succeeded. Sandboxed so the page
-// runs with no access to the ERP's origin (no session, no storage).
 app.get("/export/:key", async (c) => {
   const key = c.req.param("key");
   const gone = (status: 404 | 410) =>
@@ -883,10 +858,8 @@ app.get("/export/:key", async (c) => {
   });
 });
 
-// An export_excel file (services/mcp-round3.ts), same 15-minute key rule as /export.
 app.route("/xlsx", mcpXlsxDownload);
 
-// Stateless server: no server-initiated stream.
 app.get("/", (c) => c.json({ error: "Use POST (MCP Streamable HTTP)." }, 405, { Allow: "POST" }));
 app.delete("/", (c) => c.body(null, 405, { Allow: "POST" }));
 

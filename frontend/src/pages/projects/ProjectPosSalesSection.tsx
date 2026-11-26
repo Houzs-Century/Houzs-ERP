@@ -1,14 +1,3 @@
-/* POS Sales — the Houzs POS bills synced from the booth terminals of one
- * event, inside the project page (layout E9). A Cash & Carry project has no
- * Sales Order module, so this section stands where the Sales section does:
- * header tiles (bills, net total), Export (Excel) and Total Sales (writes the
- * booth's net takings into project_finance.total_sales, the figure the
- * Project List, the dashboard and the Google Sheet sync read), filters, and
- * the bills grouped by receipt with their item rows.
- *
- * Own module: Projects.tsx is at its file-size ceiling. The read, the labels
- * and the export rows live in lib/projectPosSales.ts, shared with the phone.
- */
 import { useState } from "react";
 import { ChevronDown, ChevronRight, Download, Plus } from "lucide-react";
 import { api } from "../../api/client";
@@ -50,8 +39,6 @@ const STATUS_PILL: Record<PosReceiptStatus, string> = {
   RETURN: "bg-sky-100 dark:bg-sky-900/40 text-sky-800 dark:text-sky-300",
 };
 
-/** Write the filtered bills as one .xlsx sheet; the library loads lazily so
- *  it never touches the project page's bundle. */
 async function exportPosSalesXlsx(res: ProjectPosSalesResponse): Promise<void> {
   const writeXlsxFile = (await import("write-excel-file")).default;
   const header = POS_EXPORT_HEADERS.map((h) => ({ value: h, fontWeight: "bold" as const }));
@@ -207,7 +194,6 @@ export function ProjectPosSalesSection({
   toast,
 }: {
   projectId: number;
-  /** project_finance.total_sales (RM) — what the Total Sales button last wrote. */
   currentTotalSales: number | null;
   onTotalSaved: () => void;
   toast: ReturnType<typeof useToast>;
@@ -221,8 +207,6 @@ export function ProjectPosSalesSection({
   const [busy, setBusy] = useState<"export" | "total" | null>(null);
   const query = useProjectPosSales(projectId, filter, canViewSales);
 
-  // Off, not hide: a user who can't see the Sales section neither renders
-  // this one nor fires its read. All hooks above run first.
   if (!canViewSales) return null;
 
   const res = query.data;

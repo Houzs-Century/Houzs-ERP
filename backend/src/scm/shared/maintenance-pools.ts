@@ -108,20 +108,6 @@ export function fillEmptyAllowedOptions<T extends Record<string, unknown>>(
   return next as T;
 }
 
-/* ── Inch-mark hygiene on config SAVE (the quote-doubling mint, 2026-08-01) ──
- *
- * The costing audit's residual family carried variant keys with a DOUBLED inch
- * mark (`legheight=1""` vs the documents' `1"`). Tracing the mint: NO code
- * path in this repo (or the 2990 POS) appends a quote — every height editor is
- * a select fed by these option pools — so the doubling was a HAND-KEYED pool
- * value, copied verbatim into line variants and from there into ledger keys,
- * splitting one physical bucket in two. This save-side hygiene closes the
- * only in-repo door the class can walk through: option values in the
- * inch-bearing pools collapse any run of double-quote marks to one and drop
- * trailing whitespace, exactly the normalizeVariantKeyQuotes equivalence the
- * doc-relabel repair uses. Applied on WRITE only — stored history is never
- * rewritten, and computeVariantKey stays untouched (re-keying history is the
- * one thing this fix must never do). */
 
 const INCH_POOLS = [
   'gaps',

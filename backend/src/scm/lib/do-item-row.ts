@@ -54,11 +54,6 @@ export async function loadCarriedSoLinePhotos(
   if (ids.length === 0) return out;
   const { data, error } = await scope(sb.from('mfg_sales_order_items').select('id, photo_urls')).in('id', ids);
   if (error) {
-    /* Best-effort by DESIGN, and the trade is stated: photo_urls is an
-       annotation, the keys stay on the SO line, and a re-carry is always
-       possible — so a read blip degrades to photo-less lines rather than
-       failing a delivery the operator is cutting. The failure still reaches
-       the log instead of nobody. */
     // eslint-disable-next-line no-console
     console.error('[do-line-photo-carry] SO line photo read failed; inserting DO lines without photos:', error.message);
     return out;
@@ -79,12 +74,6 @@ export function carriedPhotoUrls(
   return (soItemId ? photosBySoItem.get(soItemId) : null) ?? [];
 }
 
-/* `commitment` is NEVER read off the request body — it is passed in by the route
-   from planShipCommitments, so a client cannot claim a binding the ledger has
-   not earned (it decides which receipt gets to net this OUT). */
-/* `lineNo` (0165) = the DO's listing position; omit/null for un-numbered. */
-/* `photosBySoItem` is REQUIRED for the same reason `scope` above is: forgetting
-   it must fail to compile, not silently insert photo-less lines. */
 export function buildDoItemRow(
   deliveryOrderId: string,
   it: Record<string, unknown>,
@@ -96,7 +85,6 @@ export function buildDoItemRow(
   const unitPrice = Number(it.unitPriceSen ?? 0);
   const discount = Number(it.discountSen ?? 0);
   const unitCost = Number(it.unitCostSen ?? 0);
-  // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qty * unitPrice) - discount);
   const lineCost = qty * unitCost;
   const itemGroup = (it.itemGroup as string) ?? null;
@@ -105,8 +93,6 @@ export function buildDoItemRow(
   return {
     delivery_order_id: deliveryOrderId,
     so_item_id: soItemId,
-    /* Mig 20260828T0746 — the source SO line's photo keys (see the carry
-       contract above). */
     photo_urls: carriedPhotoUrls(photosBySoItem, soItemId),
     item_code: it.itemCode,
     item_group: itemGroup,
@@ -122,8 +108,6 @@ export function buildDoItemRow(
     line_cost_sen: lineCost,
     line_margin_sen: lineTotal - lineCost,
     variants,
-    /* Migration 0058 — carry the dedicated variant-breakdown columns from the
-       client line payload (manual add already carries variants + line date). */
     gap_inches: (it.gapInches as number | null) ?? null,
     divan_height_inches: (it.divanHeightInches as number | null) ?? null,
     divan_price_sen: Number(it.divanPriceSen ?? 0),
@@ -135,15 +119,7 @@ export function buildDoItemRow(
     notes: (it.notes as string) ?? null,
     line_delivery_date: dateOrNull(it.lineDeliveryDate),
     line_delivery_date_overridden: Boolean(it.lineDeliveryDateOverridden ?? false),
-    /* REC P4 (mig 0118) — the SOURCE rack this line ships from. Null = let the
-       dispatch chokepoint auto-pick the rack holding this product. */
     rack_id: (it.rackId as string | undefined) || null,
-    /* Mig 0230 — the incoming PO batch this line is shipping AGAINST when it
-       ships before the goods arrive, the bucket it was committed in, and whether
-       that batch is a DYE LOT (sofa). The strict flag is what keeps the
-       batch-agnostic oversell retro-cost off a sofa OUT — and, just as
-       deliberately, keeps it available to a mattress OUT whose PO may yet be
-       cancelled or re-raised. */
     committed_po_batch_no: commitment?.poNumber ?? null,
     committed_variant_key: commitment ? commitment.variantKey : null,
     committed_batch_strict: commitment?.strictBatch === true,

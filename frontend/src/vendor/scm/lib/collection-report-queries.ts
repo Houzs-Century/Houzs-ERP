@@ -11,7 +11,6 @@ export type CollectionOrder = {
   docNo: string; soDate: string; status: string; customer: string | null;
   totalSen: number; depositSen: number; balancePaidSen: number; collectedSen: number; outstandingSen: number;
   depositPct: number; balanceDueSen: number; balancePct: number; delivered: boolean; belowThreshold: boolean;
-  /** The live sales invoice on the order, when one exists, and what was billed (its total, else the order's). */
   invoiceNumber: string | null; billedSen: number;
 };
 export type CollectionDelivered = {

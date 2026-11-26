@@ -12,8 +12,6 @@ vi.mock("../lib/errorReporter", () => ({ reportClientError: vi.fn() }));
 
 const src = (p: string) => readFileSync(join(process.cwd(), "src", p), "utf8");
 
-/** Fresh module graph per test: lib/staleBuild's failure flag is a module-level
- *  latch, so one test tripping it would decide every later one. */
 async function mount({ updateReady }: { updateReady: boolean }) {
   vi.resetModules();
   useVersionCheck.mockReturnValue({ updateReady });
@@ -31,8 +29,6 @@ async function mount({ updateReady }: { updateReady: boolean }) {
 function dispatchPreloadError(message: string) {
   const event = new Event("vite:preloadError", { cancelable: true });
   (event as Event & { payload?: unknown }).payload = new Error(message);
-  // act(): the store notifies from outside React (Vite's helper is not a React
-  // event), which is exactly why the banner reads it through useSyncExternalStore.
   act(() => {
     window.dispatchEvent(event);
   });
@@ -60,12 +56,6 @@ describe("NewVersionBanner", () => {
   });
 
   it("appears on a FAILED dynamic import even when no poll has noticed yet", async () => {
-    // The 55-site hole. An `await import()` inside an async click handler is
-    // caught by that handler's own try/catch, so it reaches no error boundary
-    // and no unhandledrejection listener: before this, an operator clicking
-    // Print after a deploy got a raw "Failed to fetch dynamically imported
-    // module: …/assets3/purchase-order-pdf-AbC123.js" toast, and clicking again
-    // failed identically forever with nothing on screen offering a way out.
     disposers.push((await mount({ updateReady: false })).dispose);
     expect(screen.queryByRole("status")).toBeNull();
 
@@ -84,9 +74,6 @@ describe("NewVersionBanner", () => {
 
 describe("NewVersionBanner is mounted where BOTH surfaces see it", () => {
   it("is mounted from main.tsx and not from the desktop-only App", () => {
-    // AuthGate renders MobileApp INSTEAD of App, so a mount inside App() reached
-    // the desktop shell only and all 28 lazy mobile screens got no warning at
-    // all — half the product, and the half used in the field.
     expect(src("main.tsx")).toContain("<NewVersionBanner />");
     expect(src("App.tsx")).not.toContain("<NewVersionBanner");
     expect(src("auth/AuthGate.tsx")).toContain("<MobileApp />");
@@ -94,9 +81,6 @@ describe("NewVersionBanner is mounted where BOTH surfaces see it", () => {
 });
 
 describe("the mobile tab bar cannot be covered by the banner", () => {
-  /** The pill is position:fixed at z-100 and the mobile tab bar sits at z-30, so
-   *  an overlap is the pill sitting ON the tabs. The three numbers that decide
-   *  it live in two files; read them back rather than trusting a comment. */
   function px(source: string, pattern: RegExp): number {
     const m = source.match(pattern);
     expect(m, `no match for ${pattern}`).toBeTruthy();
@@ -117,9 +101,6 @@ describe("the mobile tab bar cannot be covered by the banner", () => {
 
     expect(bannerOffset).toBeGreaterThan(tabBarHeight + navWrapPadding);
 
-    // `lg` must stay the breakpoint useIsMobile flips at, or the desktop offset
-    // would apply on a viewport that is still rendering the mobile shell.
-    // Tailwind's stock `lg` is 1024px; the config must not have redefined it.
     expect(src("components/NewVersionBanner.tsx")).toContain("lg:bottom-6");
     expect(src("mobile/useIsMobile.ts")).toContain("breakpoint = 1024");
     expect(readFileSync(join(process.cwd(), "tailwind.config.js"), "utf8")).not.toMatch(

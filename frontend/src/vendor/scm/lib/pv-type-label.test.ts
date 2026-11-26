@@ -15,7 +15,6 @@ describe('pvTypeLabel — the document kind in the owner\'s words', () => {
     expect(pvTypeLabel('CUSTOMER_REFUND')).toBe('Customer Refund');
     expect(isRefundPurpose('CUSTOMER_REFUND')).toBe(true);
     expect(isRefundPurpose('OTHER')).toBe(false);
-    /* The edit form never offers it — a refund's type is fixed at birth. */
     expect(pvTypeOf('CUSTOMER_REFUND')).toBe('OTHER');
   });
 

@@ -32,28 +32,13 @@ export function appSurfaceForPath(pathname: string): AppSurface {
   // camera and the 64-hex token in the path is the only credential (owner:
   // 「就跟hookka一样」). It must land OUTSIDE AuthGate for the same reason the
   // survey does: a staff sign-in screen in front of it makes the paper useless.
-  /* BEFORE the token branch, or "/d/scan" resolves as a token named "scan" and
-     the driver gets "unknown or expired QR code" for a page that exists. Same
-     trap the backend's /batch routes carry, and the same fix: the specific path
-     is decided first. A real token can never collide — it is 10 or 64 characters
-     from a fixed alphabet. */
   if (pathname === "/d/scan" || pathname === "/d/scan/") return "doscanbasket";
   if (pathname.startsWith("/d/")) return "doscan";
-  // The per-contractor calendar share link. NO LOGIN — a booth contractor opens
-  // it and sees only their confirmed events; the token in the path is the only
-  // credential. Outside AuthGate for the same reason /d/ is.
   if (pathname.startsWith("/c/")) return "contractor";
-  // The per-brand calendar share link — the same no-login token rule, a brand's
-  // own events with display floorplan, size and total sales.
   if (pathname.startsWith("/b/")) return "brand";
-  // A meeting-room booking link (routes/meetings.ts). NO LOGIN — a customer or
-  // supplier opens it and sees only free times; the code in the path is all it needs.
   if (pathname.startsWith("/book/")) return "book";
   if (pathname.startsWith("/reset/")) return "reset";
   if (pathname.startsWith("/invite/")) return "invite";
-  // The App Store's privacy-policy URL. A static file cannot survive the
-  // Pages clean-URL + SPA-fallback combination (BUG-HISTORY 2026-08-06), so
-  // the policy is a public surface of the SPA itself.
   if (pathname === "/privacy" || pathname.startsWith("/privacy/")) return "privacy";
   return "staff";
 }

@@ -1,10 +1,3 @@
-/**
- * Every case here is a real way a price gets keyed at HOUZS, and the assertion
- * is always one of two things: the amount we read is EXACTLY right, or we
- * refused and said why. There is deliberately no case that returns a
- * best-guess number for input we could not read — that behaviour is the bug
- * this module replaced.
- */
 import { describe, it, expect } from 'vitest';
 import { parseMoneyToSen, parseQuantity, senToRm } from './money';
 
@@ -35,7 +28,6 @@ describe('parseMoneyToSen — plain amounts', () => {
   });
 
   it('never loses a sen to float multiplication', () => {
-    // 19.99 * 100 is 1998.9999999999998 in IEEE754. Integer assembly is exact.
     expect(sen('19.99')).toBe(1999);
     expect(sen('1.00')).toBe(100);
     expect(sen('8.29')).toBe(829);
@@ -55,7 +47,7 @@ describe('parseMoneyToSen — what a human plainly meant', () => {
     expect(sen('  1200  ')).toBe(120000);
     expect(sen('1200 ')).toBe(120000);
     expect(sen('1 200')).toBe(120000);
-    expect(sen(' 1200 ')).toBe(120000); // non-breaking spaces, straight out of Excel
+    expect(sen(' 1200 ')).toBe(120000);
   });
 
   it('accepts thousands separators in an unambiguous grouping', () => {
@@ -107,7 +99,6 @@ describe('parseMoneyToSen — refuses rather than guessing', () => {
   });
 
   it('refuses comma placement it cannot read', () => {
-    // The historic silent failure: parseFloat("1,20") is 1, i.e. RM 1.00.
     expect(refusal('1,20')).toMatch(/commas in a place we can't read/i);
     expect(refusal('12,34,567')).toMatch(/commas in a place we can't read/i);
     expect(refusal('1.2,5')).toMatch(/comma after the decimal point/i);
@@ -120,7 +111,7 @@ describe('parseMoneyToSen — refuses rather than guessing', () => {
 
   it('refuses a negative price by default', () => {
     expect(refusal('-5')).toMatch(/can't be negative/i);
-    expect(refusal('−5')).toMatch(/can't be negative/i); // U+2212 from a paste
+    expect(refusal('−5')).toMatch(/can't be negative/i);
   });
 
   it('allows a negative when the caller opts in', () => {

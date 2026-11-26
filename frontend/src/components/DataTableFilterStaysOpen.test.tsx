@@ -31,8 +31,6 @@ function setViewport(width: number) {
     })),
   });
 }
-/* The app's page scroller is <main> (Layout.tsx); the table box is the
-   element right around the <table>. */
 const renderReport = () =>
   render(
     <main>
@@ -60,12 +58,12 @@ describe("DataTable funnel popover stays open while values are ticked", () => {
     const tableBox = document.querySelector("table")!.parentElement!;
 
     tick("Fair A");
-    expect(popover()).not.toBeNull(); // the click itself never reached the close handler
-    fireEvent.scroll(tableBox); // the frozen box's scrollTop pulled back to the shorter rows
+    expect(popover()).not.toBeNull();
+    fireEvent.scroll(tableBox);
     expect(popover()).not.toBeNull();
 
     tick("Fair B");
-    fireEvent.scroll(document.querySelector("main")!); // the page's scrollTop pulled back too
+    fireEvent.scroll(document.querySelector("main")!);
     expect(popover()).not.toBeNull();
 
     tick("Fair C");
@@ -82,7 +80,7 @@ describe("DataTable funnel popover stays open while values are ticked", () => {
       () => ({ top, bottom: top + 14, left: 300, right: 314, width: 14, height: 14, x: 300, y: top, toJSON: () => ({}) }) as DOMRect,
     );
     fireEvent.click(funnel);
-    expect(popover()!.style.top).toBe("118px"); // hangs 4px under the funnel
+    expect(popover()!.style.top).toBe("118px");
 
     top = 200;
     fireEvent.scroll(document.querySelector("main")!);

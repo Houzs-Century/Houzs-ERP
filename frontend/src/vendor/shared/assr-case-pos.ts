@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// assr-case-pos — the purchase-order numbers a service case shows, as ONE
-// reader for the screens and the printed copies.
-//
-// WHY THIS FILE EXISTS. The list's "PO" column merged the SO's supplier "Order
-// PO"s with the case's own service PO, but the printed Office / Supplier copy
-// (routes/assr_print.ts) read `po_no` alone. A case created from an ERP sales
-// order has `po_no` empty (the create path never fills it), so staff saw the PO
-// on screen and a dash on paper (BUG-91, Farra 2026-10-08).
-//
-// The pair of paths is load-bearing: check-shared-mirrors.mjs compares
-// backend/src/scm/shared and frontend/src/vendor/shared by basename. Keep the
-// two files BYTE-IDENTICAL, no imports.
-// ----------------------------------------------------------------------------
 
 /**
  * "Order PO" — the supplier purchase orders raised from the case's SALES ORDER,
@@ -101,11 +87,6 @@ export function assrExchangePoText(row: unknown): string {
   return assrExchangePos(row).map((p) => p.po_number).join(" · ");
 }
 
-/** Canonical form for the dedupe above: upper-case, drop whitespace, and strip
- *  a leading company-code prefix ("HC-", "2990-") when what remains is itself a
- *  PO number, so a prefixed order PO and its bare-typed twin compare equal.
- *  Anything that is not `<code>-PO…` is compared whole, so genuinely different
- *  numbers (e.g. "APO/2609-001") never collapse. */
 function canonicalPoNumber(s: string): string {
   const t = s.trim().toUpperCase().replace(/\s+/g, "");
   const m = t.match(/^[A-Z0-9]+-(PO[-/].*)$/);

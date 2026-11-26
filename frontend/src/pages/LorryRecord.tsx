@@ -109,7 +109,6 @@ export function LorryRecord() {
 
   const v = detail.data?.vehicle;
   const compliance = detail.data?.compliance;
-  // The lorry master row: the vehicle-details editor writes it (PATCH /lorries/:id).
   const lorries = useLorries({ includeInactive: true, fleet: "all" });
   const lorryRow = (lorries.data ?? []).find((l) => l.id === lorryId) ?? null;
 
@@ -161,7 +160,6 @@ export function LorryRecord() {
 
       <section className="flex flex-wrap items-stretch gap-5 rounded-2xl border border-border bg-surface p-3.5 sm:p-[18px]">
         <div className="min-w-0 max-w-full flex-[1_1_420px]">
-          {/* Drawn to the lorry's own container size; drag to turn it. */}
           <Lorry3D box={lorryBox(v)} height={220} />
         </div>
         <div className="flex min-w-0 flex-[1_1_340px] flex-col gap-3">

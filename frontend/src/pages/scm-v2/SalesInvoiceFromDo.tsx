@@ -1,33 +1,3 @@
-// ----------------------------------------------------------------------------
-// SalesInvoiceFromDo — LINE-LEVEL, QUANTITY-BASED Delivery Order → Sales Invoice
-// picker.
-//
-// Commander 2026-05-30 (Phase B) rewrite: partial-invoice model, mirroring the
-// SO→DO line-level picker (DeliveryOrderFromSo.tsx). Instead of ticking whole
-// Delivery Orders, the operator picks individual DO LINES, each with a qty
-// 1..remaining. A DO line can be invoiced across SEVERAL Sales Invoices until
-// its remaining (delivered − invoiced − returned, derived LIVE by the server)
-// reaches 0:
-//   - Still invoiceable (remaining > 0) → the line is pickable.
-//   - Fully invoiced/returned (remaining == 0) → the line drops out.
-//   - Cancelling an invoice (or a return) RAISES remaining again automatically
-//     (the server re-derives it — the qty returns to Pending).
-//
-// Invoicing + returning compete for the SAME Pending pool, so an invoiced unit
-// can't be returned and vice-versa — that exclusion falls straight out of the
-// remaining formula.
-//
-// A customer-lock keeps the merge clean: once one line is ticked, lines of a
-// DIFFERENT customer grey out — an invoice bills ONE customer.
-//
-// Continue stashes the picked lines (carrying each line's doItemId) and opens the
-// normal New Sales Invoice form prefilled for review. Nothing is invoiced and no
-// revenue is recorded until the operator clicks Create there — that POST records
-// revenue (Dr Accounts Receivable / Cr Sales Revenue) and caps each line at its
-// live remaining-to-invoice via the same guard the old auto-convert used.
-//
-// Routing: /sales-invoices/from-do.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -46,8 +16,6 @@ import { soRefOfCamelStamp } from '../../lib/so-ref-search';
 import { fmtMoneySen, fmtQty } from '@2990s/shared';
 import { lineDiscountShare } from '../../vendor/shared/line-discount-share';
 
-/* An invoice pick carries its share of the DO line's discount (never the whole
-   discount on each partial invoice), so Line Value here is what the invoice holds. */
 const pickDiscount = (r: DoRemainingLine, pickQty: number): number =>
   lineDiscountShare(r.discountSen, r.delivered, r.delivered - r.remaining, pickQty);
 
@@ -57,7 +25,6 @@ const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, cu
 
 const STORAGE_KEY = 'pr-g.si-from-do-lines.layout.v1';
 
-/* Compact pill input — mirrors the SO→DO picker's qty input. */
 const QTY_INPUT: CSSProperties = {
   height: 28,
   border: '1px solid var(--line)',
@@ -68,9 +35,6 @@ const QTY_INPUT: CSSProperties = {
   color: 'var(--c-ink)',
 };
 
-/* One distinct customer key per DO line — match the server's same-customer rule:
-   debtor_code when present, else fall back to debtor_name. The lock greys out any
-   line whose key differs from the first ticked one. */
 const custKey = (l: DoRemainingLine): string =>
   (l.debtorCode && l.debtorCode.trim())
     ? `code:${l.debtorCode.trim().toUpperCase()}`
@@ -82,19 +46,12 @@ export const SalesInvoiceFromDo = () => {
   const navigate = useNavigate();
   const linesQ = useInvoiceableDoLines();
 
-  /* "Transfer to Sales Invoice" on a Delivery Order lands here with ?doId=<id> so the
-     operator sees the note they were just looking at, not every open DO in the
-     company. The parameter was being constructed by both callers and dropped
-     here until 2026-08-16. No parameter → the full picker, which is what the
-     list toolbar's "From Delivery Order" button wants. */
   const [searchParams] = useSearchParams();
   const scope = useMemo(
     () => readConvertScope('doToSi', searchParams, []),
     [searchParams],
   );
 
-  // Map<doItemId, { picked, qty }>. Defaults: picked = false; when ticked,
-  // qty defaults to the line's remaining.
   const [picks, setPicks] = useState<Record<string, Pick>>({});
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
 
@@ -112,10 +69,6 @@ export const SalesInvoiceFromDo = () => {
     return m;
   }, [rows]);
 
-  /* Scoped entry pre-ticks the note's remaining lines at full quantity, so the
-     screen is a ready-to-review draft rather than a filtered list to re-tick by
-     hand. Copies GrnFromPo, the one convert that already worked. Nothing is
-     invoiced here — Continue only carries the picks to the New SI form. */
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current) return;
@@ -126,8 +79,6 @@ export const SalesInvoiceFromDo = () => {
     const first = mine[0];
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mine[0] is typed non-optional without noUncheckedIndexedAccess; an empty scope match is real
     if (!first) return;
-    // Honour the one-customer-per-invoice lock: tick only the first line's
-    // customer, even if the scope somehow spans two.
     const lockTo = custKey(first);
     setPicks(() => {
       const next: Record<string, Pick> = {};
@@ -139,8 +90,6 @@ export const SalesInvoiceFromDo = () => {
     });
   }, [rows, linesQ.isLoading, scope.keys]);
 
-  /* The customer locked in by the current picks — the key of the first picked
-     line. Null when nothing is picked (every line is selectable). */
   const lockedCustomer = useMemo(() => {
     for (const [id, v] of Object.entries(picks)) {
       if (!v.picked) continue;
@@ -159,12 +108,11 @@ export const SalesInvoiceFromDo = () => {
     return null;
   }, [picks, rowById]);
 
-  // A row is LOCKED when a different customer is already picked.
   const isRowLocked = (r: DoRemainingLine): boolean =>
     Boolean(lockedCustomer && custKey(r) !== lockedCustomer && !picks[r.doItemId]?.picked);
 
   const togglePick = (r: DoRemainingLine) => {
-    if (isRowLocked(r)) return; // can't tick a different customer
+    if (isRowLocked(r)) return;
     const turningOn = !picks[r.doItemId]?.picked;
     setPicks((s) => ({
       ...s,
@@ -179,13 +127,6 @@ export const SalesInvoiceFromDo = () => {
     setPicks((s) => ({ ...s, [r.doItemId]: { picked: true, qty } }));
   };
 
-  /* Select-all acts on WHAT THE OPERATOR SEES — the post-search rows the grid
-     hands back (onFilteredRowsChange), not the whole loaded dataset. It walked
-     `rows` and seeded the lock from `rows[0]` (the UNFILTERED first row), so a
-     search + Select all ticked the locked customer's lines across ALL loaded rows
-     instead of the few in view. Mirrors DeliveryOrderFromSo's 2026-08-03 fix; still
-     lock-respecting (locked customer, or — when nothing is picked yet — the first
-     VISIBLE row's customer). */
   const [visibleRows, setVisibleRows] = useState<DoRemainingLine[]>([]);
 
   const selectableVisibleKeys = useMemo(
@@ -194,10 +135,6 @@ export const SalesInvoiceFromDo = () => {
     [visibleRows, picks, lockedCustomer],
   );
 
-  /* Tick/untick the given (visible, unlocked) keys — the header checkbox and the
-     toolbar button both call this. Respects the lock: only lines of the locked
-     customer, or — when nothing is picked yet — of the FIRST VISIBLE row's
-     customer, so the result is always a valid single-customer set. */
   const toggleKeys = (keys: string[], allSelected: boolean) => {
     setPicks((s) => {
       const next = { ...s };
@@ -222,17 +159,12 @@ export const SalesInvoiceFromDo = () => {
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
-  /* Ticked rows for the grid's first-class checkbox column — same rule Continue
-     applies, so a row typed down to qty 0 reads as unticked. */
   const pickedKeys = useMemo(
     () => new Set(Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0).map(([id]) => id)),
     [picks],
   );
 
   const columns = useMemo<GridColumn<DoRemainingLine>[]>(() => [
-    /* The per-row tick lives in the grid's first-class `selectable` column, so the
-       header carries a real select-all checkbox scoped to the filtered rows. Don't
-       re-add a hand-rolled `pick` column — that header can only hold a string. */
     {
       key: 'doNumber', label: 'DO No', width: 140, sortable: true, groupable: true,
       accessor: (r) => <span className={styles.codeCell}>{r.doNumber}</span>,
@@ -304,7 +236,6 @@ export const SalesInvoiceFromDo = () => {
             value={on ? p!.qty : ''}
             placeholder={String(r.remaining)}
             disabled={locked}
-            /* Always editable: typing a qty auto-selects the row. */
             onClick={(e) => e.stopPropagation()}
             onChange={(e) =>
               setQty(r, Math.min(r.remaining, Math.max(0, Number(e.target.value) || 0)))}
@@ -339,9 +270,6 @@ export const SalesInvoiceFromDo = () => {
       setDialog({ title: 'Nothing picked', body: 'Tick at least one Delivery Order line to invoice first.' });
       return;
     }
-    // Stash the picked lines and open the normal New Sales Invoice form, prefilled
-    // for review. Nothing is invoiced and no revenue is recorded until the operator
-    // clicks Create on that screen.
     const stash = picked
       .map(([doItemId, v]) => {
         const r = rowById.get(doItemId);
@@ -368,8 +296,6 @@ export const SalesInvoiceFromDo = () => {
       return;
     }
 
-    // All picks share one customer (the lock guarantees it); they may span several
-    // DOs. Land on the first DO so its header seeds the form.
     const firstDoId = stash.map((s) => s.deliveryOrderId).sort()[0] ?? '';
     if (!writeScmHandoff('siFromDoPicks', stash)) {
       setDialog({ title: 'Unable to continue', body: 'This browser could not safely store your picked lines. Your selection is still here; free some browser storage and try again.' });

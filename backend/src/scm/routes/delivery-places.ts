@@ -32,8 +32,6 @@ import type { PlaceSpec } from '../lib/delivery-rate-card';
 export const deliveryPlaces = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlaces.use('*', supabaseAuth);
 
-/* The table is not in the generated Supabase types until the migration merges;
-   like rc() in delivery-rate-cards.ts, a narrow table-local bridge. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const pg = (sb: unknown): any => sb;
 
@@ -83,7 +81,6 @@ export async function placeRefusal(c: any, names: readonly string[]) {
   return { status: 400 as const, body: { error: 'unknown_place', names: unknown, reason: `Not in a zone yet: ${list}. Add it under its zone on the Delivery Zones page first.` } };
 }
 
-/** Each town the company's rate cards price (area towns, town prices) → the cards' names. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function townsOnCards(c: any): Promise<{ ok: true; byTown: Map<string, string[]> } | { ok: false; reason: string }> {
   const sb = pg(c.get('supabase'));
@@ -108,7 +105,6 @@ async function townsOnCards(c: any): Promise<{ ok: true; byTown: Map<string, str
   return { ok: true, byTown: new Map([...byTown].map(([t, set]) => [t, [...set].sort((x, y) => x.localeCompare(y))])) };
 }
 
-// ── GET / — the places, the cards pricing each, the towns no zone holds yet. ──
 deliveryPlaces.get('/', async (c) => {
   const { data, error } = await paginateAll<Row>((lo, hi) =>
     scopeToCompany(pg(c.get('supabase')).from('delivery_places').select(PLACE_COLS), c).order('name', { ascending: true }).range(lo, hi),
@@ -131,7 +127,6 @@ const zoneField = z.string().trim().min(1).max(40).nullable();
 const postSchema = z.object({ zone: zoneField, names: z.array(z.string().max(200)).min(1).max(300) });
 const patchSchema = z.object({ zone: zoneField });
 
-/** The zone as stored, or the refusal when it is not one of the zones. */
 function zoneOf(raw: string | null) {
   if (raw == null) return { ok: true as const, zone: null };
   const zone = raw.toUpperCase();
@@ -139,7 +134,6 @@ function zoneOf(raw: string | null) {
   return { ok: true as const, zone };
 }
 
-// ── POST / — file a pasted list of towns under a zone. ───────────────────────
 deliveryPlaces.post('/', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -166,7 +160,6 @@ deliveryPlaces.post('/', async (c) => {
   return c.json({ places: saved }, 201);
 });
 
-// ── PATCH /:id — move a place to another zone, or to none. ───────────────────
 deliveryPlaces.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -185,7 +178,6 @@ deliveryPlaces.patch('/:id', async (c) => {
   return c.json({ place: placeOut(data as Row) });
 });
 
-// ── DELETE /:id — remove a place no rate card prices. ────────────────────────
 deliveryPlaces.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);

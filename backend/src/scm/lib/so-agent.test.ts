@@ -1,9 +1,3 @@
-// What lands in `mfg_sales_orders.agent`, and where it comes from.
-//
-// The column was empty on every order created since the cutover, because no SO
-// form sends `body.agent` and nothing else wrote it. That emptiness is what the
-// live AED_HOUZS book answered on 2026-08-13 with
-// `Foreign Key Error (Constraint Name=FK_SO_SalesAgent)`.
 import { describe, expect, test } from 'vitest';
 import {
   soAgentToStamp,
@@ -21,9 +15,6 @@ describe('soAgentToStamp', () => {
     expect(soAgentToStamp('KINGSLEY', 'Chang Shi Ting')).toBe('KINGSLEY');
   });
 
-  /* A form control that was never touched posts '', not undefined. Storing it
-     would put the column straight back where it was — non-null, still empty,
-     still FK_SO_SalesAgent. */
   test('a blank supplied agent is not a supplied agent', () => {
     expect(soAgentToStamp('', 'Chang Shi Ting')).toBe('Chang Shi Ting');
     expect(soAgentToStamp('   ', 'Chang Shi Ting')).toBe('Chang Shi Ting');
@@ -34,8 +25,6 @@ describe('soAgentToStamp', () => {
     expect(soAgentToStamp(null, '  Chang Shi Ting  ')).toBe('Chang Shi Ting');
   });
 
-  /* NULL, not ''. The confirm gate treats blank as "no salesperson" and so does
-     the write-back; a stored empty string would read as a value to both. */
   test('neither source leaves the column NULL rather than empty', () => {
     expect(soAgentToStamp(undefined, null)).toBeNull();
     expect(soAgentToStamp('', '')).toBeNull();
@@ -67,9 +56,6 @@ describe('readStaffAgentName', () => {
   });
 
   test('no id is not a lookup — a blank one must never reach .eq()', async () => {
-    /* `.eq('id', null)` is not "no salesperson", it is a malformed filter that
-       matches whatever the edge decides to match. The SO router already learned
-       this on the venue lookup beside this one. */
     let asked = false;
     const sb = {
       from: () => { asked = true; return staffSb([]).from(); },
@@ -84,23 +70,16 @@ describe('readStaffAgentName', () => {
     expect(await readStaffAgentName(sb, 'staff-1')).toBeNull();
   });
 
-  /* Best-effort, because this runs inside a create that has already priced,
-     gated and reserved. A dead staff lookup costs the order its agent text; it
-     must never cost the salesperson their save. */
   test('a failed lookup returns null instead of throwing into the create', async () => {
     const sb = staffSb([], true);
     await expect(readStaffAgentName(sb, 'staff-1')).resolves.toBeNull();
   });
 
-  /* One row, one read: the venue chain fetched the same staff row two
-     statements after the agent needed it. */
   test('readStaffForStamp carries the venue off the SAME row', async () => {
     const sb = staffSb([{ id: 'staff-1', name: 'Chang Shi Ting', venue_id: 'venue-7' }]);
     expect(await readStaffForStamp(sb, 'staff-1')).toEqual({
       name: 'Chang Shi Ting', venueId: 'venue-7',
     });
-    /* A venue-less salesperson (an admin under their own name) stays NULL —
-       admins oversee every venue by design. */
     const noVenue = staffSb([{ id: 'staff-2', name: 'Admin' }]);
     expect(await readStaffForStamp(noVenue, 'staff-2')).toEqual({ name: 'Admin', venueId: null });
     expect(await readStaffForStamp(sb, 'nobody')).toBeNull();
@@ -124,9 +103,6 @@ describe('followSalespersonToAgent — the header PATCH', () => {
     const body: Record<string, unknown> = { salespersonId: 'staff-2' };
     await followSalespersonToAgent(sb, updates, body);
     expect(updates.agent).toBe('Nurul Hidayah');
-    /* diffFields() audits from `body` through the same field map, so a column
-       written with no entry there changes the order with nothing in its
-       history to say so. */
     expect(body.agent).toBe('Nurul Hidayah');
   });
 
@@ -137,9 +113,6 @@ describe('followSalespersonToAgent — the header PATCH', () => {
     expect(updates.agent).toBe('KINGSLEY');
   });
 
-  /* `agent` is the LAST record of who sold the order, and the write-back reads
-     it exactly when salesperson_id is empty — clearing both would throw that
-     away. A name that cannot be read is the same call: stale beats none. */
   test('clearing the salesperson, or an unreadable name, leaves the agent alone', async () => {
     const cleared: Record<string, unknown> = { salesperson_id: null };
     await followSalespersonToAgent(sb, cleared, {});

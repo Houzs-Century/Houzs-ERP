@@ -123,9 +123,6 @@ describe('paymentReconciliation', () => {
   });
 
   it('reads the month lock off the MONEY leg, not the debtor control', async () => {
-    /* The credit leg is Trade Debtors and is never a bank account — a guard
-       that looked at the wrong line would find no lock and wave everything
-       through. */
     const sb = world({
       locks: [{
         id: 1, company_id: 1, account_code: '300-0000', period_month: '2026-08-01',
@@ -155,9 +152,6 @@ describe('paymentReconciliation', () => {
     expect(await paymentReconciliation(sb, 1, 'pay-1')).toEqual({ ok: true, by: null });
   });
 
-  /* A payment that never reached the ledger has no entry to claim, so neither
-     the bank match nor the month lock can speak for it — but a MERCHANT match
-     still can, because that one keys on the payment row itself. */
   it('still finds a merchant match on a payment that never booked', async () => {
     const sb = world({
       jes: [], lines: [],
@@ -176,9 +170,6 @@ describe('paymentReconciliation', () => {
       .toEqual({ ok: true, by: null });
   });
 
-  /* A REVERSED entry does not speak for the payment any more — the live one
-     does, and here there is none. A bank match against the dead entry's number
-     must not close a payment whose current state is unbooked. */
   it('reads only the ACTIVE entry', async () => {
     const sb = world({
       jes: [{ ...JE, reversed: true }],
@@ -209,13 +200,7 @@ describe('paymentReconciliation', () => {
     expect(await paymentReconciliation(sb, 1, 'pay-1')).toEqual({ ok: true, by: null });
   });
 
-  /* THE ONE THAT MATTERS MOST. A read that fails is not an absence of
-     reconciliation, and answering "not reconciled" would open every locked
-     payment the moment the database blinked. */
   it('REFUSES when it cannot read, rather than reporting nothing found', async () => {
-    /* Each entry names a column that read SELECTS, withheld from the fake so
-       the read errors the way PostgREST does on an unknown column. The columns
-       are the load-bearing part: they pin that the read is still made at all. */
     const reads: Array<[string, string]> = [
       ['acc_settlement_matches', 'created_at'],
       ['journal_entries', 'je_no'],
@@ -231,10 +216,6 @@ describe('paymentReconciliation', () => {
   });
 });
 
-/* The whole answer both routes ask for — the predicate fed the fact it cannot
-   fetch. These cases are about the JOIN of the two, not either half: that a
-   read failure closes the door, that DRAFT skips the reads entirely, and that
-   the amend right reaches an old payment but not a reconciled one. */
 describe('paymentMayChange', () => {
   const ask = (sb: ReturnType<typeof world>, over: Record<string, unknown> = {}) =>
     paymentMayChange(sb, {
@@ -274,8 +255,6 @@ describe('paymentMayChange', () => {
     expect(out.problem).toMatch(/JE-2608-0031/);
   });
 
-  /* A read it cannot make is not permission to proceed. This is the case that
-     turns the whole guard off if it is got wrong, so it is stated plainly. */
   it('refuses when the reconciliation cannot be read, even for a holder', async () => {
     const sb = world({}, { acc_settlement_matches: ['created_at'] });
     const out = await ask(sb, { mayAmend: true });
@@ -283,8 +262,6 @@ describe('paymentMayChange', () => {
     expect(out.problem).toBe(RECONCILIATION_UNREADABLE);
   });
 
-  /* And a DRAFT is answered before any read happens — withholding a column
-     that every read needs proves nothing was asked. */
   it('exempts a DRAFT order without asking the books anything', async () => {
     const sb = world({}, { acc_settlement_matches: ['created_at'], journal_entries: ['je_no'] });
     expect(await ask(sb, { soIsDraft: true })).toEqual({ mutable: true, problem: null, via: 'draft' });

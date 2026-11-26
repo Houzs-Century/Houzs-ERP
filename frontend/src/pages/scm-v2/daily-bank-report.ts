@@ -29,14 +29,11 @@ export type DailyBankRowKind =
 
 export type DailyBankRow = {
   kind: DailyBankRowKind;
-  /** PAY TO / FROM — a group's own words, or the party of a line. */
   who: string;
   doc: string;
   description: string;
   receivedSen: number | null;
-  /** PAYMENT — a payment made today or one pending approval; the row's kind tells which. */
   paymentSen: number | null;
-  /** BALANCE — Balance B/F, Available, a transit figure, Available + in transit. */
   balanceSen: number | null;
 };
 
@@ -91,7 +88,6 @@ export function dailyBankSections(board: DailyBankBoard): DailyBankSection[] {
 /** The board's day as the dark bar prints it: "Tue · 2026/09/29". */
 export function boardDayLabel(date: string): string {
   const d = new Date(`${date}T12:00:00`);
-  /* The weekday from the platform, not a hand-typed list (one of those already lives in three calendars). */
   const day = Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { weekday: 'short' });
   return day ? `${day} · ${fmtDate(date)}` : fmtDate(date);
 }
@@ -110,7 +106,6 @@ export const boardSourceLine = (board: DailyBankBoard): string => (board.book ==
 export const boardTotalsLine = (board: DailyBankBoard): string =>
   `Can actually move ${fmtSen(board.availableSen)}   ·   In transit (swiped, not yet remitted) ${fmtSen(board.totalTransitSen)}   ·   Checked, awaiting approval ${fmtSen(board.pendingApprovalSen)}`;
 
-/* ── The colours a row wears — the sample's: received green, pending orange ── */
 
 /* On white, its greys neutral (owner 2026-11-25: 要白色 background，看起来还是米色): the warm
    greys of the bank rows, the lines and the dark bar read as beige. */
@@ -137,9 +132,7 @@ export const balanceColor = (r: DailyBankRow): string => {
   return rowColor(r.kind);
 };
 
-/* ── The PNG the owner sends to WhatsApp — drawn, not captured ─────────────── */
 
-/** A bank with nothing but its balance today: no money in or out, nothing waiting for approval. */
 const isQuietSection = (sec: DailyBankSection): boolean =>
   sec.code !== null && sec.rows.every((r) => r.kind === 'bf' || r.kind === 'available');
 
@@ -155,10 +148,9 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
   const W = 980;
   const P = 24;
   const rowH = 24;
-  const lineH = 14; // what a wrapped second line adds to its row
-  /* Column right edges / left edges, the table's six. */
+  const lineH = 14;
   const X = { who: P + 8, doc: P + 236, desc: P + 360, rec: W - P - 250, pay: W - P - 130, bal: W - P - 8 };
-  const whoW = X.doc - X.who - 24; // a line's party, after its "· "
+  const whoW = X.doc - X.who - 24;
   const descW = X.rec - X.desc - 100;
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -171,7 +163,6 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
     while (cut.length > 1 && ctx.measureText(`${cut}…`).width > maxW) cut = cut.slice(0, -1);
     return `${cut}…`;
   };
-  /* At most two lines: the words that fit, then the rest, cut short if it still runs over. */
   const wrap = (t: string, maxW: number, size: number): string[] => {
     ctx.font = font(size);
     if (ctx.measureText(t).width <= maxW) return [t];
@@ -195,7 +186,6 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
     ctx.fillText(o.maxW ? fit(t, o.maxW) : t, x, y);
   };
 
-  /* Laid out before the canvas is sized: a wrapped row is taller, a quiet bank shorter. */
   const laid = sections.map((sec) => ({
     sec,
     quiet: isQuietSection(sec),
@@ -208,7 +198,7 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
   }));
   const body = laid.reduce((s, l) => s + (l.quiet ? rowH : 2 * rowH + l.rows.reduce((t, x) => t + x.h, 0)) + 6, 0);
   const H = P + 70 + body + 24 + P;
-  const scale = 2; // crisp on phone screens
+  const scale = 2;
   canvas.width = W * scale;
   canvas.height = H * scale;
   ctx.scale(scale, scale);
@@ -240,7 +230,6 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
     if (sec.bankBalanceSen != null) {
       const balance = `Bank Balance  ${fmtSenPlain(sec.bankBalanceSen)}`;
       text(balance, X.bal, y + 16, { size: 13, bold: true, right: true, color: sec.bankBalanceSen < 0 ? DB_COLORS.red : DB_COLORS.ink });
-      /* Its balance is all a quiet bank has to say: B/F and Available would repeat it. */
       if (quiet) text(QUIET_BANK_NOTE, X.bal - ctx.measureText(balance).width - 24, y + 16, { size: 11.5, color: DB_COLORS.soft, right: true });
     }
     y += rowH;
@@ -260,7 +249,6 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
       const color = rowColor(r.kind);
       const detail = isDetailRow(r.kind);
       const strong = r.kind === 'available' || r.kind === 'withTransit';
-      /* A group's own words run across the empty number and description columns; a line's party keeps to its column, on two lines when it must. */
       if (detail) who.forEach((line, i) => { if (line) text(i === 0 ? `· ${line}` : line, X.who + (i === 0 ? 8 : 17), y + 16 + i * lineH, { size: 12, color }); });
       else text(r.who, X.who, y + 16, { size: 12, bold: strong, color, maxW: X.rec - X.who - 110 });
       if (r.doc) text(r.doc, X.doc, y + 16, { size: 10.5, color: DB_COLORS.soft, maxW: X.desc - X.doc - 8 });

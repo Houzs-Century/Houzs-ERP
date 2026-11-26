@@ -15,9 +15,6 @@ import {
 } from "./roleMatrixExcel";
 import type { PageLite } from "./roleMatrixModel";
 
-// A trimmed catalogue that exercises every branch: a page-bearing module
-// (service_cases), a page-less module (mail), two SCM areas, an approval key and
-// a fine SCM key (both never-by-level), and the SCM umbrella.
 const PAGES: PageLite[] = [
   { key: "sales", label: "Sales Entries", parent: null },
   { key: "service_cases", label: "ASSR", parent: null },
@@ -64,7 +61,6 @@ function sheet(sheets: SheetData[], name: string): SheetData {
   return s;
 }
 
-/** The row whose cell at `keyCol` equals `key`. */
 function rowFor(s: SheetData, keyCol: number, key: string): CellValue[] {
   const r = s.aoa.find((row) => row[keyCol] === key);
   if (!r) throw new Error(`no row ${key}`);
@@ -104,8 +100,8 @@ describe("buildWorkbook", () => {
     const wb = buildWorkbook(snap());
     const fn = sheet(wb.sheets, EXCEL_SHEET_FUNCTIONS);
     const readRow = rowFor(fn, FN_KEY, "service_cases.read");
-    expect(readRow[4]).toBe("✓"); // Sales Person granted
-    expect(readRow[5]).toBe(""); // Storekeeper not — blank, not a dash
+    expect(readRow[4]).toBe("✓");
+    expect(readRow[5]).toBe("");
   });
 
   it("writes page levels (none = blank) and never emits the derived scm umbrella", () => {
@@ -113,9 +109,9 @@ describe("buildWorkbook", () => {
     const pg = sheet(wb.sheets, EXCEL_SHEET_PAGES);
     expect(pg.aoa.some((r) => r[PG_KEY] === "scm")).toBe(false);
     const warehouse = rowFor(pg, PG_KEY, "scm.warehouse");
-    expect(warehouse[5]).toBe("Edit"); // Storekeeper edit
+    expect(warehouse[5]).toBe("Edit");
     const sales = rowFor(pg, PG_KEY, "sales");
-    expect(sales[4]).toBe(""); // Sales Person none → blank
+    expect(sales[4]).toBe("");
   });
 
   it("flags dormant pages in the status column", () => {
@@ -128,7 +124,7 @@ describe("buildWorkbook", () => {
     const roles = sheet(buildWorkbook(snap()).sheets, EXCEL_SHEET_ROLES);
     const owner = roles.aoa.find((r) => r[0] === 1);
     expect(owner?.[1]).toBe("Owner");
-    expect(owner?.[4]).toBe("Yes"); // locked
+    expect(owner?.[4]).toBe("Yes");
   });
 });
 
@@ -148,7 +144,7 @@ describe("parse: function edits", () => {
   it("ticking a blank cell adds the key", () => {
     const s = snap();
     const fn = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_FUNCTIONS);
-    rowFor(fn, FN_KEY, "service_cases.read")[5] = "✓"; // Storekeeper gets read
+    rowFor(fn, FN_KEY, "service_cases.read")[5] = "✓";
     const store = parseMatrixWorkbook([fn], s).changedRoles.find((r) => r.roleId === 11)!;
     expect(store.functionsAdded).toContain("service_cases.read");
     expect(store.addedCount).toBe(1);
@@ -158,7 +154,7 @@ describe("parse: function edits", () => {
   it("clearing a ticked cell revokes it (complete-matrix: blank = not granted)", () => {
     const s = snap();
     const fn = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_FUNCTIONS);
-    rowFor(fn, FN_KEY, "service_cases.read")[4] = ""; // Sales Person loses read
+    rowFor(fn, FN_KEY, "service_cases.read")[4] = "";
     const sales = parseMatrixWorkbook([fn], s).changedRoles.find((r) => r.roleId === 10)!;
     expect(sales.functionsRemoved).toContain("service_cases.read");
     expect(sales.permsPayload).not.toContain("service_cases.read");
@@ -176,7 +172,7 @@ describe("parse: page edits reconcile scm.access", () => {
   it("raising an SCM area adds scm.access; clearing all removes it", () => {
     const s = snap();
     const pg = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_PAGES);
-    rowFor(pg, PG_KEY, "scm.sales")[4] = "看"; // Sales Person (role10)
+    rowFor(pg, PG_KEY, "scm.sales")[4] = "看";
     const sales = parseMatrixWorkbook([pg], s).changedRoles.find((r) => r.roleId === 10)!;
     expect(sales.pageChanges.some((c) => c.pageKey === "scm.sales" && c.to === "view")).toBe(true);
     expect(sales.functionsAdded).toContain("scm.access");
@@ -186,7 +182,7 @@ describe("parse: page edits reconcile scm.access", () => {
   it("lowering a page counts as removed and withdraws the umbrella", () => {
     const s = snap();
     const pg = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_PAGES);
-    rowFor(pg, PG_KEY, "scm.warehouse")[5] = ""; // Storekeeper edit → none (blank)
+    rowFor(pg, PG_KEY, "scm.warehouse")[5] = "";
     const store = parseMatrixWorkbook([pg], s).changedRoles.find((r) => r.roleId === 11)!;
     expect(store.pageChanges.some((c) => c.pageKey === "scm.warehouse" && c.to === "none")).toBe(true);
     expect(store.removedCount).toBeGreaterThanOrEqual(1);
@@ -198,7 +194,7 @@ describe("parse: locked roles and bad data", () => {
   it("never writes a locked role; flags it when a NON-blank cell targets it", () => {
     const s = snap();
     const fn = sheet(buildWorkbook(s).sheets, EXCEL_SHEET_FUNCTIONS);
-    rowFor(fn, FN_KEY, "service_cases.read")[6] = "✓"; // Owner column (locked)
+    rowFor(fn, FN_KEY, "service_cases.read")[6] = "✓";
     const parsed = parseMatrixWorkbook([fn], s);
     expect(parsed.changedRoles.some((r) => r.roleId === 1)).toBe(false);
     expect(parsed.lockedWithEdits).toContain("Owner");
@@ -310,19 +306,17 @@ describe("parse: robust column + sheet detection", () => {
 
 describe("scm.access is derived, never set by a function cell", () => {
   it("a 功能 scm.access cell neither grants nor revokes it directly", () => {
-    const s = snap(); // Storekeeper (11) currently holds scm.access
+    const s = snap();
     const sheetData: SheetData = {
       name: "x",
       aoa: [
         ["key", "11 · Storekeeper"],
-        ["scm.access", ""], // cleared — must NOT revoke (it is page-derived)
+        ["scm.access", ""],
         ["service_cases.read", "✓"],
         ["service_cases.write", "✓"],
       ],
     };
     const store = parseMatrixWorkbook([sheetData], s).roleResults.find((r) => r.roleId === 11)!;
-    // Storekeeper's SCM pages are unchanged (not in the file), so reconcile keeps
-    // scm.access exactly as it was — the blank cell did not strip it.
     expect(store.functionsRemoved).not.toContain("scm.access");
     expect(store.permsPayload).toContain("scm.access");
   });
@@ -344,7 +338,6 @@ describe("key-column detection needs a MAJORITY of rows", () => {
       ],
     };
     const parsed = parseMatrixWorkbook([sheetData], s);
-    // The gate column has 2 exact keys out of 6 rows (<50%) → no key column.
     expect(parsed.empty).toBe(true);
     expect(parsed.badCells).toEqual([]);
     expect(parsed.unknownKeys).toEqual([]);

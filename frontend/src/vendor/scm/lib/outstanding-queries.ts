@@ -1,14 +1,9 @@
-// Vendored SLICE of apps/backend/src/lib/flow-queries.ts — the Outstanding
-// surface (the unified outstanding filter across all 8 modules) the
-// Outstanding page reads. Copied verbatim; all reads go through the vendored
-// authedFetch (→ /api/scm/outstanding…). The `baseQuery` factory is inlined.
 
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import type { PoOutstandingLineRow } from './po-outstanding-rollup';
 
-// baseQuery is a custom-hook factory — only ever called from use* hooks below.
 // eslint-disable-next-line react-hooks/rules-of-hooks
 const baseQuery = <T>(key: string[], path: string) => useQuery({
   queryKey: key,
@@ -44,12 +39,6 @@ export const useOutstanding = (
   );
 };
 
-/* LINE-LEVEL PO chasing list (GET /outstanding/po-lines). Unlike useOutstanding
-   this is a dedicated cross-company hook: the backend widens to the caller's
-   granted companies and tags each row with company_code, so HOUZS + 2990 arrive
-   in one list with a company column. Same outstanding/from/to contract. Rolling
-   sofa components up into "set" rows is done client-side — see
-   po-outstanding-rollup.ts. */
 export const useOutstandingPoLines = (
   opts?: { mode?: OutstandingFilterMode; from?: string; to?: string },
 ) => {
@@ -70,12 +59,6 @@ export type OutstandingSummary = Record<OutstandingModule, {
   count: number;
   total_sen?: number;
   total_outstanding_sen?: number;
-  /* SI only, since 2026-08-23. `false` means the figure does NOT subtract the
-     deposits taken on the source sales orders — it is a CEILING, never an
-     under-statement, and `deposit_note` says why in plain language.
-     `unavailable` means nothing could be read: the numbers are meaningless and
-     the card must print a dash, because a 0 on a page about money owed reads as
-     "nothing outstanding". */
   deposit_applied?: boolean;
   deposit_note?: string | null;
   unavailable?: boolean;

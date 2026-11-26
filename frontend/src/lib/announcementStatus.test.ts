@@ -18,8 +18,6 @@ describe("announcementStatus", () => {
   });
 
   it("treats the boundary instant as already expired, like the backend does", () => {
-    // backend/src/routes/announcements.ts `notExpired` is the authority; a UI
-    // that said "Live" here would badge a notice the server no longer serves.
     expect(announcementExpired({ isActive: true, expiresAt: "2026-08-21T00:00:00Z" }, NOW)).toBe(true);
   });
 

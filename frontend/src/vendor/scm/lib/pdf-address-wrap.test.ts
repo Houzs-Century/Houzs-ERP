@@ -19,8 +19,6 @@ const LINE = 'E-28-02 & E-28-03, Menara SUEZCAP 2, KL Gateway, No. 2,';
 
 describe('wrapAtCommas', () => {
   test('breaks only after commas — "No. 2," survives whole on the owner\'s own address', () => {
-    /* Width forces several lines; every line must end on a comma boundary
-       and no line may end mid-chunk (the "No." failure). */
     const lines = wrapAtCommas(LINE, 22, byLength);
     expect(lines.length).toBeGreaterThan(1);
     for (const l of lines.slice(0, -1)) expect(l.endsWith(',')).toBe(true);

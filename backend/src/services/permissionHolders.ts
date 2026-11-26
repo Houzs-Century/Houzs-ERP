@@ -1,25 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────
-// permissionHolders.ts — the reverse of a permission check: "WHO holds this
-// key?", answered as a list of public.users ids.
-//
-// Every gate in the app asks the forward question (does THIS caller hold the
-// key — services/permissions.ts + scm/lib/houzs-perms.ts). A notification has
-// to ask it backwards: an SO amendment lands in the queue of whoever can sign
-// the lane, and nobody knows who that is until we look it up.
-//
-// WHERE PERMISSIONS LIVE. `roles.permissions` is a TEXT column holding a JSON
-// array of flat keys (mig 001; the two-lane grants in mig 0216/0225 union into
-// the same array). `users.role_id` points at one role. That is the whole model
-// — hydrateAuthUser reads exactly this and adds nothing per-user, so a role
-// scan IS the audience.
-//
-// THE WILDCARD IS DELIBERATELY EXCLUDED. Owner / IT Admin carry '["*"]', and a
-// position-tier super admin gets '*' injected at hydration. They CAN approve
-// anything, so a literal reading would put them on every amendment notice ever
-// raised — which is how a notification channel becomes something people mute.
-// This helper answers "whose desk is this on", not "who is technically able".
-// Wildcard holders still see every amendment in the module itself.
-// ─────────────────────────────────────────────────────────────────────────
 
 import type { Env } from "../types";
 import { parsePermissions } from "./permissions";
@@ -89,7 +67,6 @@ function roleIdsWhere(roles: RoleRow[], test: (perms: string[]) => boolean): num
     .filter((n) => Number.isFinite(n) && n > 0);
 }
 
-/** Active users of these roles, narrowed to the company the way the header says. */
 async function activeUsersOfRoles(
   env: Env,
   roleIds: number[],

@@ -86,7 +86,6 @@ export function fairEditPatch(event: FairEvent | null): {
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-/** A runaway period (a mistyped end date) must not build a list nobody can use. */
 const MAX_FAIR_DAYS = 400;
 
 /**
@@ -128,7 +127,6 @@ export function soleFairDay(event: Pick<FairPickValue, 'startDate' | 'endDate'>,
   return days.length === 1 ? days[0]! : null;
 }
 
-/** The fair keys of a header payload, as `fairEditPatch` builds them. */
 type FairKeys = Partial<Record<keyof ReturnType<typeof fairEditPatch>, unknown>>;
 
 /** The fair keys for the submit check (`POST /mfg-sales-orders/validate`), which

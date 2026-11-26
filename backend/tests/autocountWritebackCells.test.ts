@@ -234,7 +234,7 @@ describe('the create-side holes', () => {
        document's lines, so a parentless one can never exist there. That is a
        permanent shape mismatch — and a permanent divergence that nothing writes
        down is one nothing can find. */
-    expect(between(DO, "if ((body.soDocNo as string | undefined) ?? null) {", '/* A DO = goods shipped on creation'))
+    expect(between(DO, "if ((body.soDocNo as string | undefined) ?? null) {", "lap('do-ac-queue');"))
       .toContain('recordParentlessCreate(sb, {');
     expect(between(GRN, 'await recordGrnCreate(sb,', 'const movementErrors = postRes && postRes.ok'))
       .toContain('recordParentlessCreate(sb, {');
@@ -244,9 +244,9 @@ describe('the create-side holes', () => {
        the unconditional call that used to sit here asserted a fact it never
        tested and filed every desktop from-DO invoice as ERP-only. The record
        still exists — one file down, on the branch that established it. */
-    expect(between(SI, 'await recordSiCreate(sb,', '/* LEAK GUARD (DRAFT) — a DRAFT SI must NOT post'))
+    expect(between(SI, 'await recordSiCreate(sb,', 'if (isDraft) {'))
       .toContain('recordSiAutoCountSource(sb, {');
-    expect(between(PI, 'await recordPiCreate(sb,', '/* LEAK GUARD (DRAFT) — a DRAFT PI commits nothing'))
+    expect(between(PI, 'await recordPiCreate(sb,', 'await reallocatePiCharges(sb, h.id, normalizeAllocationMethod(body.allocationMethod), activeCompanyId(c));'))
       .toContain('recordParentlessCreate(sb, {');
   });
 
@@ -314,8 +314,8 @@ describe('an edit must be an edit, never a delete-and-recreate', () => {
        delete-then-create would also destroy AutoCount's own DocTransfer links
        and its audit trail, which is worse than the ERP-side data loss. */
     for (const src of ROUTERS) {
-      expect(src).not.toMatch(/enqueueCancel\([\s\S]{0,400}?enqueueSoCreate\(/);
-      expect(src).not.toMatch(/enqueueCancel\([\s\S]{0,400}?enqueuePoCreate\(/);
+      expect(src).not.toMatch(/enqueueCancel\((?:(?!\}\s*else\b)[\s\S]){0,400}?enqueueSoCreate\(/);
+      expect(src).not.toMatch(/enqueueCancel\((?:(?!\}\s*else\b)[\s\S]){0,400}?enqueuePoCreate\(/);
     }
   });
 

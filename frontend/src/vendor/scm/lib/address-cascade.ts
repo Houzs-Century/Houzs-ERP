@@ -61,16 +61,9 @@ export interface AddressTriple {
   postcode: string;
 }
 
-/* City options. With a State picked this is the state's cities (top-down);
-   with no State it is the cross-state pool, so the operator can start here. */
 export const cityOptionsFor = (rows: LocalityRow[], state: string): string[] =>
   (state ? citiesInState(rows, state) : allCities(rows));
 
-/* Postcode options, narrowed by whatever IS known — in order:
-   both  -> the city's postcodes in that state
-   state -> every postcode in the state (top-down keeps narrowing)
-   city  -> the postcodes of that city name, whichever states carry it
-   neither -> the whole pool, so the operator can start from a postcode. */
 export const postcodeOptionsFor = (rows: LocalityRow[], state: string, city: string): string[] => {
   if (state && city) return postcodesInCity(rows, state, city);
   if (state) return postcodesInState(rows, state);
@@ -78,16 +71,9 @@ export const postcodeOptionsFor = (rows: LocalityRow[], state: string, city: str
   return allPostcodes(rows);
 };
 
-/* Picking a State RESETS the rest of the cascade — a city/postcode chosen under
-   the old state is not valid under the new one. This is the one handler that is
-   deliberately destructive, which is exactly why the reverse resolvers below
-   must never route through it. */
 export const pickState = (nextState: string): AddressTriple =>
   ({ state: nextState, city: '', postcode: '' });
 
-/* Picking a City clears the Postcode (it belonged to the previous city) and
-   back-fills the State when — and only when — the city names one unambiguously.
-   An already-picked State is left alone unless the city contradicts it. */
 export const pickCity = (
   rows: LocalityRow[],
   current: AddressTriple,
@@ -101,10 +87,6 @@ export const pickCity = (
   };
 };
 
-/* Picking a Postcode back-fills State AND City. A Malaysian 5-digit code maps
-   to one locality, so this is the shortest path from "the customer read me a
-   postcode" to a complete address. The postcode itself is always kept — it is
-   what the operator just chose. */
 export const pickPostcode = (
   rows: LocalityRow[],
   current: AddressTriple,
@@ -118,9 +100,6 @@ export const pickPostcode = (
   };
 };
 
-/* Placeholders that TELL the operator the field is a valid starting point. The
-   old copy read "— pick state first", which described a gate that no longer
-   exists and was the only thing on screen saying the cascade was one-way. */
 export const cityPlaceholder = (state: string): string =>
   (state ? 'Pick city' : 'Pick city — State fills in');
 
@@ -130,9 +109,6 @@ export const postcodePlaceholder = (state: string, city: string): string => {
   return 'Pick postcode — State and City fill in';
 };
 
-/* The three option lists, memoised. Every form needs the same three and they
-   all depend on the same two values, so the memo keys live here rather than in
-   one copy per form, each free to forget a dependency. */
 export const useAddressCascade = (
   rows: LocalityRow[],
   state: string,

@@ -1,9 +1,3 @@
-// Unit tests for the pure ChainNode builder behind the Purchase Order
-// Relationship Map + the "From SOs: …" note fallback parser. They assert the
-// map's two load-bearing behaviours: nodes are ANCHORED to this PO (a sibling
-// PO's GRN must not paint this PO's GRN done — the hook feeds edge-walked
-// nodes, and the builder renders exactly what it is given), and a pre-MRP PO
-// (no so_item_id link) still names its source SOs from its own note.
 
 import { describe, expect, it } from 'vitest';
 import type { FlowNode } from '../../vendor/scm/lib/flow-queries';

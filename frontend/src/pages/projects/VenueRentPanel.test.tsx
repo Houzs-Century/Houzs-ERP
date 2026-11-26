@@ -19,13 +19,11 @@ describe("VenueRentPanel", () => {
   it("rent per m2 and per day are the venue's totals over its booth area and days; a venue opens to its operators", () => {
     const pnl = (rental: number) => ({ ...project({}).pnl!, rental });
     render(<VenueRentPanel periodLabel="Oct" projects={[
-      /* 100 m2, 3 days, RM 21,528 -> RM 215.28 / m2, RM 71.76 / m2 / day, RM 7,176 / day */
       project({ id: 1, organizer: "MYHOME", pnl: pnl(21528) }),
       project({ id: 2, organizer: "BIGHOME", pnl: pnl(10764) }),
       project({ id: 3, venue: "SETIA SPICE", sizeSqm: null }),
     ]} />);
     const row = screen.getByText(/MID VALLEY/).closest("tr") as HTMLElement;
-    /* 32,292 over 200 m2 = RM 161.46 per m2 */
     expect(row.textContent).toContain("RM 161.46");
     expect(screen.queryByText(/SETIA SPICE/)).toBeNull();
     expect(screen.getByText(/with a rental but no booth size are left out/)).toBeTruthy();

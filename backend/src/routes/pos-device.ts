@@ -1,24 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-device — what a PREPARED booth terminal calls on its own, with the
-// device token minted at Prepare device (POST /api/pos-admin/device/register)
-// in the `X-POS-Device` header. No staff session: cashiers are not ERP users.
-//
-//   GET  /ping                 reachability (the sync engine's captive-portal check)
-//   GET  /prepare              the bundle again (Refresh catalog / re-prepare)
-//   POST /heartbeat            terminal vitals (layout P14 / E7)
-//
-// Mounted BEFORE the global /api/* auth gate (like /api/pos); every route
-// below re-applies its own guard: the token's hash must match an ACTIVE
-// terminal, and that terminal's company is the scope of everything read.
-//   POST /sales/batch         the receipts (routes/lib/pos-ingest.ts books them)
-//   GET  /report              the event bills for the all-terminals report (P13)
-//   GET  /sales               the event bills in full, so any device can reprint another device's receipt
-//   POST /pair                redeem the pairing code from POS Admin (no token yet)
-//   POST /reconnect/request   a displaced device asks for its terminal back (its dead token proves it)
-//   POST /reconnect/claim     ...and collects the new token once a supervisor approved
-//   GET  /reconnect/requests  the open requests in the company, for a supervisor on another device
-//   POST /reconnect/approve   that supervisor approves one with their PIN
-// ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
@@ -44,7 +23,6 @@ const posDevice = new Hono<{ Bindings: Env; Variables: Vars }>();
 
 posDevice.get("/ping", (c) => c.json({ ok: true, at: new Date().toISOString() }));
 
-/** The device guard: resolve the token to its active terminal or answer 401. */
 posDevice.use("*", async (c, next) => {
   if (c.req.path.endsWith("/ping") || c.req.path.endsWith("/pair") || c.req.path.endsWith("/reconnect/request") || c.req.path.endsWith("/reconnect/claim")) return next();
   const token = c.req.header("X-POS-Device");
@@ -92,9 +70,6 @@ posDevice.post("/heartbeat", async (c: Ctx) => {
   if (typeof body.last_sync_at === "string" && !Number.isNaN(Date.parse(body.last_sync_at))) patch.last_sync_at = new Date(body.last_sync_at).toISOString();
   const pendingNow = patch.pending_count ?? t.pending_count;
   patch.status = pendingNow > 0 ? "PENDING" : "SYNCED";
-  /* DATA LOST (layout E7): the device says its local database is empty while
-     the last heartbeat still had bills pending. Recorded here; step 7 raises
-     the alert and the email from it. */
   if (body.db_empty === true && t.last_known_pending_count > 0 && pendingNow === 0) { patch.db_empty_at = now; patch.status = "DATA_LOST"; }
   else if (body.db_empty !== true) patch.db_empty_at = null;
   if (pendingNow > 0) { patch.last_known_pending_count = pendingNow; patch.last_known_pending_sen = patch.pending_amount_sen ?? t.pending_amount_sen; }
@@ -109,12 +84,7 @@ posDevice.post("/heartbeat", async (c: Ctx) => {
   return c.json({ ok: true, at: now, catalog_version: link.length ? link[0].catalog_version : null, event_project_id: t.project_id, reconnect_requests: reconnectRequests });
 });
 
-/* ── pairing: the device redeems the code POS Admin handed out ──────────── */
 
-/** No token yet: the code identifies the terminal (hash match, not expired,
- *  active, event still linked). A fresh device token is minted, the code is
- *  spent, and the bundle comes back with the token. A wrong or stale code
- *  answers the same 404 either way. */
 posDevice.post("/pair", async (c: Ctx) => {
   type PairBody = { code?: unknown; device_name?: unknown; platform?: unknown };
   const body = await c.req.json<PairBody>().catch(() => ({} as PairBody));
@@ -140,10 +110,7 @@ posDevice.post("/pair", async (c: Ctx) => {
   return c.json({ token, bundle });
 });
 
-/* ── reconnect by approval (routes/lib/pos-reconnect.ts) ────────────────── */
 
-/** The terminal a displaced device held just before the swap, by the token
- *  it still carries; null for any other caller. */
 async function displacedTerminal(c: Ctx): Promise<Terminal | null> {
   const token = c.req.header("X-POS-Device");
   if (!isDeviceToken(token)) return null;
@@ -154,8 +121,6 @@ async function displacedTerminal(c: Ctx): Promise<Terminal | null> {
 
 const NOT_ELIGIBLE = { error: "not_eligible", reason: "This device cannot ask for its terminal back. Ask for a pairing link from POS Admin > Terminals." };
 
-/** The displaced device asks. Asking again while a request is open changes
- *  nothing, so a device that polls does not flood the audit trail. */
 posDevice.post("/reconnect/request", async (c: Ctx) => {
   const t = await displacedTerminal(c);
   if (!t) return c.json(NOT_ELIGIBLE, 404);
@@ -171,11 +136,6 @@ posDevice.post("/reconnect/request", async (c: Ctx) => {
   return c.json({ status: "waiting", terminal: t.code });
 });
 
-/** The displaced device collects: once approved it gets a fresh token and
- *  the bundle. The device that held the terminal meanwhile is cut off and,
- *  unlike after a pairing, cannot ask for it back: the approval was a
- *  deliberate move, and two devices must not hand a terminal to and fro.
- *  The bills this device holds stay on it and sync next. */
 posDevice.post("/reconnect/claim", async (c: Ctx) => {
   const t = await displacedTerminal(c);
   if (!t) return c.json(NOT_ELIGIBLE, 404);
@@ -196,8 +156,6 @@ posDevice.post("/reconnect/claim", async (c: Ctx) => {
   return c.json({ status: "approved", token, bundle });
 });
 
-/** What a supervisor on another device sees: who asks, and which device
- *  holds the terminal now (approving disconnects that one). */
 posDevice.get("/reconnect/requests", async (c: Ctx) => {
   const me = c.get("terminal");
   const rows = await getDb(c.env).select().from(pos_terminals).where(and(eq(pos_terminals.company_id, me.company_id), eq(pos_terminals.active, true), isNotNull(pos_terminals.reconnect_requested_at)));
@@ -210,8 +168,6 @@ posDevice.get("/reconnect/requests", async (c: Ctx) => {
   });
 });
 
-/** A supervisor approves with their own PIN, checked here against the
- *  active supervisors of the company (the device is not trusted to have checked). */
 posDevice.post("/reconnect/approve", async (c: Ctx) => {
   const me = c.get("terminal");
   type ApproveBody = { terminal_id?: unknown; pin?: unknown };
@@ -233,11 +189,7 @@ posDevice.post("/reconnect/approve", async (c: Ctx) => {
   return c.json({ ok: true, terminal: found[0].code });
 });
 
-/* ── the event's bills for the device report, all terminals (layout P13) ── */
 
-/** A supervisor's "all terminals" report: every bill of this terminal's
- *  event that reached the ERP, in the Malaysia-day range [from, to]. Bills
- *  still pending on other devices are not here yet, and the device says so. */
 posDevice.get("/report", async (c: Ctx) => {
   const t = c.get("terminal");
   if (t.project_id == null) return c.json({ error: "no_event" }, 409);
@@ -249,9 +201,6 @@ posDevice.get("/report", async (c: Ctx) => {
   return c.json({ sales, at: new Date().toISOString() });
 });
 
-/** Find bill, "Other terminals": the bills of this terminal's event from
- *  every device, whole, in the Malaysia-day range [from, to]. For a reprint
- *  only; nothing a device does with these comes back to the ERP. */
 posDevice.get("/sales", async (c: Ctx) => {
   const t = c.get("terminal");
   if (t.project_id == null) return c.json({ error: "no_event" }, 409);
@@ -263,7 +212,6 @@ posDevice.get("/sales", async (c: Ctx) => {
   return c.json({ sales, at: new Date().toISOString() });
 });
 
-/* ── the sales batch (layout P14) ──────────────────────────────────────── */
 posDevice.post("/sales/batch", async (c: Ctx) => {
   const t = c.get("terminal");
   type BatchBody = { sales?: unknown[]; remaining?: number; receipt_counter?: number };

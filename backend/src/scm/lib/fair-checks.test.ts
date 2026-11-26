@@ -174,14 +174,10 @@ describe('the evening report outranks the slip (owner 2026-10-20)', () => {
           linked('HC-SO-2610-170', 'HC13319'),
         ],
         mfg_so_audit_log: [
-          /* Linked by hand two days after the 10/10 report: decided. */
           fairMove('HC-SO-2610-167', 'settle', '2026-10-12T02:00:00Z'),
-          /* Linked the day before the report came in: the report is news. */
           fairMove('HC-SO-2610-168', 'settle', '2026-10-09T02:00:00Z'),
-          /* Linked by hand, then the system moved it again: no longer a decision. */
           fairMove('HC-SO-2610-169', 'transfer', '2026-10-12T02:00:00Z'),
           fairMove('HC-SO-2610-169', 'nightly', '2026-10-13T02:00:00Z'),
-          /* Put aside then brought back moves no fair: the Link still stands. */
           fairMove('HC-SO-2610-170', 'settle', '2026-10-12T02:00:00Z'),
           fairMove('HC-SO-2610-170', 'settle', '2026-10-13T02:00:00Z', 'Fair Links'),
           fairMove('HC-SO-2610-170', 'settle', '2026-10-14T02:00:00Z', 'Fair Links'),
@@ -212,7 +208,6 @@ describe('the evening report outranks the slip (owner 2026-10-20)', () => {
       fakeDb([[REPORTS, [chat(307, '10/10\n1. HC20000 RM100 A', '2026-10-09'), chat(2228, '26/9\n1. HC20000 RM100 A', '2026-09-25')]], [BY_IDS, byIds]]),
     );
     expect(res.ok && res.rows.map((r) => [r.check, r.target])).toEqual([['REPORT_ELSEWHERE', null]]);
-    /* Both booths are named for the person who picks. */
     expect(res.ok && res.rows[0]!.candidates).toEqual([
       { projectId: 307, title: '[AKEMI] HOMELOVE', detail: 'IOIGECC · 10/09 - 10/11' },
       { projectId: 2228, title: '[DUNLOPILLO] MALL MGT', detail: 'SUNWAY CARNIVAL MALL · 09/25 - 09/29' },

@@ -1,12 +1,3 @@
-// ---------------------------------------------------------------------------
-// useAssistantChat — the ONE Assistant chat logic layer behind every surface:
-// the desktop page, the desktop floating panel, and the mobile bottom sheet.
-// One send() path, one message model, one history browser, one file attach, so a
-// rule fixed on one surface can never be missed on another (owner rule: desktop
-// and mobile are one product, one shared logic layer — the surfaces differ only
-// in presentation). This hook is chrome-free; each host renders the msgs /
-// composer / history list / attach control in its own idiom.
-// ---------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
@@ -49,15 +40,10 @@ export interface AssistantChatController {
   busy: boolean;
   send: (text: string) => void;
   endRef: React.MutableRefObject<HTMLDivElement | null>;
-  /** A pending image/PDF to send with the next message (null = none). */
   attachment: File | null;
   setAttachment: (f: File | null) => void;
-  /** The thread these messages belong to (null = a brand-new, unsaved chat). */
   conversationId: string | null;
-  /** Clear the stream and start a fresh thread. */
   newChat: () => void;
-  // ── history browsing ──
-  /** Whether the host is showing the past-conversations list. */
   historyView: boolean;
   conversations: ConversationSummary[];
   loadingHistory: boolean;
@@ -93,7 +79,6 @@ export function useAssistantChat(): AssistantChatController {
     try {
       let d: ChatResponse;
       if (file) {
-        // Multipart: the message + the file, so the model can READ it.
         const form = new FormData();
         form.append("message", q);
         if (conversationId) form.append("conversationId", conversationId);
@@ -139,7 +124,6 @@ export function useAssistantChat(): AssistantChatController {
       );
       setConversations(res.data.conversations ?? []);
     } catch {
-      // A history read failing must not break the chat — show an empty list.
       setConversations([]);
     } finally {
       setLoadingHistory(false);
@@ -165,7 +149,6 @@ export function useAssistantChat(): AssistantChatController {
       setMsgs((res.data.messages ?? []).map((m) => ({ role: m.role, text: m.text, agents: m.agents, degraded: m.degraded })));
       setHistoryView(false);
     } catch {
-      // leave the current view untouched on a failed open
     } finally {
       setLoadingHistory(false);
     }

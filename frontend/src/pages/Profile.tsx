@@ -38,8 +38,6 @@ export function Profile() {
   const [name, setName] = useState(user?.name || "");
   const [savingName, setSavingName] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
-  /* The compress-weigh-PUT path, the 1000px cap and the 5 MB refusal moved to
-     `lib/profilePicture` so the phone shares them instead of re-typing them. */
   const pic = useProfilePicture(reload);
   const picBusy = pic.busy;
 
@@ -87,7 +85,6 @@ export function Profile() {
         description="Display name, password, and account info."
       />
 
-      {/* ── Identity ─────────────────────────────── */}
       <section className="mb-6 rounded-md border border-border bg-surface p-6 shadow-stone">
         <div className="mb-5 flex items-center gap-4">
           <div className="relative shrink-0">
@@ -205,16 +202,12 @@ export function Profile() {
         </div>
       </section>
 
-      {/* ── Notifications ────────────────────────── */}
       <NotificationsSection />
 
-      {/* ── Change password ──────────────────────── */}
       <PasswordSection />
 
-      {/* ── Two-factor authentication ────────────── */}
       <TwoFactorSection />
 
-      {/* ── Footer — sign out ────────────────────── */}
       <section className="rounded-md border border-border bg-surface p-6 shadow-stone">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -260,13 +253,10 @@ function NotificationsSection() {
       return;
     }
     if (enabled) {
-      // Turn OFF — just flip the preference. We don't revoke the
-      // browser permission; that's the user's OS-level choice.
       setBrowserNotificationPreference(false);
       toast.success("Browser notifications off");
       return;
     }
-    // Turning ON — may need to prompt.
     if (permission === "default") {
       const result = await requestBrowserNotificationPermission();
       if (result !== "granted") {
@@ -281,14 +271,12 @@ function NotificationsSection() {
     }
     setBrowserNotificationPreference(true);
     toast.success("Browser notifications on");
-    // Fire a hello banner so they see it worked.
     try {
       new Notification("Notifications enabled", {
         body: "You'll get a banner when there's new activity on your projects.",
         icon: "/logo-mark.png",
       });
     } catch {
-      // no-op
     }
   }
 
@@ -463,16 +451,6 @@ function PasswordSection() {
   );
 }
 
-// ── Two-factor authentication (TOTP) ──────────────────────────
-// Self-service enroll / disable. Three states: off (Enable button), enrolling
-// (setup key + code + show backup codes), on (Disable).
-//
-// The STATE MACHINE IS NOT HERE. It is `lib/totpEnrollment.ts`, shared with
-// `mobile/MobileTwoFactorCard.tsx`. A phone-only member could answer the login
-// challenge but could not enrol and — the part that is a lockout rather than an
-// inconvenience — could not DISABLE 2FA after losing the authenticator. The fix
-// for that must not be a second copy of an auth flow, so this component is now
-// the desktop's markup over that hook and nothing else.
 function TwoFactorSection() {
   const toast = useToast();
   const dialog = useDialog();
@@ -493,10 +471,6 @@ function TwoFactorSection() {
     }
   }
 
-  /* THE DISABLE GATE, unchanged: a current 6-digit code or a backup code, which
-     the server verifies. The phone asks for exactly the same thing through an
-     inline field (mobile/MobileTwoFactorCard) — a modal prompt is unusable
-     inside an installed PWA and suppressed in several webviews. */
   async function disable() {
     const entered = await dialog.prompt({
       title: "Turn off two-factor authentication?",
@@ -529,7 +503,6 @@ function TwoFactorSection() {
         </div>
       </div>
 
-      {/* One-time backup codes — shown once, right after enabling. */}
       {backupCodes && (
         <div className="mb-4 rounded-md border border-accent/40 bg-accent-soft/40 p-4">
           <div className="mb-2 text-[12px] font-semibold text-accent-ink">
@@ -633,10 +606,6 @@ function TwoFactorSection() {
           <span className="inline-flex items-center gap-1.5 rounded-full bg-ink-muted/10 px-2.5 py-1 text-[11px] font-semibold text-ink-muted">
             {totp.statusError ? "Status unavailable" : "Not enabled"}
           </span>
-          {/* A failed STATUS read must not read as "off" — that would offer to
-             enrol an account whose 2FA is already ON. `useTotpEnrollment` binds
-             the reason instead of swallowing it into a false `enabled: false`;
-             this renders it. */}
           {totp.statusError && (
             <span className="text-[12px] text-err">{totp.statusError}</span>
           )}

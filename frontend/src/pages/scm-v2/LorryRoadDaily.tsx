@@ -29,7 +29,6 @@ export function LorryRoadDaily({ days, onSite, plateOf, loading, error }: {
     .map((d) => ({ ...d, key: `${d.date}|${d.lorryId}`, plate: plateOf(d.lorryId) ?? dash }))
     .sort((a, b) => b.date.localeCompare(a.date) || a.plate.localeCompare(b.plate)), [days, plateOf]);
 
-  /* All lorries first per building type, then each lorry. */
   const siteRows = useMemo<SiteRow[]>(() => {
     const byType = new Map<string, { stops: number; onSiteS: number }>();
     for (const r of onSite) {

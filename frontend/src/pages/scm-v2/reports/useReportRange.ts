@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// useReportRange — the date range a Finance report reads (batch 6 §4.3): it
-// lives in the address (`from`, `to`, ISO), so a reload, a bookmark and the
-// report list's links all carry it; the report list adds it to the report it
-// opens, so the dates follow the reader from report to report. With no dates
-// in the address the last range picked in this browser tab applies
-// (reportPrefs, sessionStorage), else This month.
-//
-// An as-at report reads the range's end (`to`) as its day.
-// ----------------------------------------------------------------------------
 
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -42,7 +32,6 @@ export type ReportRangeState = ReportRange & {
   source: ReportRangeSource;
   usable: boolean;
   setRange: (from: string, to: string) => void;
-  /** An as-at report's day: the range's end; From follows when it would pass it. */
   setAsAt: (day: string) => void;
 };
 

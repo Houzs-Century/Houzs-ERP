@@ -47,7 +47,6 @@ const draw = (el: React.ReactElement) => render(
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
-  // 01:30 on 10 November in Malaysia; still the 9th in UTC.
   vi.setSystemTime(new Date('2026-11-09T17:30:00Z'));
 });
 afterEach(() => {

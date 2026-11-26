@@ -43,8 +43,16 @@ desktop.ini
 *.swp
 *.swo
 
-# Claude local state
-.claude/
+# Claude local state; shared skills, hooks and settings are tracked
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/skills/
+.claude/worktrees/
+
+# Runtime-verify evidence and TLA+ tool cache (public repo: never commit)
+.verify/
+formal/.cache/
 
 # Temp SQL scripts
 tmp_*.sql

@@ -60,12 +60,10 @@ export const scanSupplierCreditNoteHandler = async (c: any): Promise<Response> =
   const ex = read.extraction;
   const sb = c.get('supabase');
 
-  /* The issuer, among the company's active suppliers — in code, never the model. */
   const { data: supRaw, error: supErr } = await scopeToCompany(sb.from('suppliers').select('id, code, name').eq('status', 'ACTIVE'), c);
   if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
   const match = matchSupplier(ex.vendorName, (supRaw ?? []) as Array<{ id: string; code: string | null; name: string }>);
 
-  /* The owner's accounts, where this company's chart has them active. */
   const roles = await resolveRoles(sb, co.companyId);
   const proposed = ex.lines.map((l) => scnAccountFor(l.description, ex.remark));
   const codes = [...new Set([...proposed.filter((p) => p != null).map((p) => p!.code), roles.PURCHASE_RETURNS])];
@@ -74,12 +72,8 @@ export const scanSupplierCreditNoteHandler = async (c: any): Promise<Response> =
   if (acctErr) return c.json({ error: 'load_failed', reason: acctErr.message }, 500);
   const active = new Map(((acctRaw ?? []) as Row[]).filter((a) => a.is_active !== false).map((a) => [String(a.account_code), String(a.account_name ?? '')]));
 
-  /* The amounts the note credits: as printed, grown to the printed total when
-     the paper adds tax on top (scn-scan.ts spreadToTotal). */
   const amounts = spreadToTotal(ex.lines.map((l) => l.amountSen ?? 0), ex.totalSen);
 
-  /* The documents the note credits: this supplier's purchase invoices and AP
-     invoices keyed with an invoice number the note prints. */
   const docs: PurchaseDoc[] = [];
   if (match && ex.invoiceNumbers.length > 0) {
     const supplierId = match.supplier.id;
@@ -165,7 +159,5 @@ export const scanSupplierCreditNoteHandler = async (c: any): Promise<Response> =
   });
 };
 
-/* The same read on the scan queue (lib/ai-read-jobs.ts): the page polls for
-   the answer this handler gives, run unchanged by the queue consumer. */
 export const enqueueCreditNoteScanHandler = aiReadEnqueue('cn_scan', cnGate, oneJsonBody);
 export const pollCreditNoteScanHandler = aiReadPoll('cn_scan', cnGate);

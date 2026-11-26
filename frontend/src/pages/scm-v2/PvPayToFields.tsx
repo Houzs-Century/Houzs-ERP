@@ -1,5 +1,3 @@
-// The bank a voucher pays into, as three fields in the voucher form's own grid
-// (pv-pay-to.ts says why). Used by the new-voucher form and the detail page's edit.
 
 import type { PayTo } from './pv-pay-to';
 import styles from './SalesOrderDetail.module.css';

@@ -86,26 +86,15 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   onAmendmentClick: (a: AmendmentChip) => boolean;
   returns: AmendmentChip[];
   onReturnClick: (r: AmendmentChip) => boolean;
-  /* The SO ↓ PO hop is PROVENANCE when the graph carries stored raise-links —
-     muted, "bought for", never an execution binding ("soft until DO, hard
-     from DO"). The SO map shows no FLOATING hop: usePoSoCoverage is keyed by
-     purchase doc, so the live pairing renders on the purchase-side maps and
-     on this page's per-line Stock/coverage column (same one engine) — adding
-     it here would need a new SO-keyed backend read (owner: zero new load). */
   pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
   const notify = useNotify();
-  /* A slot standing for SEVERAL documents opens a chooser whose every row
-     clicks through (2026-08-03). It used to raise a notice that only NAMED the
-     doc numbers — and pointed at lists that cannot search by this SO's doc no,
-     so the operator was copying numbers by hand. */
   const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
   const { can, pageAccess, user } = useAuth();
 
   const docNo = salesOrder?.doc_no ?? null;
-  // Downstream docs generated from this SO. Company-scoped server-side.
   const flow = useDocumentFlow('so', docNo);
   const doNodes = useMemo(() => flowNodesOf(flow.data, 'do'), [flow.data]);
   const siNodes = useMemo(() => flowNodesOf(flow.data, 'si'), [flow.data]);
@@ -116,19 +105,11 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   // purchase_invoices); the chain just never showed them.
   const poNodes = useMemo(() => flowNodesOf(flow.data, 'po'), [flow.data]);
   const piNodes = useMemo(() => flowNodesOf(flow.data, 'pi'), [flow.data]);
-  /* Delivery Returns off this SO's DOs (2990-0011). document-flow has always
-     returned them; the map dropped them, so a returned order looked like it
-     was still out with the customer. */
   const returns: AmendmentChip[] = useMemo(
     () => flowNodesOf(flow.data, 'dr').map((n) => ({ id: n.id, label: n.label, status: n.status })),
     [flow.data],
   );
 
-  /* Amendments (SO revision requests) hang off this SO. document-flow returns
-     them as a read-only side list; the map branches them off the Sales Order,
-     each chip clicking through to its job card. The amendment detail route is
-     gated exactly like the SO (scm.sales.orders + allowSales), so no extra
-     access check is needed here. */
   const amendments: AmendmentChip[] = useMemo(
     () =>
       (flow.data?.amendments ?? []).map((a) => ({
@@ -156,16 +137,9 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   const candQ = useCandidatePos(flowLoaded && poNodes.length === 0 ? docNo : null);
   const candidatePos = useMemo(() => candQ.data?.candidates ?? [], [candQ.data]);
 
-  /* GRN sits behind the procurement guard — App.tsx mounts /scm/grns/:id as
-     <ScmGuard area="scm.procurement.grn"> with NO allowSales — so mirror that
-     route gate here rather than handing a salesperson a node that navigates
-     straight into <Forbidden>. Same OR-shape as the Guard itself. */
   const canOpenGrn = can('scm.access') || pageAccess('scm.procurement.grn') !== 'none';
-  // Same gate shape for the PO / PI nodes (/scm/purchase-orders/:id and
-  // /scm/purchase-invoices/:id guard on their own areas, no allowSales).
   const canOpenPo = can('scm.access') || pageAccess('scm.procurement.po') !== 'none';
   const canOpenPi = can('scm.access') || pageAccess('scm.procurement.pi') !== 'none';
-  // Mirrors App.tsx DeliveryReturnsGuard: Sales staff are refused outright.
   const canOpenDr = !isSalesStaff(user) && (can('scm.access') || pageAccess('scm.sales.returns') !== 'none');
   const onReturnClick = useCallback(
     (r: AmendmentChip): boolean => {
@@ -190,7 +164,6 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
       {
         type: 'Customer PO',
         doc: poRef || 'Not linked',
-        // Reference only — no file exists (see useCustomerPoNotice above).
         meta: poRef ? "Customer's own doc" : '—',
         state: poRef ? 'done' : 'pending',
       },
@@ -216,8 +189,6 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
               : 'Tap to view all',
         state: doNodes.length > 0 ? 'done' : 'pending',
       },
-      /* Node 3 closes the SALES row — the owner's first chain, verbatim
-         (2026-07-23): Sales Order → Delivery Order → Sales Invoice. */
       {
         type: 'Sales Invoice',
         doc:
@@ -234,9 +205,6 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
               : 'Tap to view all',
         state: siNodes.length > 0 ? 'done' : 'pending',
       },
-      /* Nodes 4-6 = the PURCHASE row, the owner's second chain: Sales Order →
-         Purchase Order → GRN → Purchase Invoice. It hangs off the SO because
-         that is where the supplier order is raised from. */
       {
         type: 'Purchase Order',
         doc:
@@ -255,15 +223,9 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
                 ? 'Tap to open'
                 : 'Tap to list'
             : candidatePos.length > 0
-              // Advisory only — the link was never recorded (see hook).
               ? `${candidatePos.length} candidate${candidatePos.length > 1 ? 's' : ''} — tap`
               : 'On supplier order',
-        // Candidates are a GUESS, not a link, so the node stays 'pending' (grey)
-        // — only a real PO node paints it done.
         state: poNodes.length > 0 ? 'done' : 'pending',
-        // A grey candidate node is still tappable (it lists the advisory POs).
-        // Without this the modal renders it disabled and "N candidates — tap"
-        // does nothing.
         actionable: poNodes.length > 0 || candidatePos.length > 0,
       },
       {
@@ -307,9 +269,6 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
 
   const onNodeClick = useCallback(
     (n: ChainNode): boolean => {
-      // One match → its detail page; several → the list filtered by this SO's
-      // doc no (the chain has a single slot per doc type, so a split
-      // delivery/invoice lands on the filtered list).
       if (n.type === 'Delivery Order' && doNodes.length > 0) {
         if (doNodes.length === 1) {
           openDoc(`/scm/delivery-orders/${doNodes[0]!.id}`);
@@ -348,10 +307,6 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
           openDoc(`/scm/purchase-orders/${poNodes[0]!.id}`);
           return true;
         }
-        /* Several POs, one slot. Naming them was never enough — the PO list
-           searches its OWN refs (supplier / PO no) and knows nothing about an SO
-           doc no, so "go look them up" landed on an empty list. Each PO is a row
-           that opens it. */
         openChoice({
           title: 'Purchased on more than one PO',
           intro: 'This order is purchased across several Purchase Orders. Pick one to open it.',
@@ -359,10 +314,6 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
         });
         return false;
       }
-      /* No linked PO, but advisory candidates exist (pre-MRP SO). List them for
-         manual reconciliation — each one opens, but the wording keeps saying
-         what they are: a GUESS by item code, never presented as the link, since
-         which PO (if any) actually covers this SO was never recorded. */
       if (n.type === 'Purchase Order' && candidatePos.length > 0) {
         openChoice({
           title: 'No purchase order linked to this sale',
@@ -411,10 +362,6 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
           openDoc(`/scm/grns/${grnNodes[0]!.id}`);
           return true;
         }
-        /* Several GRNs and one slot to show them in. The GRN list searches its
-           OWN refs (supplier / PO / GRN no) and knows nothing about an SO doc no,
-           so ?q=<SO no> lands on an empty list — each GRN is a row that opens
-           it directly instead. */
         openChoice({
           title: 'Received on more than one GRN',
           intro: "This order's goods arrived across several Goods Received notes. Pick one to open it.",

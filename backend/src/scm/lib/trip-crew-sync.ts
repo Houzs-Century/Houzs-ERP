@@ -66,8 +66,6 @@ export async function setTripCrew(sb: Sb, tripId: string, crew: { driverId?: str
   if (error) throw new Error(error.message);
 }
 
-/* Write one DO's crew row + header driver from master snapshots — the same
-   shape PUT /delivery-orders-mfg/:id/crew writes. */
 async function writeDoCrewRow(sb: Sb, companyId: number, doId: string, s: CrewSeats, assignedBy: string | null): Promise<void> {
   const driverIds = [...new Set([s.driver1Id, s.driver2Id].filter((x): x is string => !!x))];
   const helperIds = [...new Set([s.helper1Id, s.helper2Id].filter((x): x is string => !!x))];
@@ -113,7 +111,6 @@ export async function syncTripCrewToDos(sb: Sb, tripId: string, exceptDoId: stri
   if (sErr) throw new Error(sErr.message);
   if (!trip) return 0;
   const t = trip as Record<string, string | null>;
-  // The trip's own company bounds every DO written: a stop of another company's DO is never touched.
   const companyId = Number(t.company_id);
   if (!Number.isFinite(companyId)) return 0;
   const doIds = [...new Set(((stops ?? []) as Array<{ do_id: string | null }>).map((x) => x.do_id).filter((x): x is string => !!x && x !== exceptDoId))];

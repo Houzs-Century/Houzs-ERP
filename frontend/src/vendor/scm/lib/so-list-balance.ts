@@ -1,9 +1,3 @@
-// The SO list's money per row, desktop and mobile. From the view
-// scm.mfg_sales_orders_with_payment_totals: paid = the order's payments ledger,
-// balance = total - paid. The stored header columns
-// paid_sen / balance_sen are never money: paid_sen is not written by the ERP
-// and recomputeTotals writes the gross total into balance_sen, so a fallback to
-// them showed every order as unpaid / owing in full.
 
 type SoListMoneyRow = {
   local_total_sen?: number | null;

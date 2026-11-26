@@ -23,7 +23,6 @@ const SO_DOC = 'HC-SO-011654';
 const NOT_FOUND = 'line 803474 not found on SO-011654';
 const GAVE_UP = `Gave up after 6 attempts. Last error: ${NOT_FOUND}`;
 
-/* Post-rebuild ERP keys, and the pre-rebuild key the stale edit names. */
 const REKEYED = new Set([931973, 931974, 931975, 931976, 931977, 931978]);
 const OLD_KEY = 803474;
 
@@ -143,7 +142,6 @@ describe('through the drain: a stale-keyed edit heals itself', () => {
       address4: null, phone: null, ref: null, po_doc_no: null, internal_expected_dd: null,
       linked_ac_docno: 'SO-011654', company_id: 1,
     }],
-    /* The ERP's lines AFTER the rebuild — the fresh keys the office host stored. */
     mfg_sales_order_items: [
       { id: 'row-a', doc_no: SO_DOC, item_code: 'AERO-MP (Q)', description: 'M', qty: 1, unit_price_sen: 100, cancelled: false, warehouse_id: null, linked_ac_dtlkey: 931973 },
       { id: 'row-b', doc_no: SO_DOC, item_code: 'AKEMI ULTIMATE MATT (Q)', description: 'M', qty: 2, unit_price_sen: 200, cancelled: false, warehouse_id: null, linked_ac_dtlkey: 931974 },
@@ -152,13 +150,10 @@ describe('through the drain: a stale-keyed edit heals itself', () => {
     autocount_outbox: [{
       id: 'ob-stale', company_id: 1, op: 'edit', doc_type: 'SO', doc_no: SO_DOC, doc_id: null,
       status: 'pending', attempts: 0, dedupe_key: null, archived_at: null, created_at: '2026-09-15T10:22:05.000Z',
-      /* Composed before the rebuild drained — it names the OLD key. */
       payload: { body: { DocType: 'SO', DocNo: 'SO-011654', Lines: [{ DtlKey: OLD_KEY, Qty: 3 }] } },
     }],
   });
 
-  /* The office host refuses any edit that still names a retired key, the way
-     AcSyncService.cs:3729 does, and accepts an edit that names only live ones. */
   const host = vi.fn(async (url: string, init?: RequestInit) => {
     const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
     if (!String(url).endsWith('/edit')) return ok({ ok: true });
@@ -175,9 +170,7 @@ describe('through the drain: a stale-keyed edit heals itself', () => {
 
     expect(await dispatchOne(asEnv(env), asOutboxSb(sb), stale, asFetch(host))).toBe('failed');
 
-    /* The stale row is history now, not an open refusal. */
     expect(String(byId(sb, 'ob-stale')!.last_error)).toMatch(/^\[re-queued /);
-    /* Exactly one fresh edit was queued, and it names the CURRENT keys. */
     const fresh = rows(sb).filter((r) => r.status === 'pending' && r.id !== 'ob-stale');
     expect(fresh).toHaveLength(1);
     const lines = (fresh[0].payload as { body: { Lines: Array<{ DtlKey: number }> } }).body.Lines;

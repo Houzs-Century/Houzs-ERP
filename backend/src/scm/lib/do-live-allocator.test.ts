@@ -73,7 +73,7 @@ describe('pickIncomingForSofaSet — one dye lot per set, sofa only', () => {
 
   it('picks the single PO that covers the whole set', () => {
     const pick = pickIncomingForSofaSet([
-      line('PO-1', 'A', 'k1', 1, '2026-08-10'), // covers only half
+      line('PO-1', 'A', 'k1', 1, '2026-08-10'),
       line('PO-2', 'A', 'k1', 1, '2026-08-20'),
       line('PO-2', 'B', 'k2', 1, '2026-08-20'),
     ], needs);
@@ -95,7 +95,6 @@ describe('pickIncomingForSofaSet — one dye lot per set, sofa only', () => {
   });
 
   it('set membership needs no READY state — needs come straight from the lines (closes the empty-full-set gap)', () => {
-    // A set whose SO lines are nowhere READY still forms a complete needs map here.
     const pick = pickIncomingForSofaSet([
       line('PO-7', 'A', 'k1', 2, '2026-09-01'),
       line('PO-7', 'B', 'k2', 2, '2026-09-01'),
@@ -115,7 +114,7 @@ describe('pickIncomingForSofaSet — one dye lot per set, sofa only', () => {
 
   it('a preferred PO that does NOT cover falls back to the normal order (the conflict gate is the backstop)', () => {
     const pick = pickIncomingForSofaSet([
-      line('PO-9', 'A', 'k1', 1, '2026-08-10'), // preferred, but covers only half
+      line('PO-9', 'A', 'k1', 1, '2026-08-10'),
       line('PO-3', 'A', 'k1', 1, '2026-08-20'),
       line('PO-3', 'B', 'k2', 1, '2026-08-20'),
     ], needs, 'PO-9');
@@ -123,7 +122,6 @@ describe('pickIncomingForSofaSet — one dye lot per set, sofa only', () => {
   });
 });
 
-/* ── PR-4: the fold — units earlier shipments already own are not supply ──── */
 
 const owedRow = (over: Partial<OutstandingCommitment> = {}): OutstandingCommitment => ({
   bucketKey: 'wh-1|X|k',
@@ -160,7 +158,6 @@ describe('subtractOutstanding — the outstanding-commitment fold (double-commit
   });
 
   it('END TO END: a bound unconsumed OUT moves the next pick to the next PO — the same units are never committed twice', () => {
-    // DO-1 shipped 2 short, bound to PO-1 (outstanding = 2 of PO-1's 3).
     const committed = outstandingCommitments([{
       bucketKey: 'wh-1|X|k', warehouseId: 'wh-1', itemCode: 'X', variantKey: 'k',
       batchNo: 'PO-1', outQty: 2, consumedQty: 0,
@@ -170,9 +167,7 @@ describe('subtractOutstanding — the outstanding-commitment fold (double-commit
       line('PO-1', 'X', 'k', 3, '2026-08-10'),
       line('PO-2', 'X', 'k', 3, '2026-08-20'),
     ], committed.values());
-    // DO-2 needs 2: PO-1 has only 1 genuinely free unit left, so PO-2 covers.
     expect(pickIncomingForBucket(pool, 'X', 'k', 2)?.poNumber).toBe('PO-2');
-    // Once the receipt nets DO-1 (consumed = out), PO-1 is free again.
     const netted = outstandingCommitments([{
       bucketKey: 'wh-1|X|k', warehouseId: 'wh-1', itemCode: 'X', variantKey: 'k',
       batchNo: 'PO-1', outQty: 2, consumedQty: 2,
@@ -186,7 +181,6 @@ describe('subtractOutstanding — the outstanding-commitment fold (double-commit
   });
 });
 
-/* ── PR-4: the flip — one walk decides every line's expected batch ────────── */
 
 const dLine = (over: Partial<AllocatorDemandLine> = {}): AllocatorDemandLine => ({
   lineRef: 'L1',
@@ -202,9 +196,6 @@ const dLine = (over: Partial<AllocatorDemandLine> = {}): AllocatorDemandLine => 
 
 describe('allocateExpectedBatches — the DO-time live pick (Decision 2026-08-06)', () => {
   it('a stored-vs-allocator divergence resolves to the ALLOCATOR: the pick feeds planShipCommitments and binds', () => {
-    // The stored raise-link says PO-STORED; the pool's earliest cover is
-    // PO-LIVE. Post-flip the stored link is provenance only — the fact fed to
-    // the decision table is the allocator's pick, and that is what binds.
     const picks = allocateExpectedBatches(
       [line('PO-LIVE', 'X', 'k', 5, '2026-08-10'), line('PO-STORED', 'X', 'k', 5, '2026-08-20')],
       [dLine()],
@@ -225,8 +216,8 @@ describe('allocateExpectedBatches — the DO-time live pick (Decision 2026-08-06
       dLine({ lineRef: 'late', soDocNo: 'SO-2', deliveryDate: '2026-09-01', shipQty: 2 }),
       dLine({ lineRef: 'early', soDocNo: 'SO-1', deliveryDate: '2026-08-12', shipQty: 2 }),
     ]);
-    expect(picks.get('early')?.poNumber).toBe('PO-1'); // first in demand order, gets the cover
-    expect(picks.get('late')?.poNumber).toBe('PO-2');  // PO-1 is spent; earliest remaining
+    expect(picks.get('early')?.poNumber).toBe('PO-1');
+    expect(picks.get('late')?.poNumber).toBe('PO-2');
   });
 
   it('equal dates -> smaller doc number first ("SO1 比 SO2 优先")', () => {
@@ -256,7 +247,7 @@ describe('allocateExpectedBatches — the DO-time live pick (Decision 2026-08-06
       dLine({ lineRef: 'b', shipQty: 3, soDocNo: 'SO-2', deliveryDate: '2026-08-16' }),
     ]);
     expect(picks.get('a')?.poNumber).toBe('PO-1');
-    expect(picks.get('b')?.poNumber).toBe('PO-2'); // PO-1 is spent by line a
+    expect(picks.get('b')?.poNumber).toBe('PO-2');
   });
 
   it('a line with no incoming supply gets NO pick (planShipCommitments reads that as no_po)', () => {
@@ -265,7 +256,7 @@ describe('allocateExpectedBatches — the DO-time live pick (Decision 2026-08-06
 
   it('SOFA: the whole set gets ONE pick, needs pooled across modules', () => {
     const pool = [
-      line('PO-1', 'M-A', 'k1', 1, '2026-08-10'), // covers only module A
+      line('PO-1', 'M-A', 'k1', 1, '2026-08-10'),
       line('PO-2', 'M-A', 'k1', 1, '2026-08-20'),
       line('PO-2', 'M-B', 'k2', 1, '2026-08-20'),
     ];
@@ -284,8 +275,8 @@ describe('allocateExpectedBatches — the DO-time live pick (Decision 2026-08-06
       dLine({ lineRef: 'recv', itemCode: 'M-A', variantKey: 'k1', isSofa: true, allocatedBatchNo: 'PO-9' }),
       dLine({ lineRef: 'open', itemCode: 'M-B', variantKey: 'k2', isSofa: true }),
     ]);
-    expect(picks.get('recv')).toBeUndefined();           // ships from received stock
-    expect(picks.get('open')?.poNumber).toBe('PO-9');    // follows the anchor, not the earlier ETA
+    expect(picks.get('recv')).toBeUndefined();
+    expect(picks.get('open')?.poNumber).toBe('PO-9');
   });
 
   it('SOFA: no single PO covers the set -> NO pick (the sofa guards take over; never a per-module split)', () => {
@@ -324,6 +315,6 @@ describe('allocateExpectedBatches — the DO-time live pick (Decision 2026-08-06
       line('PO-2', 'X', 'k', 3, '2026-08-20'),
     ], committed.values());
     const picks = allocateExpectedBatches(pool, [dLine({ shipQty: 2 })]);
-    expect(picks.get('L1')?.poNumber).toBe('PO-2'); // PO-1's units are already owed away
+    expect(picks.get('L1')?.poNumber).toBe('PO-2');
   });
 });

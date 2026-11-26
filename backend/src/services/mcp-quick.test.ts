@@ -30,7 +30,7 @@ describe("AI Connector quick answers", () => {
   });
 
   it("windows end today and compare with the same days one period earlier", () => {
-    expect(myToday(new Date("2026-11-25T17:00:00Z"))).toBe("2026-11-26"); // Malaysia is UTC+8
+    expect(myToday(new Date("2026-11-25T17:00:00Z"))).toBe("2026-11-26");
     expect(shiftMonths("2026-03-31", 1)).toBe("2026-02-28");
     expect(shiftMonths("2026-01-10", 1)).toBe("2025-12-10");
     expect(shiftMonths("2026-11-25", 12)).toBe("2025-11-25");
@@ -40,7 +40,7 @@ describe("AI Connector quick answers", () => {
     expect(resolveWindow({ period: "2026-q4" }, today)).toEqual({ from: "2026-10-01", to: "2026-11-25", label: "2026-Q4", months: 3, prev: { from: "2026-07-01", to: "2026-08-25" } });
     expect(resolveWindow({ period: "2025" }, today)?.prev).toEqual({ from: "2024-01-01", to: "2024-12-31" });
     expect(resolveWindow({ from: "2026-11-03", to: "2026-11-09" }, today)?.prev).toEqual({ from: "2026-10-03", to: "2026-10-09" });
-    expect(resolveWindow({ period: "2027-01" }, today)).toBeNull(); // the future
+    expect(resolveWindow({ period: "2027-01" }, today)).toBeNull();
     expect(resolveWindow({ period: "2026-13" }, today)).toBeNull();
     expect(resolveWindow({ period: "junk" }, today)).toBeNull();
     expect(resolveWindow({ from: "2026-11-09", to: "2026-11-01" }, today)).toBeNull();
@@ -68,7 +68,7 @@ describe("AI Connector quick answers", () => {
     expect(s.topModels?.[0]).toEqual({ model: "Posture", category: "MATTRESS", units: 2, salesRm: 2000 });
     expect(s.trend?.map((t) => t.month)).toEqual(["2026-09", "2026-10", "2026-11"]);
     expect(s.goodsMarginPct).toBe(41.2);
-    expect(JSON.stringify(s)).not.toContain("cost"); // per-order cost never copied into the answer
+    expect(JSON.stringify(s)).not.toContain("cost");
   });
 
   it("sales summary leaves out what the reads did not give", () => {
@@ -116,7 +116,7 @@ describe("AI Connector quick answers", () => {
     expect(parseFetchId("../etc")).toBeNull();
     expect(parseFetchId("sales_order:a/b")).toBeNull();
     expect(FETCH_KINDS.sales_order.api("HC-SO-1")).toBe("/api/scm/mfg-sales-orders/HC-SO-1");
-    expect(fetchKind("receipt")).toBeNull(); // two receipt tables share one hit type: no single record to open
+    expect(fetchKind("receipt")).toBeNull();
     expect(fetchKind("__proto__")).toBeNull();
     expect(fetchKind("constructor")).toBeNull();
     expect(fetchKind("delivery_order")?.page("abc")).toBe("/scm/delivery-orders/abc");

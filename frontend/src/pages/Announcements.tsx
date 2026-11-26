@@ -31,11 +31,6 @@ import {
   type NameLookups,
 } from "./announcements/announcementModel";
 
-// ────────────────────────────────────────────────────────────────────────────
-// Domain types — the notice itself lives in announcements/announcementModel.ts
-// (mirrors backend/src/routes/announcements.ts public shape); only the
-// read-receipt payload is local to this file.
-// ────────────────────────────────────────────────────────────────────────────
 type CompaniesResponse = { companies?: Company[] };
 
 type ListResponse = { success?: boolean; data?: Announcement[] };
@@ -66,29 +61,14 @@ export function Announcements() {
   const isSalesDir = isSalesDirectorUser(user);
   const canWrite = can("announcements.write") || isSalesDir;
   const salesDirOnly = isSalesDir && !can("announcements.write");
-  // The approval desk (mig 20260906T1509): Approve / Reject in Manage. Held by
-  // a role, so the owner re-points it without a code change. An approver
-  // without announcements.write still gets the Manage table (the queue lives
-  // there) but none of the poster's actions.
   const canApprove = can("announcements.approve");
   const canOpenManage = canWrite || canApprove;
   const currentUserId = user?.id ?? null;
 
-  // NOTE: this fetch is unbounded (no LIMIT/pagination) — the backend returns
-  // every announcement. Capping it server-side is a separate follow-up.
   const listQ = useQuery<ListResponse>("/api/announcements", () => api.get("/api/announcements"));
   const items = useMemo(() => listQ.data?.data ?? [], [listQ.data]);
-  // The reading inbox holds only what readers are served: a manager's own
-  // pending / draft / rejected rows belong in Manage, not in their inbox.
   const inboxItems = useMemo(() => items.filter((a) => isApproved(a) && !isVoided(a)), [items]);
 
-  // Lookups for the audience pickers + the "To: …" resolver. All three sit
-  // behind users.read on the backend, which a plain reader does not hold — and
-  // since 2026-07-21 this page is open to EVERY authed user, so firing them
-  // unconditionally would mean three guaranteed 403s on every ordinary
-  // staffer's page load. Off, not hidden: `enabled: canWrite` means the
-  // requests are never made. A reader's "To:" label falls back to the
-  // server-resolved department names / counts (see audienceLabel).
   const usersQ = useQuery<{ users: TeamMember[] }>("/api/users", () => api.get("/api/users"), [], {
     enabled: canWrite,
   });
@@ -104,9 +84,6 @@ export function Announcements() {
     [],
     { enabled: canWrite },
   );
-  // Multi-company: the company-target selector + scope chip only appear when
-  // the companies master returns MORE THAN ONE company (mirrors the top-bar
-  // CompanySwitcher no-op rule). Single-company Houzs shows neither.
   const companiesQ = useQuery<CompaniesResponse>("/api/companies", () =>
     api.get("/api/companies"),
   );
@@ -125,21 +102,14 @@ export function Announcements() {
     [depts, positions, users],
   );
 
-  // What is addressed to me / what I have acked — the SAME
-  // answers the mandatory modal at the app root computes, from the same
-  // shared cache entry, so the inbox can never disagree with the modal.
   const banner = useAnnouncementBanner({ scope: "human" });
 
-  // ?id=<notice> deep link (the dashboard stack's "View details" / the bell):
-  // read once at mount, then the page owns the selection.
   const [searchParams] = useSearchParams();
   const [mode, setMode] = useState<Mode>(() => (searchParams.get("view") === "register" ? "register" : "read"));
   const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get("id"));
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [search, setSearch] = useState("");
 
-  // Default selection once the list lands: the first notice waiting on me,
-  // else the newest one. Never overrides a choice the reader already made.
   useEffect(() => {
     if (selectedId && items.some((a) => a.id === selectedId)) return;
     if (items.length === 0) return;
@@ -157,16 +127,11 @@ export function Announcements() {
 
   const selected = selectedId ? items.find((a) => a.id === selectedId) ?? null : null;
 
-  // A Sales Director can manage (hide / delete / remind / view receipts) ONLY
-  // the posts they authored — the backend enforces the same ownership. Full
-  // announcers manage every row.
   const canManage = useCallback(
     (a: Announcement) => canWrite && (!salesDirOnly || a.createdBy === currentUserId),
     [canWrite, salesDirOnly, currentUserId],
   );
 
-  // Read receipts for the selected notice — writers only (the endpoint is
-  // gated on announcements.write; a reader never fires it).
   const receiptsEnabled = !!selected && canManage(selected);
   const receiptsQ = useQuery<AcksResponse>(
     `/api/announcements/${selected?.id ?? "-"}/acks`,
@@ -175,17 +140,12 @@ export function Announcements() {
     { enabled: receiptsEnabled },
   );
 
-  // The attachment log for the selected notice (mig 20260907T0715) — Manage
-  // only; the endpoint answers writers / approvers.
   const filesQ = useQuery<{ data: AnnouncementFile[] }>(
     `/api/announcements/${selected?.id ?? "-"}/files`,
     () => api.get(`/api/announcements/${selected?.id}/files`),
     [],
     { enabled: !!selected && mode === "manage" && canOpenManage },
   );
-  // The attachment policy for the ANN type (Settings → Documents): the
-  // composer disables Submit while a required file is missing. The server
-  // enforces it regardless.
   const docTypesQ = useQuery<{ data: DocumentTypeOption[] }>(
     "/api/document-types",
     () => api.get("/api/document-types"),
@@ -194,8 +154,6 @@ export function Announcements() {
   );
   const attachmentRequired = (docTypesQ.data?.data ?? []).some((t) => t.code === "ANN" && t.attachmentRequired);
 
-  // Manage mode: one ack-rate map for the whole table, fetched only while the
-  // mode is open and only for a writer (the endpoint is write-gated).
   const summaryQ = useQuery<SummaryResponse>(
     "/api/announcements/ack-summary",
     () => api.get("/api/announcements/ack-summary"),
@@ -206,9 +164,6 @@ export function Announcements() {
 
   const [composerOpen, setComposerOpen] = useState(false);
 
-  // "Notify their supervisors": one system notice per supervisor of the
-  // pending people in the open department (manual escalation; the automatic
-  // overdue job is a separate follow-up).
   async function escalate(a: Announcement, departmentId: number | null, departmentName: string) {
     const ok = await dialog.confirm({
       title: "Notify their supervisors",
@@ -231,8 +186,6 @@ export function Announcements() {
     }
   }
 
-  // "Export receipts": the selected notice's roster as CSV, built client-side
-  // from the receipts already loaded for the drawer.
   function exportReceipts() {
     const a = selected;
     const acks = receiptsQ.data?.data;
@@ -282,8 +235,6 @@ export function Announcements() {
     }
   }
 
-  // Void (mig 20260907T1030): a submitted notice keeps its row, receipts
-  // and number; it just stops being served. The reason is mandatory.
   async function voidNotice(a: Announcement) {
     const reason = await dialog.prompt({
       title: "Void announcement",
@@ -305,7 +256,6 @@ export function Announcements() {
     }
   }
 
-  // Drafts only — a submitted notice is voided (the server refuses the rest).
   async function deleteNotice(a: Announcement) {
     const ok = await dialog.confirm({
       title: "Discard draft",
@@ -379,7 +329,6 @@ export function Announcements() {
     }
   }
 
-  // Reading and Register for everyone; Manage only for a writer / approver.
   const modeToggle = (
     <div
       role="tablist"
@@ -459,10 +408,6 @@ export function Announcements() {
       )}
 
       {mode === "read" ? (
-        /* Breaks out of the page gutters (same negative margins as the sticky
-           PageHeader) so the two panes run edge to edge, and fills the viewport
-           below the pinned header — each pane scrolls itself. The bottom
-           margin cancels the layout's own page padding. */
         <InboxView
           className="-mx-3 -mb-[calc(10rem+env(safe-area-inset-bottom))] h-[calc(100dvh-var(--page-header-offset,120px)-1.5rem)] min-h-[480px] sm:-mx-4 lg:-mx-4 lg:-mb-10"
           items={inboxItems}
@@ -481,8 +426,6 @@ export function Announcements() {
           canManage={canManage}
           canPostpone={banner.canPostpone}
           onAck={(a) => {
-            // The receipts card is the poster's record; refresh it once the ack
-            // has been posted so a manager acking their own notice sees +1.
             void banner.ack(a).then(() => {
               if (receiptsEnabled) receiptsQ.reload();
             });

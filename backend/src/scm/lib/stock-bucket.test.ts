@@ -15,8 +15,8 @@ describe('stockBucketOf', () => {
   });
 
   it('the override wins over the type; a blank or unknown override falls back; no row at all is customer', () => {
-    expect(stockBucketOf({ type: 'display', stock_bucket: 'customer' })).toBe('customer'); // the Cash & Carry segment
-    expect(stockBucketOf({ type: 'others', stock_bucket: 'customer' })).toBe('customer'); // the Cash & Carry K.J
+    expect(stockBucketOf({ type: 'display', stock_bucket: 'customer' })).toBe('customer');
+    expect(stockBucketOf({ type: 'others', stock_bucket: 'customer' })).toBe('customer');
     expect(stockBucketOf({ type: 'warehouse', stock_bucket: 'display' })).toBe('display');
     expect(stockBucketOf({ type: 'warehouse', stock_bucket: 'showroom' })).toBe('showroom');
     expect(stockBucketOf({ type: 'warehouse', stock_bucket: 'others' })).toBe('others');

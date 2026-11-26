@@ -83,9 +83,7 @@ describe("groupRows", () => {
       row({ id: 4, organizer: "BIGHOME", overdue_days: 0, due_date: "2026-10-05" }),
     ];
     const groups = groupRows(rows, "organizer");
-    // BIGHOME (3 rows) before MLE (1 row)
     expect(groups.map((g) => g.label)).toEqual(["BIGHOME", "MLE"]);
-    // within BIGHOME: overdue first (id 3), then by due date (id 4 @ 10-05, id 2 @ 10-10)
     expect(groups[0].rows.map((r) => r.id)).toEqual([3, 4, 2]);
   });
 });
@@ -132,16 +130,14 @@ describe("buildAllMessage", () => {
 
 describe("month helpers", () => {
   it("currentMonthMyt returns the Malaysia year-month", () => {
-    // 2026-01-01 00:00 UTC is already 08:00 on 2026-01-01 in MYT.
     expect(currentMonthMyt(Date.parse("2026-01-01T00:00:00Z"))).toBe("2026-01");
-    // 2026-01-31 20:00 UTC is 2026-02-01 04:00 MYT — rolls to the next month.
     expect(currentMonthMyt(Date.parse("2026-01-31T20:00:00Z"))).toBe("2026-02");
   });
 
   it("monthOptions leads with upcoming months and includes the current one", () => {
     const opts = monthOptions(Date.parse("2026-09-15T02:00:00Z"));
-    expect(opts[0].value).toBe("2027-06"); // base Sep 2026, +9 months → Jun 2027
-    expect(opts[opts.length - 1].value).toBe("2026-06"); // -3 months → Jun 2026
+    expect(opts[0].value).toBe("2027-06");
+    expect(opts[opts.length - 1].value).toBe("2026-06");
     expect(opts.some((o) => o.value === "2026-09")).toBe(true);
   });
 });

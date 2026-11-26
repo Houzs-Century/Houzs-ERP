@@ -30,8 +30,6 @@ describe('soPaymentFieldChanges', () => {
       .toEqual([{ field: 'amountSen', from: 199_000, to: 199_100 }]);
   });
 
-  /* The order the audit has always printed, so a reader comparing an old entry
-     with a new one is not comparing two different orderings. */
   it('keeps the order the audit has always used', () => {
     const changed = soPaymentFieldChanges(row(), row({
       paid_at: '2026-09-04', method: 'merchant', amount_sen: 1,
@@ -44,8 +42,6 @@ describe('soPaymentFieldChanges', () => {
     ]);
   });
 
-  /* All NINE, not the four the ledger reads — an approval-code correction must
-     still reach the audit trail even though it books nothing. */
   it('records the five columns the ledger does not care about', () => {
     for (const [col, field] of [
       ['installment_months', 'installmentMonths'], ['online_type', 'onlineType'],

@@ -23,12 +23,9 @@ export type BillableLine = {
 export type PiReviewLine = {
   key: string;
   grnItemId: string | null;
-  // The GRN chosen on the row before its item is (narrows the SKU dropdown).
   grnNumber: string | null;
   qty: number;
-  // Tied by the product name printed, not by a code: shown for the operator to check.
   suggested: boolean;
-  // Tied by the AI reading the row against the supplier's open SKUs: shown as "AI match, please check".
   ai: boolean;
   read: { itemCode: string | null; description: string | null; qty: number; unitPrice: number | null; lineTotal: number | null } | null;
 };
@@ -42,10 +39,7 @@ export type PiReview = {
   doNo: string | null;
   poNo: string | null;
   notes: string | null;
-  // What the sales tax did to the rows, or why the rows do not reach the invoice total.
   taxNote: string | null;
-  // Which receipt lines the matcher was offered: the PO printed on the invoice,
-  // or (none of those matched) every unbilled line of the receipt. null: no PO printed.
   lineTier: PiLineTier | null;
   lines: PiReviewLine[];
 };
@@ -127,14 +121,12 @@ export function tieToSkus(pending: ReadonlyArray<{ line: PiReviewLine; itemCode:
   }
 }
 
-/** What each line still has to bill once the rows already tied take theirs. */
 const leftAfter = (lines: ReadonlyArray<PiReviewLine>, open: ReadonlyArray<BillableLine>): Map<string, number> => {
   const left = new Map(open.map((l) => [l.grnItemId, l.remaining]));
   for (const l of lines) if (l.grnItemId) left.set(l.grnItemId, (left.get(l.grnItemId) ?? 0) - l.qty);
   return left;
 };
 
-/** The receipts the invoice is for: those it is anchored to and those its tied rows bill. */
 const anchoredOf = (lines: ReadonlyArray<PiReviewLine>, open: ReadonlyArray<BillableLine>, anchorGrns: ReadonlyArray<string>): Set<string> => {
   const anchored = new Set(anchorGrns);
   for (const l of lines) { const hit = open.find((o) => o.grnItemId === l.grnItemId); if (hit) anchored.add(hit.grnNumber); }
@@ -157,8 +149,6 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
     if (sku) { pending.push({ line: l, itemCode: sku }); continue; }
     if (!l.read.description) continue;
     const printed = `${l.read.itemCode ?? ''} ${l.read.description}`;
-    /* NB prints SB10-B11EC-KHJ50(A)(MH-12") 5 FTS for HILTON (A)-(Q): the code names
-       the family through any size bound to this supplier, the row names the size. */
     const printedFamilies = familiesPrinted(printed, families);
     const size = printedSize(printed);
     const family = owing.filter((o) => printedFamilies.has(familyOf(o.itemCode)) && (!size || lineSizeOf(o.itemCode) === size));
@@ -166,7 +156,6 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
     const fits = named.length > 0 ? named : bestLines(`${l.read.itemCode ?? ''} ${l.read.description}`, owing, (o) => `${o.itemCode} ${o.supplierSku ?? ''} ${o.description ?? ''}`);
     const scoped = anchored.size > 0 ? fits.filter((o) => anchored.has(o.grnNumber)) : fits;
     if (scoped.length === 0 || (anchored.size === 0 && scoped.length > 1)) {
-      // One SKU on several receipts, or only off the anchored ones: the proposal decides.
       const skus = new Set(fits.map((o) => o.itemCode));
       if (skus.size === 1) pending.push({ line: l, itemCode: [...skus][0]! });
       continue;
@@ -183,16 +172,11 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
     left.set(pick.grnItemId, (left.get(pick.grnItemId) ?? 0) - l.qty);
   }
   tieToSkus(pending, open, anchored, left, false);
-  /* What is left of an anchored receipt, one row for one line of the same size:
-     the invoice bills that receipt, so the last row of a size can only be that line. */
   const bySize = new Map<string, PiReviewLine[]>();
   for (const l of lines) {
     const size = l.grnItemId || !l.read ? null : printedSize(`${l.read.itemCode ?? ''} ${l.read.description ?? ''}`);
     if (size) bySize.set(size, [...(bySize.get(size) ?? []), l]);
   }
-  /* ...unless the row prints a name the line does not carry: CODY printed, JAGER left on
-     the receipt, is a bed the receipt does not hold, not the last one of the size. A row
-     that prints only codes and generic words (NB's SB12-KHB(C)-NH79(A)) still fills. */
   const nameWords = (text: string): string[] => wordsOf(text).filter((w) => /^[A-Z]{4,}$/.test(w));
   for (const [size, rows] of bySize) {
     const lefts = open.filter((o) => anchored.has(o.grnNumber) && lineSizeOf(o.itemCode) === size && (left.get(o.grnItemId) ?? 0) > 0 && mayBill(rows[0]!.read, o));
@@ -206,8 +190,6 @@ export function suggestBills(lines: PiReviewLine[], open: ReadonlyArray<Billable
   }
 }
 
-/** Within this much of the receipt's price (RM) a row IS that price: a printed
- *  1,409.09 plus 10% is 1,549.999, and the PO says 1,550.00. */
 const NEAR = 0.05;
 const sen2 = (rm: number) => Math.round(rm * 100) / 100;
 const rm = (n: number) => n.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -245,7 +227,6 @@ export function addSalesTax(lines: PiReviewLine[], open: ReadonlyArray<BillableL
     l.read = { ...l.read!, unitPrice: unit, lineTotal: sen2(unit * l.qty) };
   }
   const sum = () => sen2(priced.reduce((a, l) => a + (l.read?.lineTotal ?? 0), 0));
-  /* Rounding left over goes on the biggest row the receipt does not fix. */
   const want = total ?? sen2(printed + tax);
   if (free.length > 0 && sum() !== want) {
     const big = free.reduce((a, l) => ((l.read?.lineTotal ?? 0) > (a.read?.lineTotal ?? 0) ? l : a));
@@ -282,14 +263,12 @@ export function buildPiReview(parsed: PiScanExtract | null, supplierId: string |
     const pending = lines.flatMap((l) => { const sku = l.grnItemId ? undefined : aiSkus.get(readKey(l.read)); return sku ? [{ line: l, itemCode: sku }] : []; });
     tieToSkus(pending, open, anchoredOf(lines, open, anchorGrns), leftAfter(lines, open), true);
   }
-  // Whatever tied it, a free row never stays on a line that costs money.
   const openById = new Map(open.map((o) => [o.grnItemId, o]));
   for (const l of lines) {
     const on = l.grnItemId ? openById.get(l.grnItemId) : undefined;
     if (on && !mayBill(l.read, on)) Object.assign(l, { grnItemId: null, grnNumber: null, suggested: false, ai: false });
   }
   const taxNote = addSalesTax(lines, open, parsed?.salesTax ?? null, parsed?.totalAmount ?? null);
-  // In the order the invoice prints them, so the card reads down beside the paper.
   const printedAt = new Map(parsed?.lines.map((l, i) => [l.description, i]) ?? []);
   const order = (l: PiReviewLine) => printedAt.get(l.read?.description ?? null) ?? Number.MAX_SAFE_INTEGER;
   return {
@@ -358,7 +337,6 @@ export function billPicks(review: PiReview): Array<{ grnItemId: string; qty: num
     if (price != null) { seen.pricedQty += l.qty; seen.sen += Math.round(price * 100) * l.qty; }
     byLine.set(l.grnItemId, seen);
   }
-  /* Two printed rows on one receipt line can carry two prices: the line holds one, so their average by qty. */
   return [...byLine].map(([grnItemId, s]) => ({ grnItemId, qty: s.qty, unitPriceSen: s.pricedQty > 0 ? Math.round(s.sen / s.pricedQty) : null }));
 }
 
@@ -438,7 +416,6 @@ export function mergeRebuiltLines(kept: ReadonlyArray<PiReviewLine>, rebuilt: Re
     const key = readKey(l.read);
     const fresh = rebuilt.filter((r) => !used.has(r.key) && r.grnItemId && readKey(r.read) === key);
     if (fresh.length === 0) return [l];
-    // A set split into its pieces comes back as several rows of the one printed row.
     const take = fresh.length > 1 && fresh.every((r) => r.qty === 1) && l.qty === 1 ? fresh : [fresh[0]!];
     for (const r of take) used.add(r.key);
     return take;

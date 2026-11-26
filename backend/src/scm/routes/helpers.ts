@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// /helpers — CRUD for the helpers table (TMS fleet master, migration 0053).
-// Cloned from drivers.ts. A helper is a delivery crew member (not a driver);
-// in_house flags in-house staff vs an outsourced/3rd-party helper.
-//
-// Houzs adaptation of 2990's apps/api/src/routes/helpers.ts — the only change
-// is the normalizePhone import: @2990s/shared/phone → ../shared (the vendored
-// shared barrel). scm.helpers already exists (migration 0053). Mounted at
-// '/helpers' in scm/index.ts.
-// ----------------------------------------------------------------------------
 
 import { idOrNull } from '../lib/lorry-warehouses';
 import { Hono } from 'hono';
@@ -19,8 +9,6 @@ import { carrierLinkForInsert, resolveCarrierLink } from '../lib/threepl-link';
 import { nextCode, CODE_PREFIX } from '../lib/fleet-code-mint';
 import { normalizeIc, INVALID_IC, NAME_MAX } from '../lib/fleet-crew-fields';
 
-/** The next HLP- code. Global read, same reason as drivers: helper_code carries
- *  a bare UNIQUE(helper_code) and the roster is shared across companies. */
 async function mintHelperCode(sb: { from: (t: string) => any }): Promise<string> {
   const { data } = await sb.from('helpers').select('helper_code');
   return nextCode(CODE_PREFIX.HELPER, ((data ?? []) as Array<{ helper_code?: string | null }>).map((r) => r.helper_code));
@@ -31,7 +19,6 @@ helpers.use('*', supabaseAuth);
 
 const COLS = 'id, helper_code, name, contact, ic_number, in_house, threepl_company_id, active, created_at, warehouse_id';
 
-/* The caller's in_house as a tri-state: absent stays absent (see threepl-link). */
 const ownFlagOf = (body: Record<string, unknown>): boolean | undefined =>
   body.inHouse === undefined ? undefined : body.inHouse !== false;
 const carrierOf = (body: Record<string, unknown>): string | null | undefined =>
@@ -39,11 +26,9 @@ const carrierOf = (body: Record<string, unknown>): string | null | undefined =>
 
 helpers.get('/', async (c) => {
   const sb = c.get('supabase');
-  const onlyActive = c.req.query('active') !== 'false';   // default: active only
+  const onlyActive = c.req.query('active') !== 'false';
   let q = sb.from('helpers').select(COLS).order('helper_code');
   if (onlyActive) q = q.eq('active', true);
-  // UNIFIED FLEET: one shared helper roster across ALL companies (see drivers.ts).
-  // Not scoped by company — every company's TMS page shows the same helpers.
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ helpers: data ?? [] });
@@ -58,8 +43,6 @@ helpers.post('/', async (c) => {
   if (!name) return c.json({ error: 'name_required' }, 400);
   if (name.length > NAME_MAX) return c.json({ error: 'name_too_long', reason: `Keep the name under ${NAME_MAX} characters.` }, 400);
 
-  /* Contact is OPTIONAL, but a non-empty one that will not normalise is not a
-     phone number — it used to be stored raw (`?? contact`). Blank stays blank. */
   let normalizedContact: string | null = null;
   if (contact) {
     normalizedContact = normalizePhone(contact);
@@ -69,7 +52,6 @@ helpers.post('/', async (c) => {
   const icNumber = normalizeIc(body.icNumber);
   if (icNumber === INVALID_IC) return c.json({ error: 'invalid_ic', reason: 'An IC / passport number is at most 20 characters.' }, 400);
 
-  /* A helper registered under a 3PL carrier is outsource, whatever was ticked. */
   const home = idOrNull(body.warehouseId ?? null);
   if (!home.ok) return c.json({ error: 'invalid_id', reason: 'warehouseId must be a warehouse id or blank' }, 400);
   const link = carrierLinkForInsert({ threeplCompanyId: carrierOf(body), ownFlag: ownFlagOf(body) });
@@ -94,14 +76,6 @@ helpers.post('/', async (c) => {
     const { data, error } = await sb.from('helpers')
       .insert({ ...row, helper_code: helperCode }).select(COLS).single();
     if (!error) return c.json({ helper: data }, 201);
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     if (error.code !== '23505') return c.json({ error: 'insert_failed', reason: error.message }, 500);
     if (suppliedCode) return c.json({ error: 'duplicate_code' }, 409);
@@ -129,8 +103,6 @@ helpers.patch('/:id', async (c) => {
     if (!home.ok) return c.json({ error: 'invalid_id', reason: 'warehouseId must be a warehouse id or blank' }, 400);
     updates.warehouse_id = home.value;
   }
-  /* The SAME rules the create path applies — a field validated on create and
-     not on edit is validated nowhere. */
   const map: Array<[string, string]> = [
     ['helperCode', 'helper_code'], ['name', 'name'],
   ];
@@ -145,8 +117,6 @@ helpers.patch('/:id', async (c) => {
     updates.name = n;
   }
   if (body.contact !== undefined) {
-    /* Blank CLEARS the optional field; a non-blank value that will not
-       normalise is not a phone number and is refused, not stored raw. */
     const raw = String(body.contact ?? '').trim();
     if (!raw) {
       updates.contact = null;

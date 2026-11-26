@@ -29,7 +29,6 @@ function setup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   qc.setQueryData(DETAIL, { salesOrder: { doc_no: 'SO-1', version: 14 }, items: [] });
   const reads: Array<(body: unknown) => void> = [];
-  /* PATCHes answer at once; each detail GET waits until the test releases it. */
   const fakeFetch = (_path: string, init?: RequestInit): Promise<unknown> => {
     if (init?.method === 'PATCH') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;

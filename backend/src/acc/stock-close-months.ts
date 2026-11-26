@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// acc/stock-close-months — the months the stock close has booked, as Books ›
-// Stock close lists them (the owner's Claude Design, batch 6 c4): each month's
-// ACTIVE closing entry (STOCKADJ-{co}-{YYYY-MM}), its lines summed per bucket
-// on the bucket's stock account (acc/rules STOCK_BUCKET_ROLES — customer,
-// display, service, showroom, others), whether it was posted once or
-// re-posted (an earlier entry for the same month was reversed), the day it
-// was booked, and the opening entry beside it (STOCKADJ-REV-…). Reads only.
-// ----------------------------------------------------------------------------
 
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { mytDateOf } from '../scm/lib/my-time';
@@ -20,7 +11,6 @@ export type ClosedMonth = {
   buckets: Record<StockBucket, number>;
   totalSen: number;
   action: 'posted' | 'reposted';
-  /** The day its active entry was booked (MYT), null when the row carries no time. */
   bookedOn: string | null;
   jeNo: string;
   revJeNo: string | null;
@@ -58,7 +48,6 @@ export async function closedStockMonths(sb: any, companyId: number): Promise<{ o
     .eq('company_id', companyId).in('journal_entry_id', batch).order('journal_entry_id').range(lo, hi));
   if (lines.error) return { ok: false, reason: `stock lines: ${lines.error.message}` };
 
-  /* Which bucket a stock account belongs to, by the company's roles. */
   const roles = await resolveRoles(sb, companyId);
   const bucketOf = new Map<string, StockBucket>();
   for (const b of STOCK_BUCKETS) {
@@ -79,7 +68,6 @@ export async function closedStockMonths(sb: any, companyId: number): Promise<{ o
       const dr = Number(l.debit_sen ?? 0);
       if (dr <= 0) continue;
       totalSen += dr;
-      /* A month still on the one-account shape books on no bucket's account: its whole value reads as customer stock. */
       buckets[bucketOf.get(String(l.account_code)) ?? 'customer'] += dr;
     }
     const at = je.posted_at ?? je.created_at;

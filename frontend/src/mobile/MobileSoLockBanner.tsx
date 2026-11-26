@@ -12,9 +12,7 @@ const BOX = { display: "flex", flexDirection: "column", gap: 8, borderRadius: 10
 export function MobileSoLockBanner({ status, overridden, overridePending, onOverride, onRelock, afterDo, afterDoTargetId, onPickTarget }: {
   status: string;
   overridden: boolean;
-  /** The override request is in flight: the button stays locked (submitLock rule). */
   overridePending: boolean;
-  /** Called with the typed reason; the caller unlocks only once the server has kept it. */
   onOverride: (reason: string) => void;
   onRelock: () => void;
   afterDo: AfterDoMode;

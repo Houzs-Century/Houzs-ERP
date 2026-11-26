@@ -44,23 +44,12 @@ import { isSingleSkuCategory } from './product-categories-store';
  * a dangling "-".
  */
 export function suffixForSku(p: Pick<MfgProductRow, 'code' | 'category' | 'size_code'>): string {
-  // Single-SKU categories (Accessory, Sofa Accessory, Service, ...) — no per-SKU
-  // suffix, the supplier code IS the SKU. "BC06-MF" is a whole model code, not
-  // a sofa compartment.
   if (isSingleSkuCategory(p.category)) return '';
 
-  // BEDFRAME / MATTRESS — prefer the canonical size_code if the API row
-  // surfaces it. Falls through to code parsing for legacy rows where
-  // size_code wasn't backfilled.
   if ((p.category === 'BEDFRAME' || p.category === 'MATTRESS') && p.size_code) {
     return p.size_code.trim();
   }
 
-  // SOFA (or any row missing size_code) — parse the trailing segment after
-  // the first '-' from the SKU code. Sofa codes follow the
-  // '{model_code}-{compartment}' default; bedframe codes follow
-  // '{model_code}-({size})'. Either way, everything after the first '-' is
-  // the per-SKU bit we want to mirror into the supplier SKU.
   const code = p.code ?? '';
   const dashAt = code.indexOf('-');
   if (dashAt < 0) return '';

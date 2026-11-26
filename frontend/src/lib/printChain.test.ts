@@ -1,24 +1,3 @@
-/* ----------------------------------------------------------------------------
-   What a row may print — and, far more importantly, what it may NOT.
-
-   WHAT THIS FILE IS FOR. The owner asked to print any document in a row's chain
-   without leaving the list (2026-08-22). A chain entry is only honest when THREE
-   things hold, and each of them reads correct while being wrong:
-
-     1. The document must be FETCHABLE. A PDF is loaded by ADDRESS
-        (`/delivery-orders-mfg/:id` is `.eq('id', id)`), and several rows carry a
-        related document's NUMBER and no id. An entry built from one of those is
-        a menu line that 404s — worse than a line that is not there.
-     2. EVERY related document must be listed. A part-delivered order has three
-        delivery orders; offering the first is the failure the DO No. column was
-        built to avoid, and it is invisible in any screenshot with one delivery.
-     3. A CAP must say what it hid. A silent truncation reads as "that's all of
-        them", which is the same lie as (2) wearing a limit.
-
-   So the assertions below are on the exact target list and the exact labels.
-   Every one of them goes RED if its guard is deleted — checked by deleting each
-   one, not by assuming.
-   ---------------------------------------------------------------------------- */
 
 import { describe, expect, test } from "vitest";
 import {
@@ -36,8 +15,6 @@ import {
   type PrintChain,
 } from "./printChain";
 
-/* What the operator would actually see in the menu, in order. `own` first,
-   because that is the "Print" entry every list already had. */
 const menuLabels = (c: PrintChain): string[] => [
   "Print",
   ...c.related.map(printChainLabel),
@@ -45,14 +22,10 @@ const menuLabels = (c: PrintChain): string[] => [
 ];
 
 describe("a related document with no ADDRESS builds no entry", () => {
-  /* This is the crux. Each of these rows KNOWS a related document exists — it
-     carries its number — and cannot fetch it. The menu must be silent, not
-     hopeful. */
 
   test("a Sales Order whose delivery orders arrive as numbers only offers no DO print", () => {
     const chain = salesOrderPrintChain({
       doc_no: "HC-SO-2608-001",
-      // The shape an older Worker sends: do_nos exists, do_refs does not.
       do_refs: null,
     });
     expect(menuLabels(chain)).toEqual(["Print"]);
@@ -70,9 +43,6 @@ describe("a related document with no ADDRESS builds no entry", () => {
   });
 
   test("the PO list's PRE-2026-07-31 bare-string GRN chip builds no entry", () => {
-    /* `suppliers-queries.ts` documents why both wire shapes reach a live page:
-       the SPA and the Worker deploy independently. A bare string is a number
-       with no address. */
     const chain = purchaseOrderPrintChain({
       id: "po-uuid",
       po_number: "HC-PO-2608-010",
@@ -121,7 +91,6 @@ describe("one-to-many is listed, never collapsed to the first", () => {
     }));
     const chain = salesOrderPrintChain({ doc_no: "HC-SO-2608-001", do_refs: many });
     expect(chain.related).toHaveLength(PRINT_CHAIN_MAX);
-    // The COUNT is the point: a cap the reader cannot see is a truncation.
     expect(chain.hidden).toEqual([{ doc: "do", count: 3 }]);
     expect(menuLabels(chain).at(-1)).toBe("+3 more Delivery Order — Open to print");
   });
@@ -134,8 +103,6 @@ describe("one-to-many is listed, never collapsed to the first", () => {
   });
 
   test("an unaddressable ref does not consume one of the cap's slots", () => {
-    /* Filtering AFTER the cap would let five numbers with no id push five real
-       documents out of the menu — the row would print nothing and look full. */
     const refs = [
       ...Array.from({ length: PRINT_CHAIN_MAX }, (_, i) => ({ id: "", docNo: `GHOST-${i}` })),
       { id: "do-real", docNo: "HC-DO-2608-050" },
@@ -146,8 +113,6 @@ describe("one-to-many is listed, never collapsed to the first", () => {
 });
 
 describe("the ADDRESS a target carries is the one its own endpoint takes", () => {
-  /* A Sales Order is fetched by NUMBER and everything else by UUID. Swapping
-     them compiles, reads fine, and 404s at the printer. */
 
   test("a Sales Order target is keyed by its document number", () => {
     const chain = salesOrderPrintChain({ doc_no: "HC-SO-2608-001" });
@@ -170,11 +135,6 @@ describe("the ADDRESS a target carries is the one its own endpoint takes", () =>
 });
 
 describe("an MRP allocation is a guess, and a guess is not a document link", () => {
-  /* `OriginAssignment.source` distinguishes a STORED link from a live MRP
-     projection. Reading one as a binding is the 2026-07-29 incident, so only
-     'linked' and 'delivered' become entries — and a row from a backend that
-     does not send `source` at all becomes none, which is the stricter way to be
-     wrong. */
 
   test("an mrp-sourced assigned SO builds no entry", () => {
     const chain = purchaseOrderPrintChain({
@@ -221,9 +181,6 @@ describe("an MRP allocation is a guess, and a guess is not a document link", () 
 });
 
 describe("the words are TRANSFER_DOC's, not a thirteenth spelling", () => {
-  /* The repo has already paid for hand-written document names — five spellings
-     of one lineage column header (transfer-vocabulary.ts). These assertions are
-     on the FULL names, so an abbreviation in a label fails here. */
   test.each([
     ["so", "Print Sales Order X-1"],
     ["do", "Print Delivery Order X-1"],
@@ -252,9 +209,6 @@ describe("every list's chain, from the fields its rows actually carry", () => {
     ]);
   });
 
-  /* Its Sales Order and nothing downstream: the DO list payload carries its
-     invoices and returns as NUMBERS with no id, and that gap is recorded rather
-     than papered over — see the comment on DoChainRow and §8b. */
   test("Delivery Order: its Sales Order, and no downstream entry it cannot fetch", () => {
     const chain = deliveryOrderPrintChain({
       id: "do-1", do_number: "HC-DO-2608-003", so_doc_no: "HC-SO-2608-001",
@@ -334,7 +288,6 @@ describe("every list's chain, from the fields its rows actually carry", () => {
   });
 
   test("a row with nothing around it offers exactly one entry, and it is 'Print'", () => {
-    // The stray-separator case: an empty chain must not produce an empty group.
     expect(menuLabels(purchaseReturnPrintChain({ id: "pr-1", return_number: "HC-PR-2608-001" })))
       .toEqual(["Print"]);
   });

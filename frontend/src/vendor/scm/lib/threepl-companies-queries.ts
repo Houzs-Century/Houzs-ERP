@@ -1,8 +1,3 @@
-// 3PL carrier COMPANY master hooks (WS4a) — the owner-maintained list of 3PL
-// vendors. A 3PL is a company that owns several lorries; a solo operator is a
-// one-lorry company. Backed by scm.threepl_companies (mig 0210) via
-// /api/scm/threepl-companies. Lorries attach to a company through
-// scm.lorries.threepl_company_id (set from the lorry drawer).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -13,24 +8,19 @@ export type ThreePLSupplierLink = { id: string; code: string; name: string };
 
 export type ThreePLCompanyRow = {
   id: string;
-  /** Minted 3PL-### (mig 0242). Null only on a row that predates the backfill
-   *  AND was never re-saved — seeing one is a bug, not an empty field. */
   code: string | null;
   name: string;
-  /** SSM registration number. Unique per tenant when present (mig 0237). */
   registrationNo: string | null;
   contactName: string | null;
   contactPhone: string | null;
   officePhone: string | null;
   email: string | null;
   address: string | null;
-  /** Picked off my_localities; a TRANSFER to this 3PL snapshots them (mig 20261117T2000). */
   postcode: string | null;
   city: string | null;
   state: string | null;
   isActive: boolean;
   notes: string | null;
-  /** Null when the carrier is not linked to a supplier yet. */
   supplier: ThreePLSupplierLink | null;
   lorryCount: number;
   driverCount: number;
@@ -52,8 +42,6 @@ export type NewThreePLCompany = {
   state?: string | null;
   notes?: string | null;
   isActive?: boolean;
-  /** Link to a supplier of this company; null unlinks. The server refuses one
-   *  another carrier already holds (409 supplier_linked_elsewhere). */
   supplierId?: string | null;
 };
 

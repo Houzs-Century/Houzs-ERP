@@ -1,11 +1,3 @@
-/* DEV-70 (syasya 2026-10-12) — "Edit SO line price after DO" in the desktop
- * editor. HC-SO-013490's shape: DELIVERED, product lines on the DO at RM 0.
- * With `scm.so.edit_price_after_do` the frozen line's $ button opens the
- * price dialog (no Override needed) and posts to /price-after-do. An invoice
- * on the DO no longer hides it (the invoice follows); a Delivery Return does.
- *
- * Harness copied from SalesOrderDetail.afterDo.test.tsx.
- */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -15,7 +7,6 @@ const { detail, perms } = vi.hoisted(() => ({ detail: vi.fn(), perms: { afterDo:
 
 vi.mock("../../vendor/scm/lib/sales-order-queries", async (orig) => ({
   ...(await orig<typeof import("../../vendor/scm/lib/sales-order-queries")>()),
-  /* The server kept the override reason: the page unlocks (fix/failed-save-looks-ok). */
   useOverrideSoLock: () => ({ mutate: (_v: unknown, o?: { onSuccess?: () => void }) => o?.onSuccess?.(), isPending: false }),
   useMfgSalesOrderDetail: detail,
   useSalesOrderAuditLog: () => ({ data: [], isLoading: false, isError: false }),
@@ -81,7 +72,7 @@ beforeEach(() => {
   perms.afterDo = false;
   perms.price = true;
   calls = [];
-  sessionStorage.setItem(AUTH_TOKEN_KEY, "test-token"); // authedFetch refuses to send without one
+  sessionStorage.setItem(AUTH_TOKEN_KEY, "test-token");
   vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
     calls.push({ url: String(url), method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : {} });
     if ((init?.method ?? "GET") === "GET") {

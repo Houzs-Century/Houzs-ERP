@@ -3,20 +3,6 @@ import { PromptProvider } from "../vendor/scm/components/PromptDialog";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-/* MobileAnnouncements — the phone's publisher surface.
- *
- * Three rules pinned here, one per defect the phone had:
- *
- *  1. A notice posted from a phone must be able to EXPIRE. Desktop sends
- *     `expiresAt`; mobile sent nothing and had no expiry control at all, so a
- *     phone-posted notice ran forever.
- *  2. A publisher must be able to RETRACT from the phone. Desktop has
- *     PATCH { isActive } and DELETE; mobile had neither, and its list read the
- *     READER feed (active + unexpired only), so a manager could not even SEE a
- *     notice they had hidden.
- *  3. "Reminder sent" must mean the server said so. Mobile fired
- *     `api.post(url).catch(() => {})` and flipped the label unconditionally —
- *     the button reported success on a 403. */
 
 const { apiGet, apiPost, apiPatch, apiDel, authUser, confirmAnswer, notified } = vi.hoisted(() => ({
   apiGet: vi.fn(),
@@ -78,7 +64,6 @@ vi.mock("../lib/announcementAttachmentUpload", () => ({
 
 import { MobileAnnouncements } from "./MobileAnnouncements";
 
-/** A human notice row, shaped like the API's. */
 type Row = Record<string, unknown> & { id: string; title: string; isActive: boolean };
 
 function notice(over: Partial<Record<string, unknown>> = {}): Row {
@@ -180,8 +165,6 @@ async function openDetail(rows: Row[]) {
 describe("MobileAnnouncements — a phone-posted notice can expire", () => {
   it("offers an expiry control on the composer", async () => {
     await openCompose();
-    // Both halves of the shared DateTimeField: an expiry the operator can set
-    // to a day AND a time, not a bare date the backend would read as midnight.
     expect(screen.getByLabelText(/Hide automatically after date/i)).toBeTruthy();
     expect(screen.getByLabelText(/Hide automatically after time/i)).toBeTruthy();
   });
@@ -189,8 +172,6 @@ describe("MobileAnnouncements — a phone-posted notice can expire", () => {
   it("sends expiresAt as an ISO string when one is picked", async () => {
     await openCompose();
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Stock take" } });
-    // DateField's visible box is a DD/MM/YYYY text input (owner-locked format);
-    // the time half is a native <input type="time">.
     fireEvent.change(screen.getByLabelText(/Hide automatically after date/i), {
       target: { value: "2026/09/01" },
     });
@@ -217,15 +198,12 @@ describe("MobileAnnouncements — numbering on the phone (owner 2026-09-09)", ()
   it("the type follows the category until picked by hand; the number is previewed; a file-demanding type holds Submit", async () => {
     await openCompose();
     const type = screen.getByLabelText("Document type") as HTMLSelectElement;
-    // General (Notice) is the default category → NTC, and the number is previewed.
     await waitFor(() => expect(type.value).toBe("NTC"));
     await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-NTC-2609-0001"));
     fireEvent.change(screen.getByLabelText("Category"), { target: { value: "SOP" } });
     await waitFor(() => expect(type.value).toBe("SOP"));
-    // SOP demands a file: the hint shows and Submit is held.
     expect(screen.getByTestId("attachment-required-hint")).toBeTruthy();
     expect((screen.getByText(/Submit for approval/) as HTMLButtonElement).disabled).toBe(true);
-    // Picked by hand: the category no longer moves it, and the hold lifts.
     fireEvent.change(type, { target: { value: "MEMO" } });
     fireEvent.change(screen.getByLabelText("Category"), { target: { value: "WARNING" } });
     expect(type.value).toBe("MEMO");
@@ -331,7 +309,6 @@ describe("MobileAnnouncements — Remind tells the truth", () => {
     });
 
     await waitFor(() => expect(notified.some((n) => /403|author/i.test(String(n.body)))).toBe(true));
-    // The label must NOT have flipped to a success claim.
     expect(screen.queryByText("Reminder sent")).toBeNull();
     expect(screen.getByText(/Remind 2 who haven't read/)).toBeTruthy();
   });

@@ -20,8 +20,6 @@ import { humanApiError } from "../../vendor/scm/lib/authed-fetch";
 import { useChangeAmendmentLane } from "../../vendor/scm/lib/so-amendment-queries";
 import { soAmendmentApprover, AMENDMENT_APPROVER_LABEL } from "../../vendor/scm/lib/amendment-approver";
 
-/* The desks an admin may move an open row TO — one per approver; these are the
-   only values the server's PATCH /lane accepts. */
 export type AmendmentLaneKey = "LINES" | "DELIVERY" | "PRICE";
 /* Lanes a row can currently BE on. LINE_ADDREMOVE (owner 2026-11-16) is a valid
    "from" an admin may move out of, but not a separate manual target — it shares

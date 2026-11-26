@@ -1,10 +1,3 @@
-// A sundry receipt and an other debtor as pages (the owner's Claude Design,
-// batch 5 step 2): the receipt's lines, journal and steps (Copy as new, Edit —
-// the form in place of the page — and Void asked inline); the debtor's party
-// data, bills and receipts each opening its own page, Edit debtor and
-// Deactivate. The writes are the same hooks as the Receipts and Debtor
-// maintenance pages — the server half is backend/tests/receipts.test.ts and
-// otherDebtors.test.ts.
 
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -195,7 +188,6 @@ describe('an other debtor, as a page', () => {
     expect(updateDebtor.mock.calls[1]![0]).toMatchObject({ id: 'd1', name: 'AHMAD BIN ALI', address1: '12 Jalan Satu', businessRegNo: '202001012345' });
   });
 
-  /* Batch 5 step 6: the page raises the debtor's documents in place. */
   test('New bill and New receipt open their forms in place, on this debtor', () => {
     const view = openDebtor();
     fireEvent.click(within(screen.getByRole('region', { name: 'Bills' })).getByRole('button', { name: /New bill/ }));
@@ -209,6 +201,6 @@ describe('an other debtor, as a page', () => {
     expect((screen.getByLabelText('Debtor') as HTMLSelectElement).value).toBe('d1');
     expect(screen.getByText('What AHMAD BIN ALI still owes')).toBeTruthy();
     expect(screen.getByLabelText('Collect HC-ODB-2609-002 in full')).toBeTruthy();
-    expect(screen.queryByLabelText('Collect HC-ODB-2609-001 in full')).toBeNull(); // paid in full
+    expect(screen.queryByLabelText('Collect HC-ODB-2609-001 in full')).toBeNull();
   });
 });

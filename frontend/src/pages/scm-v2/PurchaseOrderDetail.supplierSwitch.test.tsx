@@ -27,7 +27,6 @@ const h = vi.hoisted(() => ({
     }
     return this.supplierDetails.get(id);
   },
-  /* One object for every render: a fresh items array re-fires the page's edit seed forever. */
   detail: {
     data: {
       purchaseOrder: {

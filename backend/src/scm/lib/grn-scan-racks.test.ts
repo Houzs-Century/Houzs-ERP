@@ -1,6 +1,3 @@
-// Sim, 2026-10-20: the warehouse handwrites the rack beside each delivery-order
-// row ("R11-2"); the scanned draft should carry it instead of being picked line
-// by line. Racks as on production KL / SRW WAREHOUSE ("Rack L1.1" .. "Rack R17.2").
 import { describe, expect, test } from 'vitest';
 import { normalizeGrnExtract } from './grn-scan-extract';
 import { matchGrnScanToPoLines, type OpenPoLine, type ScannedGrnLine } from './grn-scan-match';
@@ -44,9 +41,6 @@ describe('the scanner keeps the handwritten rack per row', () => {
   });
 });
 
-// DO-2610-074 (Hookka, 2026-10-19) as handwritten: R7-2 TRION, R6-1 JAGER (K),
-// L8-1 JAGER (Q) after R7-1 was crossed out, one bracket "L-19-2" over the three
-// 5530 sofa rows, nothing on the 5540-1A(RHF) row.
 describe('a matched row hands its rack to the PO line (DO-2610-074)', () => {
   const line = (n: string, po: string, itemCode: string): OpenPoLine => ({
     poItemId: n, poId: po, poNumber: po, supplierId: 'hookka', itemCode, materialName: null, supplierSku: null, remaining: 1, locationCode: 'KL WAREHOUSE',
@@ -79,7 +73,6 @@ describe('a matched row hands its rack to the PO line (DO-2610-074)', () => {
     const res = matchGrnScanToPoLines(null, [row('JAGER-(K)', 'HC-PO-2610-177', 'R6-1'), row('JAGER-(K)', 'HC-PO-2610-177', 'R9-1')], two, [], 'hookka');
     expect(res.picks).toEqual([{ poItemId: 'jagerk', qty: 2 }]);
     expect(res.racks).toEqual({});
-    // ...but each rack keeps the qty its own row put there.
     expect(res.rackQty).toEqual({ jagerk: { 'R6-1': 1, 'R9-1': 1 } });
   });
 
@@ -104,7 +97,6 @@ describe('scanRackNote', () => {
   });
 });
 
-// A just-enough supabase fake: select / in / eq filter rows, update records the patch.
 type Row = Record<string, unknown>;
 function fakeSvc(tables: Record<string, Row[]>) {
   const updates: Array<{ table: string; id: unknown; patch: Row }> = [];
@@ -166,7 +158,6 @@ describe('applyScanRacks', () => {
       { company_id: 1, grn_item_id: 'i1', rack_id: 'kl-lh61', qty: 2, created_by: null },
       { company_id: 1, grn_item_id: 'i1', rack_id: 'kl-lv61', qty: 1, created_by: null },
     ] }]);
-    // Several racks: the line's single rack stays empty, as the GRN page leaves it.
     expect(updates).toEqual([]);
     expect(res).toMatchObject({ written: 1, filled: 1, failed: false });
   });
@@ -184,8 +175,6 @@ describe('applyScanRacks', () => {
   });
 });
 
-// 2990 DO-2610-077 (2026-10-20): "L16.2" handwritten with a 6 like a b came
-// back "L1b-2" and both sofa lines were left blank.
 describe('handwritten digits read as look-alike letters', () => {
   test('after the L / R a look-alike letter is the digit', () => {
     expect(rackKey('L1b-2')).toBe('L16.2');

@@ -28,8 +28,6 @@ type DirectoryEntry = {
   department: string;
 };
 
-// Same roster and reporting line as the org chart and announcements, so the
-// picker never disagrees with them about who reports to whom.
 app.get("/directory", async (c) => {
   const user = c.get("user");
   if (!hasPermission(user.permissions_set, "mail_center.read")) {
@@ -110,7 +108,6 @@ app.get("/directory", async (c) => {
         });
       }
     }
-    // My team: everyone under me, plus the people who share my manager.
     const teamIds = new Set(await subtreeUserIds(c.env, me));
     if (self.managerId != null) {
       for (const u of roster) if (u.managerId === self.managerId) teamIds.add(u.id);
@@ -205,8 +202,6 @@ app.get("/mail-host/pending", async (c) => {
       name: r.assigned_user_name ?? r.label ?? "",
       createdAt: r.created_at,
       userId: r.assigned_user_id,
-      // Only while the person still has no department: once someone sets one,
-      // the request is moot.
       requestedDepartment:
         r.requested_department_id != null && r.user_department_id == null
           ? { id: Number(r.requested_department_id), name: r.requested_department_name ?? "" }
