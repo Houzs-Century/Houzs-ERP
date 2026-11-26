@@ -6,8 +6,17 @@ import { useAuth } from "../auth/AuthContext";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { fmtDateTime } from "../vendor/shared/format";
 import { MediaLightbox, type MediaItem } from "../components/MediaLightbox";
+import { DateField } from "../vendor/scm/components/DateField";
 import { parseDefectCaption } from "../pages/projects/defectRemark";
-import { canPurchaseDefect, canReviewDefect, defectActionLabel } from "../pages/projects/defectReviewer";
+import {
+  canPurchaseDefect,
+  canReviewDefect,
+  defectActionLabel,
+  defectStage,
+  REVIEWER_DEFECT_ACTIONS,
+  PURCHASER_DEFECT_ACTIONS,
+  type DefectActionTone,
+} from "../pages/projects/defectReviewer";
 import "./mobile.css";
 
 /* ------------------------------------------------------------------ *
@@ -168,6 +177,30 @@ function DefectThumb({
   );
 }
 
+// Outline-button colour for a defect action tone — the mobile mirror of the
+// desktop defectListBtn (done = teal/green, escalate = clay-red, progress =
+// amber). The list shows idle buttons; the editor replaces them once picked.
+function toneBorderFg(tone: DefectActionTone): { border: string; fg: string } {
+  switch (tone) {
+    case "done":
+      return { border: "#bcdcd7", fg: "var(--hz-c-synced)" };
+    case "escalate":
+      return { border: "#e6bcbc", fg: "#b4362f" };
+    case "progress":
+      return { border: "#e6cfa0", fg: "#9a6b12" };
+  }
+}
+
+// Badge tint for a stored status, keyed on the shared defectStage: resolved
+// green, escalated clay-red, fresh / in-progress amber. Mirrors defectListBadge.
+function badgeTint(status: string | null): { bg: string; fg: string } {
+  const stage = defectStage(status);
+  if (stage === "resolved") return { bg: "var(--hz-c-synced-bg)", fg: "var(--hz-c-synced)" };
+  if (stage === "fresh" || (status ?? "").toLowerCase() === "in_progress")
+    return { bg: "var(--hz-c-warning-bg)", fg: "var(--hz-c-warning-text)" };
+  return { bg: "#f7e3e3", fg: "#b4362f" };
+}
+
 export function MobilePmsDefectList({
   onBack,
   onOpenProject,
@@ -184,7 +217,7 @@ export function MobilePmsDefectList({
   const [dateTo, setDateTo] = useState("");
   const [lightbox, setLightbox] = useState<number | null>(null);
   // One action editor open at a time, keyed by attachment id.
-  const [draft, setDraft] = useState<{ attId: number; status: "done" | "replace" } | null>(null);
+  const [draft, setDraft] = useState<{ attId: number; status: string } | null>(null);
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -302,23 +335,23 @@ export function MobilePmsDefectList({
         <div className="hdr-row" style={{ marginTop: 8, gap: 8, alignItems: "flex-end" }}>
           <label style={{ flex: 1, minWidth: 0, fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>
             From
-            <input
-              type="date"
-              className="fld-i"
+            <DateField
               value={dateFrom}
               max={dateTo || undefined}
-              onChange={(e) => setDateFrom(e.target.value)}
+              onChange={setDateFrom}
+              fullWidth
+              aria-label="From date"
               style={{ marginTop: 2 }}
             />
           </label>
           <label style={{ flex: 1, minWidth: 0, fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>
             To
-            <input
-              type="date"
-              className="fld-i"
+            <DateField
               value={dateTo}
               min={dateFrom || undefined}
-              onChange={(e) => setDateTo(e.target.value)}
+              onChange={setDateTo}
+              fullWidth
+              aria-label="To date"
               style={{ marginTop: 2 }}
             />
           </label>
@@ -382,14 +415,11 @@ export function MobilePmsDefectList({
                 const idx = rows.indexOf(r);
                 const { model, reason } = parseDefectCaption(r.caption);
                 const latest = r.latest_status;
-                const isFresh = latest !== "done" && latest !== "replace";
-                const isEscalated = latest === "replace";
-                const isDone = latest === "done";
+                const stage = defectStage(latest);
                 const canReview = canReviewDefect(user, r.state);
                 const canPurchase = canPurchaseDefect(user);
                 const editing = draft?.attId === r.attachment_id;
-                const statusBg = isDone ? "var(--hz-c-synced-bg)" : isEscalated ? "#f7e3e3" : "var(--hz-c-warning-bg)";
-                const statusFg = isDone ? "var(--hz-c-synced)" : isEscalated ? "#b4362f" : "var(--hz-c-warning-text)";
+                const tint = badgeTint(latest);
                 return (
                   <div key={r.attachment_id} style={{ display: "flex", gap: 10, padding: "11px 12px", borderTop: "1px solid #f4f5f1" }}>
                     <DefectThumb r2Key={r.r2_key} contentType={r.content_type} onOpen={() => setLightbox(idx)} />
@@ -401,15 +431,15 @@ export function MobilePmsDefectList({
                         </div>
                       )}
                       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 5 }}>
-                        <span className="rbadge" style={{ background: statusBg, color: statusFg, fontWeight: 700 }}>
-                          {isFresh ? "Baru" : defectActionLabel(latest)}
+                        <span className="rbadge" style={{ background: tint.bg, color: tint.fg, fontWeight: 700 }}>
+                          {stage === "fresh" ? "New" : defectActionLabel(latest)}
                         </span>
                         {r.latest_at && (
                           <span style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>
                             {r.latest_user_name || "—"} · {fmtDateTime(r.latest_at)}
                           </span>
                         )}
-                        {r.uploader_name && isFresh && (
+                        {r.uploader_name && stage === "fresh" && (
                           <span style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>Upload: {r.uploader_name}</span>
                         )}
                       </div>
@@ -419,17 +449,26 @@ export function MobilePmsDefectList({
                         </div>
                       )}
 
-                      {/* Action buttons — same gate + route as the project detail
-                          card. Fresh → reviewer triages; escalated → purchaser closes. */}
-                      {isFresh && canReview && !editing && (
-                        <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
-                          <button className="tinybtn" style={{ borderColor: "#bcdcd7", color: "var(--hz-c-synced)", fontWeight: 700 }} onClick={() => { setDraft({ attId: r.attachment_id, status: "done" }); setRemark(""); }}>Done</button>
-                          <button className="tinybtn" style={{ borderColor: "#e6bcbc", color: "#b4362f", fontWeight: 700 }} onClick={() => { setDraft({ attId: r.attachment_id, status: "replace" }); setRemark(""); }}>Exchange</button>
-                        </div>
-                      )}
-                      {isEscalated && canPurchase && !editing && (
-                        <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
-                          <button className="tinybtn" style={{ borderColor: "#bcdcd7", color: "var(--hz-c-synced)", fontWeight: 700 }} onClick={() => { setDraft({ attId: r.attachment_id, status: "done" }); setRemark(""); }}>Done</button>
+                      {/* Action buttons — same gate, labels and route as the
+                          project detail card and the desktop Defect List. Fresh →
+                          reviewer (Done Clean / Exchange / Service); escalated →
+                          purchaser (In Progress / Done). Each opens the remark
+                          editor before it saves. */}
+                      {((stage === "fresh" && canReview) || (stage === "purchaser" && canPurchase)) && !editing && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
+                          {(stage === "fresh" ? REVIEWER_DEFECT_ACTIONS : PURCHASER_DEFECT_ACTIONS).map((a) => {
+                            const c = toneBorderFg(a.tone);
+                            return (
+                              <button
+                                key={a.status}
+                                className="tinybtn"
+                                style={{ borderColor: c.border, color: c.fg, fontWeight: 700 }}
+                                onClick={() => { setDraft({ attId: r.attachment_id, status: a.status }); setRemark(""); }}
+                              >
+                                {a.label}
+                              </button>
+                            );
+                          })}
                         </div>
                       )}
                       {editing && (
@@ -445,7 +484,7 @@ export function MobilePmsDefectList({
                           />
                           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
                             <span style={{ marginRight: "auto", fontSize: 10.5, fontWeight: 700, color: "var(--hz-c-ink-soft)" }}>
-                              {draft?.status === "done" ? "Mark Done" : "Mark Exchange"}
+                              Mark {defectActionLabel(draft.status)}
                             </span>
                             <button className="tinybtn" disabled={saving} onClick={() => { setDraft(null); setRemark(""); }}>Cancel</button>
                             <button className="tinybtn" disabled={saving} style={{ background: "#11140f", borderColor: "#11140f", color: "#fff" }} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
