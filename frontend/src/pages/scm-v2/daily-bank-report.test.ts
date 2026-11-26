@@ -7,7 +7,7 @@
    what names no bank, only when there is some; the day's label. */
 import { describe, expect, test, vi } from 'vitest';
 import type { DailyBankBoard } from './accounting-phase1-queries';
-import { DB_COLORS, boardDayLabel, boardSourceLine, dailyBankSections, drawDailyBankCanvas, isDetailRow } from './daily-bank-report';
+import { DB_COLORS, TOTAL_BANK_LABEL, boardDayLabel, boardSourceLine, dailyBankSections, drawDailyBankCanvas, isDetailRow } from './daily-bank-report';
 
 const block = (over: Partial<DailyBankBoard['blocks'][number]>): DailyBankBoard['blocks'][number] => ({
   accountCode: '310-0010', accountName: 'CASH AT BANK - MAYBANK', start: null,
@@ -171,5 +171,22 @@ describe('the exported picture', () => {
     expect(words).not.toContain('PAY TO / FROM');
     expect(lines(calls)).toEqual([]);
     expect(calls.filter((c) => c.op === 'strokeRect')).toHaveLength(1);
+  });
+
+  /* Owner 2026-11-26 (total bank balance 不见了): the page's all-banks closing was never in the picture. */
+  test('under the last bank, a dark bar with the total bank balance of all the banks, inside the picture', () => {
+    for (const [sen, shown] of [[1_600, '16.00'], [-1_600, '(16.00)']] as const) {
+      const calls = draw(board({ book: 'cashbook', totalClosingSen: sen, blocks: [paidBank('UNICOM', 'Bill'), quietBank] }));
+      const label = texts(calls).find((c) => c.text === TOTAL_BANK_LABEL)!;
+      const total = texts(calls).find((c) => c.text === shown)!;
+      expect(total.args[1]).toBe(label.args[1]);
+      expect(label.args[1]).toBeGreaterThan(texts(calls).find((c) => c.text === 'Bank Balance  10.00')!.args[1]!);
+      const bars = calls.filter((c) => c.op === 'fillRect' && c.fill === DB_COLORS.bar);
+      expect(bars).toHaveLength(2);
+      expect(label.args[1]!).toBeGreaterThan(bars[1]!.args[1]!);
+      expect(label.args[1]!).toBeLessThan(bars[1]!.args[1]! + bars[1]!.args[3]!);
+      const [background] = calls;
+      expect(texts(calls).at(-1)!.args[1]!).toBeLessThan(background!.args[3]!);
+    }
   });
 });
