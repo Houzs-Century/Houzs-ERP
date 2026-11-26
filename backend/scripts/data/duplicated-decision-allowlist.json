@@ -547,11 +547,6 @@
     },
     {
       "check": "D1",
-      "key": "COLORCODE,FABRICCODE,FABRICCOLOR|frontend/src/vendor/scm/lib/sales-order-pdf.ts frontend/src/vendor/scm/lib/supplier-doc-data.ts",
-      "why": "A KEY-ALIAS list — the several spellings one attribute arrives under from AutoCount, forms and OCR. Adding a spelling in one reader and not another is a real risk, but the sets are readers of the same data, not two answers to one question. 2 homes: FABRIC_VARIANT_KEYS."
-    },
-    {
-      "check": "D1",
       "key": "COMPLETED_AT,STATUS,UPDATED_AT|backend/src/scm/routes/purchase-consignment-returns.ts backend/src/scm/routes/purchase-returns.ts",
       "why": "A POSTGREST WRITE PAYLOAD — the COLUMN NAMES two sibling routes happen to update, not a rule anybody decided. 2 homes: updates. Two routes touching the same columns is the schema agreeing with itself."
     },

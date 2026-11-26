@@ -14,7 +14,7 @@
 // drop.
 // ----------------------------------------------------------------------------
 
-import { sameState } from './localities-queries';
+import { sameState } from './state-key';
 
 export type OrderAddressFields = {
   ship_to_address?: string | null;

@@ -1042,7 +1042,9 @@
       "@typescript-eslint/no-floating-promises": 2
     },
     "src/vendor/scm/lib/pdf-common.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1,
+      "@typescript-eslint/no-unnecessary-condition": 1
+    },
+    "src/vendor/scm/lib/pdf-core.ts": {
       "no-restricted-syntax": 1
     },
     "src/vendor/scm/lib/po-amendment-queries.ts": {
@@ -1070,12 +1072,12 @@
       "@typescript-eslint/no-explicit-any": 6,
       "@typescript-eslint/no-floating-promises": 13
     },
-    "src/vendor/scm/lib/purchase-order-pdf-sofa.test.ts": {
-      "no-restricted-syntax": 2
-    },
-    "src/vendor/scm/lib/purchase-order-pdf.ts": {
+    "src/vendor/scm/lib/purchase-order-pdf-render.ts": {
       "@typescript-eslint/no-unnecessary-condition": 6,
       "no-restricted-syntax": 1
+    },
+    "src/vendor/scm/lib/purchase-order-pdf-sofa.test.ts": {
+      "no-restricted-syntax": 2
     },
     "src/vendor/scm/lib/purchase-return-queries.ts": {
       "@typescript-eslint/no-explicit-any": 4,
@@ -1088,7 +1090,7 @@
       "@typescript-eslint/no-explicit-any": 5,
       "@typescript-eslint/no-floating-promises": 39
     },
-    "src/vendor/scm/lib/sales-order-pdf.ts": {
+    "src/vendor/scm/lib/sales-order-pdf-render.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2,
       "no-restricted-syntax": 1
     },
@@ -1130,7 +1132,7 @@
     "src/vendor/scm/lib/stock-queries.ts": {
       "@typescript-eslint/no-floating-promises": 21
     },
-    "src/vendor/scm/lib/supplier-doc-data.ts": {
+    "src/vendor/scm/lib/supplier-doc-data-core.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
     "src/vendor/scm/lib/supplier-sku-helpers.ts": {

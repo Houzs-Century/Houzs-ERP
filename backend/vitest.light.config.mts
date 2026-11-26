@@ -5,6 +5,7 @@ import { classifyTests } from "./scripts/lib/classify-tests.mjs";
 // The ratcheted areas, from the ONE list scripts/coverage-ratchet.mjs also
 // reads, so what vitest instruments and what the gate audits cannot drift.
 import { includeGlobsFor } from "../scripts/coverage-areas.mjs";
+import { PDF_SHARED_ALIASES } from "./scripts/lib/pdf-shared-aliases.mjs";
 
 // The backend's pure-logic suite, on a plain node runner.
 //
@@ -30,7 +31,13 @@ export default defineConfig(async () => {
     // Vitest does not read tsconfig "paths"; the alias has to be repeated here
     // for the same reason vitest.config.mts repeats it.
     resolve: {
-      alias: { "@shared": path.resolve(__dirname, "../shared") },
+      alias: [
+        // The AI Connector's get_pdf imports the frontend's document layout
+        // code (src/lib/shared-pdf.ts); its bare @2990s/shared names, same map
+        // as wrangler.toml [alias] and tsconfig.json "paths". Longest first.
+        ...PDF_SHARED_ALIASES,
+        { find: "@shared", replacement: path.resolve(__dirname, "../shared") },
+      ],
     },
     test: {
       globals: true,

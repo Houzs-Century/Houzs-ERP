@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   appendPhotoMarker,
-  blobToSquarePdfImage,
   buildPhotoGroups,
   collectPhotoImages,
   drawItemPhotosBlock,
@@ -30,6 +29,7 @@ import {
   type PdfPhotoImage,
   type PhotoGroup,
 } from './pdf-item-photos';
+import { blobToSquarePdfImage } from './pdf-item-photos-canvas';
 
 describe('photoKeysOf', () => {
   it('keeps only non-empty strings and tolerates junk', () => {

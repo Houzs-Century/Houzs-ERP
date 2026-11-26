@@ -13,7 +13,7 @@
 //   RECEIVED           → "Received"            (every line fully received)
 //   CANCELLED          → "Cancelled"
 
-import type { PoStatus } from './suppliers-queries';
+export type PoStatus = 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED';
 
 export const PO_STATUS_LABEL: Record<PoStatus, string> = {
   DRAFT: 'Draft',

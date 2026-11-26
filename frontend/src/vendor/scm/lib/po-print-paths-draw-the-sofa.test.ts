@@ -22,7 +22,10 @@ import { dirname, resolve } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (p: string) => readFileSync(resolve(here, p), 'utf8');
 
-const GEN = read('./purchase-order-pdf.ts');
+/* The layout lives in purchase-order-pdf-render.ts (shared with the Worker's AI
+   Connector get_pdf); the browser entry hands it the artwork loader. */
+const GEN = read('./purchase-order-pdf-render.ts');
+const BROWSER = read('./purchase-order-pdf.ts');
 
 /** Every file that raises a Purchase Order PDF. */
 const CALLERS = [
@@ -34,14 +37,14 @@ const CALLERS = [
 
 describe('one sheet, whichever button raised it', () => {
   test('the GENERATOR loads the artwork itself', () => {
-    expect(GEN).toContain('loadSofaCompartmentArtForPrint');
+    expect(BROWSER).toContain('sofaArt: (codes) => loadSofaCompartmentArtForPrint(codes),');
     /* The lookup ALWAYS runs; a supplied map only overrides per code. "Supplied
        wins outright" let a partial map (the V2 detail page passed only codes
        with a stored imageKey) blank every other piece: HC-PO-2610-007 printed
        1A / Console / 2S as bare boxes (owner 2026-10-03). */
-    expect(GEN).toContain('...await loadSofaCompartmentArtForPrint(');
+    expect(GEN).toContain('...await sources.sofaArt(');
     expect(GEN).toContain('...opts?.sofaPhotos,');
-    expect(GEN).not.toContain('?? await loadSofaCompartmentArtForPrint(');
+    expect(GEN).not.toContain('?? await sources.sofaArt(');
     /* KEYED BY THE CODES THIS SHEET NEEDS, not by walking the stored config.
        The config carries no imageKey for the defaults — Products.tsx seeds
        those client-side — so a config-only lookup found nothing and drew

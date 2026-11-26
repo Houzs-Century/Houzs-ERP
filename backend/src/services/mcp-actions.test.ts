@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { actionOutcome, exportAlive, flowAnchorFromId, flowAnchorFromSearch, myRange, parseWhen, pdfKind, pickDateAmount, proposeEmail, proposeMeeting, shapeFlow, type MeetingBootstrap } from "./mcp-actions";
+import { actionOutcome, exportAlive, flowAnchorFromId, flowAnchorFromSearch, myRange, parseWhen, pdfDisposition, pdfKind, pickDateAmount, proposeEmail, proposeMeeting, shapeFlow, type MeetingBootstrap } from "./mcp-actions";
 import { admitMcpWrite, armAction, ARMED_TTL_MS } from "./mcp-inner";
 
 const NOW = Date.parse("2026-11-26T02:00:00Z"); // 10:00 Malaysia time
@@ -142,6 +142,18 @@ describe("get_pdf plan", () => {
     expect(pdfKind("project")).toMatchObject({ financeOnly: true });
     expect(pdfKind("customer")).toBeNull();
     expect(pdfKind("__proto__")).toBeNull();
+  });
+
+  it("draws Sales and Purchase Orders on the server; the other trading documents stay browser-only", () => {
+    expect(pdfKind("sales_order")?.server).toBe("so");
+    expect(pdfKind("purchase_order")?.server).toBe("po");
+    for (const t of ["delivery_order", "sales_invoice", "grn", "purchase_invoice", "credit_note", "delivery_return", "payment_voucher", "assr_case", "project"]) expect(pdfKind(t)?.server).toBeNull();
+  });
+
+  it("names the download in plain ASCII and in UTF-8, so a Chinese supplier name survives", () => {
+    expect(pdfDisposition("HC-PO-2611-001-佛山家具.pdf")).toBe(`attachment; filename="HC-PO-2611-001-____.pdf"; filename*=UTF-8''HC-PO-2611-001-${encodeURIComponent("佛山家具")}.pdf`);
+    expect(pdfDisposition("Tan's (copy).pdf")).toBe(`attachment; filename="Tan's (copy).pdf"; filename*=UTF-8''Tan%27s%20%28copy%29.pdf`);
+    expect(pdfDisposition('a"b\\c.pdf')).toBe(`attachment; filename="a_b_c.pdf"; filename*=UTF-8''${encodeURIComponent('a"b\\c.pdf')}`);
   });
 
   it("export links die at their expiry", () => {

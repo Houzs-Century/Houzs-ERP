@@ -392,7 +392,7 @@
       "reason": "Marker AutoCount writes into stored line remarks; used to strip book text from customer PDFs. Matches data, never shown."
     },
     {
-      "file": "src/vendor/scm/lib/pdf-common.ts",
+      "file": "src/vendor/scm/lib/pdf-core.ts",
       "text": "/[ -   　]/g",
       "reason": "Regex folding the ideographic space (U+3000) to a plain space before PDF printing. Not text."
     },

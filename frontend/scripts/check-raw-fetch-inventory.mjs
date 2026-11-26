@@ -254,13 +254,23 @@ export function exemptionProblems(srcRoot = SRC) {
     "hooks/useVersionCheck.ts",
   );
 
+  /* The font face URL is only ever a TIER_FACES entry: pdf-core asks the host
+     for exactly those two, and the browser host (pdf-common) hands that one URL
+     to fetchFaceBase64. Split this way so the Worker's AI Connector get_pdf can
+     supply its own reader for the same faces. */
+  const coreSource = readFileSync(join(srcRoot, "vendor/scm/lib/pdf-core.ts"), "utf8");
+  want(coreSource, "export type FontAssetUrl = `/fonts/${string}.ttf`;", "vendor/scm/lib/pdf-core.ts");
+  want(coreSource, "pdfHost().fontFace(TIER_FACES[tier].normal)", "vendor/scm/lib/pdf-core.ts");
+  want(coreSource, "pdfHost().fontFace(TIER_FACES[tier].bold)", "vendor/scm/lib/pdf-core.ts");
+  const hostCalls = (coreSource.match(/\.fontFace\(/g) ?? []).length;
+  if (hostCalls !== 2) {
+    problems.push(`vendor/scm/lib/pdf-core.ts: expected 2 .fontFace( calls, found ${hostCalls}`);
+  }
   const fontSource = readFileSync(join(srcRoot, "vendor/scm/lib/pdf-common.ts"), "utf8");
-  want(fontSource, "type FontAssetUrl = `/fonts/${string}.ttf`;", "vendor/scm/lib/pdf-common.ts");
-  want(fontSource, "fetchFaceBase64(TIER_FACES[tier].normal)", "vendor/scm/lib/pdf-common.ts");
-  want(fontSource, "fetchFaceBase64(TIER_FACES[tier].bold)", "vendor/scm/lib/pdf-common.ts");
+  want(fontSource, "fontFace: (url) => fetchFaceBase64(url as FontAssetUrl),", "vendor/scm/lib/pdf-common.ts");
   const faceCalls = (fontSource.match(/fetchFaceBase64\(/g) ?? []).length;
-  if (faceCalls !== 2) {
-    problems.push(`vendor/scm/lib/pdf-common.ts: expected 2 fetchFaceBase64( calls, found ${faceCalls}`);
+  if (faceCalls !== 1) {
+    problems.push(`vendor/scm/lib/pdf-common.ts: expected 1 fetchFaceBase64( call, found ${faceCalls}`);
   }
   return problems;
 }

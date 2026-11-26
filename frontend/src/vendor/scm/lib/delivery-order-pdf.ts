@@ -54,7 +54,6 @@ import { drawQrIntoPdf } from './pdf-qr';
    WinAnsi by rule (pdf-item-photos.ts header). */
 import {
   appendPhotoMarker,
-  blobToSquarePdfImage,
   buildPhotoGroups,
   collectPhotoImages,
   drawItemPhotosBlock,
@@ -63,6 +62,7 @@ import {
   photoKeysOf,
   type PdfPhotoImage,
 } from './pdf-item-photos';
+import { blobToSquarePdfImage } from './pdf-item-photos-canvas';
 import { fetchDoItemPhotoBlob } from './sales-order-queries';
 import { PDF_COMPRESS } from './pdf-options';
 import { shortRackLabels } from './rack-label';

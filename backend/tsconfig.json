@@ -18,7 +18,15 @@
     "jsxImportSource": "hono/jsx",
     "baseUrl": ".",
     "paths": {
-      "zod": ["./node_modules/zod"]
+      "zod": ["./node_modules/zod"],
+      "@2990s/shared/phone": ["../frontend/src/vendor/shared/phone.ts"],
+      "@2990s/shared/mfg-pricing": ["../frontend/src/vendor/shared/mfg-pricing.ts"],
+      "@2990s/shared/payment-methods": ["../frontend/src/vendor/scm/lib/payment-methods.ts"],
+      "@2990s/shared/so-variant-rule": ["../frontend/src/vendor/shared/so-variant-rule.ts"],
+      "@2990s/shared/so-line-display": ["../frontend/src/vendor/shared/so-line-display.ts"],
+      "@2990s/shared": ["../frontend/src/vendor/shared/index.ts"],
+      "jspdf": ["./node_modules/jspdf"],
+      "jspdf-autotable": ["./node_modules/jspdf-autotable"]
     }
   },
   "include": ["src/**/*.ts"]

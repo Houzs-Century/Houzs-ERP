@@ -153,6 +153,14 @@ jobs:
             backend:
               - 'backend/**'
               - '.github/workflows/deploy.yml'
+              # The Worker bundles the browser's document layout code for the AI
+              # Connector's get_pdf (backend/src/lib/shared-pdf.ts). Same list as
+              # backend/scripts/lib/pdf-shared-aliases.mjs PDF_SHARED_FRONTEND_PATHS.
+              - 'frontend/src/vendor/scm/lib/**'
+              - 'frontend/src/vendor/shared/**'
+              - 'frontend/src/lib/branding-text.ts'
+              - 'frontend/src/lib/customer-ref.ts'
+              - 'frontend/src/lib/thumb-key.ts'
             frontend:
               - 'frontend/**'
               - '.github/workflows/deploy.yml'

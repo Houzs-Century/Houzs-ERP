@@ -34,7 +34,9 @@ export type MaterialKind = 'mfg_product' | 'fabric' | 'raw';
 // Draft/Confirmed two-state model re-adds DRAFT to po_status (migration 0042
 // re-adds the enum value 0078 removed). A PO can be saved as DRAFT (no SO-quota
 // advance, invisible to MRP supply) and later confirmed -> SUBMITTED.
-export type PoStatus = 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED';
+/* Declared in po-status.ts (DOM-free, bundled by the Worker's get_pdf); re-exported here for existing importers. */
+export type { PoStatus } from './po-status';
+import type { PoStatus } from './po-status';
 
 export type StatementType = 'OPEN_ITEM' | 'BALANCE_FORWARD' | 'NO_STATEMENT';
 export type AgingBasis    = 'INVOICE_DATE' | 'DUE_DATE';

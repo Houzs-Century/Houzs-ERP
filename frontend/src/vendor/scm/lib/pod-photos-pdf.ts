@@ -12,7 +12,8 @@
 // fails because of one photo.
 
 import { fmtDateTime } from '@2990s/shared';
-import { blobToSquarePdfImage, type PdfPhotoImage } from './pdf-item-photos';
+import type { PdfPhotoImage } from './pdf-item-photos';
+import { blobToSquarePdfImage } from './pdf-item-photos-canvas';
 import { safeName } from './pdf-common';
 import { PDF_COMPRESS } from './pdf-options';
 
