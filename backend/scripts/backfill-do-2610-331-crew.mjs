@@ -74,7 +74,7 @@ async function main() {
   // 1. The delivery order, with every precondition deliveryOrderRows will test.
   const [d] = await sql`
     SELECT d.id::text, d.so_doc_no, d.company_id, d.status::text AS status,
-           d.is_dropship, d.local_total_sen,
+           d.is_dropship,
            (SELECT count(*)::int FROM scm.threepl_do_charges x WHERE x.do_id = d.id) AS threepl,
            (SELECT count(*)::int FROM scm.delivery_order_crew c WHERE c.do_id = d.id) AS crew_rows
       FROM scm.delivery_orders d WHERE d.id = ${DO_ID}`;
@@ -89,7 +89,7 @@ async function main() {
     await sql.end({ timeout: 5 });
     return;
   }
-  note(`\nDO ${EXPECT_SO} / ${DO_ID}: status=${d.status}, local_total=RM ${(Number(d.local_total_sen) / 100).toFixed(2)}, crew_rows=0  OK`);
+  note(`\nDO ${EXPECT_SO} / ${DO_ID}: status=${d.status}, dropship=${d.is_dropship}, 3pl=${d.threepl}, crew_rows=0  OK`);
 
   // 2. Resolve the crew + lorry from the master tables by id (snapshot columns
   //    come from here, so they match the masters exactly).
