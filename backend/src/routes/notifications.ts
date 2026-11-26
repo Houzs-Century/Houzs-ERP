@@ -33,6 +33,11 @@ export function unreadWindowStart(now: number, days: number = UNREAD_WINDOW_DAYS
   return new Date(now - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+/** Same shape as the created_at default: unread is a TEXT compare, and " " sorts below "T". */
+export function readMarkStamp(now: number): string {
+  return new Date(now).toISOString().slice(0, 19) + "Z";
+}
+
 function isStatementTimeout(err: unknown): boolean {
   const e = err as { code?: unknown; message?: unknown } | null;
   return e?.code === "57014" || /statement timeout/i.test(String(e?.message ?? ""));
