@@ -72,16 +72,7 @@ function fakeSb(tables: Record<string, Row[]>) {
         filters.push((r) => !set.has(String(r[c.includes('.') ? c.split('.').pop()! : c])));
         return builder;
       },
-      /* The lease is granted unconditionally — single-flight is not what these
-         tests are about, and a contended lock would make them flaky. Every test
-         still asserts `reason` is undefined, so a recompute that returned early
-         instead of walking cannot pass. */
       or: () => builder,
-      /* DELIBERATELY A NO-OP, and it is the point of this file. PostgREST cannot
-         ORDER BY a COALESCE of two columns, so the allocator's SQL order is only
-         there to keep paginateAll's windows coherent; the PRIORITY order is the
-         JS sort over the fully-materialised set. A fake that honoured .order()
-         would hide which of the two actually decides the winner. */
       order: () => builder,
       range: () => builder,
       limit: () => builder,
@@ -99,10 +90,6 @@ function fakeSb(tables: Record<string, Row[]>) {
 const WH = 'WH-MAIN';
 const CODE = 'MATTRESS-TEST-SKU';
 
-/* A mattress: no variants, not one of the bound groups (bedframe/sofa), so it
-   walks the plain pooled path and needs neither a PO link nor a dye lot to
-   become READY. Both orders carry a Processing Date, or the allocation gate
-   would refuse them both and every assertion below would pass vacuously. */
 const order = (docNo: string, dates: Row): Row => ({
   doc_no: docNo,
   status: 'CONFIRMED',
@@ -127,9 +114,6 @@ const line = (docNo: string): Row => ({
   allocated_batch_no: null,
 });
 
-/* EXACTLY ONE unit on the shelf against two orders of one unit each. Scarcity is
-   the whole experiment: with two units both orders go READY and the ranking is
-   unobservable. */
 const world = (a: Row, b: Row) => fakeSb({
   stock_allocation_recompute_lock: [{ lock_key: 'GLOBAL', locked_by: null, locked_until: null }],
   mfg_sales_orders: [a, b],
@@ -150,11 +134,6 @@ const statusOf = (sb: any, docNo: string) =>
 
 describe('stock allocation priority — the EFFECTIVE delivery date', () => {
   test('an order rescheduled EARLIER overtakes one whose original date was earlier', async () => {
-    /* TEST-SO-A is promised 2026-11-01 and never moved.
-       TEST-SO-B was sold for 2026-12-01 and the customer pulled it forward to
-       2026-10-01 — the board has shown 10-01 all along.
-       Old ranking: A (11-01) vs B (12-01, its original) → A took the unit.
-       Now: B is due first and takes it. */
     const sb = world(
       order('TEST-SO-A', { customer_delivery_date: '2026-11-01' }),
       order('TEST-SO-B', { customer_delivery_date: '2026-12-01', amended_delivery_date: '2026-10-01' }),
@@ -163,17 +142,12 @@ describe('stock allocation priority — the EFFECTIVE delivery date', () => {
     const res = await recomputeSoStockAllocation(sb);
 
     expect(res.ok).toBe(true);
-    // Non-vacuity: the recompute walked, rather than returning early on a lock.
     expect(res.reason).toBeUndefined();
     expect(statusOf(sb, 'TEST-SO-B')).toBe('READY');
     expect(statusOf(sb, 'TEST-SO-A')).toBe('PENDING');
   });
 
   test('an order rescheduled LATER falls behind one whose original date was later', async () => {
-    /* The mirror image, and the direction a one-sided fix drops. TEST-SO-A was
-       sold for 2026-11-01 and pushed back to 2027-01-01; TEST-SO-B is still due
-       2026-12-01. Old ranking gave the unit to A on a date nobody is waiting for
-       any more. */
     const sb = world(
       order('TEST-SO-A', { customer_delivery_date: '2026-11-01', amended_delivery_date: '2027-01-01' }),
       order('TEST-SO-B', { customer_delivery_date: '2026-12-01' }),
@@ -188,8 +162,6 @@ describe('stock allocation priority — the EFFECTIVE delivery date', () => {
   });
 
   test('CONTROL — with no amendment the earlier original still wins', async () => {
-    /* A fix that read the wrong column, or inverted the comparator, passes both
-       tests above and fails this one. */
     const sb = world(
       order('TEST-SO-A', { customer_delivery_date: '2026-11-01' }),
       order('TEST-SO-B', { customer_delivery_date: '2026-12-01' }),

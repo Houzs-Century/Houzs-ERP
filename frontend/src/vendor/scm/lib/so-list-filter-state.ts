@@ -1,14 +1,3 @@
-// The Sales Order list's second-level filters as state — the ONE logic layer
-// behind the phone "Filter" sheet (mobile/MobileSoFilterSheet.tsx) and the
-// desktop filter bar (pages/scm-v2/SoListFilterBar.tsx). Those two files differ
-// only in how they draw; everything that decides WHAT is filtered lives here or
-// in the shared model (../../shared/so-list-filter-model.ts, byte-identical to
-// the backend parser).
-//
-// URL is state (CLAUDE.md): the applied rows are repeated `f` params and the
-// first-level status is `status`, so a filtered view survives a refresh and can
-// be shared. A half-built row never reaches the URL or the API — the server
-// would refuse it, and an empty "Name contains" is not a filter.
 
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';

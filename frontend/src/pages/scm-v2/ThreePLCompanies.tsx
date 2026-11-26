@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// 3PL Companies — the master where the owner registers an outsourced carrier:
-// its company particulars (SSM, contact person, office line, address) AND its
-// fleet (lorry plates, driver contacts, helper ICs). A solo operator is a
-// one-lorry company.
-//
-// The fleet a carrier is given here lands in the SAME masters as our own —
-// scm.drivers / scm.helpers / scm.lorries — carrying threepl_company_id and
-// forced OUTSOURCE by the routes (backend/src/scm/lib/threepl-link.ts). So a
-// 3PL's lorry shows up in Fleet, Fleet Health and the assignment pickers exactly
-// like ours, marked Outsource, and Module C prices it per company.
-//
-// Route /scm/threepl-companies, nav "3PL Companies" under Transportation >
-// Maintenance. Backed by scm.threepl_companies (migs 0210 + 0237).
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type ReactNode, type CSSProperties, type Dispatch, type SetStateAction } from 'react';
 import { Button } from '@2990s/design-system';
@@ -64,8 +49,6 @@ const particularsOf = (row: ThreePLCompanyRow): Particulars => ({
   state: row.state ?? '',
 });
 
-/* The address fields every save sends — Postcode / City / State ride with the
-   free-text address so a TRANSFER to this carrier carries all three. */
 const addressOf = (f: Particulars) => {
   const trimmed = (v: string) => v.trim() || null;
   return { address: trimmed(f.address), postcode: trimmed(f.postcode), city: trimmed(f.city), state: trimmed(f.state) };
@@ -91,7 +74,6 @@ export const ThreePLCompanies = ({ embedded = false }: { embedded?: boolean } = 
   const [supplier, setSupplier] = useState<ThreePLSupplierLink | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const set = (k: keyof Particulars) => (v: string) => setForm((p) => ({ ...p, [k]: v }));
-  /* A carrier registered from its supplier takes the supplier's name, unless a name was typed first. */
   const pickSupplier = (s: ThreePLSupplierLink | null) => {
     setSupplier(s);
     if (s) setForm((p) => (p.name.trim() ? p : { ...p, name: s.name }));
@@ -241,8 +223,6 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
   const [form, setForm] = useState<Particulars>(() => particularsOf(row));
   const [supplier, setSupplier] = useState<ThreePLSupplierLink | null>(row.supplier);
   const set = (k: keyof Particulars) => (v: string) => setForm((p) => ({ ...p, [k]: v }));
-  /* Seeded from the row as it is NOW: a link refused last time, or changed since
-     on the 3PL invoices tab, must not ride along on the next save. */
   const startEdit = () => { setForm(particularsOf(row)); setSupplier(row.supplier); setEditing(true); };
 
   const save = () => {
@@ -257,7 +237,6 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
         registrationNo: trimmed(form.registrationNo), contactName: trimmed(form.contactName),
         contactPhone: trimmed(form.contactPhone), officePhone: trimmed(form.officePhone),
         email: trimmed(form.email), ...addressOf(form),
-        /* Only when it changed, so a phone edit is never refused over a link it did not touch. */
         ...(supplierId !== (row.supplier?.id ?? null) ? { supplierId } : {}),
       },
       { onSuccess: () => setEditing(false), onError: writeFailedAs('The company was not saved') },
@@ -275,10 +254,6 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
     del.mutate(row.id, { onError: writeFailedAs('The company was not deleted') });
   };
 
-  /* Editing reuses the SAME grid the register form above uses. The old inline
-     edit was a <tr> of eight cells under a nine-column header, so every field
-     sat one column left of its own label — Company name under "Code", email
-     under "Fleet", and the address input under "Active". */
   if (editing) {
     return (
       <div className={SHELL}>
@@ -336,9 +311,6 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
           {open ? <ChevronDown {...ICON} /> : <ChevronRight {...ICON} />}
         </button>
 
-        {/* The minted code (mig 0242). It was stored and returned but nowhere
-            on screen, which makes an auto-allocated identifier useless — you
-            cannot quote a code you cannot see. */}
         <div className="min-w-0 flex-[1_1_190px]">
           <div className="flex items-center gap-2">
             <span className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[11.5px] font-semibold text-ink-secondary">{row.code ?? '—'}</span>
@@ -379,7 +351,6 @@ const CompanyRow = ({ row, open, onToggleOpen }: { row: ThreePLCompanyRow; open:
 
 const SHELL = 'overflow-hidden rounded-xl border border-border bg-surface';
 
-/* One labelled value that shrinks instead of wrapping to six lines. */
 const Fact = ({ label, value, sub }: { label: string; value?: string | null; sub?: string | null }) => (
   <div className="min-w-0 flex-[1_1_150px]">
     <div className="text-[11.5px] font-semibold text-ink-muted">{label}</div>
@@ -388,7 +359,6 @@ const Fact = ({ label, value, sub }: { label: string; value?: string | null; sub
   </div>
 );
 
-/* The supplier the carrier bills as: code on one line, name below. */
 const SupplierFact = ({ supplier }: { supplier: ThreePLSupplierLink | null }) => (
   <div className="min-w-0 flex-[1_1_170px]">
     <div className="text-[11.5px] font-semibold text-ink-muted">Supplier</div>
@@ -403,9 +373,6 @@ const SupplierFact = ({ supplier }: { supplier: ThreePLSupplierLink | null }) =>
   </div>
 );
 
-/* Pick the carrier's supplier from this company's supplier master, by code or
-   name. The saved link stays an option when the list leaves it out (an inactive
-   supplier, or one only Finance sees), so opening the form never blanks it. */
 const SupplierPicker = ({ value, onChange }: {
   value: ThreePLSupplierLink | null;
   onChange: (supplier: ThreePLSupplierLink | null) => void;
@@ -417,8 +384,6 @@ const SupplierPicker = ({ value, onChange }: {
   }, [suppliers.data, value]);
   const options = useMemo(() => choices.map((s) => {
     const label = `${s.code} · ${s.name}`;
-    /* `search` keeps the match to code and name: the value is a uuid, and digits
-       typed for a code would hit it too. */
     return { value: s.id, label, search: label };
   }), [choices]);
   return (
@@ -439,8 +404,6 @@ const SupplierPicker = ({ value, onChange }: {
   );
 };
 
-/* The carrier's own fleet. Everything created here posts threeplCompanyId, so
-   the row lands OUTSOURCE — the routes refuse to let it be in-house. */
 const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyName: string }) => {
   const fleet = useThreePLFleet(companyId);
   const notify = useNotify();
@@ -450,9 +413,6 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
   const createHelper = useCreateHelper();
 
   const [plate, setPlate] = useState('');
-  /* The REAL scm.lorry_type enum, from the shared list the Fleet page uses.
-     Inventing options here is how this form shipped LORRY/VAN/TRUCK against an
-     enum that has neither LORRY nor TRUCK - every add but Van returned 400. */
   const [lorryType, setLorryType] = useState<LorryType>('LORRY_14FT');
   const [dims, setDims] = useState({ l: '', w: '', h: '' });
   const [drv, setDrv] = useState({ name: '', phone: '', ic: '' });
@@ -506,7 +466,6 @@ const CarrierFleet = ({ companyId, companyName }: { companyId: string; companyNa
           sub: [l.type ? (LORRY_TYPE_LABEL as Partial<Record<string, string>>)[l.type] ?? l.type : null, l.capacity_m3 != null ? `${l.capacity_m3} m3` : null,
             l.length_ft && l.width_ft && l.height_ft ? `${l.length_ft} x ${l.width_ft} x ${l.height_ft} ft` : null]
             .filter(Boolean).join(' · '),
-          /* Drawn on the same per-foot scale as the Fleet cards. */
           visual: <LorrySide box={l.length_ft && l.width_ft && l.height_ft ? { length: Number(l.length_ft), width: Number(l.width_ft), height: Number(l.height_ft) } : null} />,
         }))}
         loading={fleet.isLoading}

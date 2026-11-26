@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// ScanCheckModal — upload, check, then create, for any scanned document (owner
-// 2026-11-03, after Hookka's scan modal; 2026-11-04, Claude design). Goods
-// receipts (ScanGrnModal) and purchase invoices (ScanInvoiceModal) differ only
-// in their card and their calls.
-//   1. Upload: drop any number of files. The server splits each PDF into its
-//      documents and reads every one in the background.
-//   2. Check: each document is a card. Edit one, or select several and set their
-//      date together. Every edit is saved on the server, so the operator can
-//      close this, log out, and come back to the same list. A repeat of a
-//      document already made says so; it starts unticked and can still be
-//      created or deleted.
-//   3. Create: the ticked cards become DRAFT documents. Nothing is posted.
-// ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
@@ -65,7 +51,6 @@ type Props<R, D extends CheckDocBase<R>, P extends { documents: D[] }> = {
   withDate: (review: R, date: string) => R;
   onEdit?: (review: R) => void;
   renderCard: (card: CardProps<R, D> & { key: string }, data: P) => ReactNode;
-  // What the document receives or bills, counted for the toolbar.
   itemsOf: (review: R) => number;
   onClose: () => void;
 };
@@ -87,20 +72,16 @@ export function ScanCheckModal<R, D extends CheckDocBase<R>, P extends { documen
   const [results, setResults] = useState<CheckResult[]>([]);
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  /* What is waiting for this user — read on open, so a batch left yesterday comes
-     straight back; polled while any document is still being read. */
   const q = useQuery({
     queryKey,
     queryFn: api.fetchPending,
     staleTime: 0,
     refetchInterval: (query) => (query.state.data?.documents.some((d) => d.state === 'reading') ? 4000 : false),
   });
-  // As scanned: the server sends them oldest first, each PDF's documents in page order.
   const docs = useMemo(() => q.data?.documents ?? [], [q.data]);
   const data = q.data;
   const reviewOf = useCallback((id: string) => edits[id] ?? docs.find((d) => d.id === id)?.review ?? null, [edits, docs]);
 
-  // A newly read card starts ticked, unless it repeats a document already made.
   useEffect(() => {
     setTicked((cur) => {
       const next = { ...cur };
@@ -133,14 +114,12 @@ export function ScanCheckModal<R, D extends CheckDocBase<R>, P extends { documen
     }
   };
 
-  // Each edit shows at once and is saved on the server shortly after.
   const edit = (id: string, review: R) => {
     setEdits((cur) => ({ ...cur, [id]: review }));
     clearTimeout(timers.current[id]);
     timers.current[id] = setTimeout(() => { api.save(id, review).catch(writeFailedAs('That change was not saved')); }, 600);
     onEdit?.(review);
   };
-  // Saves still waiting go out before anything is created or the window shuts.
   const flush = async () => {
     const waiting = Object.entries(timers.current);
     timers.current = {};

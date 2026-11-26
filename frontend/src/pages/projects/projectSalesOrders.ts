@@ -20,7 +20,6 @@ export type ProjectSalesOrderRow = {
   amount_sen: number;
   paid_sen: number;
   balance_sen: number;
-  /** The order's service lines, inside amount_sen. */
   service_sen?: number;
   fair_match: string | null;
   linked_ac_docno: string | null;
@@ -29,7 +28,6 @@ export type ProjectSalesOrderRow = {
    *  this fair's — absent from an older server. Since 2026-10-20 also absent
    *  when this fair's evening report lists the order (the report proves it). */
   venue_differs?: string | null;
-  /** The order's own venue and brand — the pick of where to transfer it. */
   venue?: string | null;
   branding?: string | null;
   /** Another fair's evening report lists the order: the booth to move it to
@@ -43,19 +41,13 @@ export type ProjectSalesOrderTotals = {
   amount_sen: number;
   paid_sen: number;
   balance_sen: number;
-  /** The orders' service lines, inside amount_sen (absent from an older server). */
   service_sen?: number;
 };
 
 export type ProjectSalesOrdersResponse = {
   data: ProjectSalesOrderRow[];
   totals: ProjectSalesOrderTotals;
-  /** True when the caller sees their own + downline orders only, so the
-   *  totals are a partial view of the fair and the gap must not be read as
-   *  the fair's. */
   scoped: boolean;
-  /** The caller may transfer an order to another fair from here (Finance or
-   *  PMS) — false from an older server. */
   can_transfer?: boolean;
 };
 
@@ -89,21 +81,13 @@ export function normalizeProjectSalesOrders(raw: unknown): ProjectSalesOrdersRes
 export type ProjectSalesOrdersSummary = {
   count: number;
   draftCount: number;
-  /** Sum of the orders' totals, in RM. */
   openedRm: number;
-  /** openedRm split as the Financial Snapshot splits it: the goods, and the service lines. */
   salesRm: number;
   serviceRm: number;
   paidRm: number;
   balanceRm: number;
-  /** The project's lump-sum Total Sales, in RM; null when none was typed. */
   finalTotalRm: number | null;
-  /** finalTotal − opened, SIGNED, in RM. Null without a final total. Negative
-   *  means the orders already exceed the typed total (it was typed low, or
-   *  typed before the floor finished). */
   notOpenedRm: number | null;
-  /** notOpened as a percentage of the final total; null when there is no
-   *  final total or it is zero. */
   notOpenedPct: number | null;
 };
 

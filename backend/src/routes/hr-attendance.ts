@@ -37,9 +37,6 @@ export const hrAttendance = new Hono<{ Bindings: Env }>();
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
-/* An HR correction's up to 4 clock pairs (each "HH:MM" on the work date) into
- * MANUAL segments. A blank pair is skipped; a clock-out needs a clock-in; only
- * the last pair may be left open (no clock-out). */
 function segmentsFromPairs(date: string, pairs: ReadonlyArray<{ clockIn: unknown; clockOut: unknown }>): { ok: true; segments: Segment[] } | { ok: false; message: string } {
   const mark = (min: number): PunchMark => ({ at: instantOnWorkDate(date, min).toISOString(), source: "MANUAL", lat: null, lng: null, accuracyM: null, geo: null, siteId: null, distanceM: null, photoKey: null });
   const segs: Segment[] = [];
@@ -62,7 +59,6 @@ function canManage(c: Ctx): boolean {
   return hasPermission(u.permissions_set ?? u.permissions, "hr.employees.manage");
 }
 
-/* ── attendance ────────────────────────────────────────────────────────── */
 
 hrAttendance.get("/attendance", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -72,8 +68,6 @@ hrAttendance.get("/attendance", async (c) => {
   const db = getDb(c.env);
   const now = new Date();
   await closeForgottenAndSync(db, co.companyId, null, now);
-  // A pinned confirmer (hr-confirmer-scope) sees only their own employees; an
-  // unrestricted reader gets null and the queries stay company-wide.
   const scope = scopedEmployeeIds(c.get("user").id);
   const scopeIds = scope ? [...scope] : null;
   const [rows, employees, rulesFor, sites, shiftRes] = await Promise.all([
@@ -97,8 +91,6 @@ hrAttendance.get("/attendance", async (c) => {
     shiftRulesResolver(db, co.companyId, date, date),
   ]);
   const byEmployee = new Map(rows.map((r) => [r.employee_id, r]));
-  // Header shows the global shift as a reference; each row is judged by that
-  // employee's own group shift (and delivery-day override).
   const rules = rulesFor(date);
   const list = employees
     .filter((e) => e.status === "ACTIVE" || byEmployee.has(e.id))
@@ -130,7 +122,6 @@ hrAttendance.put("/attendance", async (c) => {
   const notes = typeof body.notes === "string" && body.notes.trim() ? body.notes.trim().slice(0, 500) : null;
   if (!Number.isInteger(employeeId) || employeeId <= 0) return c.json({ error: "validation_failed", message: "Pick the employee." }, 400);
   if (!status) return c.json({ error: "validation_failed", message: "Pick a status." }, 400);
-  // Up to 4 clock pairs (actual clocking); a single clockIn/clockOut is still accepted.
   const rawPairs = Array.isArray(body.pairs) && body.pairs.length ? (body.pairs as Array<{ clockIn: unknown; clockOut: unknown }>) : [{ clockIn: body.clockIn, clockOut: body.clockOut }];
   const built = segmentsFromPairs(date, rawPairs);
   if (!built.ok) return c.json({ error: "validation_failed", message: built.message }, 400);
@@ -156,13 +147,7 @@ hrAttendance.put("/attendance", async (c) => {
   ).at(0);
   const by = c.get("user").id;
   const now = new Date().toISOString();
-  /* HR's correction is the record: the day's segments (clock 1-4) and summary are
-     replaced with the typed MANUAL times. clock_in_at / clock_out_at stay the
-     first in and last out, so the OT / dock maths are unchanged. */
   const cols = segmentSummaryColumns(segments);
-  /* But don't collapse a phone-multi-punched day when HR only edits the status or
-     note: with no explicit pairs and the single pair matching the stored first in
-     / last out, keep the recorded segments and their evidence as they are. */
   const sameInstant = (a: string | null, b: string | null) => (a && b ? asDate(a).getTime() === new Date(b).getTime() : a === b);
   const sentPairs = Array.isArray(body.pairs) && body.pairs.length > 0;
   const keepStored = !sentPairs && existing != null && sameInstant(existing.clock_in_at, cols.clock_in_at) && sameInstant(existing.clock_out_at, cols.clock_out_at);
@@ -170,8 +155,6 @@ hrAttendance.put("/attendance", async (c) => {
   const attendanceId = existing
     ? (await db.update(hr_attendance).set(values).where(eq(hr_attendance.id, existing.id)).returning({ id: hr_attendance.id }))[0].id
     : (await db.insert(hr_attendance).values({ ...values, company_id: co.companyId, employee_id: employeeId, work_date: date }).returning({ id: hr_attendance.id }))[0].id;
-  /* The day's Working Hours follow the corrected punch; a day with no closed pair
-     (leave, absent, or still open) loses its AUTO hours and so its dock. */
   if (cols.clock_in_at && cols.clock_out_at) {
     await syncDayFromPunch(db, co.companyId, attendanceId);
   } else {
@@ -222,7 +205,6 @@ hrAttendance.get("/attendance/:id/photo", async (c) => {
   return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "image/jpeg", "cache-control": "private, max-age=300" } });
 });
 
-/* ── punch sites ───────────────────────────────────────────────────────── */
 
 type SiteInput = { name: string; lat: number; lng: number; radiusM: number; active: boolean };
 

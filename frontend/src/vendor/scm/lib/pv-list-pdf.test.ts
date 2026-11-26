@@ -20,8 +20,6 @@ import { fmtMoneySen, todayMY } from '../../shared/format';
 
 afterEach(() => { deliver.mockClear(); });
 
-/* As the PV list's Excel holds them: the Date is ISO text there (the grid column has no
-   export format), the Amount in the voucher's own currency. */
 const VIEW: PvListView = {
   keys: ['pv_number', 'voucher_date', 'payee_name', 'total_sen', 'status', 'next_step'],
   matrix: {

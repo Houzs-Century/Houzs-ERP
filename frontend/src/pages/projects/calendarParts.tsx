@@ -8,14 +8,7 @@ import { upcaseLeadingState } from "./projectHelpers";
 import { STATUS_BY_VALUE } from "./projectStatus";
 import type { CalendarProject, CalendarTask } from "./calendarModel";
 
-// ── Calendar view ────────────────────────────────────────────
-// Month grid: events render as colored bars spanning their date range,
-// overdue checklist items render as dots on their due date. Bars are
-// tinted by project status (mig 088) — see STATUS_OPTIONS + statusBarStyle.
 
-// Per-task chip rendered inside a calendar cell. Compact: status dot,
-// truncated title, owner initials, overdue tint. Click opens the
-// parent project's detail panel.
 export function CalendarTaskChip({
   task,
   onOpen,
@@ -83,9 +76,6 @@ export function CalendarTaskChip({
   );
 }
 
-// Per-day task-count chip in calendar cells. Neutral by default; an
-// overdue day gets a small red dot rather than a fully-red pill so the
-// month grid isn't a wall of alarm-red badges.
 export function DayCountBadge({
   count,
   overdue,
@@ -109,10 +99,6 @@ export function DayCountBadge({
   );
 }
 
-// ── Calendar bar hover popover ───────────────────────────────
-// A lightweight, cursor-anchored card showing a project's basic info
-// when the pointer is over its calendar bar. Pointer-events-none so it
-// never steals the hover; flips left/up near the viewport edges.
 export function CalendarBarPopover({
   info,
 }: {
@@ -129,7 +115,6 @@ export function CalendarBarPopover({
     p.active_section_name ??
     (p.sections_total ? "All sections complete" : null);
 
-  // Anchor near the cursor, flipping when close to the right/bottom edge.
   const W = 268;
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
@@ -182,10 +167,6 @@ export function CalendarBarPopover({
   );
 }
 
-// ── Calendar task-chip hover popover ─────────────────────────
-// Cursor-anchored card for a checklist task chip: parent project, task
-// title, due date, owner, and an overdue flag. Mirrors the project bar
-// popover so both hovers feel consistent.
 export function CalendarTaskPopover({
   info,
 }: {
@@ -255,10 +236,6 @@ export function CalendarTaskPopover({
   );
 }
 
-// ── Calendar "+N more" day modal ─────────────────────────────
-// Surfaces every project + task on a single day without forcing the
-// user to swap into week view. Triggered by the month-view "+N more"
-// expanders on bar and task overflow.
 
 export function CalendarDayModal({
   iso,
@@ -295,10 +272,6 @@ export function CalendarDayModal({
     return `${weekday} ${fmtDate(iso)}`;
   })();
 
-  // Portal into document.body so the fixed-position overlay escapes any
-  // transformed ancestor (the calendar's transformed bar segments would
-  // otherwise scope the "fixed" element to the calendar, not the
-  // viewport — leaving the modal offscreen on long calendars).
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm"
@@ -395,8 +368,6 @@ export function CalendarDayModal({
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
               Tasks due · {tasks.length}
             </div>
-            {/* Grouped by project so the (long) project code shows once as a
-                section header instead of repeating on every task row. */}
             <div className="space-y-2.5">
               {(() => {
                 const groups: Array<{

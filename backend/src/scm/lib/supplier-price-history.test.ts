@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveSupplierPricesAsOf, resolveMfgProductCostAsOf } from './supplier-price-history';
 
-// A fake `sb` that returns preset rows for the one table under test and records
-// nothing else — the resolvers' filters/order are exercised against real prod
-// by their indexes; here we test the JS shaping (per-supplier de-dup, mapping,
-// null/empty handling, error -> throw).
 function fakeSb(rows: unknown[], error: { message: string } | null = null) {
   const b: Record<string, unknown> = {};
   const chain = () => b;
@@ -28,7 +24,7 @@ describe('resolveSupplierPricesAsOf', () => {
     ];
     const out = await resolveSupplierPricesAsOf(fakeSb(rows), 1, 'X', '2026-06-01');
     expect(out).toHaveLength(2);
-    expect(out.find((s) => s.supplier_id === 'A')?.unit_price_sen).toBe(9000); // newest, not 5000
+    expect(out.find((s) => s.supplier_id === 'A')?.unit_price_sen).toBe(9000);
     expect(out.find((s) => s.supplier_id === 'B')?.unit_price_sen).toBe(7000);
   });
 

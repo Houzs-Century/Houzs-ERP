@@ -1,19 +1,3 @@
-/* The V2 read-only SO detail's Photos column.
- *
- * Two things this pins, both of which an earlier draft of this component got
- * wrong by writing its own loader instead of reusing the tile resolver:
- *
- *   1. It renders in TODAY'S PRODUCTION. `/photos/:key/signed` cannot sign
- *      (the R2 S3 credentials have never been provisioned), so it returns
- *      `{ mode: 'proxy', … }` with NO signedUrl. A component that reads
- *      `signedUrl` off that payload gets undefined and sits on its loading
- *      placeholder forever — visibly identical to "still loading", which is why
- *      it would ship. The strip must show the photo.
- *
- *   2. Clicking a thumbnail OPENS it, and the viewer fetches the FULL object,
- *      not the `.thumb` the tile is displaying and not the tile's blob: URL
- *      (which is scoped to the tile's effect run and revoked on unmount).
- */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -22,8 +6,6 @@ const fetchSoItemPhotoSignedUrl = vi.fn();
 const fetchSoItemPhotoBlob = vi.fn();
 const fetchBlobUrl = vi.fn();
 
-/* Only the network edges are faked. The resolver under test — the shared
-   useSoLinePhoto state machine — runs for real. */
 vi.mock('../../vendor/scm/lib/sales-order-queries', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../vendor/scm/lib/sales-order-queries')>();
@@ -34,7 +16,6 @@ vi.mock('../../vendor/scm/lib/sales-order-queries', async (importOriginal) => {
   };
 });
 
-/* MediaLightbox streams the full object through the shared authed client. */
 vi.mock('../../api/client', () => ({
   api: {
     fetchBlobUrl: (...a: unknown[]) => fetchBlobUrl(...a),
@@ -69,8 +50,6 @@ beforeEach(() => {
 
 afterEach(() => { vi.restoreAllMocks(); });
 
-/* The resolver's caches are module-level on purpose (they must survive a
-   remount), so each test uses its own key rather than resetting module state. */
 let n = 0;
 const freshKey = () => `so-items/${DOC_NO}/${ITEM_ID}/strip-${++n}.jpg`;
 
@@ -95,7 +74,6 @@ describe('SoLinePhotoStrip', () => {
     const img = await screen.findByAltText('Line photo');
     expect(img).toHaveProperty('src', 'blob:obj-1');
     expect(screen.queryByText('err')).toBeNull();
-    // Thumb tier, inherited from the shared resolver.
     expect(fetchSoItemPhotoBlob).toHaveBeenCalledWith(DOC_NO, ITEM_ID, `${key}.thumb`);
   });
 
@@ -112,14 +90,10 @@ describe('SoLinePhotoStrip', () => {
 
     await waitFor(() => expect(fetchBlobUrl).toHaveBeenCalled());
     const [path, typeHint] = fetchBlobUrl.mock.calls[0] as [string, string];
-    /* The BASE key, not the `.thumb` the tile is showing — the viewer's whole
-       job is the full-resolution image. */
     expect(path).toBe(
       `/api/scm/mfg-sales-orders/${DOC_NO}/items/${ITEM_ID}/photos/${encodeURIComponent(key)}`,
     );
     expect(path).not.toContain('.thumb');
-    /* The R2 key's own slashes must be percent-encoded, or Hono's `:photoKey`
-       param sees extra path segments and the proxy 404s. */
     expect(path).not.toContain('so-items/');
     expect(typeHint).toBe('image/jpeg');
   });
@@ -134,7 +108,6 @@ describe('SoLinePhotoStrip', () => {
 
     expect(await screen.findByText('err')).toBeTruthy();
     expect(screen.queryByAltText('Line photo')).toBeNull();
-    // Not a button: a retry that repeats the same failing request is theatre.
     expect(screen.queryByRole('button', { name: /err/i })).toBeNull();
   });
 
@@ -166,7 +139,6 @@ describe('SoLinePhotoStrip', () => {
       />,
     );
 
-    // No dash: an editable empty line shows the add tile instead.
     expect(screen.queryByText('—')).toBeNull();
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     expect(input).toBeTruthy();
@@ -177,7 +149,7 @@ describe('SoLinePhotoStrip', () => {
   });
 
   it('offers delete only on keys the surface owns, and hands the key to the handler', async () => {
-    const carried = freshKey(); // so-items/... — carried, NOT deletable here
+    const carried = freshKey();
     const owned = `po-items/po-1/${ITEM_ID}/addon-1.jpg`;
     fetchSoItemPhotoSignedUrl.mockResolvedValue(proxyPayload(carried));
     fetchSoItemPhotoBlob.mockResolvedValue(photoBytes());

@@ -2,28 +2,6 @@ import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { persistLineKeys } from './autocount-line-keys';
 import { fakeSb } from './fake-postgrest';
 
-/* LINE KEYS THE ERP NEVER STORED — the documents the 0888 requeue refused.
- *
- * Probe run 34826755295 (production, read-only): every one of HC-PO-2609-087,
- * -027, -032, -009, -086, -010, -079, -074, -068 went to AutoCount as a
- * `so_to_po` TRANSFER and HC-PO-2609-064 as a `create_po`, all `sent`, and not
- * one of their lines carries `linked_ac_dtlkey` — not today, and not in the
- * po_revisions snapshot taken before their first amendment. 52 of 74 transfers
- * and 4 of 27 purchase creates since go-live are the same.
- *
- * Two refusals inside persistLineKeys, both written for CONVERSIONS, were
- * applied to operations whose line order is not presumed but CONSTRUCTED:
- *
- *   1. A TRANSFER compares the book's ItemCode with the code the ERP composed.
- *      AddSOToPOTransferDetail copies the SALES line's item, so the book holds
- *      'HOK-2038 (A) (Q)' where the ERP wrote 'CELENE (A)-(Q)' — recorded
- *      verbatim on HC-PO-2609-089 — and the check can never pass for a supplier-
- *      coded product.
- *   2. A CREATE with a repeated item code and no Desc2 in the lineWriteback is
- *      refused as "a guess" — HC-PO-2609-098 ('AK-BASTION MATT (Q)') and
- *      HC-PO-2609-064 ('5536-1NA' twice). A create adds its details in payload
- *      order and the host reads them back in DtlKey order: position IS identity.
- */
 beforeEach(() => { vi.spyOn(console, 'error').mockImplementation(() => {}); });
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -66,8 +44,6 @@ describe('a CREATE stores keys by position even when a code repeats', () => {
 });
 
 describe('a TRANSFER stores keys by the source line each book line was transferred from', () => {
-  /* HC-PO-2609-032 as it really is: three PO lines, each raised from one line of
-     HC-SO-004928, and the book's item codes are the SALES items. */
   const tables = () => ({
     purchase_order_items: [
       { id: 'pl-star-ss', so_item_id: 'so-a', linked_ac_dtlkey: null },

@@ -54,7 +54,7 @@ describe('computeMrp — company 2 matches stock by the canonical variant key (2
     const res = await run(2);
 
     expect(res.skus).toHaveLength(1);
-    expect(res.skus[0]!.variantKey).toContain('totalheight=22');   // the line's own key is still shown
+    expect(res.skus[0]!.variantKey).toContain('totalheight=22');
     expect(res.skus[0]!.stock).toBe(1);
     expect(res.skus[0]!.shortage).toBe(0);
   });

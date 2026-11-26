@@ -64,7 +64,6 @@ describe('the check strip and the accounts', () => {
     expect(screen.getByText('RM 649,611.40')).toBeTruthy();
     expect(screen.getByText('RM 1,744,164.68')).toBeTruthy();
     expect(screen.getByText('CASH AT BANK - MAYBANK')).toBeTruthy();
-    /* Amounts in the tables carry no RM. */
     expect(screen.getByText('3,814,993.29')).toBeTruthy();
   });
 

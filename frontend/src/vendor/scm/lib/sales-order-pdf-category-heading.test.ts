@@ -34,9 +34,7 @@ afterEach(() => {
 });
 
 async function printedText(groups: string[]): Promise<string[]> {
-  /* Plain ASCII, no variants, no logo: no font fetch and no network. */
   setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
-  // The registry name (scm.acc_item_groups) as GET /mfg-products/categories sends it.
   primeProductCategories([{ code: 'FABRIC_ACCESSORY', name: 'Sofa Accessory', isActive: true }, { code: 'SOFA', name: 'Sofa', isActive: true }]);
   const [{ jsPDF }, { default: autoTable }, { renderSalesOrderInto }] = await Promise.all([
     import('jspdf'),

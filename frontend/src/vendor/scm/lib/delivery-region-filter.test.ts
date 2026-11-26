@@ -2,10 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { filterOrdersByRegion, planningCountsFrom, sxeDateOf } from './delivery-planning-queries';
 import type { DeliveryState, PlanningOrder } from './delivery-planning-queries';
 
-/* The region chip now filters in the browser (region=ALL fetch, local filter) —
-   the regression guard that it behaves like the backend's matchesRegion:
-   'ALL'/unknown → no-op, a known bucket → regions[]-membership. If this drifts,
-   switching a region chip would blank the board or show the wrong bucket. */
 
 const KNOWN = new Set(['ALL', 'KL', 'NORTHERN', 'SOUTHERN', 'EAST_COAST', 'EM']);
 

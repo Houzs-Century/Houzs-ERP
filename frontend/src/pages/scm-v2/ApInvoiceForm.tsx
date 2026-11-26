@@ -84,17 +84,11 @@ export const toSubmit = (v: ApFormValues): ApFormSubmit => ({
     })),
 });
 
-/* The reader's answer as form values — the supplier from the server's match,
-   the bill's number and dates, its lines under the REMEMBERED account only
-   (never a model guess); text the reader fills goes upper case (owner
-   2026-09-08). One home: the form's own Scan bill and the pile page's
-   hand-off (ApInvoices.tsx) both fill through here. */
 export const formFromExtraction = (ex: BillExtraction, match: { id: string } | null, memory: VendorMemory | null): Partial<ApFormValues> => {
   const account = memory?.debitAccountCode ?? '';
   const drafts: ApFormLine[] = ex.lines
     .filter((l): l is { description: string | null; amountSen: number } => l.amountSen != null && l.amountSen > 0)
     .map((l, i) => ({ rid: i + 1, description: upperFill(l.description) ?? '', debitAccountCode: account, amountSen: l.amountSen, projectId: null }));
-  /* A bill with no readable lines still carries its total — one line. */
   if (drafts.length === 0 && ex.totalSen != null && ex.totalSen > 0) {
     drafts.push({ rid: 1, description: upperFill(ex.invoiceNumber ? `Bill ${ex.invoiceNumber}` : 'As per bill') ?? '', debitAccountCode: account, amountSen: ex.totalSen, projectId: null });
   }
@@ -104,7 +98,6 @@ export const formFromExtraction = (ex: BillExtraction, match: { id: string } | n
     ...(ex.invoiceDate ? { invoiceDate: ex.invoiceDate } : {}),
     ...(ex.dueDate ? { dueDate: ex.dueDate } : {}),
     ...(drafts.length > 0 ? { lines: drafts } : {}),
-    /* A proforma or quotation owes its official invoice — pre-ticked; Finance decides. */
     ...(isProvisional(ex) ? { officialDocOwed: true } : {}),
   };
 };
@@ -112,8 +105,6 @@ export const formFromExtraction = (ex: BillExtraction, match: { id: string } | n
 /** The reader read PROFORMA or QUOTATION on it (item 3). */
 export const isProvisional = (ex: Pick<BillExtraction, 'documentKind'>): boolean => ex.documentKind === 'proforma' || ex.documentKind === 'quotation';
 
-/* What the form says after a read — the same sentences whether the bill was
-   picked here or handed over from the pile. */
 export const scanNoteFor = (bill: { extraction: BillExtraction; supplierMatch: { name: string } | null; memory: VendorMemory | null }): string => [
   'Read — check every figure before saving.',
   bill.supplierMatch ? `Looks like supplier ${bill.supplierMatch.name}.` : 'No supplier matched the printed name — pick it yourself.',
@@ -183,20 +174,14 @@ export const ApInvoiceForm = ({
       "same bill" (owner 2026-10-05: 提醒也加 — a warning, never a block). */
   selfId?: string | null;
   requestId?: string | null;
-  /** payment_terms: the due date follows them on a new bill (the redesign). */
   suppliers: Array<{ id: string; code: string; name: string; payment_terms?: string | null }>;
-  /** Offer Save & post on a new bill (the post key): the page saves, then posts. */
   canPost?: boolean;
   suppliersLoading?: boolean;
   lineAccounts: Account[];
-  /** A bill handed over from the pile page: its read pages, waiting to attach
-      on save, and the reader's sentence about it. */
   initialFiles?: PvFilePayload[];
   initialNote?: string | null;
   /** The events the handed-over bill points at (owner 2026-09-30, 6a — suggestions only). */
   initialEventSuggestions?: EventSuggestion[];
-  /** Editing a bill already on the books: saving re-posts, and money paid
-      caps the total and pins the supplier — the same rules the route holds. */
   posted?: boolean;
   paidSen?: number;
   saving: boolean;
@@ -208,8 +193,6 @@ export const ApInvoiceForm = ({
   const patchLine = (rid: number, patch: Partial<ApFormLine>) =>
     setV((prev) => ({ ...prev, lines: prev.lines.map((l) => (l.rid === rid ? { ...l, ...patch } : l)) }));
   const nextRid = (lines: ApFormLine[]) => Math.max(0, ...lines.map((x) => x.rid)) + 1;
-  /* 5a's header default: the lines' shared event, when they all name one — the
-     "all lines" picker shows it, and a line added takes it. */
   const commonEvent = v.lines.length > 0 && v.lines.every((l) => l.projectId === v.lines[0]!.projectId) ? v.lines[0]!.projectId : null;
 
   /* Insert adds a line and LANDS on it (owner: 按 Ins 直接加然后直接跳到那一行);
@@ -239,12 +222,8 @@ export const ApInvoiceForm = ({
     if (next) setLandOn(next.rid); else addLine(true);
   };
 
-  /* The same bill — its printed number AND date — already asked for, vouchered
-     or entered (lib/bill-matches.ts). Said under the bill's own fields. */
   const sameBill = useBillMatches(v.supplierRef, v.invoiceDate, requestId, selfId);
 
-  /* The due date from the supplier's terms (the redesign): filled while the box
-     is empty or still holds what the terms gave; a typed date stays. */
   const [dueAuto, setDueAuto] = useState(false);
   const terms = suppliers.find((s) => s.id === v.supplierId)?.payment_terms ?? null;
   useEffect(() => {
@@ -260,10 +239,6 @@ export const ApInvoiceForm = ({
   const ready = !!v.supplierId && !!v.invoiceDate && total > 0 && !belowPaid
     && v.lines.filter((l) => l.amountSen > 0).every((l) => !!l.debitAccountCode);
 
-  /* ── Scan bill (OCR) — the voucher's reader fills THIS form: the supplier
-     from the server's match, the bill's own number, its dates and lines; the
-     account ONLY from vendor memory, never a model guess. MULTI-SELECT MEANS
-     ONE BILL (its pages); the read pages attach after save. */
   const extract = useExtractBills();
   const [scanNote, setScanNote] = useState<string | null>(initialNote ?? null);
   const [pendingFiles, setPendingFiles] = useState<PvFilePayload[]>(initialFiles ?? []);
@@ -287,8 +262,6 @@ export const ApInvoiceForm = ({
       if (!bill.ok) { setScanNote(bill.reason); return; }
       applyExtraction(bill.extraction, bill.supplierMatch, bill.memory);
       setEventSuggestions(bill.eventSuggestions ?? []);
-      /* The LAST successful read wins, matching applyExtraction overwriting
-         the lines — this form reads ONE bill at a time. */
       setPendingFiles(files);
       setScanNote(scanNoteFor(bill));
     } catch (e) {
@@ -310,9 +283,6 @@ export const ApInvoiceForm = ({
             display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap',
             padding: '6px 8px', borderRadius: 6, border: `1px dashed ${dragOver ? 'var(--c-orange)' : 'var(--border-weak, #e3e1da)'}`,
           }}>
-          {/* Scan bill — pick the bill's page(s); MULTI-SELECT = ONE BILL. A
-              pile of bills goes through the pile page ("Scan bills" on the
-              list), one AP invoice each. */}
           <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-orange)', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
             📷 {extract.isPending ? 'Reading…' : 'Scan bill (OCR)'}
             <input type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Scan bill files" style={{ display: 'none' }}
@@ -390,10 +360,6 @@ export const ApInvoiceForm = ({
       <EventSuggestions suggestions={eventSuggestions} current={commonEvent}
         onUse={(id) => setV((prev) => ({ ...prev, lines: prev.lines.map((l) => ({ ...l, projectId: id })) }))} />
 
-      {/* The lines, in the owner's order: account number, description, amount.
-          Insert anywhere in the lines adds a line and lands on it. A header's
-          right edge drags its column; a cell cut short shows its whole text
-          on hover (the account and the event pickers already do). */}
       <div className={grid.scroll}>
         <div ref={linesRef} role="table" aria-label="Bill lines" data-cw-root="ap" style={{ minWidth: cw.minWidth }}
           onKeyDown={(e) => { if (e.key === 'Insert') { e.preventDefault(); addLine(true); } }}>
@@ -423,8 +389,6 @@ export const ApInvoiceForm = ({
                   onCommit={(sen) => patchLine(l.rid, { amountSen: sen ?? 0 })}
                   onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }} />
               </div>
-              {/* The event last: the owner's typing order (account, description,
-                  amount) stays unbroken; the header's picker usually sets it. */}
               <div role="cell">
                 <EventSelect value={l.projectId} around={v.invoiceDate || null} className={styles.fieldInput} aria-label={`line ${l.rid} event`}
                   onChange={(id) => patchLine(l.rid, { projectId: id })} />
@@ -460,7 +424,6 @@ export const ApInvoiceForm = ({
         <Button variant={canPost && mode !== 'edit' ? 'secondary' : 'primary'} size="sm" onClick={() => void onSubmit(toSubmit(v), pendingFiles)} disabled={saving || !ready}>
           {saving ? 'Saving…' : saveLabel}
         </Button>
-        {/* Save & post (the redesign): the same save, then today's post. */}
         {canPost && mode !== 'edit' && (
           <Button variant="primary" size="sm" onClick={() => void onSubmit(toSubmit(v), pendingFiles, { post: true })} disabled={saving || !ready}>
             Save & post

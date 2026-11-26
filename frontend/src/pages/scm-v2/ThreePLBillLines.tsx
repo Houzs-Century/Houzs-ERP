@@ -48,9 +48,6 @@ const sen = (v: number | null) => (v == null ? '—' : fmtSen(v));
 export const notReadSen = (b: BillSummary) => b.totalSen - (b.doSen + b.serviceSen + b.eventSen + b.noneSen + b.openSen);
 const LINES_KEY = ['threepl-bill-lines'];
 
-/** Where one line goes, and Save. A DO line takes its DO numbers (a trip line
- *  names several); Service its ASSR number if there is one; Setup / Dismantle
- *  its fair — the fairs nearest the line's date first. */
 function AssignEditor({ line, fairs, onSaved }: { line: BillLine; fairs: readonly FairOption[]; onSaved: (said: string | null) => void }) {
   const [assign, setAssign] = useState<LineAssign | ''>(line.assign ?? '');
   const [doNumber, setDoNumber] = useState(line.doNumbers.join(', '));

@@ -34,7 +34,6 @@ export type CardForMatch = {
   docNo: string | null;
   approvalCode: string | null;
   grossSen: number;
-  /** Where the payment's own receipt put the money: the card clearing account it is cleared out of. */
   clearingAccountCode: string;
 };
 
@@ -44,11 +43,8 @@ export type CardMatchPlan = {
   ok: true;
   entriesSen: number;
   cardsSen: number;
-  /** What the bank did not pay of the card payments — to the charges account. */
   chargeSen: number;
-  /** What of the card payments reached the bank. */
   bankSen: number;
-  /** The charge as a percentage of the card payments, to two places. */
   chargePct: number;
   lines: RuleLine[];
 };

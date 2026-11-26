@@ -43,16 +43,11 @@ export type PoLineImportField =
 
 export type PoLineImportFieldSpec = {
   field: PoLineImportField;
-  /** The grid's column label, exactly. Matched case- and space-insensitively. */
   header: PoLineLabel;
-  /** Headers an earlier export wrote for the same field (2026-09-15, before the
-   *  AutoCount captions), still read so a file already exported imports. */
   legacyHeaders: readonly string[];
   kind: 'date' | 'text';
-  /** 'line' = purchase_order_items.<column>; 'po' = purchase_orders.<column>, cascaded to every line. */
   level: 'line' | 'po';
   column: string;
-  /** Supplier-revised slot number for the PO-level dates (the bulk supplier-date action's `slot`). */
   slot: 2 | 3 | 4 | null;
 };
 
@@ -92,7 +87,6 @@ export const isPoLineImportField = (v: unknown): v is PoLineImportField =>
 export type PoLineImportCell = string | number | boolean | null;
 
 export type PoLineImportRow = {
-  /** 1-based row number as Excel shows it, so a rejection can name the row. */
   rowNumber: number;
   docNo: string | null;
   lineId: string | null;
@@ -119,9 +113,6 @@ const calendarDay = (y: number, m: number, d: number): string | null => {
   return `${y}-${pad2(m)}-${pad2(d)}`;
 };
 
-/* Excel's day 0 is 1899-12-30 for every serial after its fictitious 1900-02-29.
-   Accepted only between 1950 and 2100, so a stray small number is an invalid
-   date instead of a date in 1900. */
 const EXCEL_EPOCH_MS = Date.UTC(1899, 11, 30);
 const serialDay = (n: number): string | null => {
   if (!Number.isFinite(n) || n < 18264 || n > 73051) return null;
@@ -262,7 +253,6 @@ export function readPoLineImportSheet(matrix: unknown[][]): PoLineImportSheet {
   return { ok: true, rows, fields: fieldCols.map(([f]) => f), ignoredHeaders, missingHeaders };
 }
 
-/* ── The preview / apply wire contract ───────────────────────────────────── */
 
 export type PoLineImportRejectCode =
   | 'unknown_line'
@@ -294,7 +284,6 @@ export type PoLineImportPoChange = {
   field: PoLineImportField;
   old: string | null;
   new: string | null;
-  /** Every line of the PO and the value it holds now; the cascade overwrites all of them. */
   lineValues: Record<string, string | null>;
   rowNumbers: number[];
 };
@@ -318,7 +307,6 @@ export type PoLineImportPreview = {
   rows: PoLineImportRowResult[];
   poChanges: PoLineImportPoChange[];
   poRejections: PoLineImportPoRejection[];
-  /** Exactly what a Confirm sends back to apply. */
   lineChanges: PoLineImportLineChange[];
   counts: { rows: number; changed: number; unchanged: number; rejected: number; poChanges: number; poRejected: number };
 };

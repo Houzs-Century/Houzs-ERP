@@ -1,18 +1,3 @@
-// ---------------------------------------------------------------------------
-// The person-vs-machine rule, pinned against the ACTUAL rows the tree writes.
-//
-// Every fixture below is a verbatim copy of a real writer's arguments, with the
-// file and line it came from, so this file fails when a writer changes rather
-// than when somebody's idea of a system name changes. The sweep that produced
-// the list is recorded in audit-author.ts.
-//
-// THE RED CASE is `a salesperson's own edit`. Before this rule existed,
-// sync-ac-delta.mjs asked `actor_id === SCM_SYSTEM_STAFF_ID ? machine : person`
-// — and that uuid is what EVERY human sales-order edit carries, because
-// middleware/auth.ts pins it. That test called every person a machine, so the
-// "never overwrite a human" veto refused nothing. The assertion below is the
-// one that was red.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect } from 'vitest';
 import { Hono } from 'hono';
@@ -25,9 +10,6 @@ import {
 import { supabaseAuth, SCM_SYSTEM_STAFF_ID } from '../middleware/auth';
 import type { Variables } from '../env';
 
-/* middleware/auth.ts:47 — the uuid pinned onto c.get('user').id for EVERY
-   authenticated SCM caller, and therefore onto every `actorId: user.id` the 21
-   recordSoAudit call sites in routes/mfg-sales-orders.ts pass. */
 const PINNED_STAFF_ID = '00000000-0000-4000-8000-000000000001';
 
 describe('classifyAuditAuthor — the machine writers, verbatim', () => {
@@ -61,8 +43,6 @@ describe('classifyAuditAuthor — the machine writers, verbatim', () => {
 });
 
 describe('classifyAuditAuthor — a person', () => {
-  /* THE RED ASSERTION. A salesperson editing a sales order in the browser:
-     actor_id is the pinned system uuid (auth.ts), the NAME is theirs. */
   it("a salesperson's own edit is a PERSON, even though actor_id is the pinned system uuid", () => {
     const row = { actor_id: PINNED_STAFF_ID, actor_name_snapshot: 'Wei Siang' };
     expect(classifyAuditAuthor(row)).toBe('person');
@@ -103,10 +83,6 @@ describe('auditMachineSql / auditPersonSql — the same rule in SQL', () => {
     }
   });
 
-  /* The JS side and the SQL side must agree on the NULL case, which is the one
-     a reader is most likely to get wrong: COALESCE makes it FALSE for machine,
-     i.e. person, matching classifyAuditAuthor. Asserted as a statement about
-     the fragment rather than executed, because this suite has no database. */
   it('the SQL fragment coalesces NULL so an unnamed row lands on the person side', () => {
     expect(auditMachineSql('actor_name_snapshot')).toContain("COALESCE");
     expect(classifyAuditAuthor({ actor_name_snapshot: null })).toBe('person');
@@ -134,14 +110,11 @@ describe('auditMachineSql / auditPersonSql — the same rule in SQL', () => {
    ───────────────────────────────────────────────────────────────────────── */
 describe('the pinned actor — measured, not quoted', () => {
   it('supabaseAuth replaces the caller id with ONE uuid, so actor_id carries no authorship', async () => {
-    /* Typed as the SCM app's own Variables so `houzsUser` resolves — the bare
-       Hono generic knows only the global ContextVariableMap. */
     const app = new Hono<{ Variables: Variables }>();
     let seenUserId: unknown = 'the handler never ran';
     let seenHouzsId: unknown = null;
 
     app.use('*', async (c, next) => {
-      /* What the global /api/* auth leaves behind: the REAL Houzs user. */
       c.set('user', { id: 4242, email: 'ws@example.com', name: 'Wei Siang', permissions: ['*'] } as never);
       await next();
     });
@@ -152,19 +125,13 @@ describe('the pinned actor — measured, not quoted', () => {
       return c.text('ok');
     });
 
-    /* getSupabaseService reads these off the env; the client is never called. */
     const res = await app.request('/probe', {}, {
       SUPABASE_URL: 'https://example.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'x'.repeat(40),
     } as never);
 
     expect(res.status).toBe(200);
-    /* THE FINDING: her id went in, the pinned uuid came out. This is the value
-       all 21 `actorId: user.id` call sites in routes/mfg-sales-orders.ts write
-       onto her audit row. */
     expect(seenUserId).toBe(SCM_SYSTEM_STAFF_ID);
-    /* Her real identity survives only on houzsUser (an integer) and, for the
-       audit trail, in the NAME snapshot — which is why the name is the signal. */
     expect(seenHouzsId).toBe(4242);
   });
 });

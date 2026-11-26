@@ -33,8 +33,6 @@ describe('merge router mount order', () => {
 });
 
 describe('merge queries on the Worker client', () => {
-  // The Worker's postgres client has fetch_types off (db/pg.ts), so a JS array bound as a parameter reaches
-  // Postgres as the text "a,b" and the plan call 500s. Arrays go in as JSON text cast to jsonb.
   it('binds no raw array to ANY()', () => {
     expect(/ANY\(\$\{(?!JSON)/.test(mergeRun)).toBe(false);
     expect(/ANY\(\$\{(?!JSON)/.test(mergeRoute)).toBe(false);

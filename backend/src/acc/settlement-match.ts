@@ -28,23 +28,12 @@ export type PaymentCandidate = {
   source: 'SOPAY' | 'SIPAY';
   id: string;
   docNo: string;
-  paidOn: string;        // YYYY-MM-DD
+  paidOn: string;
   amountSen: number;
   approvalCode: string | null;
   customerName: string | null;
-  /** Who keyed the payment in — the till's `collected_by`, falling back to
-      whoever created the row. A uuid here; the name is resolved once, in bulk,
-      by whichever screen shows it. */
   recordedById?: string | null;
-  /** Which acquirer the payment was RECORDED as, null when it never was —
-      migration-era rows all are. Carried for the screen (the operator should
-      see he is claiming untagged money) and stamped on by the confirm; the
-      matching itself never reads it, because the loader already refused
-      payments tagged with a different acquirer. */
   merchantProvider?: string | null;
-  /** The account sheet the payment was recorded under, and the order's
-      salesperson — the redesign's Account sheet and Sales columns. Read for
-      the screen; the matcher never reads them. */
   accountSheet?: string | null;
   salesperson?: string | null;
 };
@@ -55,12 +44,8 @@ export type MatchDecision = {
   row: ParsedRow;
   bucket: MatchBucket;
   matchReason: 'ref' | 'amount+date' | null;
-  /** Auto-taken payments (ref match only). Empty for every other bucket. */
   matched: PaymentCandidate[];
-  /** What to offer the operator when the bucket is NEEDS_CONFIRM. */
   candidates: PaymentCandidate[];
-  /** SETS of candidates whose amounts sum exactly to the gross — a customer can
-      settle two orders with one swipe, or three. */
   comboHints: string[][];
   /**
    * The system's OWN best answer, when there is exactly one way to make this
@@ -76,7 +61,6 @@ export type MatchDecision = {
    * why amount+date may not auto-confirm — it is the same uncertainty, moved.
    */
   suggested: PaymentCandidate[];
-  /** The one-line reason shown on screen next to the row. */
   clue: string;
 };
 
@@ -92,20 +76,6 @@ const normRef = (s: string | null | undefined): string =>
 const dayGap = (a: string, b: string): number =>
   Math.abs((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000);
 
-/** Pairs (i<j) of candidates whose amounts sum exactly to the target. Bounded
-    at 40 candidates: past that the window is too wide to be a useful hint, and
-    the quadratic scan stops earning its keep. */
-/**
- * The ONE set of payments that makes the amount exactly — or nothing.
- *
- * Sizes from one upward, unlike exactPairs: this is used where the payments
- * already share the statement's reference, so a single one of them making the
- * amount is an answer and not the amount+date branch's business.
- *
- * "One way" is the whole point. 700 + 550 + 550 against a line of 1,250 can be
- * made two ways, and no evidence available here says which 550 was on the
- * swipe — so it returns nothing and a person decides.
- */
 function soleExactSubset(pool: PaymentCandidate[], targetSen: number): PaymentCandidate[] {
   /* NO size limit on how many documents one swipe covers. The owner, asked
      whether two was the ceiling: 他可能不止两张单加起来，可能超过两张. A customer
@@ -121,8 +91,6 @@ function soleExactSubset(pool: PaymentCandidate[], targetSen: number): PaymentCa
      worth a person's eye anyway. */
   const list = pool.slice(0, 14);
 
-  /* The ordinary shape first, and without any search: every document of the
-     swipe carries the code and together they are the line. */
   const all = list.reduce((s, p) => s + p.amountSen, 0);
   if (all === targetSen && list.length === pool.length) return list;
 
@@ -192,8 +160,6 @@ export function matchStatement(
   rows: ParsedRow[],
   payments: PaymentCandidate[],
   alreadySettled: Set<string> = new Set(),
-  /** The company's ONLINE payments (method `transfer`) in the window — the only
-      pool a QR line is matched against. A card line never sees them. */
   online: PaymentCandidate[] = [],
 ): MatchDecision[] {
   const key = (p: PaymentCandidate) => `${p.source}:${p.id}`;
@@ -237,12 +203,6 @@ export function matchStatement(
           : `DuitNow QR — ${same.length} Online payments of this amount within ${tolerance} day(s). Pick the one this QR paid.`,
       };
     }
-    /* One QR for two orders is one payment like any other — of ONE payer. The
-       Online pool is every bank transfer of the window, so a set across
-       customers is arithmetic, not a payment: on production 2990's 31/10
-       RM 3,500 QR line was pre-ticked with four orders of four customers that
-       happened to add up. A set counts only when every order in it is the same
-       named customer. */
     const payerOf = (p: PaymentCandidate) => String(p.customerName ?? '').trim().toUpperCase();
     const smaller = pool.filter((p) => Math.abs(p.amountSen) <= Math.abs(row.grossSen)).sort((a, b) => b.amountSen - a.amountSen);
     const byId = new Map(smaller.map((p) => [p.id, p]));
@@ -260,9 +220,6 @@ export function matchStatement(
           : `DuitNow QR — ${hints.length} set(s) of Online payments add up to this amount. Pick the right one.`,
       };
     }
-    /* Nothing keyed Online. A card payment of the amount near the day is most
-       often this very QR, keyed as a card swipe — said, never offered: card
-       money is not what a QR is made of. */
     const asCard = available().filter((p) => p.amountSen === row.grossSen && dayGap(p.paidOn, row.txnDate) <= tolerance);
     return {
       row, bucket: 'UNMATCHED', matchReason: null, matched: [], candidates: [], comboHints: [], suggested: [],
@@ -275,7 +232,6 @@ export function matchStatement(
 
   for (const row of rows) {
     if (row.channel === 'QR') { decisions.push(decideQr(row)); continue; }
-    /* 1. The unique reference — the only path that may auto-match. */
     if (trustsRef && row.ref) {
       const hits = (byRef.get(normRef(row.ref)) ?? []).filter((p) => !claimed.has(key(p)));
       if (hits.length === 1) {
@@ -387,8 +343,6 @@ export function matchStatement(
             comboHints: [],
             suggested: [],
             clue: `Reference ${row.ref} matches ${sole.length === 1 ? sole[0]!.docNo : `${sole.length} payments that add up to it exactly — ${sole.map((p) => p.docNo).join(' + ')}`}`
-              /* Say what was NOT taken. A payment left behind wearing the same
-                 reference is worth a look even though this line is settled. */
               + (rest > 0
                 ? `. ${rest} other payment(s) carry this reference and are not part of it — they stay open.`
                 : ''),
@@ -403,9 +357,6 @@ export function matchStatement(
           candidates: hits,
           comboHints: exactPairs(hits, row.grossSen),
           suggested: [],
-          /* Say BOTH numbers. A reference shared by payments that cannot make
-             this line is either a mis-keyed code or a document missing from the
-             swipe, and the difference is the clue to which. */
           clue: `${hits.length} payments carry reference ${row.ref}, but no combination of them makes `
             + `${fmtSen(row.grossSen)} (they come to ${fmtSen(together)})`
             + ' — pick the ones that belong to it.',
@@ -414,16 +365,9 @@ export function matchStatement(
       }
     }
 
-    /* 2. Amount + date, inside the CONFIGURED tolerance. Never auto-confirmed:
-          for a no-unique-ref acquirer the brief forbids it outright, and for a
-          ref-carrying acquirer a line that failed on reference is exactly the
-          line a human should look at. */
     const pool = available();
     const sameAmount = pool.filter((p) => p.amountSen === row.grossSen && dayGap(p.paidOn, row.txnDate) <= tolerance);
     if (sameAmount.length > 0) {
-      /* ONE payment of this amount in range is the system's answer — ticked for
-         the operator, still his to confirm. Several is a question, not an
-         answer, so nothing is ticked and he chooses. */
       const only = sameAmount.length === 1 ? sameAmount : [];
       const why = trustsRef && row.ref
         ? `Reference ${row.ref} matched nothing`
@@ -443,9 +387,6 @@ export function matchStatement(
       continue;
     }
 
-    /* 3. Nothing on the amount. Offer the window anyway — this is where the
-          many-orders-one-swipe case is resolved, so smaller payments in range
-          are candidates and exact-summing pairs are pointed at. */
     const inWindow = pool
       .filter((p) => dayGap(p.paidOn, row.txnDate) <= tolerance && Math.abs(p.amountSen) <= Math.abs(row.grossSen))
       .sort((a, b) => b.amountSen - a.amountSen);

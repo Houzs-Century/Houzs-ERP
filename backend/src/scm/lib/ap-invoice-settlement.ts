@@ -37,8 +37,6 @@ export async function settleApInvoicePaidSen(sb: any, invoiceId: string, delta: 
   return settleLegacy(sb, invoiceId, delta);
 }
 
-/** Optimistic-concurrency fallback, used only until scm.settle_api_paid_sen
-    exists on the database at hand. Same clamp, read-then-write. */
 async function settleLegacy(sb: any, invoiceId: string, delta: number): Promise<PiSettleResult> {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const { data: cur, error: readErr } = await sb.from('ap_invoices')
@@ -73,7 +71,6 @@ async function settleLegacy(sb: any, invoiceId: string, delta: number): Promise<
     if (((upd ?? []) as unknown[]).length > 0) {
       return { ok: true, appliedSen: calc.appliedSen, clampedSen: calc.clampedSen, legacy: true };
     }
-    /* 0 rows: somebody moved paid_sen underneath us — re-read and retry. */
   }
   return { ok: false, appliedSen: 0, clampedSen: 0, reason: 'contention', legacy: true };
 }

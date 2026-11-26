@@ -1,6 +1,3 @@
-// The statement tree with hand-opened rows: a category folds and unfolds by
-// its chevron past the level, an account's name opens its lines for the
-// period under its row (the ledger's own read), a figure still opens the GL.
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,7 +45,6 @@ describe('the tree', () => {
     fireEvent.click(opex);
     expect(labels().some((t) => t.includes('900-A001 — RENTAL'))).toBe(true);
     expect(labels().some((t) => t.includes('ADVERTISEMENT'))).toBe(true);
-    /* The child category stays folded by the level until its own chevron. */
     expect(labels().some((t) => t.includes('FACEBOOK'))).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Expand ADVERTISEMENT' }));
     expect(labels().some((t) => t.includes('900-A014 — FACEBOOK ADS'))).toBe(true);
@@ -66,16 +62,11 @@ describe('the tree', () => {
     expect(within(drill).getByText('Rent August')).toBeTruthy();
     expect(within(drill).getByText('310-0010 CASH AT BANK - MAYBANK')).toBeTruthy();
     expect(within(drill).getByText('2990-HPV-2608-017')).toBeTruthy();
-    /* The redesign's head (batch 6 §4.1): the account and the period, then the
-       ledger one click away — opened from a report, so in the report list. */
     expect(within(drill).getByText(/2026\/08\/01 – 2026\/08\/31/)).toBeTruthy();
     expect((within(drill).getByRole('link', { name: /Open in General ledger/ }) as HTMLAnchorElement).getAttribute('href')).toBe('/scm/accounting?tab=gl&accounts=900-A001&from=2026-08-01&to=2026-08-31&in=reports');
-    /* The debit and credit totals stand under the lines. */
     expect(drill.textContent).toContain('1,200.00');
-    /* The figure keeps its own door. */
     fireEvent.click(screen.getByRole('button', { name: '900-A001 — RENTAL total' }));
     expect(onPick).toHaveBeenCalledTimes(1);
-    /* Closed again by the name. */
     fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 — RENTAL' }));
     expect(document.querySelector('tr[data-lines-of="900-A001"]')).toBeNull();
   });

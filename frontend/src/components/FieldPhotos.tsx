@@ -1,21 +1,6 @@
 import { useRef, useState } from "react";
 import { ACCEPTED_PHOTO_TYPES, type FieldPhoto, type FieldPhotosApi } from "../lib/fieldPhotos";
 
-/* The photo block on every field-photo screen (phone POD, phone job stop, the
-   desktop job panel). State and uploads live in lib/fieldPhotos.ts; this only
-   draws them.
-
-   On a touch device the add tile opens a choice: "Take photo" (camera input
-   with capture=environment) or "From photo library" (multiple, NO capture - on
-   iPhone `capture` forces the camera, so a photo already taken could not be
-   picked). After each shot the sheet comes back with "Take another". With a
-   mouse the tile opens the file picker directly. Styles are inline with token
-   fallbacks so the block looks right inside the phone shell (.hz-m) and on the
-   desktop page. After a page reload the photos already uploaded come back
-   (lib/fieldPhotos.ts restore); while they are being looked up, or when that
-   failed, the block says so. The crew share the stop: a photo another crew
-   member took is labelled with their name, and its Remove shows only when the
-   server says this person may remove it. */
 
 const C = {
   brand: "var(--brand, #16695f)",
@@ -40,7 +25,6 @@ function isTouch(): boolean {
 
 export function FieldPhotos({ api, disabled, title }: {
   api: FieldPhotosApi;
-  /** True while the job is being completed: no adding, retrying or removing. */
   disabled: boolean;
   title: string;
 }) {

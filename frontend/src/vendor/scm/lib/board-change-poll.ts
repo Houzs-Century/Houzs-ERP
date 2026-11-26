@@ -74,13 +74,9 @@ export type BoardRefreshDeps = {
   today: () => string;
   visible: () => boolean;
   fullReread: () => void;
-  /** How long an unasked-for re-read waits (ms); 0 = at once. */
   spreadMs: () => number;
-  /** null = this screen has no change feed (another tab's write re-reads in full). */
   feed: { read: (after: number | null) => Promise<BoardChanges>; rows: (ch: BoardChanges) => void } | null;
-  /** false = the feed runs only on another tab's write, never on the 30 s tick. */
   pollFeed: boolean;
-  /** null = no counts check. `loaded` is null while bands are loading or refetching. */
   counts: { read: () => Promise<PlanningCounts | null>; loaded: () => PlanningCounts | null } | null;
 };
 
@@ -100,8 +96,6 @@ export function createBoardRefresher(d: BoardRefreshDeps) {
     if (spreadTimer) { clearTimeout(spreadTimer); spreadTimer = null; }
     lastFullAt = d.now(); day = d.today(); d.fullReread();
   };
-  /* An unasked-for re-read: after a random wait, once. The 5 min clock restarts now so
-     the next ticks do not queue it again. */
   const spreadFull = () => {
     if (spreadTimer) return;
     const wait = d.spreadMs();
@@ -109,7 +103,6 @@ export function createBoardRefresher(d: BoardRefreshDeps) {
     lastFullAt = d.now(); day = d.today();
     spreadTimer = setTimeout(() => {
       spreadTimer = null;
-      // Hidden by now: nothing reads while hidden; due again at the first tick once shown.
       if (!d.visible()) { lastFullAt = Number.NEGATIVE_INFINITY; return; }
       full();
     }, wait);
@@ -126,14 +119,12 @@ export function createBoardRefresher(d: BoardRefreshDeps) {
         if (ch.full) spreadFull(); else d.feed.rows(ch);
       }
     } catch {
-      /* retried next tick */
     } finally {
       feedBusy = false;
       if (nudgeAgain) { nudgeAgain = false; void nudge(); }
     }
   };
 
-  /* Another tab wrote something the board shows. */
   const nudge = async (): Promise<void> => {
     if (!d.feed) { spreadFull(); return; }
     if (feedBusy) { nudgeAgain = true; return; }
@@ -159,7 +150,6 @@ export function createBoardRefresher(d: BoardRefreshDeps) {
       const loaded = d.counts.loaded();
       if (server && loaded && countsDiffer(server, loaded)) spreadFull();
     } catch {
-      /* tried again next check */
     }
   };
 
@@ -180,7 +170,7 @@ export function createBoardRefresher(d: BoardRefreshDeps) {
     const away = hiddenAt == null ? 0 : d.now() - hiddenAt;
     hiddenAt = null;
     if (away > HIDDEN_REREAD_AFTER_MS || d.today() !== day) full();
-    else { lastFullAt += away; lastCountsAt += away; } // the schedule counts visible time only
+    else { lastFullAt += away; lastCountsAt += away; }
     void runFeed();
     startTimer();
   };

@@ -15,7 +15,6 @@ const m = (id: number, start: string, end: string | null = null): CalendarMatch 
   event_type_name: null,
 });
 
-// Sorted by start date, as the endpoint returns them.
 const matches = [m(1, "2026-03-02"), m(2, "2026-11-05", "2026-11-08"), m(3, "2026-11-20"), m(4, "2027-01-10")];
 const nov = monthPeriod(2026, 10);
 
@@ -57,8 +56,8 @@ describe("period helpers", () => {
     expect(monthPeriod(2028, 1)).toEqual({ start: "2028-02-01", end: "2028-02-29" });
   });
   it("weekStartOf snaps to Monday", () => {
-    expect(weekStartOf("2026-11-08")).toBe("2026-11-02"); // Sunday
-    expect(weekStartOf("2026-11-02")).toBe("2026-11-02"); // Monday
+    expect(weekStartOf("2026-11-08")).toBe("2026-11-02");
+    expect(weekStartOf("2026-11-02")).toBe("2026-11-02");
   });
   it("matchDateRange prints DD/MM/YYYY", () => {
     expect(matchDateRange(m(9, "2026-11-05", "2026-11-08"))).toBe("05/11/2026 – 08/11/2026");

@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { lineDiscountShare } from './line-discount-share';
 
-/* Regression: a partial DO / invoice copied the WHOLE line discount onto each
-   part, so 4 units with RM100 off delivered 2 + 2 took RM100 off twice. */
 describe('lineDiscountShare: a line discount split across partial deliveries / invoices', () => {
   it('a whole-line move carries the whole discount', () => {
     expect(lineDiscountShare(10000, 4, 0, 4)).toBe(10000);

@@ -87,9 +87,6 @@ export function isRepairClient(sb: unknown): boolean {
   try {
     return (sb as Record<symbol, unknown>)[REPAIR_CLIENT] === true;
   } catch {
-    /* A proxy that throws on symbol access is not something to guess about. It
-       is not a repair client — the shim's own clients are plain objects — and
-       the write-back's ordinary gates still apply. */
     return false;
   }
 }

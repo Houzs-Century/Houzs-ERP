@@ -1,13 +1,3 @@
-/* Supplier bills on paper (batch 4 step 8) — printSupplierBills. Pinned:
-     • every paper is read fresh, in the order given, and starts on a fresh
-       page of ONE document — an AP bill as the AP BILL, a supplier credit
-       note as the note print, a purchase invoice as Procurement's;
-     • without files nothing goes to the Worker; with files each paper renders
-       as its own PDF and the parts go to POST /ap-invoices/print-bundle in
-       order, and what comes back is what is delivered;
-     • purchase invoices alone keep no files here, so they never call the Worker;
-     • a paper that cannot be read fails the whole print by its number.
-   Ordinary ASCII in the fixtures: no CJK font fetch, no logo fetch. */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
@@ -44,7 +34,6 @@ vi.mock('./authed-fetch', async (importOriginal) => ({
     throw new Error(`unexpected read ${path}`);
   },
 }));
-/* Procurement's own print reads the supplier's catalogue; here it only says where it drew. */
 const piDrawnOnPage: number[] = [];
 vi.mock('./purchase-invoice-pdf', () => ({
   renderPurchaseInvoiceInto: async (doc: import('jspdf').jsPDF, _autoTable: unknown, header: { invoice_number: string }) => {
@@ -81,7 +70,6 @@ describe('printSupplierBills', () => {
   test('without files: each paper read fresh in order, a fresh page each, one document, no Worker', async () => {
     await printSupplierBills([API, SCN, PI], { withFiles: false, action: 'print' });
     expect(reads).toEqual(['/accounting/accounts', '/ap-invoices/api-1', '/credit-notes/scn-1', '/purchase-invoices/pi-1']);
-    /* The bill took page 1, the note page 2: the purchase invoice starts on page 3. */
     expect(piDrawnOnPage).toEqual([3]);
     expect(bundle).not.toHaveBeenCalled();
     expect(delivered).toHaveBeenCalledTimes(1);
@@ -98,7 +86,6 @@ describe('printSupplierBills', () => {
     expect(path).toBe('/ap-invoices/print-bundle');
     expect(parts.map((p) => `${p.kind}:${p.id}`)).toEqual(['SCN:scn-1', 'API:api-1', 'PI:pi-1']);
     for (const p of parts) expect(atob(p.pageBase64).startsWith('%PDF')).toBe(true);
-    /* Each paper on its own document: the purchase invoice draws on page 1 of ITS file. */
     expect(piDrawnOnPage).toEqual([1]);
     const [blob, name, action] = delivered.mock.calls[0]! as [Blob, string, string];
     expect(blob).toBe(BUNDLED);

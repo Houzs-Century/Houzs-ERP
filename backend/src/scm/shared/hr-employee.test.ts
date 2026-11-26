@@ -1,5 +1,3 @@
-// HR Employee Master: the Emp No series, reading a request body, and the save
-// checks the form and the API share.
 import { describe, expect, test } from "vitest";
 import { emptyEmployeeInput, employeeInputProblem, nextEmpNo, parseEmployeeInput } from "./hr-employee";
 

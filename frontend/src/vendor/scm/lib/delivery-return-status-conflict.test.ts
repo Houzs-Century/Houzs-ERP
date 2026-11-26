@@ -1,9 +1,3 @@
-// A delivery return status move that lost a race answers 409 `status_changed`
-// (backend delivery-returns.ts patchDeliveryReturnStatusHandler). Both callers
-// — the desktop useUpdateDeliveryReturnStatus toast and the mobile action
-// line — show `err.message`, which authedFetch builds with humanApiError. The
-// code is not in the curated map, so the server's own sentence must win over
-// the generic "That clashes with something already in the system".
 import { describe, expect, test } from "vitest";
 import { humanApiError } from "./authed-fetch";
 

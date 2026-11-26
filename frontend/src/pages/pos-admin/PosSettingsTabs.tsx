@@ -1,6 +1,3 @@
-/* POS Admin > SST & Receipt (layout E4, with a live 58 / 80 mm preview),
- * Printer & Scanner and General (layout E5). Each tab edits one settings
- * group and saves it whole; the device reads the same normalised document. */
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import { useToast } from "../../hooks/useToast";

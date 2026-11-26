@@ -15,16 +15,10 @@
 export interface SupplierReturn {
   id: number;
   round_no: number;
-  /** The trip's own document number, SVC-RTN-YYMM-NNNN. Null only until the
-   *  server has numbered it. */
   ref_no?: string | null;
-  /** YYYY-MM-DD — sent to the factory/supplier. */
   pickup_at: string | null;
-  /** YYYY-MM-DD — the date the supplier expects to send it back (ETA). */
   expected_return_at?: string | null;
-  /** YYYY-MM-DD — back from the factory/supplier. */
   returned_at: string | null;
-  /** 'pass' | 'fail' | 'na' — did the returned item pass on receipt. */
   qc_result: string | null;
   creditor_code: string | null;
   creditor_name?: string | null;

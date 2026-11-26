@@ -1,21 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { installmentFromInputs } from "./AdvancesPage";
 
-// The modal turns the owner's chosen repayment plan into the single
-// installment_sen the server stores. Both input modes collapse here:
-//   lump  -> null (whole amount in its month)
-//   split -> ceil(amount / N) per month
-//   fixed -> the RM figure, in sen
-// (amountSen is sen; months / monthly are the raw input strings.)
 describe("installmentFromInputs", () => {
   it("lump sum is null regardless of the amount", () => {
     expect(installmentFromInputs("lump", 60000, "", "")).toBeNull();
   });
 
   it("split into N months is ceil(amount / N)", () => {
-    expect(installmentFromInputs("split", 50000, "5", "")).toBe(10000); // 500 / 5
-    expect(installmentFromInputs("split", 50000, "3", "")).toBe(16667); // ceil(500 / 3)
-    expect(installmentFromInputs("split", 100000, "1", "")).toBe(100000); // 1 month = whole amount
+    expect(installmentFromInputs("split", 50000, "5", "")).toBe(10000);
+    expect(installmentFromInputs("split", 50000, "3", "")).toBe(16667);
+    expect(installmentFromInputs("split", 100000, "1", "")).toBe(100000);
   });
 
   it("split rejects a non-positive or non-integer month count", () => {

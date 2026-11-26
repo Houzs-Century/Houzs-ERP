@@ -51,7 +51,6 @@ export async function runSlaEscalation(env: Env): Promise<{ escalated: number }>
   const rows = candidates.results ?? [];
   if (rows.length === 0) return { escalated: 0 };
 
-  // Managers (hold service_cases.manage) — addressed once, not once per case.
   const managers = await env.DB.prepare(
     `SELECT DISTINCT u.id, u.email, u.name
        FROM users u
@@ -79,7 +78,6 @@ export async function runSlaEscalation(env: Env): Promise<{ escalated: number }>
       .bind(row.id, row.deadline_at, `SLA breached >24h — case auto-escalated`)
       .run();
 
-    // Email alerts — fire-and-forget (sendEmail never throws).
     const subject = `[SLA] ${row.assr_no} — escalated (overdue >24h)`;
     const link = publicUrl(env, `/assr`);
     const html = escalationEmailHtml({
@@ -101,7 +99,6 @@ export async function runSlaEscalation(env: Env): Promise<{ escalated: number }>
         refId: row.id,
       });
     }
-    // Also loop in managers unless they'd get a duplicate from the assignee addr
     for (const m of managerEmails) {
       if (m.toLowerCase() === (row.assignee_email || "").toLowerCase()) continue;
       await sendEmail(env, {

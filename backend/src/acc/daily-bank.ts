@@ -61,11 +61,8 @@ export type GlLine = {
   credit_sen: number;
   narration?: string | null;
   notes?: string | null;
-  /** Who paid or was paid — the entry's party, stamped by the route. */
   party?: string | null;
-  /** A customer payment's method, stamped by the route. */
   method?: string | null;
-  /** The document number the board prints (a customer payment's official receipt or order, a voucher's number), stamped by the route. */
   doc_no?: string | null;
 };
 
@@ -77,15 +74,11 @@ export type DailyBankMovement = {
   jeNo: string;
   sourceType: string;
   sourceDocNo: string | null;
-  /** The number the board prints: the stamped document, else the source's own number, else the journal's. */
   docNo: string;
-  /** Who paid or was paid; null when the entry names nobody. */
   party: string | null;
   note: string;
   amountSen: number;
-  /** A customer payment's method (cash, transfer, online:<how>, …); null for anything else. */
   method: string | null;
-  /** A receipt typed into the cash book: who typed it. Absent on every other line. */
   typedBy?: string | null;
 };
 
@@ -96,9 +89,7 @@ export type DailyBankPending = {
   payee: string | null;
   description: string;
   voucherDate: string | null;
-  /** The money account it will pay out of (its Paid From). */
   accountCode: string | null;
-  /** MYR sen, converted the way posting will (round per voucher). */
   amountSen: number;
 };
 
@@ -107,8 +98,6 @@ export type DailyBankTransit = { acquirerCode: string; accountCode: string; acco
 export type DailyBankBlock = {
   accountCode: string;
   accountName: string;
-  /** On the cash-book board: the account's start (the day and the balance it
-      starts from). Always null on the original board. */
   start: { date: string; balanceSen: number } | null;
   openingSen: number;
   inSen: number;
@@ -116,18 +105,12 @@ export type DailyBankBlock = {
   closingSen: number;
   receipts: DailyBankMovement[];
   payouts: DailyBankMovement[];
-  /** Checked vouchers awaiting approval that will pay out of this account. */
   pending: DailyBankPending[];
   pendingSen: number;
-  /** closing − pending: what this account can still move. */
   availableSen: number;
-  /** Card money for this account's acquirers — swiped, not yet remitted. */
   transit: DailyBankTransit[];
   transitSen: number;
-  /** available + transit: what the account holds once the card money lands. */
   availableWithTransitSen: number;
-  /** On the cash-book board only: the day's approved vouchers ticked as already in
-      the starting balance — listed, not taken off. Absent on the original board. */
   notDeducted?: DailyBankNotDeducted[];
 };
 
@@ -140,20 +123,14 @@ export type DailyBankNotDeducted = {
 export type DailyBankBoard = {
   date: string;
   blocks: DailyBankBlock[];
-  /** Every transit account, as before — the per-bank split lives on the blocks. */
   transit: DailyBankTransit[];
   totalClosingSen: number;
   totalTransitSen: number;
   pendingApprovalSen: number;
   availableSen: number;
-  /** Transit no block carries (no bank named, or a bank the board does not list). */
   unassignedTransit: DailyBankTransit[];
-  /** Pending vouchers paying from an account the board does not carry. */
   unassignedPending: DailyBankPending[];
-  /** Which board: the original ('ledger') or the owner's cash book ('cashbook'). */
   book: 'ledger' | 'cashbook';
-  /** On the cash-book board: the money accounts it does not carry yet — no start,
-      or a start after the day. Always empty on the original board. */
   notStarted: Array<{ accountCode: string; accountName: string; startDate: string | null }>;
   note: string;
 };
@@ -166,7 +143,6 @@ export type PendingVoucherRow = {
   pv_number?: string | null;
   payee_name?: string | null;
   notes?: string | null;
-  /** What it pays for, as the bills say it (payment-vouchers-describe.ts), when the route read it. */
   description_text?: string | null;
   purpose?: string | null;
   credit_account_code?: string | null;
@@ -189,7 +165,6 @@ export type CashbookSkip = { pv_id: string; ticked_by: string | null; ticked_at:
 /** What the route read for the accounts that have a start. */
 export type DailyBankCashbook = { starts: CashbookStart[]; receipts: CashbookReceipt[]; payouts: CashbookPayout[]; skips: CashbookSkip[] };
 
-/** The voucher's MYR sen: a garbage rate falls back to 1, never to zero pending. */
 const myrSen = (v: PendingVoucherRow): number => {
   const raw = Number(v.exchange_rate ?? 1);
   const rate = Number.isFinite(raw) && raw > 0 ? raw : 1;
@@ -232,10 +207,6 @@ export const insideStart = (v: CashbookPayout, start: CashbookStart): boolean =>
   return day < start.start_date || (day === start.start_date && v.voucher_date < start.start_date);
 };
 
-/** One account's cash-book figures for the day: the start, then every typed
-    receipt from the start date on and every approved voucher on the day it was
-    approved — before the day into Balance B/F, on the day listed; after the day
-    ignored. A ticked voucher is never taken off: on its day it is listed apart. */
 function cashbookFigures(
   date: string, start: CashbookStart, receipts: CashbookReceipt[], payouts: CashbookPayout[], skips: Map<string, CashbookSkip>,
 ): { opening: number; inSen: number; outSen: number; received: DailyBankMovement[]; paid: DailyBankMovement[]; notDeducted: DailyBankNotDeducted[] } {
@@ -289,14 +260,7 @@ export function computeDailyBank(
   moneyAccounts: MoneyAccount[],
   transitAccounts: TransitAccount[],
   lines: GlLine[],
-  /** Every checked voucher still awaiting approval (not yet posted or
-      cancelled) on or before the board date. Money already asked for is not
-      money the owner may still spend — it subtracts from available, from the
-      account it will pay out of. Amounts are document-currency sen; the rate
-      converts to MYR the same way posting will (round per voucher). */
   pendingVouchers: PendingVoucherRow[],
-  /** null = the original board, from the ledger. Given = the cash-book board:
-      each account's start, the typed receipts and the approved vouchers. */
   cashbook: DailyBankCashbook | null,
 ): DailyBankBoard {
   const byAccount = new Map<string, GlLine[]>();
@@ -305,7 +269,6 @@ export function computeDailyBank(
     arr.push(l);
     byAccount.set(l.account_code, arr);
   }
-  /* The cash book carries only the accounts whose start is on or before the day. */
   const startOf = new Map((cashbook?.starts ?? []).map((s) => [s.account_code, s]));
   const skipOf = new Map((cashbook?.skips ?? []).map((s) => [s.pv_id, s]));
   const onBoard = (a: MoneyAccount): boolean => {
@@ -318,9 +281,6 @@ export function computeDailyBank(
     .map((a) => ({ accountCode: a.account_code, accountName: a.account_name, startDate: startOf.get(a.account_code)?.start_date ?? null }));
   const blockCodes = new Set(carried.map((a) => a.account_code));
 
-  /* The vouchers, each on the account it pays from. On the cash book, one paying
-     out of an account it does not carry is that account's business, not this
-     board's: the original board still shows it. */
   const asked = cashbook ? pendingVouchers.filter((v) => v.credit_account_code != null && blockCodes.has(String(v.credit_account_code))) : pendingVouchers;
   const pendingAll: DailyBankPending[] = asked.map((v) => ({
     id: v.id ?? null,
@@ -342,7 +302,6 @@ export function computeDailyBank(
     }
     return { acquirerCode: t.acquirerCode, accountCode: t.account_code, accountName: t.account_name, balanceSen: bal, bankAccountCode: t.bankAccountCode ?? null };
   });
-  /* On the cash book no card money sits under a bank, so none is left over either. */
   const unassignedTransit = cashbook ? [] : transit.filter((t) => t.bankAccountCode == null || !blockCodes.has(t.bankAccountCode));
 
   const blocks: DailyBankBlock[] = carried.map((a) => {
@@ -382,8 +341,6 @@ export function computeDailyBank(
           if (net > 0) { inSen += net; receipts.push(move); }
           else if (net < 0) { outSen += -net; payouts.push(move); }
         }
-        // Lines after the board date are ignored: the board answers "as of that
-        // evening", so tomorrow's money must not bleed backwards.
       }
     }
     const closingSen = opening + inSen - outSen;

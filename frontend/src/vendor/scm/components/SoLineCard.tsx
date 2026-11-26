@@ -37,7 +37,6 @@ import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
 import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
 import { activeCompanyTracksVariants } from '../lib/binding-mode';
 
-/** divan|leg|gap as typed — the inputs a Total Height is derived from. */
 const totalHeightPartsSig = (v: Record<string, unknown>): string =>
   [v.divanHeight, v.legHeight, v.gap].map((x) => String(x ?? '')).join('|');
 import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
@@ -84,11 +83,6 @@ const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
-/* The tallest either portalled picker on this card wants to be. Matches
-   `.suggestList { max-height: 460px }` in SoLineCard.module.css, which is now
-   only the fallback for a render before the first measurement — the live value
-   comes from lib/anchoredPanel, which shortens it whenever the room on the
-   chosen side is less than this. */
 const SUGGEST_LIST_MAX_H = 460;
 
 const isBlankVariant = (v: unknown): boolean =>
@@ -121,7 +115,7 @@ const defaultSofaLegValue = (
  *    - key IN overriddenKeys     → cascade leaves alone (follower wins) */
 export type SoLineDraft = {
   itemCode:       string;
-  itemGroup:      string;        // 'sofa' | 'bedframe' | 'mattress' | 'accessory' | 'others'
+  itemGroup:      string;
   description:    string;
   uom:            string;
   qty:            number;
@@ -131,21 +125,10 @@ export type SoLineDraft = {
   variants:       Record<string, unknown>;
   remark:         string;
   overriddenKeys?: string[];
-  /* Client-only, like overriddenKeys: TRUE once the operator has typed into
-     this line's price box. It is how a deliberate RM 0 is told apart from a
-     SKU that simply has no sell price (a sofa the server prices from its
-     Model's modules at save). Parents send it as `zeroPriceIntended` via
-     vendor/scm/lib/zeroPriceClaim; it is never persisted. */
   priceAuthored?: boolean;
-  /* PR-E — Per-item delivery date + cascade override flag. */
   lineDeliveryDate?:           string | null;
   lineDeliveryDateOverridden?: boolean;
-  /* PR-F (Task #79) — Per-line photo R2 object keys (already-saved photos). */
   photoUrls?:                  string[];
-  /* Line-card-redesign (Commander 2026-05-27) — Client-only pending File
-     uploads staged before the line has a DB id. Parent strips this before
-     POST/PATCH and re-uploads each File against the saved itemId after
-     create. NEVER persisted to the API. */
   pendingPhotoFiles?:          File[];
 };
 
@@ -171,27 +154,9 @@ export const stripClientOnlyFields = (
   return rest;
 };
 
-/* posRemarkSpecialOf — the POS "special add-on" row (note + folded extra) for
-   the Special Orders accordion — lives in ../lib/pos-remark-special (pure +
-   unit-tested). Loo 2026-06-13: it reads variants.extraAddonNote, NOT the item
-   remark (variants.remark), which is now a separate field. */
 
-/* ── Per-category badge swatches ──────────────────────────────────────
-   2026-05-27: extracted to lib/category-badges.ts so MfgSalesOrdersList +
-   SalesOrderDetailListing can share the same chip palette. Re-import here
-   so the inline references below stay one-line. */
 
-/* ──────────────────────────────────────────────────────────────────────
-   SoLineCard
-   ────────────────────────────────────────────────────────────────────── */
 
-/* Task #103 — Wrap in React.memo at module bottom. The parent (SO Detail)
-   now passes stable per-row callbacks via a useMemo'd Map keyed off
-   editingLineIds, so the memo comparator can rely on shallow-equal props.
-   `inheritVariantsByCategory` from SalesOrderNew is a fresh object on every
-   render but the only state it captures is LINE 1's variants, which change
-   exactly when the user is interacting with LINE 1 anyway — i.e. exactly
-   when we DO want the follower rows to re-render. */
 const SoLineCardInner = ({
   index,
   draft,
@@ -217,11 +182,6 @@ const SoLineCardInner = ({
   onRemove:  () => void;
   canRemove: boolean;
   inheritVariantsByCategory?: Record<string, Record<string, unknown> | undefined>;
-  /* Multi-add (desktop parity with MobileSkuPicker.onPickMany). When provided,
-     the SKU picker gains a multi-select mode: the operator ticks several SKUs
-     and hits "Add N" — the FIRST fills THIS line (via onChange, so cascades +
-     inherit still fire) and the REST are appended as new lines by the parent.
-     Absent → single-pick behavior only. */
   onAddProducts?: (rows: MfgProductRow[]) => void;
   docNo?:    string;
   itemId?:   string;
@@ -250,10 +210,6 @@ const SoLineCardInner = ({
          (DO, consignment note/return, delivery return, sales invoice — the
           variants ride in with the items and are not re-specified here) */
   variantsRequired: boolean;
-  /* BUG-39 (Sim 2026-09-30): an SO with no Processing Date carries no delivery
-     date, on the lines either — the server refuses one (soLineDateRefusal).
-     SO New/Detail -> !processingDate; every other document -> false. Mandatory
-     for the same reason as variantsRequired. */
   lineDateLocked: boolean;
   /* Owner 2026-11-10 (shared/do-spec-lock.ts): a shipped DO line keeps its
      product and spec. Non-null = the product picker, variants and specials are
@@ -288,43 +244,19 @@ const SoLineCardInner = ({
      Leg Height is `required: false` in shared/so-variant-rule.ts, so a blank one
      blocks no Confirm gate on either side. */
   seedSofaLegDefault: boolean;
-  /* Scan-Order (Task #73) — the OCR rawText for a NO-MATCH line, shown as the
-     SKU picker's placeholder so the operator sees what was on the slip while
-     they pick a real SKU. It is a HINT ONLY — never committed as the product
-     value (a no-match line must be filled from the dropdown, not free-typed). */
   searchHint?: string;
-  /* Console lines: the sofa modules on this order it can be joined to
-     (`consoleAttachOptions`); stored as variants.attachTo so the PO layout puts
-     the Console beside that module instead of guessing from line order. Null
-     on documents that do not feed a PO layout, and on non-Console lines. */
   attachOptions: string[] | null;
-  /* DEV-32 — an SO line after its DO: the picker offers charge (SERVICE) SKUs
-     only, and the amount is typed: a transport or storage charge is priced per order. */
   chargeOnly?: boolean;
 }) => {
   const notify = useNotify();
   const maintQ   = useMaintenanceConfig('master');
   const maint    = maintQ.data?.data ?? null;
-  /* fabric_trackings stays ONLY for the read-only pricing-tier breakdown
-     (pickedFabric below) — the Fabrics DROPDOWN now sources the selling-side
-     fabric_colours, same as POS (SO-parity, Loo 2026-06-06). */
   const fabricsQ = useFabricTrackingsLite();
   const fabrics = useMemo(() => fabricsQ.data ?? [], [fabricsQ.data]);
   const fabricLibQ     = useFabricLibrary();
-  /* Special Add-ons (the per-Model system POS sells from + the server prices
-     from). Replaces the legacy maintenance_config specials/sofaSpecials pools. */
   const specialAddonsQ = useSpecialAddons();
   const specialDefs    = useMemo(() => specialAddonsQ.data ?? [], [specialAddonsQ.data]);
 
-  /* SO-SKU spec P4 (D4, Loo 2026-06-05) — the unit price is LOCKED to the
-     SKU Master sell price for everyone below admin. It auto-fills on pick and
-     the server recompute is authoritative at save; only admin-level roles can
-     hand-edit (the audited /override route is gated server-side too).
-     TEMPORARY (Loo 2026-06-10, SO emergency hatch) — the POS selling roles
-     creating raw SOs through the hatch may also type the price: their new
-     items often carry no sell_price_sen, so the locked field booked RM 0
-     lines. The server still enforces the catalog price on lines it CAN price
-     (isHatchSales in lib/auth.tsx — remove with the hatch). */
   const { staff } = useAuth();
   const canEditPrice = chargeOnly || isAdminLevel(staff?.role) || isHatchSales(staff?.role);
   /* DELIVERY FEE — the amount cell edits the LINE AMOUNT, not the unit price.
@@ -341,14 +273,6 @@ const SoLineCardInner = ({
      way (a discount cannot go negative) — that is what SVC-DELIVERY-ADD is
      for — so a higher figure clamps to no discount rather than pretending. */
   const feeGrossSen = Math.max(0, draft.qty * draft.unitPriceSen);
-  /* ...and the fee-vs-price verdict is LOCKED per mounted line, never
-     re-derived per keystroke. Deriving it live from the gross shipped two
-     regressions in one day (the full account is on lockedFeeSemantics): first
-     a hand-added fee line at gross 0 read "250" as a target and booked
-     nothing, then the fix for THAT let the first keystroke flip the cell into
-     target mode and pin the price at the first digit typed ("stuck at RM 2").
-     A line that arrives priced edits as a fee; a line being authored from 0
-     stays a plain unit price until it is saved and re-mounted. */
   const feeVerdictRef = useRef<boolean | null>(null);
   feeVerdictRef.current = lockedFeeSemantics(
     feeVerdictRef.current, isDeliveryFeeServiceCode(draft.itemCode), feeGrossSen,
@@ -371,39 +295,14 @@ const SoLineCardInner = ({
   const [search, setSearch] = useState(draft.description || draft.itemCode || '');
   const [picked, setPicked]         = useState<MfgProductRow | null>(null);
   const [showPicker, setShowPicker]   = useState(false);
-  // The SKU dropdown is rendered in a portal (document.body) and positioned with
-  // position:fixed from the input's live rect. Without this it lived inside the
-  // section `.card`, whose `overflow:hidden` (rounded corners) clipped it off —
-  // the options got cut at the card's bottom edge on every doc that uses this
-  // card (SO / DO / DR / consignment). Wei Siang 2026-06-06.
   const pickerWrapRef = useRef<HTMLDivElement>(null);
-  /* Multi-add (desktop MobileSkuPicker.onPickMany parity) — when the parent
-     wires onAddProducts, ticked SKUs collect here; "Add N" commits them (first
-     → this line, rest → new lines). Keyed by MfgProductRow.id. */
   const multiEnabled = typeof onAddProducts === 'function';
   const [multiMode, setMultiMode] = useState(false);
   const [multiPicked, setMultiPicked] = useState<MfgProductRow[]>([]);
-  /* Auto-open when the line carries a POS remark/extra special (Loo
-     2026-06-12) so the coordinator sees it without a click. */
   const [specialsOpen, setSpecialsOpen] = useState(() => posRemarkSpecialOf(draft.variants) != null);
-  /* Commander 2026-05-30 — Unit Price is a free-typed field. Keep the raw
-     typed text in local state so multi-digit entry (e.g. 1000) and
-     clear-then-retype work without the value being reformatted to "x.00" on
-     every keystroke (which jumps the cursor and blocks typing). Synced back
-     from the canonical centi only when it changes from outside, e.g. a
-     product pick resets it to 0. */
   const [priceText, setPriceText] = useState((amountCellSen / 100).toFixed(2));
   const [priceTyping, setPriceTyping] = useState(false);
-  /* The price the line had when this edit of the box began: an emptied box
-     requests no new price, so the line shows (and keeps) this one. */
   const priceBeforeEdit = useRef<Pick<SoLineDraft, 'unitPriceSen' | 'priceAuthored'>>({ unitPriceSen: 0 });
-  /* Load the full catalog ONCE (cached 5 min) and filter it LOCALLY — the picker
-     no longer fires a `/mfg-products?search=` request per keystroke, so typing
-     stays instant even while the Worker is slow or dropping connections (owner
-     2026-09-23: "product code search slow"). The catalog is small (~2.7k rows)
-     and the single list load is retried on a transient 504 by authedFetch. The
-     >=2-char gate keeps the dropdown quiet until the query is real; enabled only
-     while the picker is open so a saved line's render never fetches. */
   const trimmedSearch = search.trim();
   const productsQuery = useMfgProducts({ enabled: showPicker });
   const allProducts = productsQuery.data ?? [];
@@ -467,13 +366,6 @@ const SoLineCardInner = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, category, draft.itemCode, maint, seedSofaLegDefault]);
 
-  /* PR-F (Task #79) — Per-line photo state.
-     Line-card-redesign (Commander 2026-05-27): also support DRAFT mode
-     where the line hasn't been saved yet. In draft mode we stage File
-     objects in `draft.pendingPhotoFiles` and preview them via
-     URL.createObjectURL(). The parent (SalesOrderNew / SalesOrderDetail
-     Add Line flow) drains pendingPhotoFiles after save and uploads each
-     file against the freshly-minted itemId. */
   const uploadPhoto = useUploadSoItemPhoto();
   const deletePhoto = useDeleteSoItemPhoto();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -484,10 +376,6 @@ const SoLineCardInner = ({
   const canMutatePhotos = canShowPhotos && isSaved && isEditing;
   const canStagePhotos = canShowPhotos && !isSaved && isEditing;
 
-  /* Object URL lifecycle: mint a URL per pending File and revoke when
-     the file changes or the component unmounts. Keyed by index because
-     File objects don't have stable IDs and the Array reference shifts
-     on every patch. */
   const pendingPreviews = useMemo(
     () => pendingFiles.map((f) => ({ name: f.name, url: URL.createObjectURL(f) })),
     [pendingFiles],
@@ -496,15 +384,10 @@ const SoLineCardInner = ({
     pendingPreviews.forEach((p) => URL.revokeObjectURL(p.url));
   }, [pendingPreviews]);
 
-  // Sync picker search box to the description after picking.
   useEffect(() => { setSearch(draft.description ?? ''); }, [draft.description]);
 
-  // Reflect external amount changes (e.g. product pick → 0, or a delivery fee
-  // re-derived by the server) into the local text box, but leave the
-  // operator's in-progress typing untouched. On a fee line the canonical value
-  // is the NET, so a rebuilt discount lands here too.
   useEffect(() => {
-    if (!priceBoxAuthored(priceText)) return; // a box emptied mid-edit stays empty
+    if (!priceBoxAuthored(priceText)) return;
     const parsed = Math.round(Number(priceText) * 100) || 0;
     if (parsed !== amountCellSen) setPriceText((amountCellSen / 100).toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -513,16 +396,7 @@ const SoLineCardInner = ({
   const pickProduct = (p: MfgProductRow) => {
     setPicked(p);
     const category = p.category.toLowerCase();
-    /* PR #141 — Sofa-set inherit: same-category follower lines copy the
-       master's variants on pick. The seed only removes the flash of an empty
-       configurator; the live cascade in the parent form is what actually keeps
-       a follower in step, including when the master is typed AFTER this line
-       already exists (the owner's two-sofa multi-add). Both go through
-       lib/so-variant-cascade so the never-inherited keys are stripped in one
-       place. PR #147 — reset overriddenKeys on a fresh pick. */
     const seedVariants = seedFollowerVariants(inheritVariantsByCategory?.[category]);
-    /* Model default variants pre-fill under the inherited ones, only where
-       this document specifies the build (same gate as the sofa Leg default). */
     const defaults = seedSofaLegDefault
       ? pickDefaultVariants(p.category, p.model_default_variants, p.allowed_options)
       : {};
@@ -530,14 +404,7 @@ const SoLineCardInner = ({
       itemCode:       p.code,
       itemGroup:      category,
       description:    p.name,
-      /* SO-SKU spec P4 (D4, Loo 2026-06-05) — the SELLING unit price defaults
-         from the SKU Master's sell_price_sen (POS Master / Main Account
-         authored), replacing the manual-0 default (Commander 2026-05-29 — that
-         predates the cost/sell split; base_price_sen remains COST and still
-         never auto-populates). The server recompute stays authoritative at
-         save; sofa module / seat-height pools land their exact figure there. */
       unitPriceSen: p.sell_price_sen ?? 0,
-      // A seeded price is not a typed one: its 0 must not be claimed as free (BUG-63).
       priceAuthored:  false,
       variants:       { ...defaults, ...seedVariants },
       overriddenKeys: [],
@@ -545,15 +412,11 @@ const SoLineCardInner = ({
     setSearch(p.name);
   };
 
-  /* Multi-add helpers (only meaningful when onAddProducts is wired). */
-  /* A sofa piece can be ticked again — two CNRs are two lines (sofa-piece-lines.ts). */
   const toggleMultiPick = (p: MfgProductRow) =>
     setMultiPicked((prev) => tapMultiPick(prev, p, (x) => x.id, isSofaGroup(p.category)));
   const commitMulti = () => {
     if (multiPicked.length === 0) return;
     const [first, ...rest] = multiPicked;
-    // First selection fills THIS line — reuse pickProduct so inherit + cascade
-    // + price seeding all fire exactly as a single pick would.
     if (first) pickProduct(first);
     if (rest.length > 0) onAddProducts?.(rest);
     setMultiPicked([]);
@@ -561,27 +424,11 @@ const SoLineCardInner = ({
     setShowPicker(false);
   };
 
-  /* PR #136 — Auto-compute bedframe Total Height = Divan + Leg + Gap. The rule
-     itself lives in vendor/shared/total-height.ts; this card is one of sixteen
-     writers that used to carry a private copy of it. */
   const computedTotalHeight = useMemo(
     () => computeTotalHeight(category, draft.variants),
     [category, draft.variants.divanHeight, draft.variants.legHeight, draft.variants.gap],
   );
 
-  /* THE `if (!computedTotalHeight) return;` THAT USED TO SIT HERE IS GONE, and
-     removing it is the behavioural half of unifying this rule. It made the
-     writer refuse to write an EMPTY total, so clearing divan/leg/gap on a line
-     that already carried one left the OLD number in the draft — and that stale
-     number was saved, priced by mfg-pricing.ts, and gated by
-     allowed-options-check.ts, which can refuse the line for a `total_height`
-     the form has no input to correct. The fourteen purchasing screens had
-     always cleared it; only this card and MobileNewSO did not.
-
-     The decision now lives in `totalHeightPatch`, which returns null ONLY when
-     the stored value already equals the computed one — never merely because the
-     computed one is empty. That is deliberately not a guard a caller can get
-     wrong here again, and it is pinned by total-height.canonical.test.ts. */
   /* NOT ON OPEN, for a variant-tracked company only (PR #5609 follow-up;
      lib/binding-mode.ts). There the writer runs only once divan, leg or gap has
      changed in this card: opening a saved line must not rewrite its variants,
@@ -602,11 +449,6 @@ const SoLineCardInner = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [computedTotalHeight, category]);
 
-  /* PR #147 — Variant edits add the key to overriddenKeys so cascade
-     leaves this line alone when LINE 1 changes.
-     SO-parity (Loo 2026-06-06) — setVariants writes several keys atomically
-     (a fabric pick lands fabricCode + colourId + fabricId + labels in ONE
-     patch, mirroring what the POS handover payload sends per line). */
   const setVariants = (patch: Record<string, unknown>) => {
     const nextOverrides = Array.from(new Set([...(draft.overriddenKeys ?? []), ...Object.keys(patch)]));
     onChange({
@@ -616,18 +458,12 @@ const SoLineCardInner = ({
   };
   const setVariant = (k: string, v: string | number | string[]) => setVariants({ [k]: v });
 
-  /* PR #127 — HOOKKA multi-select Special Orders. */
   const specialsList = (v: unknown): string[] => {
     if (Array.isArray(v)) return v.map(String).filter(Boolean);
     if (typeof v === 'string' && v) return [v];
     return [];
   };
 
-  /* MFG-PRICING-ENGINE — Build pricing inputs from the picked product +
-     the fabric tracking row whose code matches the line's fabricCode
-     variant. Pull the per-context tier (sofa_price_tier vs
-     bedframe_price_tier) so the shared compute function can switch
-     basePriceSen ↔ price1Sen exactly the same way the server does. */
   const pickedFabric: FabricLite | null = useMemo(() => {
     const code = String(draft.variants.fabricCode ?? '');
     if (!code) return null;
@@ -651,17 +487,9 @@ const SoLineCardInner = ({
       seatHeightPrices: picked.seat_height_prices ?? null,
     };
     const specs = specialsList(draft.variants.specials ?? draft.variants.special);
-    /* SO-parity (Loo 2026-06-06) — price the picked specials from the
-       special_addons defs via the SAME pure pool builder the server recompute
-       uses (base sellingPriceSen + chosen-choice extras), instead of the
-       legacy maintenance string pools. Keeps this preview honest with what
-       POST /mfg-sales-orders will actually charge. */
     const choices = (draft.variants.specialChoices && typeof draft.variants.specialChoices === 'object')
       ? (draft.variants.specialChoices as Record<string, string[]>)
       : null;
-    /* An add-on priced by compartment (2990 POS, 2026-10-26) reads the build's
-       cells, as the recompute does for this same line. A split module row has
-       none, so it previews the base — the server's figure for that row too. */
     const lineCells = catU === 'SOFA' && Array.isArray(draft.variants.cells)
       ? (draft.variants.cells as Array<{ moduleId?: unknown } | null>)
       : null;
@@ -687,36 +515,7 @@ const SoLineCardInner = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picked, pickedFabric, draft.variants, category, draft.qty, maint, specialDefs]);
 
-  /* Commander 2026-05-29 — the SELLING unit price is operator-authored. It
-     defaults to 0 on product pick (see pickProduct) and is typed manually;
-     it must NEVER be auto-overwritten from a computed value. The previous
-     auto-recompute effect (which wrote computeMfgLinePrice's selling total
-     into the Unit Price field) is intentionally removed. `pricingBreakdown`
-     is kept ONLY to drive the read-only variant-surcharge display in the
-     right rail — it does not write the editable Unit Price. */
 
-  /* Commander 2026-05-29 — only show variant choices the SKU's Model allows
-     (allowed_options). An empty/absent pool = no restriction. Stops the editor
-     offering e.g. a leg height the SKU rejects on save (variant_not_allowed).
-     SO-parity (Loo 2026-06-06) — `picked` only exists for a freshly-picked
-     product; EDITING a saved line on SO Detail used to render unrestricted.
-     Resolve the pools by item code too so saved lines filter identically.
-
-     THIS DOES NOT MAKE variant_not_allowed UNREACHABLE, and reading it that way
-     is what left a bedframe refusal with no message for months (2026-08-18).
-     Filtering a picker can only cover fields that HAVE a picker: `totalHeight`
-     is computed below and has no control here, and `size_code` / `compartment`
-     come off the product row, so all three can still refuse on save. The
-     refusal is now rendered for the operator on the error path — see
-     vendor/scm/lib/refusal-detail.ts; do not add a second copy of that
-     wording here.
-
-     `restrictP`/`restrictS` also compare RAW, so a pool value spelled with a
-     curly inch mark (prod's `gaps` pool holds ten of them) matches no
-     maintenance value and the option is silently dropped from the dropdown.
-     The SERVER-side gate folds those spellings now (allowed-options-check.ts
-     `inPool`); these two filters deliberately still do not, because widening
-     them CHANGES WHICH OPTIONS APPEAR — an owner's call, not a bug fix. */
   const allowedByCodeQ = useModelAllowedOptionsByCode(draft.itemCode || undefined);
   const allowOpts = picked?.allowed_options ?? allowedByCodeQ.data ?? null;
   /* The SHARED restrict helpers, not a private copy. maintenance-pools.ts has
@@ -749,14 +548,6 @@ const SoLineCardInner = ({
      so the picker never blanks a previously-selected fabric. */
   const inactiveFabricCodes = useMemo(() => new Set<string>(), []);
 
-  /* Picking a colour writes the SAME variant keys the POS handover payload
-     sends (pos-handover-so.ts buildVariants): fabricCode + colourId satisfy
-     the server's allowed-fabric gate + cost lookup; fabricId (the SERIES,
-     fabric_library.id) is what the selling fabric-tier add-on keys on — the
-     Backend never sent it before, so a configured tier Δ silently priced
-     RM 0 on Backend-keyed lines. Now takes the full FabricColourRow straight
-     from the combobox's selection (identical shape to the old library row), so
-     the written variant payload is byte-for-byte what the <select> produced. */
   const fabricSeries = useMemo(
     () => new Map((fabricLibQ.data ?? []).map((f) => [f.id, f.label] as [string, string])),
     [fabricLibQ.data],
@@ -791,12 +582,6 @@ const SoLineCardInner = ({
     );
   }, [specialDefs, catUpper, allowOpts]);
 
-  /* Commander 2026-05-29 — the right-rail "Pricing" summary reflects the
-     operator-authored SELLING unit price, not a computed cost base. extraSen
-     collapses the SELLING variant surcharges (sellingPriceSen via
-     computeMfgLinePrice) — 0 today, non-zero only once a Sales Director sets
-     a selling surcharge. The product's cost base is never shown here as the
-     selling base. */
   const extraSen = pricingBreakdown
     ? pricingBreakdown.divanSurchargeSen
     + pricingBreakdown.legSurchargeSen
@@ -818,31 +603,11 @@ const SoLineCardInner = ({
      the server refuses a Processing Date while any line is still KIV. */
   const colourKiv = isColourKiv(draft.variants);
   const badge = CATEGORY_BADGE[category] ?? CATEGORY_BADGE.others!;
-  /* Drive the configurator off the EFFECTIVE category (resolved above), NOT the
-     raw persisted itemGroup — so a scan/backdoor sofa/bedframe draft whose
-     itemGroup came in generic still renders its fabric/seat/leg configurator and
-     requires those variants, exactly like a manually-picked line (owner
-     2026-07-13). */
   /* fabric_accessory = "Sofa Accessory" (owner 2026-09-14): colour ONLY, from the same
      fabric master and the same picker as a sofa. tasks/PLAN-sofa-accessories-category.md */
   const hasVariants = Boolean(draft.itemCode) && Boolean(maint)
     && (category === 'bedframe' || category === 'sofa' || category === 'fabric_accessory');
   const specials = specialsList(draft.variants.specials ?? draft.variants.special);
-  /* SO-parity (Loo 2026-06-06) — mattress lines can carry Special Add-ons too
-     (POS prices MATTRESS specials since PR #456). Render JUST the accordion for
-     them — no fabric/height grid.
-
-     WHO GETS THE PANEL, AND WHETHER IT OFFERS CHECKBOXES, is one decision and it
-     lives in lib/special-order-surface.ts with its own tests — read that file
-     for the reasoning, including why free text is safe on a pooled line and a
-     ticked add-on is not. It replaces the condition that used to sit here:
-
-         specialOptions.length > 0 || specials.length > 0 || posRemarkSpecialOf(...) != null
-
-     which asked "is there an add-on to tick?" and answered no for every plain
-     mattress (the catalogue defines none) and every accessory. So the owner had
-     nowhere to write an SP mattress's SIZE or a custom pillow's COLOUR
-     (2026-09-10). The panel now opens on the line's category alone. */
   const specialSurface = specialOrderSurface({
     category,
     hasItemCode: Boolean(draft.itemCode),
@@ -850,7 +615,6 @@ const SoLineCardInner = ({
   });
   const hasSpecialOrder = specialSurface.block;
 
-  /* ── Render ─────────────────────────────────────────────────────── */
 
   /* Keep the portal'd SKU dropdown pinned to its input while open. The
      geometry — flip above when there is more room there, clamp the height to
@@ -862,12 +626,9 @@ const SoLineCardInner = ({
 
   return (
     <div data-grid-row className={styles.card}>
-      {/* ── Main single row ────────────────────────────────────────── */}
       <div className={styles.row}>
-        {/* 1. No # */}
         <span className={styles.lineNo}>{index + 1}</span>
 
-        {/* 2. Item picker (SKU search → the picked line names itself ONCE) */}
         <div className={styles.pickerWrap} ref={pickerWrapRef}>
           {draft.itemCode && search === draft.description && !showPicker ? (
             <button
@@ -881,15 +642,6 @@ const SoLineCardInner = ({
               onClick={() => { setShowPicker(true); setSearch(draft.description ?? ''); }}
               title="Click to change product"
             >
-              {/* Description ONCE, code NOT displayed — the shared rule
-                  (vendor/shared/line-identity.ts). The dropdown BELOW this
-                  button has shown description-only since Commander 2026-05-27
-                  ("picker rows show description only — one scannable line per
-                  SKU. The code still binds on click"); the PICKED line kept
-                  showing code-over-description, so the same row contradicted the
-                  list it was chosen from. The code still BINDS — draft.itemCode
-                  is untouched and still travels to the payload; the button's own
-                  gate compares `search` against `description`, not the code. */}
               <div className={styles.pickerInputCol}>
                 <span className={styles.pickerCode}>
                   {lineIdentity({ code: draft.itemCode, description: draft.description }).primary}
@@ -900,9 +652,6 @@ const SoLineCardInner = ({
             <>
               <input
                 className={styles.input}
-                /* Scan-Order no-match (Task #73) — surface the slip's rawText as
-                   the placeholder so the operator sees what was written while
-                   picking a real SKU, without it being committed as a value. */
                 placeholder={searchHint ? `Slip: ${searchHint} — pick a SKU` : 'Click to pick or type to filter…'}
                 value={search}
                 disabled={!isEditing || specLocked}
@@ -930,18 +679,11 @@ const SoLineCardInner = ({
             </>
           )}
           {showPicker && isEditing && menuPos && createPortal(
-            /* Portal to body + position:fixed so the dropdown escapes the
-               section card's overflow:hidden clip and floats over whatever is
-               below (e.g. the next card). Inline top/left/width override the
-               class's absolute top:100%/left/right. */
             <ul
               className={styles.suggestList}
               style={{ ...anchoredPanelStyle(menuPos), right: 'auto', marginTop: 0 }}
             >
               {multiEnabled && candidates.length > 0 && (
-                /* Multi-add toggle (MobileSkuPicker.onPickMany parity). onMouseDown
-                   + preventDefault keeps the search input focused so the portal
-                   stays open while ticking rows. */
                 <li
                   className={styles.suggestItem}
                   style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', fontWeight: 600 }}
@@ -954,8 +696,6 @@ const SoLineCardInner = ({
                 </li>
               )}
               {candidates.length > 0 ? (
-                /* Commander 2026-05-27: picker rows show description only — one
-                   scannable line per SKU. The code still binds on click. */
                 candidates.slice(0, 50).map((p) => {
                   const tickCount = multiMode ? multiPickCount(multiPicked, p.id, (x) => x.id) : 0;
                   const ticked = tickCount > 0;
@@ -994,8 +734,6 @@ const SoLineCardInner = ({
                 })
               ) : (
                 <li className={styles.suggestItem} style={{ color: 'var(--fg-muted)', cursor: 'default' }}>
-                  {/* Task #102 — Distinguish "type more" (gate hasn't tripped)
-                      from "no matches" (server returned []). */}
                   {trimmedSearch.length < 2
                     ? 'Type at least 2 characters to search…'
                     : productsQuery.isFetching
@@ -1017,7 +755,6 @@ const SoLineCardInner = ({
           )}
         </div>
 
-        {/* 3. Remarks */}
         <input
           className={styles.input}
           placeholder="Type remarks…"
@@ -1026,8 +763,6 @@ const SoLineCardInner = ({
           onChange={(e) => onChange({ remark: e.target.value })}
         />
 
-        {/* 4. Qty — DEV-62 (Adrian): qty is a small count, so it gets the
-             up/down arrows; the Unit Price beside it is typed. */}
         <NumberInput
           sign="unsigned"
           decimal={false}
@@ -1040,19 +775,10 @@ const SoLineCardInner = ({
           onBlur={() => { if (draft.qty <= 0) onChange({ qty: 1 }); }}
         />
 
-        {/* 5. Unit Price — D4: locked to the SKU Master sell price below admin.
-             Uses a distinctive brass-tinted `.priceInput` (2026-07-09) so the
-             amount cell is impossible to miss between the qty and date
-             columns that sit either side of it. */}
         <input
           type="text"
           inputMode="decimal"
           className={styles.priceInput}
-          /* DEV-62 (Adrian, PC + saved lines): any RM 0 shows as the
-             placeholder so typing a price does not start with deleting
-             "0.00". A 0 shows only while being typed, so "0" / "0.5" can
-             still be keyed in. A fee line keeps its 0.00: there it means
-             the fee is waived. */
           value={!isFeeLine && amountCellSen === 0 && !priceTyping ? '' : priceText}
           placeholder="0.00"
           disabled={!isEditing || !canEditPrice}
@@ -1067,10 +793,6 @@ const SoLineCardInner = ({
             setPriceText(t);
             setPriceTyping(true);
             if (isFeeLine) {
-              /* A BLANK box is mid-edit, not "waive the fee". `Number('')` is
-                 0, which would read as charge-nothing and discount the whole
-                 line on the way to retyping it — and a blur right then would
-                 save that. A real waiver is typed as 0, which still lands. */
               const n = Number(t);
               if (t.trim() === '' || !Number.isFinite(n)) return;
               onChange({ discountSen: feeDiscountForAmount(feeGrossSen, Math.round(n * 100)) });
@@ -1113,7 +835,6 @@ const SoLineCardInner = ({
             onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
           />
         )}
-        {/* 7. Delivery Date (2990 addition between Unit Price and Amount) */}
         <DateField
           fullWidth
           className={styles.input}
@@ -1133,15 +854,12 @@ const SoLineCardInner = ({
           }
         />
 
-        {/* 8. Amount */}
         <span className={styles.amount}>{fmtRm(lineTotal)}</span>
 
-        {/* 9. Group badge */}
         <span className={styles.badge} style={{ background: badge.bg, color: badge.fg }}>
           {badge.label}
         </span>
 
-        {/* 9. Trash — hidden when not editing */}
         {isEditing ? (
           <button
             type="button"
@@ -1225,8 +943,6 @@ const SoLineCardInner = ({
               Colour KIV — confirm the colour before a Processing Date can be set.
             </div>
           )}
-          {/* Computed Total Height marker — Houzs shows this read-only;
-              we surface it as a small inline hint instead of a 5th cell. */}
           {computedTotalHeight && (
             <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
               Total height (auto):{' '}
@@ -1282,11 +998,6 @@ const SoLineCardInner = ({
               onSelect={pickFabricColour}
             />
             <VariantSelect
-              /* "Seat Size" is the system-wide name (vendor/shared/so-variant-rule
-                 declares it, and PO / GRN / Stock Adjustment / PI / PR / PoLineCard
-                 / PcVariantEditor all render it). This card was the last screen
-                 still saying "Seat Heights", and the only one anywhere that
-                 pluralised it. */
               label="Seat Size" required={variantsRequired}
               value={String(draft.variants.seatHeight ?? '')}
               disabled={!isEditing || specLocked}
@@ -1318,7 +1029,6 @@ const SoLineCardInner = ({
                 onChange={(v) => setVariant(CONSOLE_ATTACH_KEY, v)}
               />
             ) : (
-              /* Empty cell so the 4-col grid stays balanced */
               <span />
             )}
           </div>
@@ -1357,20 +1067,13 @@ const SoLineCardInner = ({
       )}
 
         </div>}
-        {/* /bodyLeft */}
 
-        {/* ── Right rail (price summary + photos) ───────────────── */}
         <div className={styles.bodyRight}>
-          {/* Price summary — only meaningful once a SKU is picked. */}
           {picked && (
             <div className={styles.priceSummary}>
               <div className={styles.priceSummaryHead}>
                 <span>Pricing</span>
               </div>
-              {/* Commander 2026-05-29 — selling unit price is operator-typed.
-                  Show the manually-entered Unit Price (not a computed cost
-                  base). Variant selling surcharges only surface once a Sales
-                  Director sets them (sellingPriceSen) — 0 today. */}
               {extraSen > 0 && (
                 <div className={styles.priceRow}>
                   <span className={styles.priceLabel}>
@@ -1398,9 +1101,6 @@ const SoLineCardInner = ({
             </div>
           )}
 
-          {/* Photos — saved mode (R2 thumbs) + draft mode (object-URL
-              previews staged on the draft). canStagePhotos === !isSaved
-              && isEditing; canMutatePhotos === isSaved && isEditing. */}
           {canShowPhotos && (
             <div className={styles.photosCard}>
               <div className={styles.photosHead}>
@@ -1412,7 +1112,6 @@ const SoLineCardInner = ({
                 )}
               </div>
               <div className={styles.photosStrip}>
-                {/* Saved photos (R2 signed URL thumbs) */}
                 {photoUrls.map((key) => (
                   <PhotoThumb
                     key={key}
@@ -1431,9 +1130,6 @@ const SoLineCardInner = ({
                   />
                 ))}
 
-                {/* Pending (DRAFT) photos — preview from object URL with
-                    a small "pending" stripe + a delete X that removes
-                    the File from the staged array. */}
                 {pendingPreviews.map((p, i) => (
                   <div key={`pending-${i}`} className={styles.photoTile}>
                     <img src={p.url} alt={p.name} />
@@ -1454,9 +1150,6 @@ const SoLineCardInner = ({
                   </div>
                 ))}
 
-                {/* Hidden file input + Add button. The same input is used
-                    for both saved (immediate upload) and draft (stage in
-                    component-state) modes. */}
                 {(canMutatePhotos || canStagePhotos) && (
                   <>
                     <input
@@ -1470,30 +1163,17 @@ const SoLineCardInner = ({
                         if (files.length === 0) return;
 
                         if (canStagePhotos) {
-                          // DRAFT mode — stage Files on the draft. Parent
-                          // drains pendingPhotoFiles after the line saves.
                           onChange({ pendingPhotoFiles: [...pendingFiles, ...files] });
                           if (fileInputRef.current) fileInputRef.current.value = '';
                           return;
                         }
 
-                        // SAVED mode — upload immediately to R2.
                         if (!docNo || !itemId) return;
                         const newKeys: string[] = [];
                         for (const f of files) {
                           try {
                             const res = await uploadPhoto.mutateAsync({ docNo, itemId, file: f });
                             newKeys.push(res.photoKey);
-                            // Task #92 — seed the signed-URL cache with
-                            // the URL the API just minted so PhotoThumb
-                            // doesn't do a redundant /signed round-trip
-                            // on first render of the just-uploaded photo.
-                            // WO-7 — carry the thumbUrl the same way.
-                            // The startsWith('http') filter is load-bearing:
-                            // the upload route's OWN signing fallback returns
-                            // photoUrl as a RELATIVE proxy path, which an
-                            // <img src> cannot use. Filtered here, the cache
-                            // holds only <img>-loadable URLs by construction.
                             if (res.expiresAt && res.photoUrl?.startsWith('http')) {
                               cacheSoLinePhotoSignedUrl(res.photoKey, {
                                 signedUrl: res.photoUrl,
@@ -1541,50 +1221,27 @@ const SoLineCardInner = ({
             </div>
           )}
         </div>
-        {/* /bodyRight */}
       </div>
       )}
-      {/* /body */}
     </div>
   );
 };
 SoLineCardInner.displayName = 'SoLineCard';
 
-/* Task #103 — Wrapped in React.memo with the default shallow comparator.
-   With the SO Detail page now passing stable per-row callbacks
-   (rowCallbacks Map + patchAddingDraft useCallback), the memo skips
-   re-renders when an unrelated row's draft state, an unrelated parent
-   state (History drawer toggle, Edit-mode flip, payment table activity),
-   or the routinely-stable header useQuery cache result changes. */
 export const SoLineCard = memo(SoLineCardInner);
 
-/* ──────────────────────────────────────────────────────────────────────
-   VariantSelect — uniform <select> with label + optional "+RM x.xx" suffix
-   ────────────────────────────────────────────────────────────────────── */
 
 const VariantSelect = ({
   label, options, value, onChange, disabled = false, required = false,
 }: {
   label:    string;
-  /* Commander 2026-05-28: `priceSen` is COST and must NOT surface in the SO
-     create/edit flow. The option label shows the SELLING surcharge only
-     (`sellingPriceSen`), and only when a Sales Director has set one (> 0).
-     Today sellingPriceSen is unset, so dropdowns render clean ("10"`, `16"`)
-     with no MYR cost numbers — exactly what the commander asked for. */
   options:  Array<{ value: string; priceSen: number; sellingPriceSen?: number; display?: string }>;
   value:    string;
   disabled?: boolean;
-  /* Commander 2026-05-28: variants are mandatory — a salesperson must NOT be
-     able to proceed without picking. When required + empty, the field shows a
-     red ring and Save is blocked upstream (SO New / SO Detail). */
   required?: boolean;
   onChange: (v: string) => void;
 }) => {
   const invalid = required && !value;
-  /* SO-parity (Loo 2026-06-06) — saved lines can hold a value the Model's
-     allowed_options pool no longer offers (now that pools also filter on SO
-     Detail). Render it as "(current)" instead of blanking the select — the
-     coordinator can see what's on the line and re-pick a live option. */
   const hasCurrent = Boolean(value) && options.some((o) => o.value === value);
   return (
     <label className={styles.variantField}>
@@ -1596,8 +1253,6 @@ const VariantSelect = ({
         onChange={(e) => onChange(e.target.value)}
         style={invalid && !disabled ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
       >
-        {/* Commander 2026-05-28: no selectable blank "—" — the placeholder is
-            disabled so it can't be chosen to "proceed without selecting". */}
         <option value="" disabled>Select…</option>
         {value && !hasCurrent && <option value={value}>{value} (current)</option>}
         {options.map((o) => {
@@ -1637,17 +1292,11 @@ const FabricColourCombobox = ({
   label, value, colourLabel, fabricSeries, onSelect, disabled = false, required = false, pool, inactiveCodes, itemCode,
 }: {
   label:    string;
-  /** draft.variants.colourLabel — shown after the code when closed, as the phone's FabricField does. */
   colourLabel: string;
-  /** fabric_library id → series label, for the dropdown's second line. */
   fabricSeries: Map<string, string>;
-  /** The line's SKU — the server applies its Model's pool before the 50 cap. */
   itemCode: string | null;
-  /** Selected colour code (draft.variants.fabricCode). Shown (plus colourLabel) when closed. */
   value:    string;
-  /** Non-empty = restrict to these colour codes (Model allowed_options.fabrics). */
   pool?:    string[] | null;
-  /** fabric_trackings.is_active===false codes — hidden from NEW picks (Mig 0167). */
   inactiveCodes: Set<string>;
   disabled?: boolean;
   required?: boolean;
@@ -1657,14 +1306,10 @@ const FabricColourCombobox = ({
   const [search, setSearch] = useState('');
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  /* Same debounce + length>=2 + open gate the SKU picker uses, so the query
-     only fires while the operator is actively picking. */
   const debounced = useDebouncedValue(search, 200);
   const trimmed   = debounced.trim();
   const coloursQ  = useFabricColoursSearch(trimmed, { enabled: open && trimmed.length >= 2, itemCode });
 
-  /* Apply the pool + inactive gates to the SERVER results (the old option-list
-     prune, moved server-side of the fetch). Cap at 50 like the SKU picker. */
   const results = useMemo(() => {
     const rows = coloursQ.data ?? [];
     return rows
@@ -1677,9 +1322,6 @@ const FabricColourCombobox = ({
       .slice(0, 50);
   }, [coloursQ.data, pool, inactiveCodes]);
 
-  /* Pin the portalled dropdown to the input (escapes the card's
-     overflow:hidden clip), tracking scroll/resize — the same shared geometry
-     the SKU picker above uses, so both flip and clamp identically. */
   const menuPos = useAnchoredPanel(wrapRef, open && !disabled, SUGGEST_LIST_MAX_H);
 
   const invalid = required && !value;
@@ -1691,8 +1333,6 @@ const FabricColourCombobox = ({
       <div ref={wrapRef} style={{ position: 'relative' }}>
         <input
           className={styles.select}
-          /* Closed → show the selected code (NEVER blank a saved fabric).
-             Open  → show the operator's live search term. */
           value={open ? search : shown}
           placeholder={value ? undefined : 'Type 2+ chars to search…'}
           disabled={disabled}
@@ -1762,30 +1402,11 @@ const FabricColourCombobox = ({
 export function missingRequiredVariants(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
-  /* REQUIRED, like the rule it wraps. A wrapper that keeps the parameter
-     optional re-opens the hole one layer up: the DIVAN ONLY / adjustable-bed
-     exemptions key off this code, and a caller that omits it silently gets the
-     un-exempted answer with no compile error. Pass null where there is
-     genuinely no code — nothing is exempted then. */
   itemCode: string | null,
 ): string[] {
   return missingVariantAxes(itemGroup, variants, itemCode).map((a) => a.label);
 }
 
-/* ──────────────────────────────────────────────────────────────────────
-   PhotoThumb — one tile of the edit card's photo strip
-   ──────────────────────────────────────────────────────────────────────
-   PRESENTATION ONLY. Everything about HOW a photo resolves — the signed-URL
-   cache and its expiry skew, the thumb tier, the authed-proxy fallback that is
-   the only reason photos display in production at all, the per-effect-run
-   attempt that survives StrictMode's double-invoke, and the blob caches —
-   lives in ../lib/so-line-photo.useSoLinePhoto, shared with the V2 read-only
-   strip. Read that file's header before changing any of it; three separate
-   production regressions have lived in there.
-
-   Exported as a test seam: SoLinePhotoFallback.test.tsx drives the real state
-   machine through this tile, which is the mount configuration production uses.
-   ────────────────────────────────────────────────────────────────────── */
 export const PhotoThumb = ({
   photoKey, docNo, itemId, canDelete, onDelete,
 }: {

@@ -1,10 +1,3 @@
-// Mobile twins of the desktop source/delivered chips (phone shell idiom:
-// inline styles, display-only — the phone doesn't route on tap). One home so
-// MobileModuleDetail (DO / SI / PO / GRN / PI lines) and MobileSODetail (SO
-// lines) render the same chips the desktop drill-downs render — the owner's
-// one-product rule, and the 2026-08-01 "identical source data on every
-// surface" ruling. Detail rows render the FULL list (the "+N" overflow rule is
-// for LIST cells; a phone detail line wraps instead).
 
 import type { CSSProperties } from "react";
 import { formatDate } from "../lib/utils";
@@ -40,9 +33,6 @@ export function soStockPillMobile(l: {
   item_group?: string | null;
   stock_status?: string | null;
   stock_state?: string | null;
-  /** The server's verdict over stock_status + stock_state — see the desktop
-   *  twin. Desktop and mobile must move together (CLAUDE.md); this is that
-   *  half. */
   stock_status_effective?: string | null;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
@@ -61,11 +51,6 @@ export function soStockPillMobile(l: {
   return { label: "PENDING", fg: "#5c6357", bg: "#f4f6f3", bd: "#d9ded4" };
 }
 
-/* The non-selling-warehouse refusal, phone shell. Desktop twin: the note under
-   SoStockPill (components/SoSourceChips.tsx) — keep the two in lockstep. The
-   phone has vertical room the 96px desktop Stock column does not, so it shows
-   the SERVER's whole sentence instead of hiding it on a hover the phone has no
-   way to trigger. Same field, same words, different amount of it. */
 export function NonSellingWarehouseNoteMobile({
   note,
 }: {
@@ -106,9 +91,6 @@ export function StockAdjChipMobile() {
   );
 }
 
-/* Sales docs (DO / SI / SO): the source PO(s) the goods came from. `ready`
-   chips (SO only) carry a qty suffix under the same rule as Delivered: every
-   qty on a multi-chip line, qty > 1 on a single chip. */
 export function SourcePosRowMobile({
   pos,
   adj,
@@ -121,21 +103,11 @@ export function SourcePosRowMobile({
 }: {
   pos: string[];
   adj?: boolean;
-  /* SO bound PO (BUG-72): PO number -> formatted ETA, appended to that chip. */
   etas?: Record<string, string>;
   ready?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
-  /* SO list card (2026-08-11): the purchase orders this SO's lines were raised
-     INTO (`converted_po_nos`). Procurement provenance, NOT a goods source — so
-     it wears the muted dress, exactly like the "bought for" chips on the
-     purchase-doc rows. Desktop twin: the PO No. column's muted chip in
-     pages/scm-v2/MfgSalesOrdersListV2.tsx — keep the two in lockstep. */
   raised?: string[];
   label?: string;
-  /* SO lines: the MRP incoming-PO coverage for an un-arrived remainder
-     (stock_state === 'po') — "PO-x · ETA dd/mm/yyyy" as muted mono text. */
   incoming?: { po: string; eta: string | null } | null;
-  /* true → an unresolved line still renders the row with a dash (the desktop
-     drill-down's honest "—"), so a blank is visible, never silent. */
   showEmpty?: boolean;
 }) {
   const readyPo = (ready ?? []).filter((r) => r.kind === "po" && r.po && !pos.includes(r.po));
@@ -292,11 +264,6 @@ export function PairedSoRowsMobile({
   assigned: Array<{ soDocNo: string; deliveryDate?: string | null; locked?: boolean; source?: string }>;
   delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
   sourceLinked?: boolean;
-  /* PR-3 (2026-08-07): the coverage wire's PARALLEL stored-origin slot. SOs
-     not already shown above render as one trailing row of muted "bought for"
-     chips (+ delivery date), with NO status pill — provenance is not the live
-     assignment, so DELIVERED/PENDING (execution verdicts) do not apply.
-     Desktop twin: PairedSoCell provenance row — keep in lockstep. */
   provenance?: Array<{ soDocNo: string; deliveryDate?: string | null }>;
   }) {
   const rows: Array<{ soDocNo: string; deliveryDate: string | null; floating: boolean; chip: CSSProperties; title: string; dos: Array<{ doNo: string; qty: number }> }> = [];
@@ -334,9 +301,6 @@ export function PairedSoRowsMobile({
       orphan.dos.push({ doNo: d.doNo, qty: d.qty });
     }
   }
-  /* PR-3: "bought for" chips for provenance SOs not already shown by ANY row
-     (assignments or orphan delivered rows) — dedupe by soDocNo, so when the
-     stored origin won the precedence nothing extra renders. */
   const shownSos = new Set(rows.map((r) => r.soDocNo));
   /* Owner 2026-11-19: beside MRP's order a raised-for chip read as two orders; it
      shows only when nothing else is assigned (desktop twin: provenanceExtras). */

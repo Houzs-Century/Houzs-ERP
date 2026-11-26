@@ -33,32 +33,16 @@ scanPiCheck.use('*', supabaseAuth);
 
 scanPiCheck.post('/upload', (c) => handleUpload(c, { documentType: 'PI', feature: 'scan_pi_split', reviewVersion: PI_REVIEW_VERSION, scannedToday: (review) => review, runLocal: runPiJobFromRow }));
 
-/* GET /scan-pi/check/pending — this user's invoices still being read or waiting
-   to be checked, with the suppliers, what is left to bill on every supplier on
-   them, and per invoice whether it repeats one already made. */
-/* A working copy of an older shape: rebuild it from the stored read, once, so a
-   waiting invoice takes the newer matching without being uploaded again. The head
-   the operator may have edited and every row already tied stay; a row still
-   untied takes what the newer matching ties it to. Copies rebuild side by side:
-   each may ask the AI once. */
 async function upgradeCopies(svc: ReturnType<typeof svcOf>, companyId: number | null, rows: Array<CheckRow<PiReview>>, ai: AiSkuMatcher | null, open: ReadonlyMap<string, BillableLine>): Promise<void> {
   await Promise.all(rows.map((r) => upgradeCopy(svc, companyId, r, ai, open)));
 }
 
 async function upgradeCopy(svc: ReturnType<typeof svcOf>, companyId: number | null, r: CheckRow<PiReview>, ai: AiSkuMatcher | null, open: ReadonlyMap<string, BillableLine>): Promise<void> {
   if (r.review_state !== 'pending' || !r.review) return;
-  /* A SUGGESTED tie to a receipt line another invoice has since billed is stale: the
-     row showed blank under "no longer open to bill" and never matched again (owner
-     2026-11-10, INV-2610-097 after the batch's other invoices were created). Untie it
-     and rebuild; a tie the operator chose keeps its warning instead. A row printed at
-     RM 0 tied to a line that costs money is stale too (INV-2610-097's free JAGER). */
   const stale = staleSuggestions(r.review, open);
   if (r.review.v === PI_REVIEW_VERSION && stale === 0) return;
   const older = r.review.v < PI_REVIEW_VERSION;
   if (stale > 0) r.review = { ...r.review, lines: r.review.lines.map((l) => (staleTie(l, open, older) ? { ...l, grnItemId: null, grnNumber: null, suggested: false, ai: false } : l)) };
-  /* The stored read when there is one; else the copy's own rows (2026-11-09: the
-     five HOOKKA invoices waiting at deploy carried no scan sample, so they were
-     skipped and kept their old, empty matching). */
   let parsed: PiScanExtract | null = null;
   if (r.sample_id) {
     const { data, error } = await svc.from('so_scan_samples').select('extracted').eq('id', r.sample_id).maybeSingle();
@@ -68,7 +52,6 @@ async function upgradeCopy(svc: ReturnType<typeof svcOf>, companyId: number | nu
   if (!parsed || !Array.isArray(parsed.lines)) parsed = extractOfReview(r.review);
   if (!parsed) return;
   const { review, note } = await reviewOfPiRead(svc, companyId, parsed, ai);
-  // A supplier the operator chose stands; the rows' ties then follow the copy kept.
   const keepSupplier = r.review.supplierId != null && r.review.supplierId !== review.supplierId;
   const lines = keepSupplier ? r.review.lines : mergeRebuiltLines(r.review.lines, review.lines);
   const next: PiReview = { ...review, supplierId: r.review.supplierId ?? review.supplierId, invoiceNumber: r.review.invoiceNumber ?? review.invoiceNumber, invoiceDate: r.review.invoiceDate ?? review.invoiceDate, lines };
@@ -82,8 +65,7 @@ async function upgradeCopy(svc: ReturnType<typeof svcOf>, companyId: number | nu
 scanPiCheck.get('/pending', async (c) => {
   const svc = svcOf(c.env);
   const companyId = activeCompanyId(c) ?? null;
-  // A document whose queue message died comes back here even if nobody opens the old list.
-  await reapStalePiScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { /* tests */ } });
+  await reapStalePiScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { } });
   const waiting = await waitingRows<PiReview>(svc, c, 'PI');
   if ('failed' in waiting) return c.json({ error: 'query_failed', reason: 'Could not load your scans. Please try again.' }, 500);
   const { rows } = waiting;
@@ -96,7 +78,6 @@ scanPiCheck.get('/pending', async (c) => {
   if (refs.length > 0) {
     const { data, error } = await svc.from('purchase_invoices').select('id, invoice_number, supplier_id, supplier_invoice_ref, status, invoice_date')
       .eq('company_id', companyId).neq('status', 'CANCELLED').in('supplier_invoice_ref', refs);
-    // Without this read no repeat could be flagged, so the list is refused rather than shown clean.
     if (error) return c.json({ error: 'query_failed', reason: 'Could not check for invoices already billed. Please try again.' }, 500);
     for (const x of (data as Array<{ id: string; invoice_number: string; supplier_id: string | null; supplier_invoice_ref: string | null; status: string; invoice_date: string | null }> | null) ?? []) {
       existing.push({ id: x.id, invoiceNumber: x.invoice_number, supplierId: x.supplier_id, supplierInvoiceRef: x.supplier_invoice_ref, status: x.status, invoiceDate: x.invoice_date });
@@ -119,7 +100,6 @@ scanPiCheck.get('/pending', async (c) => {
   } });
 });
 
-/* PATCH /scan-pi/check/:id {review} — save the operator's edit. */
 scanPiCheck.patch('/:id', async (c) => {
   const review = cleanPiReview(((await jsonBody(c)) as { review?: unknown } | null)?.review);
   if (!review) return c.json({ error: 'bad_request', reason: 'Nothing to save.' }, 400);
@@ -138,8 +118,6 @@ const REFUSED: Record<string, string> = {
   item_not_found: 'A Goods Receipt line on it is not in this company.',
 };
 
-/* POST /scan-pi/check/create {ids} — make the DRAFT purchase invoices. One result
-   per document; a refused one keeps its working copy and says why. */
 scanPiCheck.post('/create', async (c) => {
   // company-scope: rows are read with the active company and the caller; drafts go through createDraftPiFromGrnItems, whose GRN-line read is company-scoped; each row update repeats the company predicate.
   const svc = svcOf(c.env);
@@ -157,8 +135,6 @@ scanPiCheck.post('/create', async (c) => {
     const res = await createDraftPiFromGrnItems(c.env, {
       userId, houzsUserId, companyId, allowedCompanyIds: companyId != null ? [companyId] : null, companyCode, picks,
       supplierInvoiceNumber: review.invoiceNumber, invoiceDate: review.invoiceDate, notes: review.notes,
-      /* The queue showed "Already billed" (duplicatePi) before this button; the
-         operator's choice to create anyway stands. */
       duplicateBill: 'allow',
     });
     if (!res.ok || res.created.length === 0) {

@@ -33,11 +33,6 @@ const shape = (r: RemarkRow) => ({
   createdAt: r.created_at,
 });
 
-/* Every order that carries at least one remark, with its count — the board uses
-   it to show a REMARK pill without the heavy delivery-planning feed carrying it.
-   Registered before '/' (distinct exact path). The table holds every remark ever
-   written, so it is paged: one plain select stopped at 1,000 rows and every order
-   past them silently lost its pill. */
 export async function loadRemarkFlags(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scm-scoped supabase-js client
   sb: any,

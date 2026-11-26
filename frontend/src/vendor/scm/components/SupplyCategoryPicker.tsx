@@ -47,7 +47,6 @@ export const SupplyCategoryPicker = ({
   labelClassName,
   fieldClassName,
 }: {
-  /** The stored comma-joined text ("Sofa, Bedframe"). */
   value: string;
   onChange: (next: string) => void;
   labelClassName?: string;
@@ -56,9 +55,6 @@ export const SupplyCategoryPicker = ({
   const pool = useSupplierCategoryPool();
   const picked = parseSupplierCategories(value);
   const pickedLc = picked.map((v) => v.toLowerCase());
-  // Legacy / out-of-pool values still stored on the row (e.g. old uppercase
-  // enum 'MIXED') — surface them as active chips so they can be toggled OFF;
-  // they are never offered for fresh selection.
   const extras = picked.filter(
     (v) => !pool.some((p) => p.trim().toLowerCase() === v.toLowerCase()),
   );

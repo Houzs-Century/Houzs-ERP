@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// ConsignmentOrderNew — full-page Create Consignment Order at /scm/consignment-orders/new.
-//
-// Faithful clone of SalesOrderNew.tsx. It reuses the SAME shared components
-// UNCHANGED — SoLineCard (+ emptySoLine / missingRequiredVariants / SoLineDraft),
-// PaymentsTable, PhoneInput — and the SAME generic data hooks (useStaff,
-// useVenues, useLocalities, useSoDropdownOptions, useStateWarehouseMappings).
-//
-// Only the consignment-specific wiring differs from the SO page:
-//   • create mutation → useCreateConsignmentOrder
-//   • debtor search   → useConsignmentDebtorSearch
-//   • copy-from / photo read-back → consignment detail + photo hooks
-//   • page title / back link / post-save navigate → /scm/consignment-orders/:docNo
-//
-// The ENTIRE line editor / variant / colour / sofa / pricing / payments
-// experience is identical to the SO create flow. The backend route
-// `/consignment-orders` mirrors `/mfg-sales-orders` 1:1 (same create body,
-// same detail shape, same line/payment endpoints); numbering is CS-YYMM-NNN.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -85,16 +66,9 @@ const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, cu
 export const ConsignmentOrderNew = () => {
   const navigate = useNavigate();
   const notify = useNotify();
-  /* Copy-to-new: ?copyFrom=<docNo> seeds this form from an existing consignment
-     order (customer + line items only — dates, payments, customer ref, doc no
-     and status are left blank so the operator starts fresh). */
   const [searchParams] = useSearchParams();
   const copyFromDocNo = searchParams.get('copyFrom');
   const copySource = useConsignmentOrderDetail(copyFromDocNo);
-  /* One key for the one order this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the order detail on success, so the MOUNT is
-     exactly one order: stable across re-renders and across a re-press after a
-     stalled submit, fresh on remount. */
   const idemKey    = useIdempotencyKey();
   const create     = useCreateConsignmentOrder();
   const addPayment = useAddConsignmentOrderPayment();
@@ -103,9 +77,6 @@ export const ConsignmentOrderNew = () => {
   const venuesQ  = useVenues();
   const loc      = useLocalities();
   const { staff: currentStaff } = useAuth();
-  // Houzs-flavoured: gate on the flat permission key `scm.so.attribute_other`
-  // (the 2990 bridge always reports either super_admin or sales). Owner + IT
-  // Admin pass via `*`; grant to other positions via Team > Positions.
   const { user: currentUser, can } = useHouzsAuth();
   const canChangeSalesperson = can('scm.so.attribute_other');
 
@@ -116,7 +87,6 @@ export const ConsignmentOrderNew = () => {
   const buildingTypeOpts = optionsOrFallback('building_type', buildingTypeOptsQ.data);
   const relationshipOpts = optionsOrFallback('relationship',  relationshipOptsQ.data);
 
-  // ── Customer fields ────────────────────────────────────────────────
   const [debtorCode,    setDebtorCode]    = useState('');
   const [debtorName,    setDebtorName]    = useState('');
   const [phone,         setPhone]         = useState('');
@@ -125,9 +95,6 @@ export const ConsignmentOrderNew = () => {
   const [customerType,  setCustomerType]  = useState<string>('');
   const [customerSoNo,  setCustomerSoNo]  = useState('');
 
-  /* Autofill rescue — Chrome/Edge paint saved values into Customer
-     Name / Phone / Email WITHOUT firing React's onChange; read them out of the
-     DOM shortly after mount and push into state when still empty. */
   const custGridRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const sync = () => {
@@ -145,13 +112,11 @@ export const ConsignmentOrderNew = () => {
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
-  // ── Order Info fields ───────────────────────────────────────────────
   const [buildingType,   setBuildingType] = useState<string>('');
   const [processingDate, setProcessingDate] = useState('');
   const [deliveryDate,   setDeliveryDate]   = useState('');
   const [note,           setNote]           = useState('');
 
-  // ── Delivery address ───────────────────────────────────────────────
   const [fillAddressLater, setFillAddressLater] = useState(false);
   const [address1,    setAddress1]    = useState('');
   const [address2,    setAddress2]    = useState('');
@@ -160,15 +125,12 @@ export const ConsignmentOrderNew = () => {
   const [postcode,    setPostcode]    = useState('');
   const [salesLocation, setSalesLocation] = useState('');
 
-  // ── Emergency contact ──────────────────────────────────────────────
   const [emergencyName,  setEmergencyName]   = useState('');
   const [emergencyRel,   setEmergencyRel]    = useState<string>('');
   const [emergencyPhone, setEmergencyPhone]  = useState('');
 
-  // ── Items state ────────────────────────────────────────────────────
   const [lines, setLines] = useState<DraftLine[]>(() => [newLine()]);
 
-  /* Copy-to-new seed — runs once when the source order finishes loading. */
   const [copySeeded, setCopySeeded] = useState(false);
   useEffect(() => {
     if (!copyFromDocNo || copySeeded) return;
@@ -211,14 +173,10 @@ export const ConsignmentOrderNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [copyFromDocNo, copySeeded, copySource.data]);
 
-  // ── Payments draft state ───────────────────────────────────────────
   const [paymentDrafts, setPaymentDrafts] = useState<PaymentDraft[]>([]);
 
-  // ── Debtor autocomplete ─────────────────────────────────────────────
   const debtors = useConsignmentDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
-  /* SalesOrderDetail's copy of this field was portalled in an earlier pass; this
-     one and ConsignmentOrderDetail's were the twins that pass missed. */
   const debtorInputRef = useRef<HTMLInputElement>(null);
   const debtorSuggestions: DebtorSuggestion[] = (debtors.data?.debtors ?? []).filter(
     (d) => (d.debtor_name ?? '').toLowerCase() !== debtorName.trim().toLowerCase(),
@@ -278,7 +236,6 @@ export const ConsignmentOrderNew = () => {
     const { variants, masters } = cascadeMasterVariants(
       lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown>, itemCode: l.itemCode })),
       masterSnapshotRef.current,
-      /* Same answer as the desktop SO page: every category cascades. */
       null,
     );
     masterSnapshotRef.current = masters;
@@ -299,11 +256,6 @@ export const ConsignmentOrderNew = () => {
     [lines],
   );
 
-  /* The PICK-TIME seed for a brand-new line, and deliberately NOT the same
-     question the cascade's master asks: this one skips a category's first line
-     while it is still empty, so a new line does not flash an empty
-     configurator. SoLineCard strips the never-inherited keys on the way in
-     (seedFollowerVariants), so this hands over the master's variants raw. */
   const inheritVariantsByCategory = useMemo(
     () => seedableMasterVariants(
       lines.map((l) => ({ category: l.itemGroup ?? '', variants: (l.variants ?? {}) as Record<string, unknown> })),
@@ -318,11 +270,7 @@ export const ConsignmentOrderNew = () => {
     [lines],
   );
 
-  // ── Locality cascades ──────────────────────────────────────────────
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
-  /* Shared address cascade, BOTH directions (address-cascade.ts). Three atoms,
-     so each pick writes all three back — the raw setters keep the value just
-     chosen, which routing through the State picker's handler would clear. */
   const { cities, postcodes } = useAddressCascade(locRows, state, city);
   const applyTriple = (next: { state: string; city: string; postcode: string }) => {
     setState(next.state); setCity(next.city); setPostcode(next.postcode);
@@ -346,23 +294,11 @@ export const ConsignmentOrderNew = () => {
     [locRows, state],
   );
 
-  // ── Salesperson + Venue resolution ─────────────────────────────────
   const staffList = useMemo(
     () => (staffQ.data ?? []).filter((s) => s.active),
     [staffQ.data],
   );
 
-  /* WHO IS OPENING THIS DOCUMENT, resolved to a REAL staff row.
-     The vendored 2990 bridge (`vendor/scm/lib/auth.ts:60`) returns
-     `{ id: null, name: null, staffCode: null, venueId: null }` for EVERY Houzs
-     user — it exists to answer isAdminLevel(role) for the MRP page and nothing
-     else. So the seed this replaces (`if (!currentStaff?.id) return`) could
-     never fire, and the Salesperson on a consignment order was never filled in.
-     The ladder is the shared `resolveSelfStaff`, the one SalesOrderNew and
-     MobileNewSO use: user_id first, then the bridge staff id, then email, then
-     name. `GET /staff/pickable` always carries the caller's own row whatever
-     narrowing it applied (staff.ts, the always-holds rule), so this resolves on
-     every account. */
   const selfStaffMatch = useMemo(
     () => resolveSelfStaff(staffList, {
       userId: currentUser?.id,
@@ -374,7 +310,6 @@ export const ConsignmentOrderNew = () => {
     [staffList, currentStaff?.id, currentStaff?.name, currentUser?.id, currentUser?.email, currentUser?.name],
   );
 
-  /* Seed once the roster resolves, and never stomp a choice already made. */
   useEffect(() => {
     if (selfStaffMatch) setSalespersonId((prev) => prev || selfStaffMatch.id);
   }, [selfStaffMatch]);
@@ -383,10 +318,6 @@ export const ConsignmentOrderNew = () => {
     () => staffList.find((s) => s.id === salespersonId) ?? null,
     [staffList, salespersonId],
   );
-  /* `?? currentStaff?.venueId` used to sit in the middle here. The bridge's
-     venueId is null for every Houzs user, so it could never contribute; it is
-     dropped rather than left as a term that reads like a fallback and is not.
-     salespersonId is seeded above, so selectedStaff is the creator by default. */
   const resolvedVenueId: string | null = selectedStaff?.venueId ?? null;
   const resolvedVenueName: string = useMemo(() => {
     if (!resolvedVenueId) return '';
@@ -406,8 +337,6 @@ export const ConsignmentOrderNew = () => {
     );
     if (linesWithPending.length === 0) return { failed: 0, skipped: 0 };
 
-    // HOUZS VENDOR: read saved item IDs through the vendored authedFetch
-    // (→ /api/scm) instead of the supabase session + raw VITE_API_URL.
     let savedItems: Array<{ id: string; item_code: string }> = [];
     try {
       const body = await authedFetch<{ items: Array<{ id: string; item_code: string }> }>(
@@ -463,8 +392,6 @@ export const ConsignmentOrderNew = () => {
           accountSheet: d.accountSheet || null,
           approvalCode: d.approvalCode || null,
           collectedBy:  d.collectedBy  || null,
-          // Per-draft key — see lib/idempotency.ts. The order is created first
-          // and the payments posted after, so a retry of the save re-posts these.
           idempotencyKey: d.idempotencyKey,
         };
         Object.assign(body, draftMethodFields(method, d));
@@ -517,9 +444,6 @@ export const ConsignmentOrderNew = () => {
       notify({ title: 'Add at least one item via "Add line".', tone: 'error' });
       return;
     }
-    // Sofa is exclusive among main products — the server 400s
-    // `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-    // Block + warn here so the operator gets one plain sentence, not a raw 400.
     if (hasSofaMixConflict(validLines.map((l) => l.itemGroup))) {
       notify({ title: SOFA_MIX_MESSAGE, tone: 'error' });
       return;
@@ -612,7 +536,6 @@ export const ConsignmentOrderNew = () => {
 
   return (
     <div className="space-y-4">
-      {/* Top bar */}
       <PageHeader back
         eyebrow="Supply Chain"
         title="New Consignment Order"
@@ -635,7 +558,6 @@ export const ConsignmentOrderNew = () => {
         }
       />
 
-      {/* ── CUSTOMER ────────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Customer</h2>
@@ -715,14 +637,6 @@ export const ConsignmentOrderNew = () => {
                   value={salespersonId}
                   onChange={setSalespersonId}
                   disabled={!canChangeSalesperson}
-                  /* A self-scoped author sees ONE option — themselves — exactly
-                     as the native select pinned them before. */
-                  /* A self-scoped author sees ONE option — themselves — and it
-                     must be a REAL person. This used to fall back to the 2990
-                     bridge, whose name and staffCode are null for every Houzs
-                     user, so the single option rendered as the literal text
-                     "null (null)" with an empty value. selfStaffMatch carries a
-                     real id, name and code on every account. */
                   options={canChangeSalesperson
                     ? sortByText(staffList).map((s) => ({
                         value: s.id,
@@ -742,7 +656,6 @@ export const ConsignmentOrderNew = () => {
         </div>
       </section>
 
-      {/* ── ORDER INFO ──────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Order Info</h2>
@@ -833,7 +746,6 @@ export const ConsignmentOrderNew = () => {
         </div>
       </section>
 
-      {/* ── EMERGENCY CONTACT ─────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Emergency Contact</h2>
@@ -880,7 +792,6 @@ export const ConsignmentOrderNew = () => {
         </div>
       </section>
 
-      {/* ── DELIVERY ADDRESS ──────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Delivery Address</h2>
@@ -1004,7 +915,6 @@ export const ConsignmentOrderNew = () => {
         </div>
       </section>
 
-      {/* ── LINE ITEMS ────────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({lines.length})</h2>
@@ -1019,13 +929,6 @@ export const ConsignmentOrderNew = () => {
               onRemove={() => dropLine(line.rid)}
               canRemove={lines.length > 1}
               inheritVariantsByCategory={inheritVariantsByCategory}
-              /* Mandatory ONLY once a Processing Date is set — which is exactly
-                 what THIS document's own server does: consignment-orders.ts:687
-                 runs findIncompleteVariantLines only `procDate ? ... : []`.
-                 Omitting this prop took SoLineCard's `= true` default, so the
-                 form demanded fabric/seat/leg on a dateless draft that the
-                 server would have accepted. Same conditional rule as
-                 SalesOrderNew; the CO is an ORDER, not a downstream document. */
               variantsRequired={!!processingDate}
               specLockedReason={null}
               lineDateLocked={false}
@@ -1052,9 +955,6 @@ export const ConsignmentOrderNew = () => {
         </div>
       </section>
 
-      {/* PAYMENTS removed (Wei Siang 2026-06-06): a consignment is goods placed
-          on loan at the showroom, not a sale — no money is collected, so there
-          is no payments ledger. */}
 
     </div>
   );

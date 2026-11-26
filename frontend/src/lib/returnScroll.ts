@@ -14,7 +14,6 @@
 import { useEffect } from "react";
 
 export const RETURN_SCROLL_KEY = "houzs.returnScroll.v1";
-/** Thirty minutes: long enough to read an order, short enough not to haunt. */
 const FRESH_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 20;
 
@@ -46,7 +45,6 @@ export function rememberReturnScroll(href: string = here()): void {
       .slice(0, MAX_ENTRIES);
     sessionStorage.setItem(RETURN_SCROLL_KEY, JSON.stringify(Object.fromEntries(kept)));
   } catch {
-    // storage disabled — the page simply opens at the top
   }
 }
 
@@ -100,7 +98,6 @@ export function rememberReturnPicks(picks: ReturnPicks, href: string = here()): 
       .slice(0, MAX_ENTRIES);
     sessionStorage.setItem(RETURN_PICKS_KEY, JSON.stringify(Object.fromEntries(kept)));
   } catch {
-    // storage disabled — the page simply comes back unticked
   }
 }
 
@@ -121,7 +118,6 @@ export function dropReturnPicks(href: string = here()): void {
     delete all[href];
     sessionStorage.setItem(RETURN_PICKS_KEY, JSON.stringify(all));
   } catch {
-    // storage disabled — nothing was kept
   }
 }
 

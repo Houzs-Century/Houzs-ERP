@@ -1,40 +1,6 @@
-// ----------------------------------------------------------------------------
-// acc/settlement-pdf — turning an acquirer's PDF statement into the CSV the
-// reader already speaks.
-//
-// Maybank sends its merchant daily settlement report ONLY as a PDF (owner,
-// 2026-08-17), and it is his largest acquirer by a wide margin — RM 251,840 in
-// half a month across eight merchant numbers, with the fee deducted before the
-// money reaches the bank. Without this the biggest fee stream in the business
-// stays invisible, which is the exact disease this module exists to cure.
-//
-// So the PDF is converted to a table HERE and handed to parseStatement, which
-// keeps every rule in one place: the heading search, the date handling, the fee
-// methods, the statement-total check. Nothing about Maybank is special-cased in
-// the reader.
-//
-// Three obstacles, all real, all handled:
-//
-//   1. The file is ENCRYPTED. Maybank's is owner-restricted with an empty user
-//      password (RC4-128 or AES-128 depending on the producer), so it opens —
-//      but every stream has to be decrypted before it can be inflated. A file
-//      that genuinely needs a password is refused by name, not mangled.
-//   2. The text is OBFUSCATED. The producer writes each glyph two bytes wide
-//      and shifts the character by a constant, so "MAYBANK" leaves the file as
-//      20 30 20 24 20 3C … The shift is DETECTED rather than hardcoded: the
-//      candidate decoding that yields the most text-like output wins.
-//   3. A PDF HAS NO COLUMNS. Each cell is its own positioned string, so cells
-//      are grouped into rows by their y coordinate and ordered by x — which is
-//      what makes the heading row come out as a heading row.
-//
-// No dependencies: MD5 and RC4 are ~40 lines here, AES-CBC and inflate come
-// from the platform (Web Crypto + DecompressionStream), both available in the
-// Worker and in Node.
-// ----------------------------------------------------------------------------
 
 export type PdfToCsvResult = { ok: true; csv: string } | { ok: false; reason: string };
 
-/* ── MD5, because Web Crypto does not carry it and the PDF key needs it ────── */
 
 export function md5(input: Uint8Array): Uint8Array {
   const S = [
@@ -114,8 +80,6 @@ const concat = (...parts: Uint8Array[]): Uint8Array => {
 };
 
 async function inflate(data: Uint8Array): Promise<Uint8Array> {
-  /* A one-chunk ReadableStream rather than a Blob: the Worker's type surface
-     does not carry BlobPart, and this needs no copy. */
   const source = new ReadableStream<Uint8Array>({
     start(controller) { controller.enqueue(data); controller.close(); },
   });
@@ -123,9 +87,7 @@ async function inflate(data: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-/* ── The PDF itself ───────────────────────────────────────────────────────── */
 
-/** A PDF literal string, with its escapes resolved. */
 function readLiteral(s: string, from: number): { text: string; end: number } {
   let out = '';
   let depth = 1;
@@ -155,8 +117,6 @@ const bytesOf = (latin1: string): Uint8Array => {
   return out;
 };
 
-/** How text-like a candidate decoding is — letters, digits and the punctuation
-    a statement actually uses. Used to CHOOSE a decoding rather than assume one. */
 function textiness(s: string): number {
   if (!s.length) return 0;
   let good = 0;
@@ -198,7 +158,6 @@ async function buildCells(bytes: Uint8Array): Promise<PdfCellsResult> {
   }
   if (!s.startsWith('%PDF')) return { ok: false, reason: 'That file is not a PDF.' };
 
-  /* ── the decryption key, for an empty user password ── */
   let decrypt: (num: number, gen: number, data: Uint8Array) => Promise<Uint8Array>;
   if (s.includes('/Encrypt')) {
     const oAt = s.indexOf('/O (');
@@ -217,8 +176,6 @@ async function buildCells(bytes: Uint8Array): Promise<PdfCellsResult> {
     let key = md5(concat(PAD, O, pbuf, ID)).slice(0, keyBytes);
     if (R >= 3) for (let i = 0; i < 50; i += 1) key = md5(key).slice(0, keyBytes);
 
-    /* Verify the empty password really opens it, rather than producing rubbish
-       further down: /U is what the file itself says the answer should be. */
     const uAt = s.indexOf('/U (');
     if (uAt >= 0 && R >= 3) {
       const U = bytesOf(readLiteral(s, uAt + 4).text);
@@ -237,8 +194,6 @@ async function buildCells(bytes: Uint8Array): Promise<PdfCellsResult> {
       const objKey = md5(isAes ? concat(key, ext, SALT) : concat(key, ext)).slice(0, Math.min(key.length + 5, 16));
       if (!isAes) return rc4(objKey, data);
       const ck = await crypto.subtle.importKey('raw', objKey as BufferSource, 'AES-CBC', false, ['decrypt']);
-      /* AES-CBC in PDF carries its IV in the first 16 bytes and pads per
-         PKCS#7; Web Crypto strips the padding for us. */
       const plain = await crypto.subtle.decrypt({ name: 'AES-CBC', iv: data.slice(0, 16) as BufferSource }, ck, data.slice(16) as BufferSource);
       return new Uint8Array(plain);
     };
@@ -246,7 +201,6 @@ async function buildCells(bytes: Uint8Array): Promise<PdfCellsResult> {
     decrypt = async (_n, _g, data) => data;
   }
 
-  /* ── every stream, decrypted and inflated ── */
   const streams = new Map<number, string>();
   for (const m of s.matchAll(/(\d+)\s+(\d+)\s+obj/g)) {
     const num = Number(m[1]);
@@ -268,17 +222,11 @@ async function buildCells(bytes: Uint8Array): Promise<PdfCellsResult> {
         text += String.fromCharCode(...body.subarray(i, Math.min(i + 8192, body.length)));
       }
       streams.set(num, text);
-    } catch { /* not a stream this reader can use */ }
+    } catch { }
   }
   if (streams.size === 0) return { ok: false, reason: 'Nothing in this PDF could be read — it may be a scan rather than a statement.' };
 
-  /* ── positioned text ── */
   type Cell = { page: number; x: number; y: number; text: string };
-  /* PAGE, not just position. Every content stream is one page, and until this
-     was recorded they were all flattened into one coordinate space — so a
-     two-page document laid page 2 exactly on top of page 1 and every row came
-     out holding two unrelated records at identical x. Public Bank's IBG advice
-     is two pages, which is how this surfaced. */
   const rawCells: Array<{ page: number; x: number; y: number; raw: string }> = [];
   let page = 0;
   for (const content of streams.values()) {
@@ -305,7 +253,6 @@ async function buildCells(bytes: Uint8Array): Promise<PdfCellsResult> {
   }
   if (rawCells.length === 0) return { ok: false, reason: 'This PDF has no readable text — it may be a scan rather than a statement.' };
 
-  /* ── which decoding is the real one ── */
   const asIs = (r: string) => r;
   const twoByteShift = (r: string) => {
     let out = '';
@@ -324,12 +271,8 @@ async function buildCells(bytes: Uint8Array): Promise<PdfCellsResult> {
   return { ok: true, cells };
 }
 
-/* ── one arrangement: a grid, for a statement whose table fills the page ──── */
 
 function cellsToCsv(cells: PdfCell[]): string {
-  /* ── rows by y ── */
-  /* Page first, then y, then x — a two-page document used to interleave its
-     pages here, because every page starts its coordinates again from the top. */
   const ordered = [...cells].sort((a, b) => (a.page !== b.page ? a.page - b.page
     : Math.abs(a.y - b.y) > 2 ? b.y - a.y : a.x - b.x));
   const rows: PdfCell[][] = [];
@@ -339,14 +282,6 @@ function cellsToCsv(cells: PdfCell[]): string {
     else rows.push([c]);
   }
 
-  /* ── columns by x, NOT by sequence ──────────────────────────────────────────
-     A PDF writes nothing at all for an empty cell. Emitting cells in the order
-     they appear therefore shifts every value after a blank one LEFT, so on this
-     Maybank statement — whose Terminal No is blank — the card type slid into
-     the terminal column and everything after it moved with it. Read a mapped
-     column that way and you are reading the neighbouring column's number.
-     So the x coordinates are clustered into a grid and each cell is placed in
-     ITS OWN column, with gaps left empty. */
   const xs = [...ordered.map((c) => c.x)].sort((a, b) => a - b);
   const columns: number[] = [];
   for (const x of xs) {
@@ -367,10 +302,8 @@ function cellsToCsv(cells: PdfCell[]): string {
     const wide: string[] = new Array(columns.length).fill('');
     for (const c of row) {
       const i = columnOf(c.x);
-      // Two strings in one column (a wrapped label) join rather than overwrite.
       wide[i] = wide[i] ? `${wide[i]} ${c.text}` : c.text;
     }
-    // Trailing empties carry no information; interior ones do.
     let end = wide.length;
     while (end > 0 && wide[end - 1] === '') end -= 1;
     return wide.slice(0, end).map(quote).join(',');

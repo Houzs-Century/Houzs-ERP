@@ -1,7 +1,3 @@
-/* A consignment return line must come from a Consignment Note line (owner 23 Nov 2026; server 409
-   note_link_required). The blank form offers no free "Add line" and steers to the From-Note picker; a return
-   opened from a note carries each line's note-line id to the server (it used to send none, so even a
-   note-started return was free-entry). */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

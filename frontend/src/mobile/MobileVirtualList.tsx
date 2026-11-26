@@ -24,11 +24,6 @@ export function MobileVirtualList<T>({
   threshold?: number;
   overscan?: number;
   gap?: number;
-  /**
-   * Accessible name for the loaded set. Say "loaded" when the caller may be
-   * rendering one server page so assistive technology is not promised a
-   * larger result set than this component can actually browse.
-   */
   ariaLabel?: string;
 }) {
   const on = items.length > threshold;

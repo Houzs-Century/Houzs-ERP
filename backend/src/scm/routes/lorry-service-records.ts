@@ -53,10 +53,6 @@ const COLS = [
   'next_service_date', 'next_service_km', 'notes', 'created_at', 'created_by',
 ].join(', ');
 
-/* Invoices are usually PDFs — the product-model gallery's image-only set would
-   reject the common case. Reuses the existing SlipMime vocabulary rather than
-   declaring a second copy (this repo's BUG-HISTORY logs hand-copied lists as a
-   recurring defect). */
 const INVOICE_MIME = new Set<string>(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 const INVOICE_MAX_BYTES = 10 * 1024 * 1024;
 const KEY_PREFIX = 'lorry-service/';
@@ -69,9 +65,6 @@ function dateField(v: unknown): { ok: true; value: string | null } | { ok: false
   return ISO_DATE.test(s) ? { ok: true, value: s } : { ok: false };
 }
 
-/* Non-negative integer or null. The table CHECKs cost_sen >= 0 and
-   odometer_km >= 0 — validate here so a typo returns a named 400 rather than a
-   raw constraint-violation 500. */
 function intField(v: unknown): { ok: true; value: number | null } | { ok: false } {
   if (v === null || v === undefined || v === '') return { ok: true, value: null };
   const n = Number(v);
@@ -79,11 +72,6 @@ function intField(v: unknown): { ok: true; value: number | null } | { ok: false 
   return { ok: true, value: n };
 }
 
-// ── list ─────────────────────────────────────────────────────────────────────
-// GET /lorry-service-records?lorryId=<uuid> — newest first (idx_lorry_service_
-// records_lorry_date). lorryId is REQUIRED: an unfiltered fleet-wide dump has no
-// caller today, and the index is on (lorry_id, service_date) so it would be a
-// seq scan the moment the history grows.
 lorryServiceRecords.get('/', async (c) => {
   // company-scope: unified fleet (owner 2026-09-02, bugs/0620) - a lorry's service history is shared across companies like the lorry itself; see the file header.
   const lorryId = c.req.query('lorryId');
@@ -99,7 +87,6 @@ lorryServiceRecords.get('/', async (c) => {
   return c.json({ records: data ?? [] });
 });
 
-// ── create ───────────────────────────────────────────────────────────────────
 lorryServiceRecords.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -135,10 +122,7 @@ lorryServiceRecords.post('/', async (c) => {
     next_service_date: nextDate.value,
     next_service_km: nextKm.value,
     notes: (body.notes as string)?.trim() || null,
-    // The real person, not the pinned scm.staff system uuid — see the column
-    // comment in mig 0121.
     created_by: c.get('houzsUser')?.id ?? null,
-    // invoice_* is server-owned: it arrives via PUT /:id/invoice.
   }).select(COLS).single();
   if (error) {
     if (error.code === '23503') return c.json({ error: 'lorry_not_found' }, 404);
@@ -147,7 +131,6 @@ lorryServiceRecords.post('/', async (c) => {
   return c.json({ record: data }, 201);
 });
 
-// ── update ───────────────────────────────────────────────────────────────────
 lorryServiceRecords.patch('/:id', async (c) => {
   // company-scope: UNIFIED FLEET — deliberate, not an oversight. lorries.ts:132
   // and drivers.ts:24-26,48 declare one shared fleet/roster across ALL companies
@@ -196,10 +179,6 @@ lorryServiceRecords.patch('/:id', async (c) => {
   }
   if (body.workshop !== undefined) updates.workshop = (body.workshop as string)?.trim() || null;
   if (body.notes !== undefined) updates.notes = (body.notes as string)?.trim() || null;
-  // lorry_id is NOT re-assignable and invoice_* is server-owned — moving a
-  // record to another lorry would rewrite two lorries' histories at once, and a
-  // client-settable invoice_key would let a caller point the row at any object
-  // in the shared bucket.
 
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
 
@@ -210,9 +189,6 @@ lorryServiceRecords.patch('/:id', async (c) => {
   return c.json({ record: data });
 });
 
-// ── delete ───────────────────────────────────────────────────────────────────
-// Removes the R2 object too — an orphaned invoice in a shared bucket is a leak
-// nobody would ever go looking for.
 lorryServiceRecords.delete('/:id', async (c) => {
   // company-scope: UNIFIED FLEET — deliberate, not an oversight. lorries.ts:132
   // and drivers.ts:24-26,48 declare one shared fleet/roster across ALL companies
@@ -230,13 +206,10 @@ lorryServiceRecords.delete('/:id', async (c) => {
   const { error } = await sb.from('lorry_service_records').delete().eq('id', id);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   const key = (row as { invoice_key: string | null }).invoice_key;
-  // Best-effort, and AFTER the row is gone: a failed object delete must not
-  // resurrect a record the operator was told is deleted.
   if (key && c.env.SO_ITEM_PHOTOS) await c.env.SO_ITEM_PHOTOS.delete(key).catch(() => {});
   return c.json({ ok: true });
 });
 
-// ── invoice upload ───────────────────────────────────────────────────────────
 lorryServiceRecords.put('/:id/invoice', async (c) => {
   // company-scope: UNIFIED FLEET — deliberate, not an oversight. lorries.ts:132
   // and drivers.ts:24-26,48 declare one shared fleet/roster across ALL companies
@@ -281,23 +254,13 @@ lorryServiceRecords.put('/:id/invoice', async (c) => {
     invoice_size: file.size,
   }).eq('id', id).select(COLS).maybeSingle();
   if (error || !data) {
-    // Roll the object back so a failed DB write doesn't leak storage — the
-    // idiom product-models.ts:1141 established.
     await c.env.SO_ITEM_PHOTOS.delete(r2Key).catch(() => {});
     return c.json({ error: 'update_failed', reason: error?.message ?? 'record_not_found' }, 500);
   }
-  // Replacing an invoice: drop the old object only AFTER the row points at the
-  // new one, so a crash leaves an orphan (recoverable) rather than a row
-  // pointing at a deleted key (a broken download).
   if (previousKey && previousKey !== r2Key) await c.env.SO_ITEM_PHOTOS.delete(previousKey).catch(() => {});
   return c.json({ record: data });
 });
 
-// ── invoice download ─────────────────────────────────────────────────────────
-// Authed (the whole router is). The key is read from the ROW, never from the
-// request — all four R2 bindings share one physical bucket (wrangler.toml:
-// 72-102), so accepting a caller-supplied key would be a read primitive over
-// every other module's objects.
 lorryServiceRecords.get('/:id/invoice', async (c) => {
   // company-scope: unified fleet (owner 2026-09-02, bugs/0620) - the service record belongs to the shared lorry, not to one company's book; see the file header.
   const id = c.req.param('id');
@@ -318,9 +281,7 @@ lorryServiceRecords.get('/:id/invoice', async (c) => {
   return new Response(obj.body, {
     headers: {
       'content-type': r.invoice_mime ?? obj.httpMetadata?.contentType ?? 'application/octet-stream',
-      // inline so a PDF opens in the browser's viewer instead of forcing a save.
       'content-disposition': `inline; filename="${(r.invoice_name ?? 'invoice').replace(/"/g, '')}"`,
-      // Private: an invoice must not land in a shared/CDN cache.
       'cache-control': 'private, max-age=300',
     },
   });

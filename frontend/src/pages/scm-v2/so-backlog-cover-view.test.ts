@@ -1,8 +1,3 @@
-/* The SO conversion & backlog report's rules (so-backlog-cover-view.ts): where
-   an order sits, the part the tiles filter to, the average start the URL may
-   carry, and the sheet Excel and PDF are made from — the parts, the backlog
-   cover by month by amount and by orders with their averages, then the
-   orders. Made-up figures. */
 import { describe, expect, test } from 'vitest';
 import type { CoverRow, SoBacklogCoverData } from '../../vendor/scm/lib/so-backlog-cover-queries';
 import { averagePeriod, avgFromOf, coverSheet, firstOfText, ordersText, partText, partViewOf, rowsOfPart } from './so-backlog-cover-view';

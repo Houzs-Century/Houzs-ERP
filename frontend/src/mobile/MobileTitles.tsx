@@ -22,15 +22,6 @@ import {
   type TitlePolicyPayload,
 } from "../lib/titlePolicyModel";
 
-/**
- * Mobile Titles — the phone presentation of the desktop Roles & Permissions ›
- * Titles tab (`pages/team/TeamTitlesPolicy.tsx`). ONE shared logic layer
- * (`lib/titlePolicyModel`) and the SAME `/api/position-policy` endpoints; only
- * the presentation differs: a Title LIST grouped by department, then a per-Title
- * detail where each control saves at once. Reads ride `users.read` (the screen
- * mount gate); writes need `roles.manage`, so a viewer without it sees the same
- * values with every control locked.
- */
 
 const HDR_BACK: React.CSSProperties = {
   display: "flex",
@@ -67,7 +58,6 @@ export function MobileTitles({ onBack }: { onBack: () => void }) {
   const positions = payload ? orderedPositions(payload) : [];
   const selected = selectedId != null ? positions.find((p) => p.id === selectedId) ?? null : null;
 
-  // A Title that vanished under us (deleted/deactivated elsewhere) drops back to the list.
   useEffect(() => {
     if (selectedId != null && positions.length > 0 && !positions.some((p) => p.id === selectedId)) {
       setSelectedId(null);
@@ -94,7 +84,6 @@ export function MobileTitles({ onBack }: { onBack: () => void }) {
   );
 }
 
-// ── List view ────────────────────────────────────────────────
 function TitleList({
   payload,
   loading,
@@ -174,7 +163,6 @@ function TitleList({
   );
 }
 
-// ── Detail view ──────────────────────────────────────────────
 function TitleDetail({
   entry,
   payload,
@@ -192,8 +180,6 @@ function TitleDetail({
   const [draft, setDraft] = useState<Draft>(() => draftOf(entry));
   const [busy, setBusy] = useState(false);
 
-  // Re-seed when a different Title is opened or the payload reloads (id is stable
-  // across a save+reload, so persisted edits are not clobbered).
   useEffect(() => {
     setDraft(draftOf(entry));
   }, [entry]);

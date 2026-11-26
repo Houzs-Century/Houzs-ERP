@@ -23,7 +23,6 @@ export async function departmentIdsOf(db: Db, userId: number, primary: number | 
       .all<{ department_id: number }>();
     ids = res.results.map((r) => Number(r.department_id));
   } catch {
-    // user_departments is PG-only (mig 0020); the D1 test mirror has the primary only.
   }
   if (primary != null) ids.unshift(Number(primary));
   return [...new Set(ids.filter((n) => Number.isFinite(n)))];
@@ -70,7 +69,7 @@ export async function departmentMailboxes(
     try {
       own = await run(`${members} UNION SELECT user_id FROM user_departments WHERE department_id IN (${ph})`, [...departmentIds, ...departmentIds]);
     } catch {
-      own = await run(members, departmentIds); // D1 test mirror: no user_departments
+      own = await run(members, departmentIds);
     }
     out.push(...own.results.map((r) => r.address));
   }

@@ -75,11 +75,6 @@ export function isFloorplanTitle(title: string | null | undefined): boolean {
 const SIZE_SOURCE_TITLES_SQL =
   "(pc.title LIKE 'Display Floor Plan%' OR pc.title LIKE 'Blank Floorplan%' OR pc.title LIKE '3D Design%')";
 
-/* Newest-first, stop at the first file that yields a number. One model call
-   per candidate, so this cap is the cost ceiling. Before this, only the single
-   newest file was read: a Display Floor Plan uploaded weeks after a dimensioned
-   Blank Floorplan became "the" source, found no measurement on itself, and the
-   project kept whatever was already there with no second look. */
 const MAX_SIZE_CANDIDATES = 3;
 
 /**
@@ -108,7 +103,7 @@ async function mayWrite(
   )
     .bind(id)
     .first<{ to_value: string | null }>();
-  if (!last?.to_value) return false; // nothing was ever auto-written: a human typed this
+  if (!last?.to_value) return false;
   return Number(last.to_value) === Number(current);
 }
 
@@ -126,8 +121,6 @@ export async function detectFloorplanSize(
     .first<{ id: number; size_sqm: number | null; booth_no: string | null }>();
   if (!project) return { ok: false, status: 404, error: "Not found" };
 
-  // Live attachments on any size-bearing item, newest first. Each is tried in
-  // turn until one yields a number (MAX_SIZE_CANDIDATES).
   const candidates = await env.DB.prepare(
     `SELECT a.r2_key, a.file_name, a.content_type
        FROM project_checklist_attachments a
@@ -143,10 +136,6 @@ export async function detectFloorplanSize(
   const files = candidates.results ?? [];
   if (files.length === 0) return { ok: false, status: 400, error: "No floorplan uploaded yet." };
 
-  /* One file, one model call. Returns null for "this file cannot be read"
-     (missing, wrong type, too big) so the caller moves to the next candidate
-     instead of failing the whole read — a 20MB 3D render must not stop us
-     reading the dimensioned floorplan sitting behind it. */
   const readOne = async (
     att: { r2_key: string; file_name: string; content_type: string | null },
   ): Promise<{
@@ -160,17 +149,10 @@ export async function detectFloorplanSize(
   if (!obj) return null;
   const buf = await obj.arrayBuffer();
   const mime = (att.content_type || obj.httpMetadata?.contentType || "").toLowerCase();
-  // Images go as image blocks; PDFs as a document block (both supported by the
-  // model the scan pipeline already uses).
   const isPdf = mime.includes("pdf") || /\.pdf$/i.test(att.file_name);
   const isImage =
     /^image\/(jpeg|png|webp|gif)$/.test(mime) || /\.(jpe?g|png|webp|gif)$/i.test(att.file_name);
   if (!isPdf && !isImage) return null;
-  // Per-kind ceilings: the API caps an IMAGE block near 5MB, while a PDF
-  // document block may be much larger (the 32MB request budget is the real
-  // limit, and base64 inflates ~33%, so 12MB of PDF is about 16MB on the wire).
-  // A venue master floorplan PDF routinely exceeds 5MB — the flat 5MB cap
-  // rejected them outright (project 187, verified 2026-08-05).
   const maxBytes = isPdf ? 12 * 1024 * 1024 : 5 * 1024 * 1024;
   if (buf.byteLength > maxBytes) {
     console.warn("[floorplan-size] skipping oversized file", att.file_name, buf.byteLength);
@@ -232,9 +214,6 @@ export async function detectFloorplanSize(
   }
   };
 
-  /* Try each candidate newest-first, keeping the first that yields a number.
-     If none does, report against the newest so the message names the file the
-     operator just uploaded. */
   let parsed: Awaited<ReturnType<typeof readOne>> = null;
   let att = files[0];
   let anyRead = false;

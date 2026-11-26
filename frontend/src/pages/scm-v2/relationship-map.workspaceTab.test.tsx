@@ -52,7 +52,6 @@ beforeEach(() => {
   window.open = open as unknown as typeof window.open;
 });
 
-/** Marked as a document open, then navigated to `path` in this window. */
 const openedInStripTab = (path: string) => {
   expect(marked).toHaveBeenCalledTimes(1);
   expect(marked).toHaveBeenCalledWith(true);
@@ -95,7 +94,6 @@ describe("relationship maps open documents in the in-app tab strip", () => {
     const onClose = vi.fn();
     render(<MemoryRouter><DocumentFlowModal type="po" id="po-1" open onClose={onClose} /></MemoryRouter>);
     fireEvent.click(screen.getByText("DO-2609-001"));
-    // This map's own (legacy) DO route; the router's alias sends it to the detail page.
     openedInStripTab("/scm/delivery-orders/do-1");
     expect(onClose).toHaveBeenCalled();
   });

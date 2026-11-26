@@ -98,11 +98,6 @@ import {
 const norm = (s: string | null | undefined): string =>
   String(s ?? '').toUpperCase().replace(/\s+/g, ' ').trim();
 
-/** Whitespace-collapsed and trimmed, or null. `/ensure-masters` opens a master
- *  under EXACTLY the string it is given, so two spaces would open two of it. */
-/* The account book's own string rules live next door and are RE-EXPORTED, so
-   every caller and test keeps one import site (docs/repo-hygiene.md: this file
-   is at its ceiling and a ceiling only moves down). */
 import { tidy, soInvoiceAddress } from './autocount-address-fit';
 import { poSupplierDateUdf, poSourceSoUdf, type PoSupplierDates } from './autocount-po-supplier-dates';
 export { AC_ADDRESS_LINE_MAX, AC_ADDRESS_LINES, fitAddressLines, tidy, soInvoiceAddress } from './autocount-address-fit';
@@ -170,10 +165,8 @@ export function bookSpellingOrOwn(
   return bookSpelling(own, map) ?? own;
 }
 
-/** Cents (integer) -> the decimal AutoCount price fields want. */
 const price = (centi: number | null | undefined): number => Math.round(centi ?? 0) / 100;
 
-// ── ERP-side row shapes (only the fields the write-back reads) ───────────────
 
 export interface ErpSoHeader {
   doc_no: string;
@@ -183,9 +176,6 @@ export interface ErpSoHeader {
   sales_location: string | null;
   branding: string | null;
   venue: string | null;
-  /** Street lines. `address3` / `address4` were written ONLY by the cutover
-   *  import; an ERP-created order keeps the rest of the address in the three
-   *  columns below. See `soInvoiceAddress` for how five become four. */
   address1: string | null;
   address2: string | null;
   address3: string | null;
@@ -194,23 +184,8 @@ export interface ErpSoHeader {
   postcode: string | null;
   customer_state: string | null;
   phone: string | null;
-  /**
-   * AutoCount's `SO.DeliverPhone1`, on the ERP side. NOT `phone`.
-   *
-   * This is the column the cutover POURED DeliverPhone1 into:
-   * `import-ac-outstanding-so.mjs:302` takes `DeliverPhone1` when it differs
-   * from `Phone1` (else the second number out of a slash-separated `Phone1`)
-   * and :390/:412 insert it as `emergency_contact_phone`. It is a live field —
-   * the SO header PATCH allow-list carries it, the SO detail select reads it,
-   * and `so-to-do-fields.ts` copies it onto the delivery order.
-   */
   emergency_contact_phone: string | null;
   ref: string | null;
-  /** The customer's own reference for this order. It has lived in three columns;
-   *  `po_doc_no` and `customer_po` were 0%-filled and DROPPED from
-   *  scm.mfg_sales_orders by migration 0310, leaving `customer_so_no` — the only
-   *  one any surface still writes (PR #140 dropped the Customer PO card). See
-   *  `soCustomerRef`. */
   customer_so_no: string | null;
   /** The SO's "Processing date" — the field with that label in the UI, and the
    *  owner's 账目日期. Its storage is `processing_date` and there is only ONE
@@ -231,8 +206,6 @@ export interface ErpSoHeader {
    * the ERP replaces, writes it there.
    */
   customer_delivery_date?: string | null;
-  /** AutoCount SO number this ERP order came FROM, when it was imported at the
-   *  cutover (mig 0271). Non-null means the counterpart already exists. */
   linked_ac_docno?: string | null;
 }
 
@@ -249,9 +222,7 @@ export interface ErpPoHeader extends PoSupplierDates {
   creditor_code: string | null;
   creditor_name: string | null;
   agent: string | null;
-  /** The source sales order's reference, when the PO's sold lines come from ONE order (readPoSourceSo). */
   ref: string | null;
-  /** The source orders' book numbers for `UDF_SONo`, ", "-joined; null keeps the book's own. */
   source_so_no: string | null;
   notes: string | null;
   /**
@@ -280,18 +251,9 @@ export interface ErpPoHeader extends PoSupplierDates {
 }
 
 export interface ErpLine {
-  /** The ERP row id. Only the add-a-line path needs it — see `newLineIds`. */
   id?: string | null;
   item_code: string;
   item_group?: string | null;
-  /**
-   * The line's brand, snapshotted from the product catalog at line creation by
-   * `deriveLineBrandingFromProduct`. This — NOT the header column — is where an
-   * ERP-created sales order keeps its branding; see `soBranding`.
-   *
-   * `undefined` on the five line tables whose column list does not select it,
-   * the same convention `cancelled` runs under.
-   */
   branding?: string | null;
   description: string | null;
   description2?: string | null;
@@ -303,26 +265,13 @@ export interface ErpLine {
   /** The AutoCount DtlKey this ERP line maps to (PR #1819, mig 0273). NULL is
    *  the correct "create, do not update" signal on the edit path. */
   linked_ac_dtlkey?: number | string | null;
-  /**
-   * The line has been RETIRED in the ERP — the owner's cancel-never-delete rule
-   * applied at line level.
-   *
-   * Only `scm.mfg_sales_order_items` carries the column today, so this is
-   * `undefined` on the other five line tables and the composer treats that as
-   * "live". Asking PostgREST for a column a table does not have fails the WHOLE
-   * query with 42703, so it must stay off their column lists until each gets
-   * the column (see docs/autocount-line-retirement-plan.md).
-   */
   cancelled?: boolean | null;
-  /** The line's place on the document, on the tables that have one and select it
-   *  (sales and purchase order lines); the sofa fold spells pieces in that order. */
   line_no?: number | null;
 }
 
 /** A line the ERP removed, named by the AutoCount key it still points at. */
 export type { AcLineGoneReason, AcRetiredLine } from './ac-line-gone';
 
-// ── AcSyncService payload shapes ────────────────────────────────────────────
 
 export interface AcDetail {
   ItemCode: string;
@@ -331,15 +280,6 @@ export interface AcDetail {
   Qty: number;
   UnitPrice: number;
   Location?: string | null;
-  /**
-   * PRESENT-AND-NULL IS THE MESSAGE, not an accident. On a CREATE the key is
-   * always sent: a date when the ERP has one, `null` when it does not, and the
-   * service assigns `d.DeliveryDate = (DateTime?) null` for the second — which
-   * is the only way to get the BLANK the account book itself holds on 11,886 of
-   * its 60,939 sales-order lines. Omitting the key leaves AutoCount's own
-   * default, which is what put the document date on every ERP-created line.
-   * An EDIT omits it instead when the ERP has none; see composeEdit.
-   */
   DeliveryDate?: string | null;
 }
 
@@ -377,22 +317,12 @@ export interface AcCreateSoPayload {
   SalesLocation: string | null;
   Ref: string | null;
   Phone: string | null;
-  /**
-   * The DELIVERY contact number, which is a different fact from `Phone`.
-   *
-   * `CreateSo` already falls back to `Phone` when this is absent
-   * (`Or(Str(p,"DeliverPhone1"), Str(p,"Phone"))`), and that fallback is
-   * exactly the cutover's own rule read backwards — `import-ac-outstanding-so.mjs:302`
-   * kept `DeliverPhone1` only when it DIFFERED from `Phone1`. So null here
-   * means "the same number", not "no number".
-   */
   DeliverPhone1: string | null;
   Attention: string | null;
   InvAddr1: string | null;
   InvAddr2: string | null;
   InvAddr3: string | null;
   InvAddr4: string | null;
-  /** The delivery date — see `customer_delivery_date` on `ErpSoHeader`. */
   SalesExemptionExpiryDate: string | null;
   UDF: Record<string, string>;
   Details: AcDetail[];
@@ -406,11 +336,6 @@ export interface AcCreatePoPayload {
   Agent: string | null;
   Ref: string | null;
   Description: string | null;
-  /** See `ErpPoHeader.purchase_location`. OMITTED, never null: BOTH service
-   *  copies gate this one key on `ContainsKey` AND non-empty
-   *  (AcSyncService.cs:934 and :2456) precisely because a blank is its own
-   *  foreign key error, so `composeCreatePo` leaves the key off when the ERP
-   *  has none. */
   PurchaseLocation?: string;
   UDF: Record<string, string>;
   Details: AcDetail[];
@@ -456,11 +381,7 @@ export type AcEditLine =
 export interface AcEditPayload {
   DocType: AcDocType;
   DocNo: string;
-  Rebuild?: true;   // clear the details, lay these Lines down in order — 0607
-  /* `UDF` is a NESTED object, because that is how AcSyncService reads it
-     (`ApplyUdf` -> `Dict(h, "UDF")`). A flat SOUDF_* key at header level is
-     silently ignored — the connector's own decompiled source made the same
-     point about its create path, and it cost a round of blind pushes then. */
+  Rebuild?: true;
   Header: Record<string, string | null | Record<string, string>>;
   Lines: AcEditLine[];
 }
@@ -511,22 +432,11 @@ export interface ComposeOptions {
    * ItemCode back, so it must refuse too. Both are checked at the use site.
    */
   keyedLinesKeepTheBooksItem?: boolean;
-  rebuild?: boolean;        // clear the details, lay these Lines down — 0607
-  rebuildBlocked?: string;  // present = keyed path, never rebuild — 0609
+  rebuild?: boolean;
+  rebuildBlocked?: string;
   supplierCode?: string | null;
-  /** Test seam: an alternative cutover map. Defaults to the compiled one. */
   itemIndex?: AcItemIndex;
-  /**
-   * The document's own location, used for a line that carries none of its own.
-   * A sales order knows where it sells from even when a line does not.
-   */
   defaultLocation?: string | null;
-  /**
-   * CREATE only. A line that still resolves to no location is REFUSED rather
-   * than sent — see MissingLocationError for the live-book evidence. An edit
-   * must never set this: there, an absent location means "leave the account
-   * book's own value alone".
-   */
   requireLocation?: boolean;
   /**
    * The composed details are for a TRANSFER, which does not send an ItemCode.
@@ -549,19 +459,7 @@ export interface ComposeOptions {
    * there the ItemCode really is what opens or names an item in a licensed book.
    */
   forTransfer?: boolean;
-  /**
-   * ERP code (uppercased) -> AutoCount ItemCode, from
-   * `scm.supplier_material_bindings`. Consulted BEFORE the compiled cutover
-   * map: the binding is the live record and the CSV is a 2026-08-05 snapshot,
-   * so only the binding can know a product opened since.
-   */
   bindings?: Map<string, string> | null;
-  /**
-   * EDIT only. ERP row ids the CALLER has just inserted — positive evidence
-   * that a keyless line is genuinely new rather than un-backfilled. Honoured
-   * only when EVERY keyless line on the document is one of these; see the
-   * comment in composeEdit for why both halves are required.
-   */
   newLineIds?: Set<string>;
 }
 
@@ -633,7 +531,6 @@ export class MissingLocationError extends Error {
  * document as a whole is refused, never sent with a blank the book will reject.
  */
 export class MissingAgentError extends Error {
-  /** What `mfg_sales_orders.agent` held, for the operator reading the row. */
   readonly agentText: string | null;
   constructor(agentText: string | null) {
     const saw = agentText && agentText.trim()
@@ -948,9 +845,6 @@ export function composeDescription2(line: ErpLine): string | null {
   const stored = line.description2 && line.description2.trim();
   const text = stored || buildVariantSummary(line.item_group ?? null, line.variants ?? null);
   if (!text) return null;
-  /* Shortened HERE and never in the data: `variants.specials` is priced by NAME
-     and a rename drops the surcharge — autocount-desc2-abbrev.ts has the trace.
-     A text that already fits comes back unchanged. */
   return abbreviateDesc2(text, AC_DESC2_MAX);
 }
 
@@ -988,11 +882,6 @@ export function composeDetails(
       index: opts.itemIndex,
       bindings: opts.bindings ?? null,
     });
-    /* A line whose ItemCode will not be SENT cannot be wrong, so it is not
-       refused. Two ways that happens: a transfer sends four fields and no code,
-       and an edit leaves the book's own item on a line the book already holds.
-       A keyless line is appended WITH its code, and a rebuild puts every code
-       back, so both of those still have to resolve. */
     const keyed = l.linked_ac_dtlkey != null && String(l.linked_ac_dtlkey) !== '';
     const codeWillBeSent = !opts.forTransfer
       && !(opts.keyedLinesKeepTheBooksItem && keyed && !opts.rebuild);
@@ -1000,10 +889,6 @@ export function composeDetails(
       failures.push({ index: i, erpItemCode: l.item_code, detail: r.detail });
       return;
     }
-    /* A TRANSFER KEEPS THE LINE. The ItemCode below is never sent — see
-       `forTransfer` — so the ERP code stands in for it, and the line survives
-       to carry the four fields the transfer DOES send. Dropping it instead
-       would silently short the Details array and break the DtlKey zip. */
     const acItemCode = r.ok ? r.acItemCode : l.item_code;
     const raw = l.location ?? opts.defaultLocation ?? null;
     const location = bookSpellingOrOwn(raw, LOCATION_MAP);
@@ -1012,10 +897,6 @@ export function composeDetails(
       return;
     }
     const desc2 = composeDescription2(l as ErpLine);
-    /* The sofa collapse applies this same ceiling to a BUILD and refuses over
-       it (autocount-sofa-collapse.ts). Nothing applied it to an ordinary line,
-       which was harmless only while Desc2 was four short attributes; a bedframe
-       spec with a special order can reach it. */
     if (desc2 && desc2.length > AC_DESC2_MAX) {
       overlong.push({ index: i, itemCode: acItemCode, length: desc2.length });
       return;
@@ -1027,34 +908,7 @@ export function composeDetails(
       Qty: Number(l.qty) || 0,
       UnitPrice: price(l.unit_price_sen),
     };
-    /* A KEY THE ERP DOES NOT OWN IS OMITTED, NOT SENT AS NULL.
-     *
-     * AcSyncService's line loop is ContainsKey-gated (AcSyncService.cs:538-543)
-     * and its Str helper turns a present-but-null key into the empty string
-     * (:571). So {"Location": null} does not mean "leave it alone" — it means
-     * d.Location = "", blanking the value the account book owns. SO_ITEM_COLS
-     * and PO_ITEM_COLS select no `location`, so emitting the key unconditionally
-     * wiped the stock location off every line of every edited document. */
     if (location) d.Location = location;
-    /* DELIVERY DATE IS THE ONE KEY THAT IS SENT PRESENT-AND-NULL, and it is the
-     * exception that proves the omission rule rather than a breach of it.
-     *
-     * The rule everywhere else — omit, never null — exists because `Str()` turns
-     * a present-null into `""` and blanks the book. `DeliveryDate` does not go
-     * through `Str()`: it goes through `Date()`, which answers `null` for an
-     * absent key AND for a null one, so an omitted key could never mean anything
-     * but "leave AutoCount's default". And AutoCount's default is the DOCUMENT
-     * DATE, which is what the owner reported seeing on every ERP-created line.
-     *
-     * A blank IS expressible and IS what the book itself holds: 11,886 of the
-     * 60,939 lines in `ac-fidelity-so-lines.json.gz` have a NULL DeliveryDate,
-     * across 2,268 whole documents, and the reflected SDK surface types the
-     * property `DeliveryDate:Nullable\`1` on all six detail classes. So the null
-     * is sent explicitly and the service assigns it — see AcSyncService's
-     * ContainsKey guard, which is what makes the two cases different.
-     *
-     * `composeEdit` drops the key again on a line the book already holds, where
-     * a blank WOULD be destructive. */
     d.DeliveryDate = l.delivery_date ?? null;
     details.push(d);
   });
@@ -1076,7 +930,6 @@ export function composeDetails(
  */
 export const live = (lines: ErpLine[]): ErpLine[] => lines.filter((l) => l.cancelled !== true);
 
-/** UDF entries, blanks dropped — AcSyncService writes every key it is given. */
 function udf(entries: Record<string, string | null>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(entries)) if (v) out[k] = v;
@@ -1134,7 +987,6 @@ export interface ErpPaymentRef {
   approval_code: string | null;
 }
 
-/** The three characters AutoCount's PAYEMENT format uses as delimiters. */
 const PAYEMENT_DELIMITERS = /[()/]/g;
 
 const cleanPayemenPart = (v: string | null | undefined): string | null => {
@@ -1173,8 +1025,6 @@ export function composePaymentUdf(payments: readonly ErpPaymentRef[]): string | 
   for (const p of payments) {
     const acct = cleanPayemenPart(p?.account_sheet);
     const appr = cleanPayemenPart(p?.approval_code);
-    /* `(/)` is skipped by the parser anyway — emitting it is noise in a field
-       people read off a printed document. */
     if (!acct && !appr) continue;
     groups.push(`(${acct ?? ''}/${appr ?? ''})`);
   }
@@ -1199,50 +1049,13 @@ export function composePaymentUdf(payments: readonly ErpPaymentRef[]): string | 
 export function composeCreateSo(
   header: ErpSoHeader,
   lines: ErpLine[],
-  /**
-   * The name behind `mfg_sales_orders.salesperson_id`, resolved by the caller —
-   * REQUIRED, never optional. It DECIDES whether this document can be sent at
-   * all, so an omitted argument must be a compile error rather than a silent
-   * fallback to the empty agent that caused FK_SO_SalesAgent (CLAUDE.md, "a
-   * parameter that DECIDES something is required, never optional"). Pass an
-   * explicit `null` to state that the order has no salesperson link; that is a
-   * REFUSAL when `agent` cannot answer either.
-   *
-   * The composer stays pure: the `scm.staff` read lives beside the other header
-   * reads in scm/lib/autocount-outbox.ts, the same division `withLocations`
-   * uses for the line-level warehouse.
-   */
   salespersonName: string | null,
-  /**
-   * What the order still owes, in sen — REQUIRED, never optional, because it
-   * DECIDES what the account book's `UDF_BALANCE` says about a live customer
-   * debt. An optional parameter would let a caller that says nothing keep the
-   * old behaviour of never sending it, with no compile error and no failing
-   * test (CLAUDE.md, "a parameter that DECIDES something is required").
-   *
-   * Pass an explicit `null` to state that the ERP has no answer; the key is
-   * then omitted and the book keeps its own. The computation is
-   * `soOutstandingSen` in `scm/shared/so-outstanding.ts` and the payments
-   * read lives beside the other header reads in `scm/lib/autocount-outbox.ts`,
-   * the same division `withLocations` and `readSalespersonName` draw.
-   */
   outstandingSen: number | null,
-  /**
-   * The payment references this order carries, oldest first — REQUIRED, never
-   * optional, for the same reason as the two above: it DECIDES what the account
-   * book's `PAYEMENT` field says, and a caller that says nothing would keep the
-   * old behaviour of never sending it with no compile error. Pass an empty
-   * array to state that the ERP has no references; the key is then omitted and
-   * the book keeps whatever the cutover left there.
-   */
   paymentRefs: readonly ErpPaymentRef[],
   opts: ComposeOptions = {},
 ): AcCreateSoPayload {
   const agent = resolveAcAgent(header.agent, salespersonName);
   if (!agent) throw new MissingAgentError(header.agent ?? null);
-  /* Composed FIRST, because the header's own stock location falls back to the
-     lines' — see soSalesLocation. Refusals here (item code, sofa collapse, a
-     line with no location) still fire before anything else is decided. */
   const details = composeDetails(live(lines), {
     ...opts,
     defaultLocation: opts.defaultLocation ?? header.sales_location,
@@ -1283,13 +1096,8 @@ export function composeCreateSo(
          account book. See SO_PROCESSING_DATE_AC_UDF. */
       [SO_PROCESSING_DATE_AC_UDF]: acUdfDate(header.processing_date),
       BALANCE: acUdfMoney(outstandingSen),
-      /* The misspelling is AutoCount's own — the field is UDF_PAYEMENT in the
-         book, and the cutover read it (import-ac-outstanding-so.mjs). */
       PAYEMENT: composePaymentUdf(paymentRefs),
     }),
-    /* PRESENT-AND-NULL BLANKS IT, absent leaves AutoCount's default — the same
-       rule as the line delivery date, and for the same reason: an order the ERP
-       has no delivery date for must not inherit one. */
     SalesExemptionExpiryDate: acUdfDate(header.customer_delivery_date),
     Details: details,
   };
@@ -1302,72 +1110,23 @@ export function composeCreatePo(
 ): AcCreatePoPayload {
   const creditorCode = tidy(header.creditor_code);
   if (!creditorCode) throw new MissingCreditorError(header.po_number);
-  /* Through the same map the LINE locations go through — the
-     `bookSpellingOrOwn(..., LOCATION_MAP)` in `composeDetails` below — so the
-     header and its lines cannot end up spelling one warehouse two ways. A line
-     number is deliberately not cited: it is the same file, and every edit to it
-     would move one. */
   const purchaseLocation = bookSpellingOrOwn(header.purchase_location, LOCATION_MAP);
   return {
     DocNo: header.po_number,
     DocDate: header.po_date,
     CreditorCode: creditorCode,
     CreditorName: header.creditor_name,
-    /* NOT through AGENT_MAP. That map is the SALES agent vocabulary — a
-       different table (dbo.PurchaseAgent), a different foreign key, a different
-       SDK command — and the ERP has no purchase-agent column to map anyway, so
-       it only ever returned null, which is the value that fails
-       FK_PO_PurchaseAgent. The one writer is `readPoHeader`, and it supplies
-       AC_PURCHASE_AGENT; the tidy() is here so a future column cannot
-       reintroduce the null. */
     Agent: tidy(header.agent) ?? AC_PURCHASE_AGENT,
     Ref: header.ref,
     Description: header.notes,
-    /* THE HEADER SHIP-TO WAREHOUSE, and the comment that used to stand where
-       `defaultLocation` is resolved below said the opposite: "a purchase order
-       has no location of its own". Both sides say otherwise.
-
-       AUTOCOUNT: the purchase documents carry `PurchaseLocation`, and it is
-       assigned in TWO places because /create-po does not share a header
-       function with the rest — `CreatePo` sets its own master
-       (AcSyncService.cs:934-935), and `PurchaseHeader` (:2456-2457) is what
-       /so-to-po (:2359) and the four conversions apply. `PurchaseHeader`'s own
-       comment records that the ERP "has never been sent" one, so AutoCount has been
-       defaulting the purchase location on every ERP-written purchase order
-       since the cutover.
-
-       THE ERP: `scm.purchase_orders.purchase_location_id`, which /submit
-       REFUSES a purchase order without (mfg-purchase-orders.ts:1125,
-       `purchase_location_id_required`).
-
-       OMITTED WHEN THE ERP HAS NONE, never sent null: the service's guard is
-       ContainsKey AND non-empty, because a blank PurchaseLocation is a foreign
-       key error rather than an empty field — the same rule the line-level
-       `Location` key follows in composeDetails. */
     ...(purchaseLocation ? { PurchaseLocation: purchaseLocation } : {}),
-    UDF: { ...poSupplierDateUdf(header), ...poSourceSoUdf(header) },   // EDate/2/3 (0918), SONo (0926); blanks omitted
-    /* The creditor is the D10 disambiguator, and a PO always has one. Defaulted
-       from the header so no caller can forget it. */
+    UDF: { ...poSupplierDateUdf(header), ...poSourceSoUdf(header) },
     Details: composeDetails(live(lines), {
       supplierCode: opts.supplierCode ?? header.creditor_code ?? null,
       itemIndex: opts.itemIndex,
       bindings: opts.bindings,
-      /* A LINE WITHOUT A WAREHOUSE INHERITS THE HEADER'S, which is the ERP's own
-         precedence read the only direction it runs: `warehouse_id ?? po.purchase_location_id`
-         (outstanding-po-lines.ts:382, and `poWarehouseGap` at
-         mfg-purchase-orders.ts:4019 treats a header warehouse as covering every
-         line). Before this, a purchase order the ERP considers complete — header
-         warehouse set, no per-line override — was refused with
-         MissingLocationError, and a line that DID reach the book carried a
-         location the header disagreed with. A line with neither is still
-         refused, because then no one has said where the goods go. */
       defaultLocation: opts.defaultLocation ?? purchaseLocation,
       requireLocation: true,
-      /* CARRIED THROUGH, because on a transfer this whole Details array is
-         discarded by composeSoToPo — refusing the document here would refuse it
-         over a value nobody sends. `bindings` was already passed this way; the
-         option that decides whether the ItemCode matters has to travel with
-         it. */
       forTransfer: opts.forTransfer,
     }).details,
   };
@@ -1421,23 +1180,12 @@ export function composeEdit(
   opts: ComposeOptions = {},
   retired: AcRetiredLine[] = [],
 ): AcEditPayload {
-  /* keyedLinesKeepTheBooksItem is set HERE and nowhere else: composeEdit is the
-     only caller that strips ItemCode from a keyed line, so it is the only one
-     entitled to skip resolving it. A create sends every code. */
   const effOpts: ComposeOptions = {
     ...opts,
-    rebuild: shouldRebuild(opts, docType, retired),  // 0608, authoritative - 0615
+    rebuild: shouldRebuild(opts, docType, retired),
     keyedLinesKeepTheBooksItem: true,
   };
   const { details, collapsed } = composeDetails(lines, effOpts);
-  /* The key is read off the COLLAPSED line, not the ERP line. One AutoCount
-     line has one DtlKey, and a sofa build's compartments only carry line
-     identity when every one of them holds the same key — anything else
-     collapses to null here and is refused below, which is the whole point. */
-  /* A build is RETIRED only when every compartment behind it is cancelled.
-     AutoCount holds one line for the whole build, so "half retired" has no
-     shape there; some-but-not-all is ambiguous and is refused rather than
-     guessed — the same rule the collapse itself runs under. */
   const cancelledOf = (i: number): boolean | 'partial' => {
     const src = collapsed[i].sourceIndexes;
     const n = src.filter((ix) => lines[ix]?.cancelled === true).length;
@@ -1464,8 +1212,6 @@ export function composeEdit(
       const line: AcRetiredLine & { Retire: true } = {
         DtlKey: dtlKey, ItemCode: d.ItemCode, Retire: true,
       };
-      /* Present-but-null would blank it (Str turns null into ""), and the
-         service's own fallback keeps whatever the book already has. */
       if (d.Desc2 != null) line.Desc2 = d.Desc2;
       return line;
     }
@@ -1487,41 +1233,16 @@ export function composeEdit(
      * added row has no DtlKey, so it keeps its ItemCode and is appended. Only
      * an in-place item change on a line the book owns is dropped, and the ERP
      * has no such operation. */
-    const { ItemCode: acItemCode, ...rest } = d;  // put back on a REBUILD - 0615
-    /* AN EXPLICIT BLANK IS A CREATE'S PRIVILEGE. On a create there is nothing
-     * to preserve and AutoCount's default would invent the document date; on a
-     * line the book already holds, sending null would ERASE a delivery date an
-     * operator may have set in AutoCount itself. Same asymmetry as Location and
-     * the header's own omit-when-absent rule, at line level.
-     *
-     * A date the ERP DOES hold still travels — the ERP is master, and that is
-     * the whole point of D8. */
+    const { ItemCode: acItemCode, ...rest } = d;
     if (rest.DeliveryDate == null) delete rest.DeliveryDate;
     return { ...rest, ...(effOpts.rebuild ? { ItemCode: acItemCode, ErpLineIds: erpLineIdsOf(collapsed[i].sourceIndexes, lines) } : {}), DtlKey: dtlKey } as AcEditLine;
   });
 
-  /* Refused BEFORE the keyless check, because a half-cancelled build is a
-     question about what the operator meant, not a missing backfill — telling
-     them to backfill a key would send them after the wrong thing. */
   if (partial.length) throw new SofaCollapseError(partial);
 
   const keyless: number[] = [];
   keyed.forEach((d, i) => { if (d.DtlKey == null) keyless.push(i); });
 
-  /* ADDING A LINE to a document AutoCount already has.
-   *
-   * A keyless line has two possible meanings and they are opposite: it is a
-   * line the operator just added, or it is a legacy line whose key was never
-   * backfilled. Guess "new" and the second case appends a SECOND COPY of a line
-   * that is already in a live account book — permanently, on a purchase order.
-   * So the ERP is not allowed to infer it. It has to be TOLD, by the route that
-   * did the adding, and even then only when the rest of the document proves the
-   * backfill is complete.
-   *
-   * Both halves are required: (1) the caller named this ERP row as one it just
-   * inserted, and (2) EVERY OTHER line already carries a key — which is what
-   * makes (1) safe to believe, because a document with other keyless lines has
-   * not been backfilled and nothing on it can vouch for this one. */
   const declaredNew = effOpts.newLineIds ?? null;
   if (declaredNew && declaredNew.size && keyless.length) {
     const isDeclared = (i: number) => {
@@ -1531,8 +1252,6 @@ export function composeEdit(
       return id != null && declaredNew.has(String(id));
     };
     if (keyless.every(isDeclared)) {
-      /* `ErpLineIds` names WHO the line is, so persistNewLineKeys can store the
-         key AutoCount assigns it. A LIST: a sofa build is several rows. */
       for (const i of keyless) {
         const d = keyed[i] as AcDetail & { IsNewLine?: true; ErpLineIds?: string[] };
         d.IsNewLine = true;
@@ -1548,8 +1267,6 @@ export function composeEdit(
     const which = keyless
       .map((i) => `${i + 1} (${keyed[i].ItemCode || 'no item code'}${cancelledOf(i) === true ? ', cancelled' : ''})`)
       .join(', ');
-    /* Only an EARNED rebuild goes through here — the line set changed, or a caller
-       asked (0608). Rebuilding any unmatchable document was retracted: 0613. */
     if (effOpts.rebuild) return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, Rebuild: true };
     const anyCancelled = keyless.some((i) => cancelledOf(i) === true);
     throw new KeylessLineError(
@@ -1564,10 +1281,6 @@ export function composeEdit(
     );
   }
 
-  /* Deleted rows come LAST and are deduplicated against the retained lines: a
-     re-added line that inherited the same key would otherwise be edited and
-     retired in the same payload, and AcSyncService applies Lines in order, so
-     the retirement would win and silently zero a line the operator restored. */
   const present = new Set(keyed.map((d) => d.DtlKey).filter((k): k is number => k != null));
   for (const r of retired) {
     if (!Number.isFinite(r.DtlKey) || present.has(r.DtlKey)) continue;
@@ -1575,25 +1288,15 @@ export function composeEdit(
     keyed.push({ ...r, Retire: true });
   }
 
-  /* `Rebuild` rides the ORDINARY return too: set only on the keyless branch, a
-     deleted line on a fully-keyed document derived a rebuild nobody carried — 0612. */
   return { DocType: docType, DocNo: docNo, Header: header, Lines: keyed, ...(effOpts.rebuild ? { Rebuild: true as const } : {}) };
 }
 
-// ── the HTTP client ─────────────────────────────────────────────────────────
 
 /** AcSyncService route per outbox operation. */
 export const AC_ROUTE = {
   create_so: '/create-so',
   create_po: '/create-po',
   so_to_do: '/so-to-do',
-  /* SO -> PO is a TRANSFER like the four below, but it is not one of them: a
-     purchase document transferring from a sales order uses its own SDK method
-     (AddSOToPOTransferDetail), so the service gives it its own route rather
-     than folding it into Convert_. Sent only when every purchase line maps 1:1
-     to a sales line the book has a key for — the decision is
-     scm/shared/po-transfer-shape.ts, and a consolidated purchase stays a plain
-     create_po. */
   so_to_po: '/so-to-po',
   po_to_gr: '/po-to-gr',
   do_to_iv: '/do-to-iv',
@@ -1601,11 +1304,6 @@ export const AC_ROUTE = {
   cancel: '/cancel',
   edit: '/edit',
   ensure_masters: '/ensure-masters',
-  /* NOT a document operation, and the only route here that reads. It is in this
-     map so the drain can reach it through `callAcService` — same URL, same key,
-     same error classification — rather than growing a second HTTP client for
-     one call. The service answers it on GET or POST (the branch sits above the
-     POST-only check) and it is the ONLY thing that says which BUILD is running. */
   health: '/health',
 } as const;
 
@@ -1626,44 +1324,19 @@ export type AcOp = keyof typeof AC_ROUTE;
  * would block real purchasing in bulk. `ok` is untouched by a mismatch.
  */
 export interface AcMasterMismatch {
-  /** `creditor:400-H004` — the kind and the account, as the service names it. */
   master: string;
-  /** The name the ERP sent alongside the code. */
   erp: string;
-  /** The name the account book holds against that code. */
   book: string;
 }
 
 export interface AcCallResult {
   ok: boolean;
-  /** HTTP status, or 0 when the host could not be reached at all. */
   status: number;
-  /** AutoCount's document number, when the route returns one. */
   docNo: string | null;
-  /**
-   * The lines AutoCount created, when the route returns them. EMPTY is a
-   * legitimate answer and must not be treated as a failure: an older
-   * AcSyncService binary does not send them at all, and the service degrades to
-   * an empty array when its own read-back fails rather than losing the DocNo.
-   */
   lines: AcCreatedLine[];
   error: string | null;
-  /**
-   * Masters the book already held under a different name. ALWAYS EMPTY except
-   * on `/ensure-masters`, and empty is not the same as clean: a host still
-   * running a build older than this field simply does not send it, and
-   * `GET /health`'s `builtAt` / `mvid` is the only thing that says which build
-   * answered. Absent reads as "not reported", never as "compared and agreed".
-   */
   mismatches: AcMasterMismatch[];
-  /**
-   * The parsed response object, for the one caller that needs a field this
-   * interface does not name: `/health` answers `builtAt` and `mvid`, and
-   * promoting those to first-class fields would put a diagnostic's shape into
-   * the type every document operation returns. Null when the body was not JSON.
-   */
   body: Record<string, unknown> | null;
-  /** False for a refusal a retry cannot fix (a 4xx, or AutoCount saying no). */
   retryable: boolean;
 }
 
@@ -1732,7 +1405,6 @@ export async function callAcService(
       body: JSON.stringify(payload),
     });
   } catch (e) {
-    // The AutoCount host reboots and the tunnel drops. Always retryable.
     return {
       ok: false,
       status: 0,
@@ -1747,7 +1419,7 @@ export async function callAcService(
 
   const text = await res.text().catch(() => '');
   let body: { ok?: boolean; docNo?: string; error?: string; lines?: unknown; mismatched?: unknown } = {};
-  try { body = text ? JSON.parse(text) : {}; } catch { /* keep the raw text below */ }
+  try { body = text ? JSON.parse(text) : {}; } catch { }
 
   if (res.ok && body.ok !== false) {
     return {
@@ -1761,24 +1433,6 @@ export async function callAcService(
       retryable: false,
     };
   }
-  /* THE HOST DID NOT ANSWER — say THAT, and do not dress it as a refusal.
-   *
-   * When the response is not JSON, `body.error` is undefined and the RAW BODY
-   * used to become the error string. Cloudflare's edge answers an unreachable
-   * origin with `text/plain` containing exactly `error code: 502`, so that
-   * string travelled all the way to the operator's screen inside the sentence
-   * "masters not opened, document not sent: error code: 502".
-   *
-   * That sentence is a claim we never checked. The ERP did not ask AutoCount to
-   * open anything — the request never reached the machine. Measured 2026-08-23:
-   * `curl https://autocount.houzscentury.com/health` returned HTTP 502 with a
-   * 16-byte `error code: 502` body in 0.06s, from `server: cloudflare`. It cost
-   * a day of looking at AutoCount logins for a fault that was a stopped service
-   * behind the tunnel.
-   *
-   * A GATEWAY status with a non-JSON body means exactly one thing and the
-   * message now says it. A gateway status WITH a JSON `error` is the service
-   * itself speaking and keeps its own words. */
   const GATEWAY = new Set([502, 503, 504]);
   const unreachable = body.error === undefined && GATEWAY.has(res.status);
   const error = unreachable
@@ -1791,26 +1445,13 @@ export async function callAcService(
     status: res.status,
     docNo: null,
     lines: [],
-    /* Carried on the failure path too. A payload can name ten creditors, have
-       nine of them agree, one of them disagree, and fail on an unrelated ITEM —
-       dropping the finding because the call failed would lose it for good. */
     mismatches: parseAcMismatches(body.mismatched),
     body: (body ?? null) as Record<string, unknown> | null,
     error,
-    /* 4xx is configuration or a bad payload — a retry cannot fix either, so
-       fail it now with the message intact. 5xx is ambiguous by construction:
-       AcSyncService turns EVERY exception into a 500 (AcSyncService.cs:107), so
-       the same status carries both "AutoCount login failed" (transient) and
-       "already transferred downstream" (permanent, and the mirror image of the
-       rule downstream-lock.ts enforces on our side). Retrying is the cheaper
-       mistake: a permanent refusal simply exhausts its attempts and lands in
-       'failed' still carrying AutoCount's own words, whereas dead-lettering a
-       transient one loses a document until a human notices. */
     retryable: res.status >= 500,
   };
 }
 
-// ── clearing a field, which is not the same as never having one ─────────────
 
 /**
  * WHY THIS EXISTS. `soEditHeader` omits every key the ERP has no value for, and
@@ -1889,22 +1530,14 @@ export function clearedAcKeys(
   const isBlank = (col: string) => String(saved[col] ?? '').trim() === '';
   const header: string[] = [];
   for (const [col, key] of Object.entries(CLEARABLE_SO_HEADER_FIELDS)) {
-    /* Ref is composed from two columns: it clears only when both are empty. */
     if (key === 'Ref' && soReference(saved) != null) continue;
     if (touched.has(col) && isBlank(col) && !header.includes(key)) header.push(key);
   }
   for (const [col, key] of Object.entries(CLEARABLE_SO_DATE_FIELDS)) {
     if (touched.has(col) && isBlank(col)) header.push(key);
   }
-  /* The address is a package: if any of its columns was written and the packer
-     now produces fewer lines, the trailing ones have to be nulled or the book
-     keeps a street that is no longer on the order. */
   if (SO_ADDRESS_FIELDS.some((f) => touched.has(f))) {
     header.push('InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4');
-    /* Both copies, because the ERP holds ONE address and the book holds two.
-       Clearing only the invoice half would leave the delivery half showing a
-       street the order no longer has — the same asymmetry that let an EDITED
-       address reach the book on one side only until 2026-08-16. */
     header.push('DeliverAddr1', 'DeliverAddr2', 'DeliverAddr3', 'DeliverAddr4');
   }
   const udf: string[] = [];

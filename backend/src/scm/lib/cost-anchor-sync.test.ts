@@ -7,8 +7,6 @@ import {
   type SyncResult,
 } from './cost-anchor-sync';
 
-// Narrow a SyncResult to its patch (or fail loudly) — keeps
-// noUncheckedIndexedAccess / the discriminated union happy without inline casts.
 function patchOf<P>(r: SyncResult<P>): P {
   if (r.skipped) throw new Error(`expected a patch, got skipped: ${r.reason}`);
   return r.patch;
@@ -22,8 +20,6 @@ function patchOf<P>(r: SyncResult<P>): P {
 describe('productToBindingPatch — SOFA product cost propagates to the binding', () => {
   const sofaBinding: Pick<BindingCost, 'category' | 'price_matrix'> = {
     category: 'SOFA',
-    // A stale binding matrix the product edit must overwrite, proving the drift
-    // the fix closes: the binding was NOT tracking the product.
     price_matrix: { '24': { P2: 111111 }, '99': { P2: 222222 } },
   };
 
@@ -38,12 +34,10 @@ describe('productToBindingPatch — SOFA product cost propagates to the binding'
       ],
     };
     const patch = patchOf(productToBindingPatch(product, sofaBinding));
-    // The whole matrix is REPLACED from the product (stale '99' key dropped).
     expect(patch.price_matrix).toEqual({
       '24': { P2: 300000, P1: 280000 },
       '28': { P2: 320000 },
     });
-    // Flat fallback lane tracks base_price_sen.
     expect(patch.unit_price_sen).toBe(250000);
   });
 
@@ -52,13 +46,12 @@ describe('productToBindingPatch — SOFA product cost propagates to the binding'
       base_price_sen: null,
       price1_sen: null,
       seat_height_prices: [
-        { height: '24', priceSen: 300000 }, // no tier → P2
+        { height: '24', priceSen: 300000 },
         { height: '24', tier: 'PRICE_3', priceSen: 350000 },
       ],
     };
     const patch = patchOf(productToBindingPatch(product, sofaBinding));
     expect(patch.price_matrix).toEqual({ '24': { P2: 300000, P3: 350000 } });
-    // base_price_sen null → the flat lane is left untouched (not forced to 0).
     expect(patch.unit_price_sen).toBeUndefined();
   });
 
@@ -79,12 +72,9 @@ describe('productToBindingPatch — SOFA product cost propagates to the binding'
     const product: ProductCost = {
       base_price_sen: 250000,
       price1_sen: null,
-      // priceSen absent = no cost on this slot (a POS selling-only row).
       seat_height_prices: [{ height: '24', tier: 'PRICE_2' }],
     };
     const patch = patchOf(productToBindingPatch(product, sofaBinding));
-    // No priced row → matrix untouched (NOT wiped, NOT zero-filled); only the
-    // flat fallback follows base_price_sen.
     expect(patch.price_matrix).toBeUndefined();
     expect(patch.unit_price_sen).toBe(250000);
   });
@@ -97,7 +87,6 @@ describe('productToBindingPatch — SOFA product cost propagates to the binding'
     };
     const result = productToBindingPatch(product, sofaBinding);
     expect(result.skipped).toBe(true);
-    // Empty patch → caller writes nothing → the binding's existing cost survives.
     expect(result).toEqual({ skipped: true, reason: 'sofa_product_has_no_cost' });
   });
 });
@@ -115,9 +104,6 @@ describe('bindingToProductPatch — SOFA stays one-way (a supplier edit cannot o
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// Non-sofa sync must remain bidirectional and unchanged by this fix.
-// ─────────────────────────────────────────────────────────────────────────
 describe('non-sofa sync is unchanged (bidirectional)', () => {
   it('FLAT (mattress) binding→product mirrors unit_price_sen to base_price_sen', () => {
     const patch = patchOf(
@@ -134,7 +120,6 @@ describe('non-sofa sync is unchanged (bidirectional)', () => {
       ),
     );
     expect(patch.unit_price_sen).toBe(12345);
-    // Flat categories never touch the matrix.
     expect(patch.price_matrix).toBeUndefined();
   });
 
@@ -157,10 +142,8 @@ describe('non-sofa sync is unchanged (bidirectional)', () => {
   });
 });
 
-// ── BEDFRAME flat-priced binding (no matrix) — the auto-derive reprice bug ──
 describe('bindingToProductPatch — BEDFRAME falls back to flat unit_price_sen', () => {
   it('a matrix-less bedframe binding maps its flat cost to base_price_sen (not null)', () => {
-    // ELEPHANE-(SK): RM1650 in unit_price_sen, price_matrix null. Must NOT derive null.
     const patch = patchOf(bindingToProductPatch({ category: 'BEDFRAME', unit_price_sen: 165000, price_matrix: null }));
     expect(patch.base_price_sen).toBe(165000);
     expect(patch.price1_sen).toBeNull();

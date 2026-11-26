@@ -109,7 +109,6 @@ describe('General Ledger — the page', () => {
     const block = document.querySelector('[data-account="310-0010"]')!;
     expect(block).toBeTruthy();
     const rows = rowsOf(block);
-    /* Head (code, name, count, figures), Balance b/f, two lines, Total. */
     expect(rows).toHaveLength(5);
     expect(rows[0]!.textContent).toContain('310-0010');
     expect(rows[0]!.textContent).toContain('CASH AT BANK - MAYBANK');
@@ -125,7 +124,6 @@ describe('General Ledger — the page', () => {
     expect(rows[2]!.textContent).toContain('2990-HPV-2608-017');
     expect(rows[2]!.textContent).toContain('300.00');
     expect(rows[2]!.textContent).toContain('700.00 Dr');
-    /* The invoice's other side: the debtor and one more. */
     expect(rows[3]!.textContent).toContain('300-0000');
     expect(rows[3]!.textContent).toContain('+1');
     expect(rows[3]!.textContent).toContain('2990-SO-2608-067');

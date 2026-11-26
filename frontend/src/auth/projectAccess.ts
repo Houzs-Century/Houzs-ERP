@@ -60,9 +60,6 @@
  *  field is REQUIRED here even though the wire type marks them optional —
  *  that is the whole point of going through the reader. */
 export interface ProjectAccess {
-  /** Row-level tier for this project: PIC / unscoped vs a scoped rep. NOT a
-   *  substitute for any section flag below — see the header note on the
-   *  canFinancial fallback that conflated the two. */
   full: boolean;
   canEdit: boolean;
   canFinancial: boolean;
@@ -70,9 +67,6 @@ export interface ProjectAccess {
   canPayment: boolean;
   canSensitive: boolean;
   canSetupDismantle: boolean;
-  /** The server's PmsRole name, for display/telemetry only. Never gate on this
-   *  — gate on the flags, which are what the backend itself strips the wire on.
-   *  Empty string when unresolved. */
   role: string;
 }
 

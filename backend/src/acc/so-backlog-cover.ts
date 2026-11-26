@@ -42,11 +42,9 @@ export type DateFrom = 'processing_date' | 'first_do';
 export type CoverRow = {
   docNo: string;
   soDate: string;
-  /** The date the order counts on. */
   processedOn: string;
   dateFrom: DateFrom;
   customer: string | null;
-  /** The order came over from AutoCount at the cutover (`soIsMigratedShape`). */
   imported: boolean;
   part: CoverPart;
   amountSen: number;
@@ -55,25 +53,19 @@ export type CoverRow = {
 export type Count = { orders: number; amountSen: number };
 
 export type CoverTotal = Count & {
-  /** Share of the month's processed total, one decimal; null when nothing was processed. */
   pct: number | null;
 };
 
 /** The two cover rates, one decimal, of amounts or of order counts. */
 export type CoverRates = {
-  /** Backlog processed ÷ the backlog at the 1st; null with no backlog. */
   onBacklog: number | null;
-  /** Backlog processed ÷ everything processed in the month; null when nothing was processed. */
   onMonth: number | null;
 };
 
 export type CoverMonth = {
   month: string;
-  /** Orders raised before the month and not processed by its 1st. */
   backlog: Count;
-  /** Of those, the ones processed in the month. */
   backlogProcessed: Count;
-  /** Everything processed in the month. */
   processed: Count;
   amount: CoverRates;
   orders: CoverRates;
@@ -85,16 +77,11 @@ export type SoBacklogCoverData = {
   to: string;
   total: Count;
   parts: Record<CoverPart, CoverTotal>;
-  /** The backlog at the month's 1st. */
   backlog: Count;
   cover: { amount: CoverRates; orders: CoverRates };
-  /** Each rate's plain mean over the months from `from` to `to`; a month with no rate is left out. */
   average: { from: string; to: string; amount: CoverRates; orders: CoverRates };
-  /** Where the average starts when the reader picks nothing. */
   defaultFrom: string;
-  /** The months the average covers, oldest first; the last is this month. */
   months: CoverMonth[];
-  /** The orders processed in the month. */
   rows: CoverRow[];
 };
 
@@ -108,7 +95,6 @@ const day = (v: string | null | undefined): string | null => (v ? String(v).slic
 export const pctOf = (part: number, whole: number): number | null =>
   (whole === 0 ? null : Math.round((part / whole) * 1000) / 10);
 
-/** An order as the report places it: the date it counts on, or none yet. */
 type Placed = Omit<CoverRow, 'processedOn' | 'dateFrom' | 'part'> & { on: string | null; dateFrom: DateFrom | null };
 
 function place(orders: readonly ScOrder[], firstDo: ReadonlyMap<string, string>): Placed[] {
@@ -150,10 +136,6 @@ function monthOf(placed: readonly Placed[], month: string): { cover: CoverMonth;
   };
 }
 
-/** The company's first month in the ERP with a backlog. Before its first order
- *  raised in the ERP the history is AutoCount's, and only the orders still open
- *  at the cutover came over (`import-ac-outstanding-so.mjs`), so those months
- *  are short; a first month with nothing waiting has no rate to give. */
 function defaultFromOf(placed: readonly Placed[], month: string): string {
   const firstErp = placed.reduce<string | null>((a, p) => (!p.imported && (a === null || p.soDate < a) ? p.soDate : a), null);
   let m = firstErp === null ? month : firstErp.slice(0, 7);
@@ -161,8 +143,6 @@ function defaultFromOf(placed: readonly Placed[], month: string): string {
   return m < month ? m : month;
 }
 
-/** Shares of a whole, one decimal, adding up to 100.0: the rounding left over
- *  goes to the largest part, so a reader adding them never lands on 99.9. */
 function sharesOf(amounts: Record<CoverPart, number>, whole: number): Record<CoverPart, number | null> {
   if (whole === 0) return { this_month: null, backlog: null };
   const tenths = { this_month: Math.round((amounts.this_month / whole) * 1000), backlog: Math.round((amounts.backlog / whole) * 1000) };
@@ -171,8 +151,6 @@ function sharesOf(amounts: Record<CoverPart, number>, whole: number): Record<Cov
   return { this_month: tenths.this_month / 10, backlog: tenths.backlog / 10 };
 }
 
-/** The plain mean of the months' rates as shown (one decimal), so a reader
- *  averaging the column by hand gets the same figure. */
 function meanOf(rates: readonly (number | null)[]): number | null {
   const xs = rates.filter((r): r is number => r !== null);
   return xs.length === 0 ? null : Math.round((xs.reduce((s, r) => s + r, 0) / xs.length) * 10) / 10;
@@ -185,10 +163,8 @@ const meanRates = (rates: readonly CoverRates[]): CoverRates => ({
 
 export function buildSoBacklogCover(input: {
   month: string;
-  /** The average's first month; null = the company's default. */
   avgFrom: string | null;
   orders: readonly ScOrder[];
-  /** Each order's first shipped DO date, read for the orders with no Processing Date. */
   firstDo: ReadonlyMap<string, string>;
 }): SoBacklogCoverData {
   const { month } = input;

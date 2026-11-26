@@ -1,15 +1,3 @@
-/* ----------------------------------------------------------------------------
-   doc-actions — the footer-action descriptor every mobile document detail
-   renders, and the one step that asks for a mandatory reason before firing one.
-
-   EXTRACTED FROM MobileModuleDetail.tsx, which sits at its 2000-line ceiling
-   (scripts/file-size-ceilings.json): the reason prompt the Purchase Order cancel
-   needs could not be added there without pushing the file past it, and this
-   repo's rule is that new code moves into a module rather than a ceiling moving
-   up. What lives here is the SHAPE and the ASKING; which actions a document
-   offers at which status stays in that file's `statusActionsFor`, where it is
-   read beside the rest of the screen.
-   ---------------------------------------------------------------------------- */
 
 import { inBandFailureText, type InBandFailure } from "../vendor/scm/lib/mutation-error";
 
@@ -20,15 +8,8 @@ export type DocAction = {
   key: string;
   label: string;
   variant: ActVariant;
-  /** POST/PATCH/DELETE request, relative to /api/scm. */
   request: { path: string; method: "PATCH" | "POST" | "DELETE"; body?: unknown };
-  /** In-app danger confirm before firing (Cancel / Void). */
   confirm?: { title: string; body?: string; confirmLabel: string };
-  /** Ask for a mandatory REASON and send it as `reason` in the body. The server
-   *  refuses a Purchase Order or Delivery Order cancel that carries none, so a
-   *  phone that only confirmed would collect a 400 the operator cannot act on.
-   *  Used INSTEAD of `confirm`: the prompt is the confirmation, and asking twice
-   *  for one decision is exactly what the desktop copy was cut down to avoid. */
   reasonPrompt?: ReasonPrompt;
   /** When true, the record no longer exists after this action → navigate back
    *  to the list instead of staying on a now-deleted detail.
@@ -98,9 +79,6 @@ export async function askActionReason(
     validate: (v: string) => (v.trim().length < p.minChars ? "Say why in a few words — this is what the next person reads." : null),
   });
   if (reason == null) return null;
-  /* Merged, not replaced: an action can carry both a body and a reason. The
-     body is typed `unknown` — narrow it rather than casting, so a shape that is
-     not an object cannot spread garbage into the request. */
   const body = action.request.body;
   const carried = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
   return { ...action, request: { ...action.request, body: { ...carried, reason: reason.trim() } } };

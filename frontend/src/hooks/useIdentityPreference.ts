@@ -65,7 +65,6 @@ export function useIdentityPreference<T>(
     try {
       localStorage.removeItem(physicalKey);
     } catch {
-      // The default remains usable when storage is unavailable.
     }
   }, [decoded.invalid, physicalKey]);
 

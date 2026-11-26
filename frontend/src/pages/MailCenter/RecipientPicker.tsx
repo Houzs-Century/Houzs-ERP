@@ -1,7 +1,3 @@
-// Mail Center: pick recipients from the org chart (DEV-03 / PRD T-011 P4, A5).
-// Tabs come from GET /api/mail-center/directory. Ticked people are added to
-// To or Cc; the parent merges them into its field. Shared by desktop
-// Compose.tsx and the phone's MobileMailCenter.tsx.
 import { useMemo, useState } from "react";
 import { Search, Users, X } from "lucide-react";
 import { api } from "../../api/client";
@@ -54,7 +50,6 @@ export function RecipientPicker({
   open: boolean;
   onClose: () => void;
   onPick: (addresses: string[], field: "to" | "cc") => void;
-  /** The To / Cc / Bcc fields as typed; anyone on them shows ticked and locked. */
   already: string[];
 }) {
   const { data, loading, error } = useQuery<MailDirectory>(

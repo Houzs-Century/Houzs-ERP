@@ -1,14 +1,3 @@
-/* A SCANNED draft cannot be confirmed without a fair or No fair (owner
- * 2026-10-19), and the phone's Edit Draft is where the rep says which. The No
- * fair tick used to show on a NEW order only, so a genuine showroom sale that
- * came in by scan had no way out. These pin the draft half:
- *
- *   - a DRAFT with no fair event offers the tick, and saving sends noFair;
- *   - a draft already marked NO_FAIR opens with it ticked;
- *   - a CONFIRMED order does not offer it (re-assigning is Finance / PMS's job).
- *
- * Same harness as MobileNewSO.fairPick.test.tsx.
- */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -44,7 +33,6 @@ afterEach(() => { cleanup(); vi.mocked(authedFetch).mockClear(); });
 const DOC = "HC-SO-2610-300";
 const FAIRS = { date: "2026-10-19", running: [], earlier: [], venues: [{ id: "9", name: "ZANOTTI LIVING (KELANA JAYA)" }] };
 
-/* A scan draft written at a showroom: a place, no fair event. */
 const draft = {
   doc_no: DOC, status: "DRAFT", so_date: "2026-10-19", debtor_name: "Ada", phone: "+60123456789",
   email: "a@b.c", address1: "1 Jalan", customer_state: "Selangor", city: "Shah Alam", postcode: "40000",

@@ -21,15 +21,12 @@ export type GridColumn<T> = {
   label: string;
   group?: string;
   accessor: (row: T) => ReactNode;
-  /** Default width in px. */
   width?: number;
   minWidth?: number;
   align?: "left" | "right";
   sortable?: boolean;
   groupable?: boolean;
   sortFn?: (a: T, b: T) => number;
-  /* Nullable on purpose: DataGrid pages were found returning undefined for
-     some rows, and a crash here takes the whole list down. */
   groupValue?: (row: T) => string | null | undefined;
   searchValue?: (row: T) => string | null | undefined;
   exportValue?: (row: T) => string | number;
@@ -40,8 +37,6 @@ export type GridColumn<T> = {
   dateValue?: (row: T) => string | null | undefined;
   numberValue?: (row: T) => number | null | undefined;
   defaultHidden?: boolean;
-  /** The footer cell over the rows showing (DataTable's `total`): a column that
-   *  has one turns the table's Total row on. */
   total?: (rows: T[]) => ReactNode;
 };
 
@@ -55,36 +50,21 @@ export type GridContextMenuItem = {
 export type DataGridCompatProps<T> = {
   rows: T[];
   columns: GridColumn<T>[];
-  /** The DataGrid's storageKey. Becomes the table id, and its saved layouts
-   *  are carried over on first open. */
   storageKey: string;
   rowKey: (row: T) => string;
   searchPlaceholder?: string;
-  /** Known cap on the rows the page loaded (search hint). */
   loadedSearchLimit?: number;
   hideSearch?: boolean;
   exportName?: string;
-  /** See DataTable `exportLines`. A server-paged list passes it so Export reads
-   *  every page the filter matches; absent, Export writes the rows loaded, which
-   *  is the whole list on a page that loads everything. */
   exportLines?: DataTableLineExport<T, never>;
-  /** See DataTable `onExportPdf`: a page that prints adds Export to PDF to the
-   *  header's right-click menu and receives the cells of the rows showing. */
   onExportPdf?: (view: TablePdfView<T>) => void;
   onRowClick?: (row: T) => void;
   onRowDoubleClick?: (row: T) => void;
   rowStyle?: (row: T) => CSSProperties | undefined;
-  /** Row class, e.g. `dt-row-cancelled` for a cancelled document (lib/scm cancelledRowClass). */
   getRowClassName?: (row: T) => string | undefined;
-  /** Show the first N rows with a "Load more" affordance instead of the whole
-   *  set (search / filters / sort still run over everything). */
   initialRowLimit?: number;
-  /** Enable drag-to-reorder; called with the new order of the displayed rows
-   *  (only while no column sort is active). See DataTable.onRowReorder. */
   onRowReorder?: (orderedKeys: string[]) => void;
-  /** See DataTable.cellRangeSum. */
   cellRangeSum?: boolean;
-  /** See DataTable.fitToWidth. */
   fitToWidth?: boolean;
   onFilteredRowsChange?: (rows: T[]) => void;
   toolbar?: ReactNode;
@@ -105,40 +85,28 @@ export type DataGridCompatProps<T> = {
     checkboxOnly?: boolean;
   };
   embedded?: boolean;
-  /** Opt-in single-level group-by (forwarded to DataTable). The key must match a
-   *  column exposing a group/search value; `label` pretty-prints the bucket
-   *  value for the collapsible header. Absent = flat rows. */
   groupBy?: { key: string; label?: (val: string) => string };
-  /** See DataTable `freezeFrom`. */
   freezeFrom?: "toolbar" | "table";
   defaultSort?: (a: T, b: T) => number;
   sortForSessionOnly?: boolean;
-  /** See DataTable `persistFilters`; absent = funnels kept for the visit only. */
   persistFilters?: boolean | "always";
-  /** See DataTable `resetFilters`: the page's own view state folded into the
-   *  toolbar Reset, which already clears the funnels and the search box. */
   resetFilters?: { active: boolean; onReset: () => void; label?: string };
-  /** Page seeds written in DataGrid's layout rules; converted here. */
   layoutPresets?: LayoutSeed[];
-  /** See DataTable `onApplyLayoutSeed`. */
   onApplyLayoutPreset?: (presetId: string) => void;
   overlayHidden?: readonly string[];
   onUserAdjustColumns?: () => void;
   scrollToRow?: { key: string; nonce: number } | null;
 };
 
-/** A ReactNode cell as text: strings and numbers only, as DataGrid read it. */
 const cellText = (v: ReactNode): string =>
   typeof v === "string" || typeof v === "number" ? String(v) : "";
 
-/** DataGrid's value for grouping/sorting: groupValue, then searchValue, then text. */
 function sortText<T>(c: GridColumn<T>, row: T): string {
   if (c.groupValue) return c.groupValue(row) ?? "";
   if (c.searchValue) return c.searchValue(row) ?? "";
   return cellText(c.accessor(row));
 }
 
-/** DataGrid's funnel value: filterValue, groupValue, the cell text, else searchValue. */
 function filterText<T>(c: GridColumn<T>, row: T): string {
   if (c.filterValue) return String(c.filterValue(row) ?? "");
   if (c.groupValue) return String(c.groupValue(row) ?? "");
@@ -147,7 +115,6 @@ function filterText<T>(c: GridColumn<T>, row: T): string {
   return String((c.searchValue ? c.searchValue(row) : "") ?? "");
 }
 
-/** DataGrid's header-sort fallback: numeric when both sides are numbers. */
 function defaultCompare<T>(c: GridColumn<T>): (a: T, b: T) => number {
   return (a, b) => {
     const va = cellText(c.accessor(a)) || sortText(c, a);
@@ -159,8 +126,6 @@ function defaultCompare<T>(c: GridColumn<T>): (a: T, b: T) => number {
   };
 }
 
-/** DataGrid's export cell: exportValue, filterValue, rendered text, groupValue.
- *  Never searchValue, which bundles several tokens. Dates leave as ISO. */
 function exportCell<T>(c: GridColumn<T>, row: T): ExportCell {
   if (c.exportValue) return isoForExport(c.exportValue(row));
   if (c.filterValue) return isoForExport(c.filterValue(row) ?? "");

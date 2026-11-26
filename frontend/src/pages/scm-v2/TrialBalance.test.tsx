@@ -1,7 +1,3 @@
-// The Trial balance in the owner's Claude Design (batch 6, step 5): As at a day
-// (read c1), the three tiles with today's words, the accounts by section on the
-// statement table — code over name — each section totalled and the grand total
-// last, a row's lines in a drawer, and the exports as shown.
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -72,7 +68,6 @@ describe('the Trial balance’s lines', () => {
     ]);
     expect(totals).toEqual({ dr: 1_250_000, cr: 1_250_000, diff: 0 });
     expect(lines.at(-1)!.cells).toEqual({ dr: { amountSen: 1_250_000, pct: null }, cr: { amountSen: 1_250_000, pct: null }, bal: { amountSen: 0, pct: null } });
-    /* An account with nothing posted shows only when asked. */
     expect(trialBalanceLines(BALANCES, true).lines.map((l) => l.id)).toContain('acc:330-0000');
   });
 });

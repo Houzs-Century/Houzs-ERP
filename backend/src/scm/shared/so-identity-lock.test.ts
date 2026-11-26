@@ -5,9 +5,6 @@ import {
   salespersonReattributed,
 } from './so-identity-lock';
 
-/* The lock decides whether a delivered order can be edited at all, so these pin
-   both directions: what it still freezes, and the 2026-08-17 carve-out that lets
-   a resigning salesperson's orders move to their replacement. */
 
 const before = {
   debtor_name: 'ACME',
@@ -46,8 +43,6 @@ describe('changedIdentityLockCols', () => {
   });
 
   it('still locks an agent the client authored itself', () => {
-    // No salesperson move behind it, so the follow flag is false and `agent`
-    // is exactly the identity column it has always been.
     expect(changedIdentityLockCols({ agent: 'Bernard' }, before)).toEqual(['agent']);
   });
 

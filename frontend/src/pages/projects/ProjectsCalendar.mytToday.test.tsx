@@ -1,7 +1,3 @@
-/* The Projects calendar (desktop) opens on, and its "Today" button returns to,
-   the MALAYSIAN today. Before 08:00 Malaysia time, on a machine whose clock
-   zone is UTC, it opened last month on the 1st and last week on a Monday.
-   Run with TZ=UTC. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -73,7 +69,7 @@ describe("ProjectsCalendarView", () => {
   });
 
   it("Today in week mode lands on the Malaysian week, Monday first", async () => {
-    vi.setSystemTime(new Date("2026-11-15T17:30:00Z")); // Monday 16 Nov, 01:30 in Malaysia
+    vi.setSystemTime(new Date("2026-11-15T17:30:00Z"));
     mount("/projects?view=calendar&mode=week&week=2026-10-05");
     await waitFor(() => expect(lastEventsCall()).toContain("from=2026-10-05"));
     fireEvent.click(screen.getByRole("button", { name: "Today" }));

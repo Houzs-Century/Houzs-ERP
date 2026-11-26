@@ -55,18 +55,14 @@ import type { MrpResult } from '../routes/mrp';
 import { pgrestIn } from './pgrest-in-list';
 import { HARD_BOUND_COMPANY_ID, isHardBoundLine } from './so-stock-allocation';
 
-/* One bucket's forward trace: the source PO numbers (sorted, GRN-healed) plus
-   how many of its shipped units came out of a PO-less stock ADJUSTMENT. */
 export type BucketTrace = { pos: string[]; adjQty: number };
 
 export type ReadySourceChip = {
-  po: string | null;          // PO number (batch_no / GRN-resolved / sofa allocated batch)
-  qty: number;                // units of the line this chip covers
-  kind: 'po' | 'adjustment';  // adjustment → the UI renders "STOCK ADJ"
+  po: string | null;
+  qty: number;
+  kind: 'po' | 'adjustment';
 };
 
-/* Sized in URL BYTES, not rows: every list this slices is uuids, and the old
-   literal 300 was ~11.7KB of `in.(…)` filter. See UUID_CHUNK. */
 const CHUNK = UUID_CHUNK;
 
 const bucketKey = (doId: string, code: string, vk: string | null): string =>
@@ -93,9 +89,6 @@ const freeze = (m: Map<string, MutableTrace>): Map<string, BucketTrace> => {
   return out;
 };
 
-/* Resolve GRN ids → their PO numbers (the read-time twin of the durable
-   backfill). Company is NOT filtered here: the caller's DO set already scopes
-   the lots, and a lot's GRN is by construction the same company's. */
 export async function poNumbersByGrnId(sb: any, grnIds: string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const ids = [...new Set(grnIds.filter(Boolean))];
@@ -124,7 +117,7 @@ export async function poNumbersByGrnId(sb: any, grnIds: string[]): Promise<Map<s
       const poNo = poNoById.get(poId);
       if (poNo) out.set(grnId, poNo);
     }
-  } catch { /* grns/purchase_orders unreadable — lots stay unresolved */ }
+  } catch { }
   return out;
 }
 
@@ -140,11 +133,6 @@ type LotClassRow = {
 
 type LotClass = { po: string | null; adjustment: boolean };
 
-/* A lot whose source is a DO is units that DO gave back: a shipped-DO edit whose
-   return to the original lots failed wrote a plain IN, and the FIFO trigger
-   minted this lot (lib/do-resync-return.ts has the story). Its origin is the lot
-   the same DO consumed in the same bucket, newest consumption first (the order
-   the return unwinds in). Returns returnLotId -> originLotId. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the PostgREST shim every reader in this file takes
 async function originOfDoReturnLots(sb: any, rows: LotClassRow[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
@@ -158,7 +146,6 @@ async function originOfDoReturnLots(sb: any, rows: LotClassRow[]): Promise<Map<s
         .select('id, lot_id, source_doc_id, warehouse_id, item_code, variant_key, consumed_at')
         .eq('source_doc_type', 'DO')
         .in('source_doc_id', doIds.slice(i, i + CHUNK));
-      // A half-read must not name an origin: leave every return lot unclassified.
       if (error) return new Map();
       for (const c of (data ?? []) as typeof cons) cons.push(c);
     }
@@ -172,14 +159,10 @@ async function originOfDoReturnLots(sb: any, rows: LotClassRow[]): Promise<Map<s
         .sort(newestFirst);
       if (hit.length > 0) out.set(l.id, hit[0].lot_id);
     }
-  } catch { /* consumptions unreadable — the return lot stays unclassified */ }
+  } catch { }
   return out;
 }
 
-/* Classify a set of lots for the forward trace: batch_no verbatim where
-   present; NULL-batch GRN lots healed via grns→PO; NULL-batch ADJUSTMENT lots
-   flagged; a DO return lot classified as the lot it came back from (at most
-   three hops). Returns lotId → { po, adjustment }. */
 export async function classifyLots(
   sb: any,
   lotIds: string[],
@@ -212,11 +195,8 @@ export async function classifyLots(
   return out;
 }
 
-/* ── FORWARD core: one ledger pass for a set of Delivery Orders ────────────── */
 export type DoShipmentTrace = {
-  /* `${doId}::${item_code}::${variant_key}` → trace (the ship's bucket key) */
   byBucket: Map<string, BucketTrace>;
-  /* delivery_order_id → rolled-up trace (the DO / SI list cells) */
   byDo: Map<string, BucketTrace>;
 };
 
@@ -240,7 +220,6 @@ export async function traceDoShipmentSources(
 
   for (let i = 0; i < ids.length; i += CHUNK) {
     const chunk = ids.slice(i, i + CHUNK);
-    // 1. Batched OUT movements (sofa allocated batch / drop-ship expected batch).
     try {
       const { data: movs } = await sb.from('inventory_movements')
         .select('source_doc_id, item_code, variant_key, batch_no')
@@ -253,8 +232,7 @@ export async function traceDoShipmentSources(
         addPo(m.source_doc_id, m.item_code, m.variant_key, m.batch_no);
         batchedBuckets.add(bucketKey(m.source_doc_id, m.item_code, m.variant_key));
       }
-    } catch { /* column/table absent — the consumption path still contributes */ }
-    // 2. FIFO lot consumptions → consumed lots, classified (batch / GRN-heal / adjustment).
+    } catch { }
     try {
       const { data: cons } = await sb.from('inventory_lot_consumptions')
         .select('source_doc_id, lot_id, item_code, variant_key, qty_consumed')
@@ -269,14 +247,14 @@ export async function traceDoShipmentSources(
         if (cls.po) addPo(r.source_doc_id, r.item_code, r.variant_key, cls.po);
         else if (cls.adjustment) addAdj(r.source_doc_id, r.item_code, r.variant_key, Math.abs(Number(r.qty_consumed ?? 0)));
       }
-    } catch { /* consumption table absent — movement batches stand alone */ }
+    } catch { }
   }
   let traced = freeze(byBucket);
   try {
     const lines = await doLinesForBoundPo(sb, ids);
     const received = await receivedBoundPosBySoItem(sb, lines.map((l) => l.soItemId));
     traced = preferReceivedBoundPo(traced, batchedBuckets, lines, received);
-  } catch { /* bound-PO read failed — the ledger answer stands */ }
+  } catch { }
   return { byBucket: traced, byDo: rollUpByDo(traced) };
 }
 
@@ -361,8 +339,6 @@ async function doLinesForBoundPo(
       item_group: string | null; variants: VariantAttrs | null; committed_po_batch_no: string | null;
     }>) {
       if (!r.item_code || !isHardBoundLine(r.item_group, r.item_code)) continue;
-      // Batched by construction even when the OUT's stored variant key drifted
-      // from the line's, so the batchedBuckets match alone would miss it.
       if (String(r.item_group ?? '').toUpperCase().includes('SOFA') || r.committed_po_batch_no) continue;
       const vk = computeVariantKey(r.item_group ?? null, r.variants ?? null);
       out.push({ bucket: bucketKey(r.delivery_order_id, r.item_code, vk), itemCode: r.item_code, soItemId: r.so_item_id });
@@ -371,8 +347,6 @@ async function doLinesForBoundPo(
   return out;
 }
 
-/* so_item_id → the live POs raised for that SO line that have received at
-   least one unit, with the item each PO line orders. */
 export async function receivedBoundPosBySoItem(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
@@ -411,9 +385,7 @@ export async function receivedBoundPosBySoItem(
   return out;
 }
 
-/* ── FORWARD adapters (the shapes each surface consumes) ───────────────────── */
 
-/* DO list / SI list rollup: delivery_order_id → trace. */
 export async function resolveDoSources(
   sb: any,
   doIds: Array<string | null | undefined>,
@@ -421,7 +393,6 @@ export async function resolveDoSources(
   return (await traceDoShipmentSources(sb, doIds)).byDo;
 }
 
-/* DO / SI detail per line: `${item_code}::${variant_key}` → trace, one DO. */
 export async function resolveDoLineSources(
   sb: any,
   deliveryOrderId: string,
@@ -435,9 +406,6 @@ export async function resolveDoLineSources(
   return out;
 }
 
-/* SO line: mfg_sales_order_items.id → trace. Walk SO line → its DO line(s) →
-   the SAME (item_code, variant_key) bucket the ship wrote them under
-   (movements are not keyed by so_item_id). */
 export async function soLineShippedSources(
   sb: any,
   soItemIds: string[],
@@ -446,8 +414,6 @@ export async function soLineShippedSources(
   const ids = [...new Set(soItemIds.filter((x): x is string => Boolean(x)))];
   if (ids.length === 0) return new Map();
   try {
-    // Chunked: the SO LIST now walks this for a whole page (hundreds of SOs →
-    // thousands of line ids); one giant `.in()` would blow the PostgREST URL cap.
     const doLines: Array<{
       so_item_id: string | null; delivery_order_id: string; item_code: string;
       item_group: string | null; variants: VariantAttrs | null;
@@ -469,11 +435,10 @@ export async function soLineShippedSources(
       for (const po of trace.pos) acc.pos.add(po);
       acc.adjQty += trace.adjQty;
     }
-  } catch { /* ledger unreadable — no shipped source (falls back to coverage PO) */ }
+  } catch { }
   return freeze(out);
 }
 
-/* ── Legacy-shaped wrappers (kept so existing callers/import sites survive) ── */
 
 export async function soLineShippedSourcePosImpl(
   sb: any,
@@ -519,24 +484,14 @@ export async function resolveDoSourcePosForDosImpl(
    section: DO header-vs-line-union), never to the header cell. */
 
 export type HeaderUnionLine = {
-  /* Rollup key of the document whose header cell we are deriving
-     (delivery_order_id for a DO row, sales_invoice id for an SI row). */
   docKey: string;
-  /* The DO whose ledger buckets this line's goods shipped under. */
   bucketDoId: string;
   itemCode: string | null;
   itemGroup: string | null;
   variants: VariantAttrs | null;
-  /* Bound-PO display fallback for a line whose ledger trace is empty — the
-     SAME fallback the DO drill renders (SO-line bound PO), so the header stays
-     ≡ the union of what the lines actually SHOW, fallback included. */
   fallbackPo?: string | null;
 };
 
-/* PURE core: union the per-line resolver output into one trace per docKey.
-   Service lines are excluded (they move no goods, so a stray ledger row must
-   not resurface through them); a bucket shared by two lines of one document
-   counts ONCE (adjQty is per distinct bucket, not per line). */
 export function unionLineTraces(
   byBucket: Map<string, BucketTrace>,
   lines: HeaderUnionLine[],
@@ -569,9 +524,6 @@ export function unionLineTraces(
   return out;
 }
 
-/* DO list header cells: delivery_order_id → union of ITS lines' traces (the
-   exact set the drill renders, bound-PO fallback included). Replaces the byDo
-   rollup for every header/list surface. */
 export async function resolveDoHeaderSources(
   sb: any,
   doIds: Array<string | null | undefined>,
@@ -591,8 +543,6 @@ export async function resolveDoHeaderSources(
       for (const r of (data ?? []) as DoLine[]) doLines.push(r);
     }
     const { byBucket } = await traceDoShipmentSources(sb, ids);
-    // Bound-PO fallback for lines whose ledger trace is empty — the drill's rule
-    // verbatim (resolveExpectedBatchBySoItem; adjustment-shipped lines resolved).
     const unresolvedSoIds = doLines
       .filter((l) => {
         if (!l.item_code || !l.so_item_id) return false;
@@ -604,10 +554,7 @@ export async function resolveDoHeaderSources(
       .map((l) => l.so_item_id as string);
     let boundPoBySoItem = new Map<string, { poNumber: string | null }>();
     if (unresolvedSoIds.length > 0) {
-      /* 'latest' — same read-only drill-down rule as the DO detail: this
-         names a likely source PO, it never stamps a batch, so the ambiguous
-         line is better answered than blank. The stamping paths block (H3). */
-      try { boundPoBySoItem = await resolveExpectedBatchBySoItem(sb, unresolvedSoIds, { onMultiPo: 'latest' }); } catch { /* fallback only */ }
+      try { boundPoBySoItem = await resolveExpectedBatchBySoItem(sb, unresolvedSoIds, { onMultiPo: 'latest' }); } catch { }
     }
     return unionLineTraces(byBucket, doLines.map((l) => ({
       docKey: l.delivery_order_id,
@@ -622,10 +569,6 @@ export async function resolveDoHeaderSources(
   }
 }
 
-/* SI list header cells: sales_invoice id → union of the SI's OWN lines' traces
-   (each line matched into its DO's ledger buckets — the exact per-line rule the
-   SI detail applies). An SI with no delivery_order_id (manual invoice) yields
-   nothing. */
 export async function resolveSiHeaderSources(
   sb: any,
   sis: Array<{ id: string | null | undefined; delivery_order_id: string | null | undefined }>,
@@ -705,27 +648,16 @@ export function unionSoLineChips(
   return out;
 }
 
-/* ── READY projection (pure core) ──────────────────────────────────────────
-   One (warehouse, code, variant) bucket: claims in ALLOCATION order (MRP's
-   sku.lines array — delivery date then doc_no, the exact order computeMrp
-   consumed the stock pool in), lots in CONSUMPTION order (received_at ASC,
-   id ASC — fn_consume_fifo's ORDER BY). Claim N's stock slice occupies
-   [sum of earlier claims' stockQty, +stockQty) of the bucket's pooled stock,
-   so spreading the slices across the lots FIFO answers "which lot — and so
-   which PO — will THIS line draw when it ships". Deterministic, no writes;
-   agrees with the reservations drawer's spread (distributeAssignedToLots) by
-   construction because both walk the same orders. A lot tail beyond the open
-   lots (balances drift) yields no chip — honest, never a guess. */
 export function projectReadyFifo(
   claims: Array<{ soItemId: string; stockQty: number }>,
   lots: Array<{ qty: number; po: string | null; adjustment: boolean }>,
 ): Map<string, ReadySourceChip[]> {
   const out = new Map<string, ReadySourceChip[]>();
   let lotIdx = 0;
-  let lotUsed = 0; // units of lots[lotIdx] already claimed by earlier claims
+  let lotUsed = 0;
   for (const claim of claims) {
     let need = Math.max(0, Math.floor(claim.stockQty));
-    const chips = new Map<string, ReadySourceChip>(); // key: po ?? '::adj'
+    const chips = new Map<string, ReadySourceChip>();
     while (need > 0 && lotIdx < lots.length) {
       const lot = lots[lotIdx];
       if (!lot) break;
@@ -742,15 +674,11 @@ export function projectReadyFifo(
       }
       if (lotUsed >= Math.floor(lot.qty)) { lotIdx += 1; lotUsed = 0; }
     }
-    // need > 0 here = the MRP stock figure exceeded the open lots (drift) — the
-    // uncovered tail simply carries no chip.
     if (chips.size > 0) {
       const arr = [...chips.values()].sort((a, b) =>
         (a.po ?? '￿').localeCompare(b.po ?? '￿', undefined, { numeric: true }));
       const prev = out.get(claim.soItemId);
       if (prev) {
-        // Same SO line split across buckets cannot happen (one line = one
-        // bucket), but merge defensively rather than drop.
         for (const ch of arr) {
           const hit = prev.find((p) => p.po === ch.po && p.kind === ch.kind);
           if (hit) hit.qty += ch.qty;
@@ -764,13 +692,6 @@ export function projectReadyFifo(
   return out;
 }
 
-/* ── READY projection (query wrapper) ──────────────────────────────────────
-   items: the SO's item rows (id / item_group / qty / stock_status /
-   allocated_batch_no). mrp: the SAME computeMrp result the caller already ran
-   for coverage (null → sofa-only resolution). Sofa lines surface their stored
-   allocated_batch_no directly (mig 0121 — the batch allocator's hard answer);
-   non-sofa lines project over open lots. Fail-soft: any read error resolves to
-   an empty map, never a 500. */
 export async function soLineReadySourcePos(
   sb: any,
   companyId: number | null,
@@ -787,7 +708,6 @@ export async function soLineReadySourcePos(
   const wanted = new Set(items.map((it) => it.id).filter(Boolean));
   if (wanted.size === 0) return out;
 
-  // SOFA: the allocator already bound ONE batch (= one PO) per READY set.
   for (const it of items) {
     const isSofa = String(it.item_group ?? '').toUpperCase().includes('SOFA');
     const batch = (it.allocated_batch_no ?? '').trim();
@@ -798,7 +718,6 @@ export async function soLineReadySourcePos(
   if (!mrp) return out;
 
   try {
-    // Buckets that hold at least one of OUR lines with a stock slice.
     type Bucket = {
       warehouseId: string | null;
       itemCode: string;
@@ -820,9 +739,6 @@ export async function soLineReadySourcePos(
     }
     if (buckets.length === 0) return out;
 
-    // Open lots for those buckets — FIFO order (received_at ASC, id ASC), the
-    // exact ORDER BY fn_consume_fifo walks. A WH_NONE bucket has no physical
-    // warehouse, so it can match no lot — honest empty.
     const codes = [...new Set(buckets.map((b) => b.itemCode))];
     const whIds = [...new Set(buckets.map((b) => b.warehouseId).filter((x): x is string => Boolean(x)))];
     if (whIds.length === 0) return out;
@@ -850,8 +766,6 @@ export async function soLineReadySourcePos(
     }
     if (lots.length === 0) return out;
 
-    // Classify NULL-batch lots once (GRN-heal + adjustment), reusing the same
-    // rules the shipped side applies — the two traces must speak one language.
     const nullBatch = lots.filter((l) => !l.batch_no);
     const grnIds = nullBatch
       .filter((l) => (l.source_doc_type ?? '').toUpperCase() === 'GRN' && l.source_doc_id)
@@ -884,29 +798,17 @@ export async function soLineReadySourcePos(
         }),
       );
       for (const [soItemId, chips] of projected.entries()) {
-        if (!wanted.has(soItemId)) continue; // competing claims are walked, not shown
-        if (!out.has(soItemId)) out.set(soItemId, chips); // sofa direct answer wins
+        if (!wanted.has(soItemId)) continue;
+        if (!out.has(soItemId)) out.set(soItemId, chips);
       }
     }
-  } catch { /* projection is display-only — degrade to no chips */ }
+  } catch { }
   return out;
 }
 
-/* ── REVERSE core: PO numbers → the DOs that shipped their goods ───────────
-   Moved VERBATIM in behaviour from po-so-coverage.ts (deliveredLedger…), plus
-   the (do::code::variant) bucket keys per PO so the Assigned-SO DO-lock and
-   the Delivered column derive from ONE ledger pass.
-
-   Qty MUST NOT double-count: a sofa/allocated-batch OUT writes BOTH a batched
-   movement AND a consumption of that same batched lot, so consumptions are the
-   PRIMARY qty source and a batched OUT only fills the DROP-SHIP gap (its
-   bucket has no consumption — it shipped before receipt). Plain-FIFO OUTs are
-   un-batched so the movement filter never matches them; their consumed lots
-   ARE batched and carry them. */
 export type PoDeliveredLedger = {
   qtyByPoDo: Map<string, Map<string, number>>;
   qtyByPoDoCode: Map<string, Map<string, Map<string, number>>>;
-  /* poNumber → `${doId}::${code}::${variantKey}` bucket keys (the DO-lock's input) */
   bucketsByPo: Map<string, Set<string>>;
   doIds: Set<string>;
 };
@@ -943,12 +845,7 @@ export async function tracePoDeliveredLedger(
     doIds.add(doId);
   };
   if (poNumbers.length === 0) return { qtyByPoDo, qtyByPoDoCode, bucketsByPo, doIds };
-  // 1. Consumptions FIRST (the primary qty source, no double count).
   try {
-    /* chunkIn — `poNumbers` is every PO on a LIST PAGE (po-so-coverage hands
-       this the page's whole PO set), so it went into the URL un-batched and past
-       the 1000-row cap un-paged. The two maps built from it are keyed, so the
-       merge is order-free. */
     const { data: lots } = await chunkIn<{ id: string; batch_no: string | null }>(poNumbers, (batch, from, to) =>
       sb.from('inventory_lots').select('id, batch_no').in('batch_no', batch).order('id').range(from, to));
     const lotPo = new Map<string, string>();
@@ -971,14 +868,8 @@ export async function tracePoDeliveredLedger(
         addBucket(poNum, r.source_doc_id, r.item_code, r.variant_key);
       }
     }
-  } catch { /* consumption / lot table absent — movement batches stand alone */ }
-  // 2. Batched OUT movements — buckets always (the ship DID come from this PO);
-  //    qty only where NO consumption covered the bucket (drop-ship).
+  } catch { }
   try {
-    /* chunkIn — same page-sized `poNumbers` as the lot read above. This one also
-       gains PAGING, which it needs more: OUT movements are the highest-volume
-       table here, so the un-paged form was dropping shipped qty past row 1000 —
-       an under-count of what a PO delivered. */
     const { data: movs } = await chunkIn<{ source_doc_id: string | null; item_code: string | null; variant_key: string | null; batch_no: string | null; qty: number | null }>(poNumbers, (batch, from, to) => sb.from('inventory_movements')
       .select('source_doc_id, item_code, variant_key, batch_no, qty')
       .eq('source_doc_type', 'DO').eq('movement_type', 'OUT').in('batch_no', batch).order('id').range(from, to));
@@ -986,11 +877,11 @@ export async function tracePoDeliveredLedger(
       addBucket(m.batch_no, m.source_doc_id, m.item_code, m.variant_key);
       if (m.batch_no && m.source_doc_id && m.item_code
         && consumedBuckets.has(`${m.batch_no}::${m.source_doc_id}::${m.item_code}`)) {
-        continue; // already counted via its lot consumption — skip to avoid 2x
+        continue;
       }
       bump(m.batch_no, m.source_doc_id, m.item_code, Number(m.qty ?? 0));
     }
-  } catch { /* movements shape differs — consumption path still contributes */ }
+  } catch { }
   return { qtyByPoDo, qtyByPoDoCode, bucketsByPo, doIds };
 }
 
@@ -1025,11 +916,6 @@ export async function resolveDoSourceSos(
   const out = new Map<string, string[]>();
   if (ids.length === 0) return out;
   try {
-    /* chunkIn on both hops — `ids` is a whole DO LIST PAGE of uuids
-       (delivery-orders-mfg hands this `rows.map(r => r.id)`), and `soItemIds` is
-       one more uuid per line of it. resolveDoHeaderSources above already chunks
-       the identical read on the identical table; this path did not. Both results
-       feed keyed maps / per-DO Sets, so batching cannot change the answer. */
     const { data: rows } = await chunkIn<{ delivery_order_id: string; so_item_id: string | null }>(ids, (batch, from, to) => sb
       .from('delivery_order_items')
       .select('delivery_order_id, so_item_id')
@@ -1062,8 +948,6 @@ export async function resolveDoSourceSos(
     for (const [doId, set] of byDo) out.set(doId, [...set].sort());
     return out;
   } catch {
-    /* Best-effort, exactly like the PO trace beside it: a failed lookup must
-       leave the list rendering its header label, never break the page. */
     return out;
   }
 }

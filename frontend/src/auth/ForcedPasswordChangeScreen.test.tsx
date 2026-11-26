@@ -2,10 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-/* The required-change screen is the ONLY thing a flagged member's session can
-   reach, so a broken form here is a lockout. These pin that it sends the
-   current + new password, refuses the obvious mistakes before a round trip, and
-   shows the server's refusal instead of swallowing it. */
 
 const completePasswordChange = vi.fn();
 const logout = vi.fn();

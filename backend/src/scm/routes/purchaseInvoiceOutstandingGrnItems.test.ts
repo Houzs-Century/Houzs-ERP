@@ -27,8 +27,6 @@ import routerSrc from './purchase-invoices.ts?raw';
 const MAX_ROWS = 1000;
 
 const state: { sb: unknown } = { sb: null };
-/* supabaseAuth replaces whatever the caller set with the service client, so the
-   fake is injected at that seam (same harness as purchaseInvoiceZeroPriceCreate). */
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => state.sb }));
 
 const CALLER = {
@@ -57,7 +55,6 @@ async function getPicker(sb: ReturnType<typeof fakeSb>, company = HOUZS) {
   return { status: res.status, body: (await res.json()) as { items?: Item[]; truncated?: boolean; error?: string } };
 }
 
-/* uuid-shaped, so the id batches are sized the way production sizes them. */
 const uuid = (space: number, n: number) =>
   `${space.toString(16).padStart(8, '0')}-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
 const day = (offset: number) => new Date(Date.UTC(2025, 0, 1) + offset * 86_400_000).toISOString().slice(0, 10);
@@ -67,8 +64,6 @@ type NoteSpec = {
   lines: Array<{ accepted: number; invoiced?: number | null; returned?: number | null; company?: number; createdAt?: string }>;
 };
 
-/* Builds grns + grn_items AND scm.v_grn_outstanding, with the view computed by
-   mig 0267's own definition so the fixture cannot disagree with it. */
 function tables(notes: NoteSpec[]) {
   const grns: Row[] = [];
   const grn_items: Row[] = [];
@@ -104,7 +99,6 @@ function tables(notes: NoteSpec[]) {
   return { grns, grn_items, v_grn_outstanding: view, fabric_trackings: [] as Row[] };
 }
 
-/* The handler as it was, replayed through the same fake. */
 async function oldRead(sb: ReturnType<typeof fakeSb>, companyId = 1) {
   const { data: headers } = await sb.from('grns').select('*').eq('company_id', companyId)
     .eq('status', 'POSTED').eq('on_hold', false)
@@ -117,16 +111,14 @@ async function oldRead(sb: ReturnType<typeof fakeSb>, companyId = 1) {
 describe('GET /purchase-invoices/outstanding-grn-items', () => {
   it('offers an older unbilled note that 600 newer, fully billed notes used to push out', async () => {
     const notes: NoteSpec[] = [];
-    // 620 posted notes, one a day. The 600 newest are fully billed; the 20 oldest are not.
     for (let k = 0; k < 620; k++) {
       notes.push({ n: k, received: day(k), lines: [{ accepted: 3, invoiced: k >= 20 ? 3 : 1 }] });
     }
-    // Another company's unbilled notes must never appear.
     for (let k = 0; k < 5; k++) notes.push({ n: 5000 + k, company: 2, received: day(700 + k), lines: [{ accepted: 2 }] });
     const sb = fakeSb(tables(notes), {}, [], [], MAX_ROWS);
 
     const control = await oldRead(sb);
-    expect(control).toHaveLength(0); // the old read saw 500 billed notes and nothing to offer
+    expect(control).toHaveLength(0);
 
     const { status, body } = await getPicker(sb);
     expect(status).toBe(200);
@@ -147,7 +139,7 @@ describe('GET /purchase-invoices/outstanding-grn-items', () => {
     const sb = fakeSb(tables(notes), {}, [], [], MAX_ROWS);
 
     const control = await oldRead(sb);
-    expect(control).toHaveLength(MAX_ROWS); // 1,200 lines asked for, 1,000 came back, no error
+    expect(control).toHaveLength(MAX_ROWS);
 
     const { status, body } = await getPicker(sb);
     expect(status).toBe(200);
@@ -158,13 +150,13 @@ describe('GET /purchase-invoices/outstanding-grn-items', () => {
   it('offers only POSTED, not-held notes of this company, and only lines this company owns', async () => {
     const sb = fakeSb(tables([
       { n: 1, received: day(1), lines: [{ accepted: 2 }] },
-      { n: 2, received: day(2), onHold: true, lines: [{ accepted: 2 }] },            // held: the view still says outstanding
+      { n: 2, received: day(2), onHold: true, lines: [{ accepted: 2 }] },
       { n: 3, received: day(3), status: 'DRAFT', lines: [{ accepted: 2 }] },
       { n: 4, received: day(4), status: 'CANCELLED', lines: [{ accepted: 2 }] },
-      { n: 5, received: day(5), lines: [{ accepted: 2 }, { accepted: 2, company: 2 }] }, // a line stamped with the other company
+      { n: 5, received: day(5), lines: [{ accepted: 2 }, { accepted: 2, company: 2 }] },
       { n: 6, received: day(6), company: 2, lines: [{ accepted: 2 }] },
-      { n: 7, received: day(7), lines: [{ accepted: 2, invoiced: 1, returned: 1 }] },  // returned counts as consumed
-      { n: 8, received: day(8), lines: [{ accepted: 2, invoiced: null, returned: null }] }, // NULL tallies read as zero
+      { n: 7, received: day(7), lines: [{ accepted: 2, invoiced: 1, returned: 1 }] },
+      { n: 8, received: day(8), lines: [{ accepted: 2, invoiced: null, returned: null }] },
     ]), {}, [], [], MAX_ROWS);
 
     const { body } = await getPicker(sb);
@@ -188,17 +180,13 @@ describe('GET /purchase-invoices/outstanding-grn-items', () => {
     expect(n1).toEqual([uuid(0xb, 11), uuid(0xb, 10)]);
   });
 
-  /* Staff 2026-11-09, HC-GRN-2611-052: "convert GRN list all same PO number".
-     One receipt took lines from two POs; every line was labelled with the
-     header's PO. Each line must name the PO its own purchase_order_item_id
-     belongs to, and only a line with no PO link borrows the header's. */
   it('labels each line with its OWN purchase order when one note received from several', async () => {
     const t = tables([{ n: 52, received: day(1), lines: [{ accepted: 1 }, { accepted: 1 }, { accepted: 1 }, { accepted: 1 }] }]);
     const [l0, l1, l2, l3] = t.grn_items;
     l0!.purchase_order_item_id = 'poi-125-a';
     l1!.purchase_order_item_id = 'poi-202-a';
-    l2!.purchase_order_item_id = 'poi-other-co'; // a link that does not resolve in this company
-    l3!.purchase_order_item_id = null;            // a manual line
+    l2!.purchase_order_item_id = 'poi-other-co';
+    l3!.purchase_order_item_id = null;
     const sb = fakeSb({
       ...t,
       grns: t.grns.map((g) => ({ ...g, purchase_order_id: 'po-125', purchase_order: { po_number: 'HC-PO-2610-125' } })),
@@ -237,9 +225,6 @@ describe('GET /purchase-invoices/outstanding-grn-items', () => {
     expect(body.error).toBe('load_failed');
   });
 
-  /* A failed read must never come back as "nothing to bill". Each of the three
-     reads is broken in turn by asking it for a column the table does not have,
-     which the fake fails with 42703 and a null body, as PostgREST does. */
   it.each([
     ['the outstanding-note read', { v_grn_outstanding: ['id'] }],
     ['the note header read', { grns: ['currency'] }],

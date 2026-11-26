@@ -1,27 +1,3 @@
-// ----------------------------------------------------------------------------
-// GrnFromPo — multi-select PO LINE → New GRN form FEEDER.
-//
-// Commander 2026-05-29 redesign: this picker no longer auto-creates GRNs. Like
-// Create-PO-from-SO (PurchaseOrderFromSo), it now FEEDS the New GRN form — tick
-// the outstanding PO lines you're receiving, optionally adjust the Pick Qty,
-// hit "Add N lines to GRN", and you land back on /grns/new with those lines
-// pre-loaded (supplier locked, each line keeping its own purchase_order_item_id
-// so received_qty still rolls up to every source PO).
-//
-// Same shared <DataGrid> primitive + toolbar (Select all / Clear all + category
-// filter + date-range filter targeting PO Date / Expected Delivery + search +
-// Columns config) + dense ledger columns with the variant summary under each
-// Description + click-row-to-pick + editable Pick Qty. One supplier per GRN:
-// once a line is ticked, other suppliers' lines grey out + disable.
-//
-// Routing: /grns/from-po.
-//
-// HOUZS VENDOR — verbatim from apps/backend/src/pages/GrnFromPo.tsx. Import
-// boundary only: react-router → react-router-dom; the outstanding-PO picker hook
-// stays in suppliers-queries (vendor path); the GRN detail/add-item hooks →
-// vendored grn-queries; components/category-badges → ../../vendor/scm/*; nav
-// repointed to /scm/grns (the New GRN form + the append-to-GRN edit page).
-// ----------------------------------------------------------------------------
 
 import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
@@ -47,9 +23,6 @@ import { fmtDate, fmtMoneySen, fmtQty } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 
-/* The picker rows carry the PO line's warehouse as two FLAT columns, not a
-   nested object, so the ONE display rule is reached through this adapter rather
-   than re-spelled per cell (vendor/scm/lib/warehouse-label.ts — code, then name). */
 const whLabel = (
   r: { warehouseLocationCode?: string | null; warehouseLocationName?: string | null } | null | undefined,
 ): string | null =>
@@ -59,11 +32,8 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
-/* DataGrid localStorage layout key. */
 const STORAGE_KEY = 'grn-from-po.layout.v1';
 
-/* Houzs-style compact pill controls for the toolbar filters — matches the
-   inputs on Create-PO-from-SO so the density is identical. */
 const FILTER_INPUT: CSSProperties = {
   height: 28,
   border: '1px solid var(--line)',
@@ -75,7 +45,6 @@ const FILTER_INPUT: CSSProperties = {
 };
 
 
-/** Which date field the range filter targets (PO has PO Date + Expected). */
 const DATE_FIELD_OPTIONS = [
   { value: 'poDate',   label: 'PO Date' },
   { value: 'expected', label: 'Expected Delivery' },
@@ -87,27 +56,15 @@ const rowDateFor = (r: OutstandingPoItem, field: DateField): string | null =>
 
 type Pick = { picked: boolean; qty: number };
 
-/* Shape stashed to sessionStorage for the New GRN form to consume. Mirrors the
-   poFromSoPicks pattern — the full row plus the chosen pick qty. */
 export type GrnFromPoPick = OutstandingPoItem & { _pickQty: number };
 
 export const GrnFromPo = () => {
   const navigate = useNavigate();
-  /** Category filter options (the registry, as Create-PO-from-SO). */
   const CATEGORY_OPTIONS = [
     { value: 'all', label: 'All categories' },
     ...useProductCategories().active.map((c) => ({ value: c.code.toLowerCase(), label: c.name })),
   ];
 
-  /* Commander 2026-05-31 — "Partially Convert" from the PO list lands here with
-     ?poId=<id>, scoping the picker to ONE PO's outstanding lines so the operator
-     isn't hunting through every supplier's PO; ?poId=<id>,<id>,… is the batch
-     convert from the toolbar. Empty set = the full open picker. The name
-     is not spelled here: it comes from lib/convertScope, which the callers also
-     import, so a caller and this page cannot drift apart the way the GRN→PI /
-     SO→DO / DO→SI links had (2026-08-16). `appendToGrn` is declared as the
-     other parameter this screen legitimately takes, so it is not reported as
-     unrecognised. */
   const [searchParams] = useSearchParams();
   const scope = useMemo(
     () => readConvertScope('poToGrn', searchParams, ['appendToGrn']),
@@ -121,12 +78,6 @@ export const GrnFromPo = () => {
      outside it. That is the owner's 2026-08-17 zero-row screen. */
   const itemsQ = useOutstandingPoItems(useMemo(() => [...poIdSet], [poIdSet]));
 
-  /* Commander 2026-05-31 — APPEND mode. When a POSTED GRN's edit page sends the
-     operator here with ?appendToGrn=<grnId>, this picker no longer feeds the
-     New GRN form; instead it appends the picked PO lines straight into that
-     existing GRN (same multi-pick UI as Create-GR's "From PO (multi)"). Scope:
-     the GRN is supplier- + warehouse-locked, so only that supplier's lines for
-     that warehouse are pickable. */
   const appendToGrn = searchParams.get('appendToGrn');
   const grnDetailQ  = useGrnDetail(appendToGrn);
   const addGrnItem  = useAddGrnItem();
@@ -135,30 +86,18 @@ export const GrnFromPo = () => {
     | undefined;
   const [appending, setAppending] = useState(false);
 
-  // Map<poItemId, { picked, qty }>. qty defaults to remainingQty when ticked.
   const [picks, setPicks] = useState<Record<string, Pick>>({});
 
-  // Toolbar filters — identical to Create-PO-from-SO.
   const [category, setCategory]   = useState<string>('all');
   const [dateField, setDateField] = useState<DateField>('poDate');
   const [dateFrom, setDateFrom]   = useState<string>('');
   const [dateTo, setDateTo]       = useState<string>('');
 
-  // In-app result dialog (validation only now — the grid feeds the form).
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
 
   const items = useMemo(() => itemsQ.data?.items ?? [], [itemsQ.data]);
-  /* The WHY behind an empty grid. Older cached payloads have no `scope`, so it
-     is nullable and `outstandingEmptyReason` treats null as "I cannot name a
-     scoped reason" rather than as "nothing is scoped". */
   const serverScope = itemsQ.data?.scope ?? null;
 
-  /* The New GRN form stashes its current draft (grnNewDraft) before sending us
-     here. Build a per-poItemId drafted-qty map so the same PO line can't be
-     picked twice across the unsaved draft + these new picks:
-       · lines FULLY consumed by the draft are filtered out,
-       · lines PARTIALLY consumed still show with a "in draft X" tag, and the
-         Pick Qty is capped at (remaining − draft). Mirrors PurchaseOrderFromSo. */
   const draftQtyById = useMemo(() => {
     try {
       const d = readScmHandoff<{ lines?: Array<{ purchaseOrderItemId?: string | null; qtyReceived?: number }> }>('grnNewDraft');
@@ -172,20 +111,11 @@ export const GrnFromPo = () => {
     } catch { return new Map<string, number>(); }
   }, []);
 
-  /* Effective remaining for a row, after subtracting what the unsaved draft
-     already holds for this same PO line. <=0 → filtered out. */
   const effRemaining = (r: OutstandingPoItem): number =>
     r.remainingQty - (draftQtyById.get(r.poItemId) ?? 0);
 
-  /* THE SCREEN'S OWN NARROWING, split out so the empty state can tell it apart
-     from the toolbar and from the unsaved draft. Three different causes with
-     three different fixes: clear a filter, go back and save the draft, or drop
-     the PO scope. Folded together, a row the SCOPE dropped was reported as a row
-     the operator's own draft had already taken. */
   const scopedRows = useMemo(() => items.filter((r) => {
     if (poIdSet.size > 0 && !poIdSet.has(r.poId)) return false;
-    // Append mode — only this GRN's supplier (and warehouse, if the GRN is
-    // warehouse-bound) so the receipt stays one-supplier / one-warehouse.
     if (appendGrn) {
       if (appendGrn.supplier_id && r.supplierId !== appendGrn.supplier_id) return false;
       if (appendGrn.warehouse_id && r.warehouseLocationId !== appendGrn.warehouse_id) return false;
@@ -193,7 +123,6 @@ export const GrnFromPo = () => {
     return true;
   }), [items, poIdSet, appendGrn]);
 
-  // ── Filtered rows fed to the grid ────────────────────────────────────
   const rows = useMemo(() => {
     return scopedRows.filter((r) => {
       if (effRemaining(r) <= 0) return false;
@@ -225,8 +154,6 @@ export const GrnFromPo = () => {
     const mine = items.filter((r) => poIdSet.has(r.poId) && effRemaining(r) > 0);
     const first = mine[0];
     if (!first) return;
-    // Honour the one-warehouse-per-GRN lock: tick only lines that share the
-    // first line's warehouse (a same-supplier batch can still span warehouses).
     const lockTo = first.warehouseLocationId ?? null;
     setPicks(() => {
       const next: Record<string, Pick> = {};
@@ -239,11 +166,6 @@ export const GrnFromPo = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, itemsQ.isLoading, poIdSet]);
 
-  // One WAREHOUSE per GRN (Commander 2026-05-30) — once a line is ticked, the
-  // selection locks to that PO line's warehouse (purchase_location). Lines from a
-  // DIFFERENT warehouse grey out / become un-tickable. Mirrors the supplier-lock
-  // pattern in PurchaseOrderFromSo, but keyed on warehouseLocationId. Clearing
-  // all picks unlocks.
   const lockedWarehouse = useMemo(() => {
     for (const [id, v] of Object.entries(picks)) {
       if (!v.picked) continue;
@@ -253,23 +175,18 @@ export const GrnFromPo = () => {
     return null;
   }, [picks, items]);
 
-  // Human-readable label for the locked warehouse (for the header note).
   const lockedWarehouseLabel = useMemo(() => {
     if (!lockedWarehouse) return null;
     const row = items.find((r) => r.warehouseLocationId === lockedWarehouse);
     return whLabel(row) ?? lockedWarehouse;
   }, [lockedWarehouse, items]);
 
-  // A row is LOCKED when a different warehouse is already picked. Grey these out
-  // + disable their checkbox / qty input.
   const isRowLocked = (r: OutstandingPoItem): boolean =>
     Boolean(lockedWarehouse && r.warehouseLocationId !== lockedWarehouse
       && !picks[r.poItemId]?.picked);
 
-  // ── Pick helpers ─────────────────────────────────────────────────────
   const togglePick = (id: string, remaining: number) => {
     const row = items.find((r) => r.poItemId === id);
-    // Block ticking a different warehouse than the one already locked.
     if (row && lockedWarehouse && row.warehouseLocationId !== lockedWarehouse
         && !picks[id]?.picked) return;
     setPicks((s) => ({
@@ -283,11 +200,9 @@ export const GrnFromPo = () => {
   const setQty = (id: string, qty: number) =>
     setPicks((s) => ({ ...s, [id]: { picked: true, qty } }));
 
-  // Select / clear all currently-VISIBLE rows (respects filters + warehouse lock).
   const selectAll = () =>
     setPicks((s) => {
       const next = { ...s };
-      // Lock to the first visible warehouse so a bulk select stays one-warehouse.
       const lockTo = lockedWarehouse ?? rows[0]?.warehouseLocationId ?? null;
       for (const l of rows) {
         if (lockTo && l.warehouseLocationId !== lockTo) continue;
@@ -301,10 +216,6 @@ export const GrnFromPo = () => {
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
-  // ── Columns — mirror Create-PO-from-SO (PO Doc No / Supplier / Category /
-  //    Item Code / Description+variants / Ordered / Received / Pick Qty /
-  //    Expected / Line Value). Memoized on `picks` so the controlled inputs
-  //    re-render when pick state changes (DataGrid is React.memo'd). ────────
   const columns = useMemo<GridColumn<OutstandingPoItem>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
@@ -344,8 +255,6 @@ export const GrnFromPo = () => {
       filterValue: (r) => r.supplierCode ?? '—',
     },
     {
-      /* Warehouse column (Deliverable 4b) — each PO line's purchase_location.
-         The GRN locks to one warehouse; this column makes the lock legible. */
       key: 'warehouse', label: 'Warehouse', width: 150, sortable: true, groupable: true,
       accessor: (r) => (
         <span className={styles.muted}>
@@ -357,8 +266,6 @@ export const GrnFromPo = () => {
       sortFn: (a, b) => (a.warehouseLocationCode ?? '').localeCompare(b.warehouseLocationCode ?? ''),
     },
     {
-      /* PO Date — available in the Columns toggle; hidden by default to keep the
-         picker dense. (Deliverable 4c.) */
       key: 'poDate', label: 'PO Date', width: 120, sortable: true, defaultHidden: true,
       accessor: (r) => fmtDate(r.poDate),
       searchValue: (r) => r.poDate ?? '',
@@ -425,7 +332,6 @@ export const GrnFromPo = () => {
             value={on ? p!.qty : ''}
             placeholder={String(eff)}
             disabled={locked}
-            /* Typing a qty auto-selects the row (no need to tick first). */
             onClick={(e) => e.stopPropagation()}
             onChange={(e) =>
               setQty(r.poItemId, Math.min(eff, Math.max(0, Number(e.target.value) || 0)))}
@@ -458,10 +364,6 @@ export const GrnFromPo = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change
   ], [picks]);
 
-  // ── Add to GRN ───────────────────────────────────────────────────────
-  // Commander 2026-05-29 — this grid FEEDS the New GRN form (no longer auto-
-  // creates GRNs). On confirm, stash the picked PO lines + their chosen qty,
-  // then return to /grns/new, which loads them as GRN line items.
   const onSave = async () => {
     if (pickedCount === 0) { setDialog({ title: 'Nothing picked', body: 'Tick at least one PO line first.' }); return; }
     const out: GrnFromPoPick[] = picked
@@ -471,13 +373,8 @@ export const GrnFromPo = () => {
       })
       .filter((x): x is GrnFromPoPick => x !== null);
 
-    // APPEND mode — push each pick straight into the existing GRN as a new line
-    // (server rolls received_qty + writes inventory-IN per line), then return to
-    // the GRN's edit page where the new lines now appear.
     if (appendToGrn) {
       setAppending(true);
-      /* The lines that landed are unticked when a later one fails, so pressing again appends only the rest. Before,
-         a retry added every line again on top of the ones already in the receipt. */
       const landed: string[] = [];
       try {
         for (const r of out) {
@@ -523,8 +420,6 @@ export const GrnFromPo = () => {
     navigate('/scm/grns/new');
   };
 
-  // ── Toolbar (filters + select/clear) — same layout as Create-PO-from-SO.
-  //    Received date is now set on the New GRN form, not here. ──────────────
   const toolbar = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
       <Button variant="ghost" size="sm" onClick={selectAll} disabled={rows.length === 0}>
@@ -538,7 +433,6 @@ export const GrnFromPo = () => {
 
       <Filter size={14} strokeWidth={1.75} style={{ color: 'var(--fg-muted)' }} aria-label="Filters" />
 
-      {/* Category filter */}
       <select
         value={category}
         onChange={(e) => setCategory(e.target.value)}
@@ -548,7 +442,6 @@ export const GrnFromPo = () => {
         {sortByText(CATEGORY_OPTIONS).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
 
-      {/* Date-range filter */}
       <select
         value={dateField}
         onChange={(e) => setDateField(e.target.value as DateField)}
@@ -578,8 +471,6 @@ export const GrnFromPo = () => {
 
   return (
     <div className="space-y-4">
-      {/* Explicit back target (was the action-rail link): appending to an
-          existing GRN returns to THAT GRN in edit mode, not the list. */}
       <PageHeader
         back={appendToGrn ? `/scm/grns/${appendToGrn}?edit=1` : '/scm/grns'}
         eyebrow="Procurement"
@@ -662,7 +553,6 @@ export const GrnFromPo = () => {
         rowKey={(r) => r.poItemId}
         searchPlaceholder="Search PO, supplier, item…"
         onRowClick={(r) => togglePick(r.poItemId, effRemaining(r))}
-        /* Grey out rows whose supplier conflicts with the locked one. */
         rowStyle={(r) => isRowLocked(r)
           ? { opacity: 0.45, background: 'var(--c-cream)', cursor: 'not-allowed' }
           : undefined}

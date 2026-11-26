@@ -8,7 +8,6 @@ describe("table highlight rules", () => {
   });
 
   it("a timestamp is past due by the Malaysian day it falls on", () => {
-    // 01:30 on the 10th in Malaysia: not yet overdue on the 10th.
     expect(isPastDue("2026-11-09T17:30:00Z", true, "2026-11-10")).toBe(false);
     expect(isPastDue("2026-11-09T15:59:59Z", true, "2026-11-10")).toBe(true);
     expect(isPastDue("not a date", true, "2026-11-10")).toBe(false);

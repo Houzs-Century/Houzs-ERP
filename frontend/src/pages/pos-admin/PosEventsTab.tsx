@@ -1,9 +1,3 @@
-/* POS Admin > Events (layout E3): the projects linked to POS — type, dates,
- * terminals with paired status, cashiers, catalog version, COMING / ON GOING /
- * DONE plus LINKED / NOT LINKED. The drawer sets terminals, cashiers (= login tiles),
- * catalog scope, stock source, event price overrides, SST default, receipt
- * header, and pushes a catalog update. Cash & Carry projects are listed
- * automatically; any other project can be linked by search. */
 import { useMemo, useState } from "react";
 import { Link2, RefreshCw, Unlink } from "lucide-react";
 import { api } from "../../api/client";

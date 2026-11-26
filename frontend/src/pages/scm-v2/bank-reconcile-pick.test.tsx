@@ -45,7 +45,6 @@ const GHL = line(1197, 277662, 'GHL CARD PAYOUT');
 const UMOBILE = line(1192, -7210, 'U MOBILE');
 const PV021 = entry('2990-JE-2610-0354', 7210);
 
-/* A tick box per movement and per entry, as the two tables draw them. */
 const Ticks = ({ lines, entries }: { lines: BankLine[]; entries: LedgerEntry[] }) => {
   const pick = useReconcilePick();
   return (
@@ -73,7 +72,6 @@ describe('a tick whose row has left the list', () => {
   test('is neither counted nor sent: only what is still on the screen is matched', () => {
     const { rerender } = render(<Month lines={[GHL, UMOBILE]} entries={[PV021]} />);
     tick('GHL CARD PAYOUT');
-    /* The payout is matched elsewhere and the month comes back without it. */
     rerender(<Month lines={[UMOBILE]} entries={[PV021]} />);
     expect(bar()).toBeNull();
     tick('U MOBILE');
@@ -102,7 +100,6 @@ describe('a refusal', () => {
     render(<Month lines={[UMOBILE]} entries={[PV021]} />);
     tick('U MOBILE');
     tick('2990-JE-2610-0354');
-    /* Nothing sent yet: an earlier refusal is not this pair's. */
     expect(screen.queryByText(/already posted/)).toBeNull();
     fireEvent.click(go());
     expect(screen.getByText('Movement 1192 is already posted. Undo it first.')).toBeTruthy();
@@ -202,7 +199,6 @@ describe('card payments ticked with the movement', () => {
     render(<MonthWithCards lines={[HOUZS]} />);
     tick('HOUZS CENTURY SDN. BHD. REFUND TO 2990 HC-HPV-2611-052');
     tick('2990-SO-2611-028');
-    /* RM 26,308.81 for one RM 3,990 swipe: the bank paid more than ticked. */
     expect(bar()!.textContent).toContain('more than ticked');
     expect((screen.getByRole('button', { name: /Match, difference to charges/ }) as HTMLButtonElement).disabled).toBe(true);
   });

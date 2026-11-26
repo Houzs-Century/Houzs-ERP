@@ -22,11 +22,9 @@ export type AttendanceAllowanceDay = { status: AttendanceStatus; isLate: boolean
 
 export type AttendanceAllowanceResult = {
   amountSen: number;
-  /** Sum of the day fractions the rate was paid on (0 when forfeited stays the real count). */
   presentDays: number;
   lateDays: number;
   forfeited: boolean;
-  /** A short English line for the payslip explaining the figure. */
   note: string;
 };
 

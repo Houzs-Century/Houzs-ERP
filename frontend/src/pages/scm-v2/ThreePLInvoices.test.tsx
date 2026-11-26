@@ -82,7 +82,6 @@ describe('3PL invoices (HC-0031)', () => {
     });
     mount();
     expect(await screen.findByText('To check (2 lines · RM 650.00)')).toBeTruthy();
-    /* Per bill: the parts, and what no line accounts for (2,280.00 less 2,168.00). */
     expect(screen.getByText('RM 650.00 · 2 lines')).toBeTruthy();
     expect(screen.getByText('RM 112.00')).toBeTruthy();
     expect(screen.getByText('By itself · 2026/10/24')).toBeTruthy();
@@ -101,7 +100,6 @@ describe('3PL invoices (HC-0031)', () => {
       ['/threepl-do-charges/bill-lines/bl-7', { assign: 'none', doNumber: null, serviceRef: null, projectId: null }],
     ]);
 
-    /* A bill's own lines open under Per bill. */
     fireEvent.click(screen.getByRole('button', { name: 'Lines' }));
     expect(await screen.findByText('Lines of HC-API-2610-009 · MSJ TRANSPORT SERVICE · bill 617797')).toBeTruthy();
     await waitFor(() => expect(fetchMock.mock.calls.some((c) => c[0] === '/threepl-do-charges/bill-lines?apInvoiceId=api-9')).toBe(true));
@@ -120,8 +118,6 @@ describe('3PL invoices (HC-0031)', () => {
     expect(JSON.parse(put[1].body)).toMatchObject({ doNumber: 'DO-404', threeplCompanyId: 'msj', billedSen: 15000 });
   });
 
-  /* Audit 2026-11-07: the trash removed a row with no question, and a second
-     key-in for the same DO and 3PL replaced the first in silence. */
   it('asks before removing a DO row', async () => {
     fetchMock.mockImplementation((_p: string, init?: RequestInit) => Promise.resolve(init?.method === 'DELETE' ? { ok: true } : { rows: [row], invoices: [] }));
     mount();

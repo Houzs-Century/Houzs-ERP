@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// StockAdjustmentDetail — one stock adjustment document at
-// /scm/stock-adjustments/:id (BUG-66: "cant open review item"). Read-only view
-// of the header and every line with its variant / batch; Edit opens the same
-// form the New page uses (/scm/stock-adjustments/:id/edit), and History shows
-// the INVENTORY_ADJUSTMENT audit trail — who created or edited it and what
-// changed.
-// ----------------------------------------------------------------------------
 
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';

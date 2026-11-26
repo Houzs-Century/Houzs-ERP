@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validatePriceMatrix } from './suppliers';
 
-// BUG-109: the SKU Pricing grid shows every Maintenance Sizes pool height, so a
-// named height ("Flat") or an inch-marked one (`25"`) must save like "24".
 describe('validatePriceMatrix sofa height keys', () => {
   it('accepts the Flat cell from the BUG-109 screenshot', () => {
     expect(validatePriceMatrix({ Flat: { P2: 73600 } }, 'SOFA')).toEqual({ Flat: { P2: 73600 } });
@@ -15,7 +13,6 @@ describe('validatePriceMatrix sofa height keys', () => {
     )).toEqual({ '28': { P2: 105600 }, '25"': { P1: 99000 }, DEFAULT: { P3: 1 } });
   });
 
-  // 2990-0024: supplier sofa lists price Full Leather as its own grade.
   it('accepts a sofa P4 cell; a bedframe P4 is still refused', () => {
     expect(validatePriceMatrix({ '24': { P3: 346000, P4: 454000 } }, 'SOFA')).toEqual({ '24': { P3: 346000, P4: 454000 } });
     expect(() => validatePriceMatrix({ P4: 1 }, 'BEDFRAME')).toThrow('invalid_price_matrix:bedframe_key:P4');

@@ -1,7 +1,3 @@
-/* The one arithmetic the project page does on its sales orders: the lump-sum
- * Total Sales against what was actually opened in the SO module. Pinned so
- * desktop and mobile keep reading the same gap — and so a read that is not
- * the expected shape degrades to an empty one instead of crashing the page. */
 import { describe, expect, test } from "vitest";
 
 import { normalizeProjectSalesOrders, soStatusLabel, summarizeProjectSalesOrders } from "./projectSalesOrders";

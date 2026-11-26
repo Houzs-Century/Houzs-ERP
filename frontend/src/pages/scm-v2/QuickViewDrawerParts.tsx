@@ -1,8 +1,3 @@
-/* Shared pieces of the list quick-view drawer — the right slide-over a row
-   click opens on the Sales Order / Delivery Order lists. The consignment
-   lists (CR, PCO, PCR, PCT) compose their drawers from these so the six
-   consignment surfaces read as one family. Data stays in each page; this
-   file is layout only. */
 import type { ReactNode } from 'react';
 import { ExternalLink, X } from 'lucide-react';
 import { Badge } from '../../components/Badge';
@@ -11,7 +6,6 @@ import { cn } from '../../lib/utils';
 
 export type DrawerTone = 'success' | 'warning' | 'error' | 'neutral';
 
-/* Dark header + scroll body + footer, inside the shared resizable panel. */
 export function QuickViewShell({
   open,
   onClose,
@@ -105,7 +99,6 @@ export function DrawerKV({ k, v }: { k: string; v: ReactNode }) {
   );
 }
 
-/* Customer / supplier card: initials avatar, name, code, then DrawerKV rows. */
 export function DrawerPartyCard({ name, code, children }: { name: string; code?: string | null; children: ReactNode }) {
   const initials = (name || 'C').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('') || 'C';
   return (
@@ -142,9 +135,6 @@ export function DrawerTotal({ k, v, strong, tone }: { k: string; v: string; stro
   );
 }
 
-/* Line list: header row + body. `cols` is the Tailwind grid-cols template
-   shared by header and rows; `state` renders the loading / error / empty
-   placeholder instead of rows. */
 export function DrawerLines({
   cols,
   headings,

@@ -60,9 +60,7 @@ export function latestLiveDo<T extends { id: string; status: string | null; crea
 
 export interface OnTimeOrderIn {
   soDocNo: string; customer: string | null; promised: string | null;
-  /** delivered_at of the latest live DO when that DO is DELIVERED, else null. */
   deliveredAt: string | null;
-  /** The SO is closed (DELIVERED / INVOICED / CLOSED) but its latest live DO carries no delivery time. */
   closedWithoutTime: boolean;
   region: string; offPeninsula: boolean;
   lorryId: string | null; lorry: string | null; driver: string | null;
@@ -77,7 +75,6 @@ export interface OnTimeOrderRow {
 export interface OnTimeGroup {
   key: string; lorryId: string | null;
   delivered: number; onTime: number; early: number; late: number; lateOpen: number;
-  /** (on time + early) / delivered, percent to one decimal; null when nothing was delivered. */
   ratePct: number | null;
 }
 
@@ -114,7 +111,6 @@ export function onTimeSummary(orders: readonly OnTimeOrderIn[], from: string, to
       .sort((a, b) => Number(a.key === NONE) - Number(b.key === NONE) || b.delivered - a.delivered || a.key.localeCompare(b.key));
   };
   const all = group(() => 'all', () => null)[0] as OnTimeGroup | undefined;
-  /* Late-open first, then late, early, on time: open orders, then by days late. */
   const rank = (r: OnTimeOrderRow) => (r.delivered === null ? 0 : r.daysLate > 0 ? 1 : r.daysLate < 0 ? 2 : 3);
   return {
     from, to,
@@ -123,7 +119,6 @@ export function onTimeSummary(orders: readonly OnTimeOrderIn[], from: string, to
     byLorry: group((r) => r.lorry ?? NONE, (r) => r.lorryId),
     byDriver: group((r) => r.driver ?? NONE, () => null),
     byRegion: group((r) => r.region, () => null),
-    /* Left out, counted so the reader sees them. */
     excluded: { offPeninsula, noPromise, noDeliveryTime },
     orders: rows.sort((a, b) => rank(a) - rank(b) || b.daysLate - a.daysLate || a.soDocNo.localeCompare(b.soDocNo)),
   };

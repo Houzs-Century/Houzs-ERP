@@ -1,31 +1,3 @@
-// ----------------------------------------------------------------------------
-// po-revision.ts — the Approve engine for a PURCHASE ORDER amendment.
-//
-// Sibling of so-revision.ts's reviseBoundPo, but simpler and self-directed: a PO
-// amendment is authored directly against a Purchase Order (not derived from a
-// revised SO), so applyPoAmendment applies the operator's requested line + header
-// diffs to the PO IN PLACE. It does NOT re-run honest selling-price pricing — a
-// PO carries the supplier COST the purchaser negotiated, so the amendment's
-// new_unit_price_sen is authoritative and is written through as given.
-//
-// On approve, for the ONE bound PO the amendment targets:
-//   • snapshot the CURRENT PO into scm.po_revisions (reusing snapshotPo from
-//     so-revision.ts — the immutable version being replaced),
-//   • apply the header diffs (supplier / delivery / notes),
-//   • apply the line diffs (SPEC / QTY / PRICE / DELIVERY / ADD / REMOVE),
-//   • recompute the PO subtotal + total + expected_at from the live line set,
-//   • bump purchase_orders.revision to the snapshot's next number,
-//   • write ONE AMENDMENT_PO_APPROVED row to scm.entity_audit_log.
-//
-// Received floor (mirror of reviseBoundPo): a SURVIVING line whose revised qty
-// would drop below its already-received_qty ABORTS the whole apply before any
-// write (ReceivedFloorError). A REMOVE of an already-received line is PRESERVED
-// and warned, never silently deleted — goods already in are not ours to discard.
-//
-// Idempotency: snapshotPo upserts on (po_id, revision); an approve runs once
-// (the route's status gate + apply-lease prevent a second), but a retry after a
-// mid-apply failure re-snapshots the same revision as a no-op.
-// ----------------------------------------------------------------------------
 
 import type { Context } from 'hono';
 import { snapshotPo, ReceivedFloorError, receivedFloorFromDb, withReceivedFloor } from './so-revision';
@@ -39,9 +11,6 @@ import { buildVariantSummary } from '../shared';
 import { validateItemCodes, unknownItemCodeResponse } from './validate-item-codes';
 import { retiredLineOf, type AcRetiredLine } from './autocount-outbox';
 
-/* The routable field atoms a PO amendment moves — lines + header. Mirrors the
-   frontend poLineFieldKinds / poHeaderFieldKind so the audit routing note matches
-   what the detail page and PDF show. */
 function poAmendmentFieldKinds(
   lines: Array<{ change_type: string; new_item_code: string | null; new_qty: number | null; new_unit_price_sen: number | null; new_delivery_date: string | null; old_snapshot: Record<string, unknown> | null }>,
   headerChanges: Record<string, unknown> | null,
@@ -63,7 +32,6 @@ function poAmendmentFieldKinds(
   return kinds;
 }
 
-// The same structural client shape so-revision.ts + the fake-sb test use.
 type Sb = { from: (t: string) => any };
 
 export { ReceivedFloorError };
@@ -108,21 +76,16 @@ export type ApplyPoAmendmentResult = {
   linesUpdated: number;
   linesAdded: number;
   linesRemoved: number;
-  /* Plain-language notes for the operator about anything left for a human hand —
-     a removed line preserved because it was already received, or a PO left with
-     no lines at all. */
   warnings: string[];
   /* AutoCount keys of the removed lines, read before the delete: the edit the
      route queues is composed from the PO as it is now, so a line it does not
      name stays live and outstanding in AutoCount (HC-0121). */
   retired: AcRetiredLine[];
-  /* SO lines whose PO line was removed, for the route's po_qty_picked recount. */
   releasedSoItemIds: string[];
 };
 
 const centi = (v: unknown): number => Number(v ?? 0);
 
-/** Recompute a PO line's total from its qty / unit price / discount, clamped >= 0. */
 function lineTotal(qty: number, unitPriceSen: number, discountSen: number): number {
   return Math.max(0, qty * unitPriceSen - discountSen);
 }
@@ -133,7 +96,6 @@ export async function applyPoAmendment(
   userId: string | null,
   c?: Context<any>,
 ): Promise<ApplyPoAmendmentResult> {
-  // (1) Load amendment + its lines + the PO header it targets.
   const { data: amdRow, error: amdErr } = await sb
     .from('po_amendments')
     .select('id, po_id, po_number, header_changes, old_header_snapshot, source_so_amendment_id')
@@ -141,12 +103,6 @@ export async function applyPoAmendment(
     .maybeSingle();
   if (amdErr) throw new Error(`applyPoAmendment: amendment load failed: ${amdErr.message}`);
   if (!amdRow) throw new Error('applyPoAmendment: amendment not found');
-  /* A follow-up of a SALES-ORDER amendment applies through reviseBoundPo, which
-     links each added purchase line to the sales line it was added for. This engine
-     has no sales line to link, so an added line written here would be an unlinked
-     purchase of a customer's piece: a company-1 sofa or pillow the MRP page then
-     reports SHORT with the purchase order open. The route already branches; this
-     makes the other door impossible rather than merely unused. */
   if (amdRow.source_so_amendment_id) {
     throw new Error('applyPoAmendment: a sales-order follow-up amendment applies through reviseBoundPo');
   }
@@ -171,8 +127,6 @@ export async function applyPoAmendment(
   if (!poHeader) throw new Error(`applyPoAmendment: PO ${poId} not found`);
   const companyId = (poHeader as { company_id?: number | null }).company_id ?? null;
 
-  // (2) Received floor — check EVERY surviving in-place line BEFORE any write, so
-  //     a violation aborts cleanly with nothing changed (mirror reviseBoundPo).
   for (const diff of amendmentLines) {
     const change = String(diff.change_type ?? '').toUpperCase();
     if (change === 'ADD' || change === 'REMOVE') continue;
@@ -193,10 +147,8 @@ export async function applyPoAmendment(
   // (2b) HC-0153: an ADD of a deactivated SKU aborts before any write.
   await assertAddedSkusActive(sb, amendmentLines, companyId);
 
-  // (3) Snapshot the CURRENT PO before touching a line. Returns the next revision.
   const nextRevision = await snapshotPo(sb, poId, amendmentId, userId, c);
 
-  // (4) Header diffs — supplier / delivery date / notes, applied as given.
   const headerFieldChanges: Array<{ field: string; from: unknown; to: unknown }> = [];
   let expectedAtOverridden = false;
   /* The supplier the lines are ordered FROM once this amendment lands: a line
@@ -221,7 +173,6 @@ export async function applyPoAmendment(
     }
   }
 
-  // (5) Line diffs.
   let linesUpdated = 0, linesAdded = 0, linesRemoved = 0;
   const warnings: string[] = [];
   const retired: AcRetiredLine[] = [];
@@ -249,10 +200,9 @@ export async function applyPoAmendment(
         .eq('id', diff.purchase_order_item_id)
         .maybeSingle();
       if (exErr) throw new Error(`applyPoAmendment: REMOVE load failed: ${exErr.message}`);
-      if (!existing) continue; // already gone — nothing to remove
+      if (!existing) continue;
       const row = existing as { received_qty?: number; material_name?: string; item_code?: string; so_item_id?: string | null };
       if (centi(row.received_qty) > 0) {
-        // Already (partly) received — preserve it and surface for manual handling.
         warnings.push(
           `The line for ${row.material_name || row.item_code || 'an item'} on purchase order ${poNumber} `
           + `was already received, so it was kept on the order instead of being removed. Handle it by hand.`,
@@ -315,7 +265,6 @@ export async function applyPoAmendment(
       continue;
     }
 
-    // SPEC / QTY / PRICE / DELIVERY — mutate an existing line in place.
     if (!diff.purchase_order_item_id) continue;
     const { data: existing, error: exErr } = await sb
       .from('purchase_order_items')
@@ -323,7 +272,7 @@ export async function applyPoAmendment(
       .eq('id', diff.purchase_order_item_id)
       .maybeSingle();
     if (exErr) throw new Error(`applyPoAmendment: line load failed: ${exErr.message}`);
-    if (!existing) continue; // line already gone
+    if (!existing) continue;
     const row = existing as Record<string, unknown>;
 
     const qty = diff.new_qty != null ? Math.max(1, Number(diff.new_qty)) : Math.max(1, centi(row.qty));
@@ -380,8 +329,6 @@ export async function applyPoAmendment(
     linesUpdated++;
   }
 
-  // (6) Recompute the PO subtotal + total + expected_at from the LIVE line set,
-  //     then bump the revision. Mirrors reviseBoundPo's roll-up.
   const { data: liveLines, error: liveErr } = await sb
     .from('purchase_order_items')
     .select('line_total_sen, delivery_date')
@@ -402,16 +349,10 @@ export async function applyPoAmendment(
     revision:       nextRevision,
     updated_at:     new Date().toISOString(),
   };
-  // Only let the line set drive expected_at when the header did not set it
-  // explicitly, and only when a line carries a date: undated lines say nothing
-  // about arrival, so they must not wipe the PO's expected date.
   if (!expectedAtOverridden && dates.length > 0) bump.expected_at = dates[0];
   const { error: bumpErr } = await sb.from('purchase_orders').update(bump).eq('id', poId);
   if (bumpErr) throw new Error(`applyPoAmendment: PO revision bump failed: ${bumpErr.message}`);
 
-  // (7) Audit — one AMENDMENT_PO_APPROVED row on the entity audit log (the
-  //     sanctioned home for every non-SO document, mig 0139). Best-effort +
-  //     non-throwing by design; the route runs the pre-flight before mutating.
   const routingSummary = routingNote(poAmendmentFieldKinds(amendmentLines, headerChanges));
   await recordEntityAudit(sb as any, {
     entityType:  'PURCHASE_ORDER',
@@ -428,9 +369,6 @@ export async function applyPoAmendment(
       { field: 'lines_removed', to: linesRemoved },
       ...headerFieldChanges,
       ...lineFieldChanges,
-      /* Accountability: the type/department routing this single approval covers.
-         The apply stays single-signature — this records WHICH routed fields the
-         approver signed for, it does not split the gate. */
       ...(routingSummary ? [{ field: 'routing', to: routingSummary }] : []),
       ...(warnings.length ? [{ field: 'needs_attention', to: warnings.join(' | ') }] : []),
     ],

@@ -65,7 +65,6 @@ export function posComboToEngine(r: PosComboRow): SofaComboRow {
     accessories: r.accessories ?? [],
     tier: r.tier,
     customerId: null,
-    // No cost column: the charged price IS the selling price.
     pricesByHeight: r.selling_prices_by_height ?? {},
     pwpPricesByHeight: r.pwp_prices_by_height ?? {},
     label: r.label,

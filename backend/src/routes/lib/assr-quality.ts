@@ -14,7 +14,6 @@
 export interface QCase {
   id: number; stage: string; openedAt: string; closedAt: string | null; creditor: string | null;
   assrNo: string | null; customer: string | null;
-  /** What the customer complained about, and its category. */
   complaint: string | null; issueCategory: string | null;
 }
 export interface QStageRow { caseId: number; stage: string; enteredAt: string; exitedAt: string | null; targetDays: number | null }
@@ -54,10 +53,7 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
   const closedBetween = (a: string, b: string) => live.filter((c) => c.stage === "completed" && !!c.closedAt && c.closedAt.slice(0, 10) >= a && c.closedAt.slice(0, 10) <= b);
   const last30 = closedBetween(dayBefore(29), today);
   const prev30 = closedBetween(dayBefore(59), dayBefore(30));
-  /* The same over 90 days (owner: "one month or three?") — the page switches. */
   const last90 = closedBetween(dayBefore(89), today);
-  /* Open on day d: opened by then, and either still open now or closed after d.
-     A completed case with no closing date (older imports) counts as closed. */
   const openAt = (d: string) => live.filter((c) => c.openedAt.slice(0, 10) <= d && (isOpen(c) || (!!c.closedAt && c.closedAt.slice(0, 10) > d)));
   const openNow = live.filter(isOpen);
   const resolution = (cs: QCase[]) => avg(cs.filter((c) => c.closedAt).map((c) => Math.max(0, days(c.openedAt, c.closedAt as string))));
@@ -74,13 +70,11 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
       month: key,
       opened: live.filter((c) => c.openedAt.slice(0, 7) === key).length,
       closed: closedIn.length,
-      /* The month's average to close: cases closed that month, opened to closed. */
       avgDaysToClose: resolution(closedIn),
       backlog: openAt(end < today ? end : today).length,
     };
   });
 
-  /* Time per stage: stages that ended in [a, b], for the given cases. */
   const stageDays = (ids: Set<number> | null, a: string, b: string) => {
     const by = new Map<string, number[]>();
     for (const h of history) {
@@ -90,7 +84,6 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
     return Object.fromEntries([...by.entries()].map(([s, xs]) => [s, { avgDays: avg(xs), cases: xs.length }]));
   };
 
-  /* Overdue now: the open stage row whose days so far reached its target. */
   const byId = new Map(live.map((c) => [c.id, c]));
   const overdue = history
     .filter((h) => !h.exitedAt && (h.targetDays ?? 0) > 0)
@@ -105,7 +98,6 @@ export function qualityOverview(cases: QCase[], itemsByCase: Map<number, number>
 
   const recv = new Map<string, { qty: number; lines: number; name: string }>();
   for (const r of received) { const k = groupOf(r.creditor); const g = recv.get(k) ?? { qty: 0, lines: 0, name: r.name }; g.qty += r.qty; g.lines += r.lines; recv.set(k, g); }
-  /* Every month of the period, so a quarter or a year shows each month's goods in, cases and rate. */
   const months: string[] = [];
   const inRate = (d: string | null) => !!d && d.slice(0, 10) >= rateFrom && d.slice(0, 10) <= to;
   const rateCases = live.filter((c) => inRate(c.openedAt));

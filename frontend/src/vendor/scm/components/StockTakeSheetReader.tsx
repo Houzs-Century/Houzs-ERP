@@ -10,14 +10,12 @@ import { readStockTakeSheet, type SheetProposal, type SheetUnmatched } from '../
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 
 const READ_AT_ONCE = 3;
-const MAX_EDGE = 2400; // px — sharp enough for handwriting, small enough for the reader
+const MAX_EDGE = 2400;
 
 export type SheetApply = { lineId: string; counted: number | null; rackId: string | null };
 
 type Picked = SheetProposal & { page: number; apply: boolean };
 
-/* A phone photo is 3–8 MB; the reader takes ~5 MB an image. Re-encode an image
-   to JPEG at most MAX_EDGE on its long side; a PDF goes as it is. */
 async function toUpload(file: File): Promise<{ name: string; mime: string; dataBase64: string }> {
   const asBase64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
     const r = new FileReader();
@@ -49,7 +47,6 @@ export function StockTakeSheetReader({
 }: {
   takeId: string;
   takeNo: string;
-  /* What the on-screen sheet holds now, per line id. */
   current: ReadonlyMap<string, { counted: string; rackId: string | null }>;
   rackLabel: (rackId: string | null) => string;
   onApply: (rows: SheetApply[]) => void;
@@ -83,8 +80,6 @@ export function StockTakeSheetReader({
       }
     };
     await Promise.all(Array.from({ length: Math.min(READ_AT_ONCE, files.length) }, worker));
-    /* One line read on two pages (a page photographed twice): the first wins,
-       the second is shown as already read. */
     const seen = new Set<string>();
     const nextPicked: Picked[] = [];
     const nextUnmatched: Array<SheetUnmatched & { page: number }> = [];

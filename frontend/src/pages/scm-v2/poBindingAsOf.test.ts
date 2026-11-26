@@ -1,5 +1,3 @@
-/* A from-scratch PO prices a flat supplier cost at the price in force on the PO
-   date (2990-0013): newest history row on or before it, else the current binding. */
 
 import { describe, expect, test } from 'vitest';
 import { bindingAsOf, type PriceHistoryRow } from './poBindingAsOf';

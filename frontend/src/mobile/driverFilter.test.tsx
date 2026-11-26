@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { todayMyt } from "../vendor/scm/lib/dates";
 
 // HC-0192: office users get a driver filter on the run-sheet; one driver alone gets none.
-const today = todayMyt(); // the run-sheet's own "today" (Malaysia), not the UTC date
+const today = todayMyt();
 const stop = (n: string, driver: string) => ({
   so_doc_no: n, row_type: "dp", delivery_state: "PENDING_DELIVERY", debtor_name: `Cust ${n}`,
   effective_delivery_date: today, crew: { driver, helper: null, lorry: null }, delivery_orders: [],

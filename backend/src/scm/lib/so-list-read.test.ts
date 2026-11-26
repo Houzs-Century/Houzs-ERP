@@ -1,15 +1,3 @@
-// lib/so-list-read — the Sales Order list's ONE predicate set.
-//
-// Two things are asserted:
-//   1. Behaviour, over the fake PostgREST: the tab, the search (phone included),
-//      the date window, the second-level `f` rows and the company all narrow the
-//      read.
-//   2. Wiring, in the routeSource idiom of tests/mineBoardViewAllTier.test.ts:
-//      the list handler builds its PAGE and its MONEY STRIP through the same
-//      `header` — the money strip used to carry its own copy of the search term
-//      without the phone arm, so a phone search counted the right orders and
-//      summed the wrong money (docs/bugs, the SO money strip ignored a phone
-//      search).
 import { describe, expect, it } from 'vitest';
 import { soRouterSource } from '../../../tests/lib/so-router-source';
 import { fakeSb } from './fake-postgrest';
@@ -76,8 +64,6 @@ describe('the Sales Order list predicate set', () => {
       so({ doc_no: 'B', debtor_name: 'BOB' }),
       so({ doc_no: 'C', debtor_name: 'ALICE' }),
     ];
-    // Only ALICE's orders, regardless of which page they sit on — the point of
-    // the server-side push (multi-value, so a second customer could be added).
     expect(await docNos(rows, params({ debtorNames: ['ALICE'], sort: 'doc_no:asc' }))).toEqual(['A', 'C']);
     expect(await docNos(rows, params({ debtorNames: ['ALICE', 'BOB'], sort: 'doc_no:asc' }))).toEqual(['A', 'B', 'C']);
   });
@@ -102,11 +88,8 @@ describe('the Sales Order list predicate set', () => {
       so({ doc_no: 'E', branding: null }),
       so({ doc_no: 'F', branding: 'ZANOTTI', company_id: 2 }),
     ];
-    // A brand on headers: exact, placeholder-header orders NOT admitted, other company never.
     expect(await docNos(rows, params({ brandings: ['ZANOTTI'], sort: 'doc_no:asc' }))).toEqual(['A', 'C']);
     expect(await docNos(rows, params({ brandings: ['ZANOTTI', 'AKEMI'], sort: 'doc_no:asc' }))).toEqual(['A', 'B', 'C']);
-    // A label that is only ever derived ("Accessory"): the blank/placeholder-header
-    // orders are admitted (their cell is derived from lines; the grid trims the page).
     expect(await docNos(rows, params({ brandings: ['Accessory'], sort: 'doc_no:asc' }))).toEqual(['D', 'E']);
     expect(await docNos(rows, params({ brandings: ['ZANOTTI', 'Accessory'], sort: 'doc_no:asc' }))).toEqual(['A', 'C', 'D', 'E']);
   });
@@ -136,9 +119,7 @@ describe('the Sales Order list predicate set', () => {
     expect(await docNos(rows, params({ cols: { city: ['—'] }, sort: s }))).toEqual(['C', 'D']);
     expect(await docNos(rows, params({ cols: { so_date: ['2026-09-02'] }, sort: s }))).toEqual(['B', 'C']);
     expect(await docNos(rows, params({ cols: { amount: ['1000', '—'] }, sort: s }))).toEqual(['A', 'C', 'D']);
-    // Two funnels AND together; status is matched exactly.
     expect(await docNos(rows, params({ cols: { status: ['CONFIRMED'], so_date: ['2026-09-02', '2026-09-03'] }, sort: s }))).toEqual(['C', 'D']);
-    // A value no order can carry matches nothing rather than everything.
     expect(await docNos(rows, params({ cols: { amount: ['not-a-number'] }, sort: s }))).toEqual([]);
   });
 
@@ -148,9 +129,6 @@ describe('the Sales Order list predicate set', () => {
     expect(await docNos(rows, params({ currencies: ['USD'], sort: 'doc_no:asc' }))).toEqual(['C']);
   });
 
-  /* Regression (local stack 2026-10-17): values taken from /funnel-values or a
-     row of the list — a doc no, a date, text with a space, '&' or '.', and the
-     blank entry, which the value list and a hand-built request send as ''. */
   it('matches a doc no, a date, text with spaces and reserved characters, and the blank entry sent as an empty string', async () => {
     const rows = [
       so({ doc_no: 'HC-SO-2610-218', so_date: '2026-10-16', city: '546080 Singapore', venue: '3 DAMANSARA', sales_location: 'C&C K.J', ref: '-' }),
@@ -170,7 +148,6 @@ describe('the Sales Order list predicate set', () => {
     expect(await viaQuery({ sales_location: ['C&C K.J'] })).toEqual(['HC-SO-2610-218']);
     expect(await viaQuery({ reference: ['-'] })).toEqual(['HC-SO-2610-218']);
     expect(await viaQuery({ reference: ['R, (1)'] })).toEqual(['HC-SO-2610-217']);
-    // The blank entry, as '' or as the grid's "—": blank cells only, never the whole set.
     expect(await viaQuery({ city: [''] })).toEqual(['HC-SO-2610-216', 'HC-SO-2610-217']);
     expect(await viaQuery({ city: ['—'] })).toEqual(['HC-SO-2610-216', 'HC-SO-2610-217']);
     expect(await viaQuery({ city: ['', '546080 Singapore'] })).toEqual(['HC-SO-2610-216', 'HC-SO-2610-217', 'HC-SO-2610-218']);
@@ -195,11 +172,10 @@ describe('the Sales Order list predicate set', () => {
     const s = 'doc_no:asc';
     expect(await docNos(rows, params({ cols: { doc_no: ['SO-AC-9'] }, sort: s }), 1, more)).toEqual(['C']);
     expect(await docNos(rows, params({ cols: { reference: ['R-1'] }, sort: s }), 1, more)).toEqual(['A', 'B']);
-    expect(await docNos(rows, params({ cols: { reference: ['—'] }, sort: s }), 1, more)).toEqual(['B', 'C']); // superset: B shows R-1, the grid trims it
+    expect(await docNos(rows, params({ cols: { reference: ['—'] }, sort: s }), 1, more)).toEqual(['B', 'C']);
     expect(await docNos(rows, params({ cols: { venue: ['SUTERA MALL'] }, sort: s }), 1, more)).toEqual(['A']);
     expect(await docNos(rows, params({ cols: { salesperson: ['ALICE TAN'] }, sort: s }), 1, more)).toEqual(['A']);
     expect(await docNos(rows, params({ cols: { salesperson: ['NICO'] }, sort: s }), 1, more)).toEqual(['B']);
-    // The primary line's warehouse label, else the free-text location.
     expect(await docNos(rows, params({ cols: { sales_location: ['BALAKONG'] }, sort: s }), 1, more)).toEqual(['A', 'C']);
   });
 
@@ -232,8 +208,6 @@ describe('the list handler reads through it', () => {
     expect(listBlock()).toContain('prepareSoListRead(');
   });
 
-  /* Regression: a page past a narrowed set (8 orders, read at page 2) is a 416,
-     on which supabase-js drops the count — the total read 0, not 8. */
   it('counts the set again when the page is past its end', () => {
     const block = listBlock();
     const arm = block.slice(block.indexOf('isRangeNotSatisfiable(error)'));

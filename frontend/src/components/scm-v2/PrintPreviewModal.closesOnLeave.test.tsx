@@ -1,7 +1,3 @@
-/* A print preview belongs to the page it was opened on. The print-chain provider
-   lives in the SCM shell, which stays mounted across a move to another SCM page,
-   so its card stayed open over the next page (Conts-ERP #756). Leaving the page
-   closes it; a change to the query string alone (URL is state) does not. */
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";

@@ -1,17 +1,3 @@
-/* The Purchase Return / Delivery Return line column CONTRACT.
- *
- * WHY A MIRROR. The server shapes the lines (backend/src/scm/lib/*-return-list-read.ts)
- * and the grid writes the sheet. The frontend cannot import from backend/src, so
- * the module is copied byte for byte and this test is the referee.
- * backend/scripts/check-shared-mirrors.mjs sees the pair by basename, so the file
- * must stay at the top level of this directory.
- *
- * WHY THE LABELS ARE PINNED AS LITERALS. They are AutoCount Accounting 2.2's own
- * captions and order for "Print Delivery Return Detail Listing" and "Print
- * Purchase Return Detail Listing" (the program's embedded form resources, read
- * 2026-09-15; the live book holds no saved layout for either form). A rename in
- * both copies would still pass byte-identity and stop matching AutoCount.
- */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';

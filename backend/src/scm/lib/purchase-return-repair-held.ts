@@ -27,10 +27,6 @@ export async function repairHeldQty(sb: any, grnItemIds: string[], excludeLineId
   return held;
 }
 
-/* Cap for a qty edit on a GRN-linked return line. A REPAIR line is not in
-   returned_qty, so its own prior qty is NOT given back; the OTHER live REPAIR
-   lines are still held. Every read here fails closed: a failed header read must
-   not fall through to "CREDIT" and hand a REPAIR line its own qty back. */
 export async function editLineCapRefusal(
   sb: any,
   a: { prId: string; itemId: string; grnItemId: string; qtyReturned: number; prevQty: number },
@@ -46,8 +42,6 @@ export async function editLineCapRefusal(
   });
 }
 
-/* Cap for a new GRN-linked line: nothing of its own to give back, every live
-   REPAIR line held. Fails closed like the edit cap. */
 export async function addLineCapRefusal(sb: any, a: { grnItemId: string; qtyReturned: number }) {
   const held = await repairHeldQty(sb, [a.grnItemId], null);
   if (!held) return { error: 'cap_check_failed', reason: 'repair returns unreadable' };

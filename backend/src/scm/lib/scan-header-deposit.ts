@@ -25,11 +25,7 @@
 // makes soPaidSen ignore the header anyway, so reports/PDF still read the deposit.
 
 export interface ScanDepositContext {
-  /** The draft is a SHELL (required fields unread) — it returns before the
-   *  receipt-payment pass, so no is_deposit row will ever back a deposit. */
   isShell: boolean;
-  /** The scan classified at least one uploaded image as a payment RECEIPT, so
-   *  recordScanReceiptPayments will book an is_deposit ledger row for it. */
   hasClassifiedReceipt: boolean;
 }
 

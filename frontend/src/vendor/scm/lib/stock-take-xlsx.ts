@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// stock-take-xlsx — the Count Sheet as an Excel workbook (2990-0014, Sim:
-// "need export to excel format also", next to Print PDF). The screen's columns
-// in the screen's order; quantities and RM are numbers in the cell, so a sum
-// in Excel still adds. SERVER rows, like the PDF: a typed-but-unsaved count is
-// not on the record. When the server withheld every system qty (blind take,
-// non-supervising viewer) System / Variance / Value are left out, decided from
-// the data as the PDF does. `write-excel-file` is loaded lazily.
-// ----------------------------------------------------------------------------
 
 import type { Cell, SheetData } from 'write-excel-file';
 import type { StockTakeLine } from './stock-queries';
@@ -14,7 +5,6 @@ import { AMOUNT_FORMAT, sheetName } from './report-sheet-xlsx';
 
 export type StockTakeXlsxHeader = {
   takeNo: string;
-  /* One line under the title: warehouse · date · scope · status · assignees. */
   subtitle: string;
 };
 
@@ -31,9 +21,6 @@ const INK = '#11140f';
 const text = (v: string | null | undefined): Cell => (v ? { value: v, type: String } : null);
 const qty = (v: number | null | undefined): Cell => (v == null ? null : { value: v, type: Number, align: 'right' });
 
-/* counted − system, as the screen works it out: the stored `variance` column
-   came back null on prod for counted lines (HC-STK-2610-005). An UNCOUNTED
-   line has no variance — a 0 there would say the count agreed. */
 const varianceOf = (l: StockTakeLine): number | null =>
   l.counted_qty == null || l.system_qty == null ? null : l.counted_qty - l.system_qty;
 
@@ -85,7 +72,6 @@ export async function downloadStockTakeXlsx(header: StockTakeXlsxHeader, lines: 
     fileName: `${header.takeNo}.xlsx`,
     sheet: sheetName(header.takeNo),
     columns: cols.map((c) => ({ width: c.width })),
-    /* Title, subtitle, a blank and the column header stay put; so does the SKU. */
     stickyRowsCount: 4,
     stickyColumnsCount: 1,
   });

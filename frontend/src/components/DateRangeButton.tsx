@@ -1,12 +1,3 @@
-// DateRangeButton — the owner's redesign date-range picker (Claude Design,
-// Finance › Money in › Outstanding; the Finance reports reuse it). A button
-// that names the range, and a popover with the presets, From / To fields and a
-// month calendar: the first click on a day sets From, the second sets To.
-//
-// The range is ISO `YYYY-MM-DD` in and out, '' for an open end; both ends ''
-// is "All dates". Every date a reader sees goes through fmtDate and every typed
-// one through DateField, so the picker cannot invent a date format of its own.
-// The presets come from lib/dateRangePresets (one home for every picker).
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -19,8 +10,6 @@ import {
 } from '../lib/dateRangePresets';
 import styles from './DateRangeButton.module.css';
 
-/* Weekday letters from the calendar itself (2024-01-07 was a Sunday) rather
-   than a typed list: Sunday first, as the design draws it. */
 const WEEKDAYS = Array.from({ length: 7 }, (_, i) =>
   new Date(Date.UTC(2024, 0, 7 + i)).toLocaleString('en-US', { weekday: 'short', timeZone: 'UTC' }).slice(0, 2));
 
@@ -29,37 +18,28 @@ const monthTitle = (first: string): string =>
 
 const dayWord = (n: number): string => (n === 1 ? '1 day' : `${n.toLocaleString('en-MY')} days`);
 
-/** The 42 days (six weeks, Sunday first) the month starting `first` is drawn on. */
 function gridDays(first: string): string[] {
   const lead = new Date(`${first}T00:00:00Z`).getUTCDay();
   return Array.from({ length: 42 }, (_, i) => addDays(first, i - lead));
 }
 
 export type DateRangeButtonProps = {
-  /** ISO `YYYY-MM-DD`, or '' for an open end. */
   from: string;
   to: string;
   onChange: (from: string, to: string) => void;
-  /** The presets offered, in order (lib/dateRangePresets). */
   presets: readonly RangePresetKey[];
-  /** Today, ISO — the presets count back from it and the calendar rings it. */
   today: string;
-  /** What the dates filter, for screen readers ("Invoice dates"). */
   label?: string;
 };
 
 export function DateRangeButton({ from, to, onChange, presets, today, label = 'Dates' }: DateRangeButtonProps) {
   const [open, setOpen] = useState(false);
-  /* Which end the next calendar click sets; `picking` while the second click is
-     awaited after the first, `hover` the day the band previews to. */
   const [end, setEnd] = useState<'from' | 'to'>('from');
   const [picking, setPicking] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   const [view, setView] = useState(() => monthStart(from || today));
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  /* The popover lives on <body> (a portal) at a measured spot, so no sidebar or
-     clipping card can cover it (lib/popoverPlacement). */
   const popRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
@@ -133,9 +113,6 @@ export function DateRangeButton({ from, to, onChange, presets, today, label = 'D
         ? '“From” is after “To”'
         : `${dayWord(days)}${picking && end === 'to' ? ' · now pick the end date' : ''}`;
 
-  /* First click (or a day before From) starts the range — keeping To when the
-     new From is still before it, else a single day — and waits for the end;
-     the second click sets To. */
   const pickDay = (day: string) => {
     if (end === 'from' || from === '' || day < from) {
       onChange(day, end === 'from' && to !== '' && day <= to ? to : day);
@@ -166,7 +143,6 @@ export function DateRangeButton({ from, to, onChange, presets, today, label = 'D
     setHover(null);
   };
 
-  // The band: From to To, or From to the hovered day while the end is picked.
   const lo = from || null;
   const hi = picking && end === 'to' && from && hover ? (hover < from ? from : hover) : to || null;
   const fromBad = !allDates && from === '';
@@ -262,8 +238,6 @@ export function DateRangeButton({ from, to, onChange, presets, today, label = 'D
                 const single = isLo && isHi;
                 const inside = lo != null && hi != null && day > lo && day < hi;
                 const banded = inside || (edge && !single && lo != null && hi != null && lo !== hi);
-                /* The band rounds where the range starts or ends, and at the
-                   ends of each week row it runs through. */
                 const roundStart = banded && (isLo || (inside && col === 0));
                 const roundEnd = banded && (isHi || (inside && col === 6));
                 const outside = day.slice(0, 7) !== viewMonth;

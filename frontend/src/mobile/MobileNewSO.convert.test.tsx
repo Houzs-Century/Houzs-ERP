@@ -63,7 +63,6 @@ describe("phone New SO opened by Convert", () => {
     );
     await waitFor(() => expect(screen.getByDisplayValue("Ada")).toBeTruthy());
     expect(container.textContent).toContain("MT-QUEEN");
-    /* The converted row: its method chosen, its source picked, its amount what was picked. */
     const source = screen.getByLabelText("Cancelled order") as HTMLSelectElement;
     expect(source.value).toBe(OLD);
     const methods = Array.from(container.querySelectorAll("select")).filter((s) => Array.from(s.options).some((o) => o.value === CONVERT_LABEL));

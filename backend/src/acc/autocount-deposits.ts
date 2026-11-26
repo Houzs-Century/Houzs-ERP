@@ -65,13 +65,10 @@ export { AUTOCOUNT_DEPOSIT_REF, isAutoCountDepositNote } from './autocount-depos
 type Db = any;
 type Row = Record<string, any>;
 
-/* acc/payments.ts: an imported row books nothing — AutoCount carried it. */
 const IMPORTED = 'imported';
 
 type PaymentRow = { method?: unknown; amount_sen?: unknown; paid_at?: unknown };
 
-/** The order's imported payment rows above nought, dated on or before
-    `throughDay` — or whatever their date, when it is null. */
 function importedSen(payments: ReadonlyArray<PaymentRow>, throughDay: string | null): number {
   let sen = 0;
   for (const p of payments) {
@@ -102,7 +99,7 @@ export type AutoCountDepositResult =
   | { ok: false; reason: string };
 
 const log = (...args: unknown[]): void => {
-  // eslint-disable-next-line no-console
+  // eslint-disable-next-line no-console -- the deposit job logs to the Worker console
   console.error('[acc/autocount-deposits]', ...args);
 };
 
@@ -124,7 +121,6 @@ export async function invoicePartyOf(
   return { ok: true, party: { code, name: si.debtor_name ?? null } };
 }
 
-/** The live AutoCount deposit notes of one order (not cancelled). */
 async function liveNotesOf(sb: Db, companyId: number, soDocNo: string): Promise<{ ok: true; notes: Row[] } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('acc_credit_notes')
     .select(CREDIT_NOTE_HEADER)
@@ -185,7 +181,6 @@ export async function applyAutoCountDepositToInvoice(
   if (!live.ok) return live;
   const standing = live.notes.find((n) => n.status !== 'CANCELLED');
   if (standing) {
-    /* A note a retry left unposted is posted, never raised a second time. */
     if (standing.status === 'DRAFT') {
       const posted = await postCreditNote(sb, { companyId: p.companyId, note: standing, actor: p.actor });
       if (!posted.ok) return { ok: false, reason: `${String(standing.note_number)} not posted: ${posted.reason}` };
@@ -220,8 +215,6 @@ export async function applyAutoCountDepositToInvoice(
   });
   if (!raised.ok) return { ok: false, reason: `note not raised: ${raised.reason}` };
   const posted = await postCreditNote(sb, { companyId: p.companyId, note: raised.note, actor: p.actor });
-  /* Raised but refused at posting: the draft stays and the next posting of any
-     of the order's invoices posts it (above), never a second note. */
   if (!posted.ok) return { ok: false, reason: `${String(raised.note.note_number)} raised but not posted: ${posted.reason}` };
   return { ok: true, status: 'raised', noteNumber: String(raised.note.note_number), jeNo: posted.jeNo, amountSen };
 }
@@ -240,8 +233,6 @@ export async function applyAutoCountDepositBestEffort(
   }
 }
 
-/** The order's earliest live, non-migrated invoice dated after the opening day
-    that bills something (an RM 0 invoice posts no revenue), other than `exceptId`. */
 async function nextInvoiceOf(sb: Db, companyId: number, soDocNo: string, exceptId: string, openingDate: string): Promise<{ ok: true; si: Row | null } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('sales_invoices')
     .select('id, invoice_number, invoice_date, status, so_doc_no, debtor_code, debtor_name, total_sen, migrated_no_stock')

@@ -35,20 +35,11 @@ import { NOT_THIS_COMPANY, requireActiveCompanyId, scopeToCompanyId } from './co
 import { HOLD_COLUMNS, holdPatch, readHoldRequest } from './document-hold';
 
 export type HoldRouteConfig = {
-  /** The scm table the document lives in, e.g. `mfg_sales_orders`. */
   table: string;
-  /** The column the URL parameter matches — `id` for four of them, `doc_no` for
-   *  the Sales Order, whose route is keyed by document number. */
   keyColumn: string;
-  /** The Hono route parameter name, e.g. `id` or `docNo`. */
   param: string;
-  /** The key the document comes back under, e.g. `salesOrder`. */
   responseKey: string;
-  /** Extra columns to return beside the marker, e.g. `doc_no, status`. */
   echoColumns: string;
-  /** What must follow a successful hold or release, or `null` for nothing.
-   *  REQUIRED so a document whose hold feeds another engine cannot forget it:
-   *  the Sales Order's hold decides whether it may keep allocated stock. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the Hono context and PostgREST client are untyped through this whole module (see makeHoldHandler)
   afterWrite: ((c: any, sb: any, key: string) => Promise<void>) | null;
 };
@@ -76,8 +67,6 @@ export function makeHoldHandler(cfg: HoldRouteConfig) {
     const co = requireActiveCompanyId(c);
     if (!co.ok) return c.json(co.refusal, 409);
 
-    /* Read first so a document in another company's books answers 404 rather
-       than silently updating zero rows and reporting success. */
     const select = `${cfg.keyColumn}, ${cfg.echoColumns}, ${HOLD_COLUMNS}`;
     const { data: cur, error: readErr } = await scopeToCompanyId(
       sb.from(cfg.table).select(select).eq(cfg.keyColumn, key),

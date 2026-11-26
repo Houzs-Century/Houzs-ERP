@@ -1,9 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { isExternalPosition } from "./externalPosition";
 
-/* The member-creation hint that steers an outsourced driver to Fleet instead of
- * the member directory. A hint, so it must catch the outsource Titles and never
- * a normal one; a miss only means the nudge does not show. */
 
 describe("isExternalPosition", () => {
   test("matches an outsourced Title by name or slug", () => {

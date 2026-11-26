@@ -1,9 +1,3 @@
-// ac-preflight — the ERP says at SAVE time what the account book will refuse.
-//
-// Every test here is written to FAIL on the code as it stood before this module
-// (origin/main @839fcaed0) and to pass after. The controls matter as much as the
-// failures: over-blocking is the failure mode this change can introduce, and a
-// gate that refuses a good document is worse than the silence it replaces.
 import { describe, expect, test } from 'vitest';
 import {
   acAgentProblem, acAgentIsSendable, acNotSentProblems, AC_NOT_SENT,
@@ -22,8 +16,6 @@ import rawOutbox from './autocount-outbox.ts?raw';
 const codes = (ps: Array<{ code: string }>) => ps.map((p) => p.code);
 const messages = (ps: Array<{ message: string }>) => ps.map((p) => p.message).join(' || ');
 
-/* A confirmable order in every respect EXCEPT the salesperson, so a problem in
-   these tests can only have come from the salesperson rule. */
 const CONFIRMABLE = {
   salespersonId: 'staff-1' as string | null,
   agent: null as string | null,
@@ -33,30 +25,16 @@ const CONFIRMABLE = {
   nonCatalogCodes: [] as string[],
 };
 
-// ── THE BLOCK: a salesperson the ACCOUNT BOOK can be given ──────────────────
-//
-// Refused at save, not five minutes later, because the fix is the Salesperson
-// field on the screen the operator is already looking at.
 describe('the confirm gate asks the composer its own question', () => {
-  /* THE BUG, in one assertion. HC-SO-2607-008's real value. Before this change
-     the gate returned NO problem for it and `composeCreateSo` then threw
-     MissingAgentError into a `skipped` row — the operator got a 201 and the
-     order never reached the accounts. */
   test('"Unassigned" with no salesperson is REFUSED at confirm', () => {
     const problems = collectSoConfirmProblems({
       ...CONFIRMABLE, salespersonId: null, agent: 'Unassigned',
     });
     expect(codes(problems)).toContain('salesperson_required');
-    /* And it names the text, not a field the operator has already filled in —
-       being told to "assign a salesperson" while the box visibly says
-       "Unassigned" is the circle so-location-gate.ts warns about. */
     expect(messages(problems)).toContain('"Unassigned"');
     expect(messages(problems)).toContain('Pick a salesperson');
   });
 
-  /* The OTHER shape production actually holds in `agent`: a bare scm.staff
-     UUID (useStaffLookup carries a UUID_RE for exactly this). It is not a
-     person's name and `/ensure-masters` would open a sales agent under it. */
   test('a bare staff UUID in `agent` with no salesperson is REFUSED', () => {
     expect(codes(collectSoConfirmProblems({
       ...CONFIRMABLE, salespersonId: null, agent: '3f7c1e2a-0000-4000-8000-000000000000',
@@ -69,7 +47,6 @@ describe('the confirm gate asks the composer its own question', () => {
     expect(messages(problems)).toContain('A salesperson must be assigned');
   });
 
-  // ── CONTROLS: what must NOT be refused ────────────────────────────────────
   test('CONTROL — a linked salesperson passes, agent text or none', () => {
     expect(codes(collectSoConfirmProblems(CONFIRMABLE))).not.toContain('salesperson_required');
     expect(codes(collectSoConfirmProblems({ ...CONFIRMABLE, agent: 'Unassigned' })))
@@ -83,11 +60,6 @@ describe('the confirm gate asks the composer its own question', () => {
     }
   });
 
-  /* THE ANTI-DRIFT ASSERTION, and the reason this module exists. The gate and
-     the composer must answer the SAME question about the SAME order — they
-     disagreed before, which is how "Unassigned" walked through Save and died
-     in the queue. This holds by construction now (the gate calls
-     `resolveAcAgent`), and it is pinned so it cannot stop holding. */
   test('CONTROL — gate and composer never disagree about an unlinked order', () => {
     const texts = [
       null, '', '   ', 'Unassigned', 'unassigned', 'ZACK', 'Zack', 'Lim',
@@ -103,10 +75,6 @@ describe('the confirm gate asks the composer its own question', () => {
     }
   });
 
-  /* A rep hired since the 2026-08-05 cutover is in no map. `resolveAcAgent`
-     step 3 trusts a real `scm.staff.name` unmapped and /ensure-masters opens
-     it, so the gate must not refuse them either — that would be the
-     over-blocking this change is most at risk of. */
   test('CONTROL — a salesperson hired since the cutover is not refused', () => {
     expect(acAgentIsSendable(null, 'Nurul Hidayah')).toBe(true);
     expect(acAgentProblem({ salespersonId: null, agent: null, salespersonName: 'Nurul Hidayah' }))
@@ -114,12 +82,7 @@ describe('the confirm gate asks the composer its own question', () => {
   });
 });
 
-// ── THE WARNS: saved, but the accounts will not see it ──────────────────────
-//
-// Not refused, because the remedy is master data the operator does not own.
-// The document is committed by the time these are known; a 422 would be a lie.
 
-/** A line in the shape composeDetails takes. */
 const line = (item: string): ErpLine => ({
   item_code: item,
   description: 'a line',
@@ -129,10 +92,6 @@ const line = (item: string): ErpLine => ({
 } as unknown as ErpLine);
 
 describe('a purchase-order line the accounts cannot pin to one item', () => {
-  /* MEASURED against the compiled cutover map, not invented: '9028-1S' is one
-     of the 117 ERP codes the cutover collapsed from several AutoCount items,
-     and 400-H004 owns none of them. This is the ONE cause the diagnosis found
-     still reachable by a document raised today. */
   const AMBIGUOUS = '9028-1S';
   const FOREIGN_CREDITOR = '400-H004';
 
@@ -154,11 +113,8 @@ describe('a purchase-order line the accounts cannot pin to one item', () => {
     expect(problems[0].code).toBe(AC_NOT_SENT);
     expect(problems[0].line).toBe(AMBIGUOUS);
     const m = problems[0].message;
-    // says it is NOT in the accounts...
     expect(m).toContain('has NOT reached the accounts');
-    // ...names the offending code...
     expect(m).toContain(AMBIGUOUS);
-    // ...and names the next step, both halves of it.
     expect(m).toContain('supplier the product is actually bought from');
     expect(m).toContain('retired');
   });
@@ -177,11 +133,9 @@ describe('a purchase-order line the accounts cannot pin to one item', () => {
     expect(refusalFor(FOREIGN_CREDITOR)).toBeInstanceOf(ItemCodeError);
     try {
       composeDetails([line('AKEMI APEX MATT (SP)')], { supplierCode: FOREIGN_CREDITOR });
-    } catch (e) { expect(e).toBeNull(); /* must not throw */ }
+    } catch (e) { expect(e).toBeNull(); }
   });
 
-  /* EVERY failing line, not the first — an operator who fixes one and re-saves
-     into the next is how a divergence outlives everyone who remembers it. */
   test('every failing line is named, not just the first', () => {
     let e: unknown = null;
     try { composeDetails([line(AMBIGUOUS), line(AMBIGUOUS)], { supplierCode: FOREIGN_CREDITOR }); }
@@ -214,9 +168,6 @@ describe('a supplier with no AutoCount creditor code', () => {
 
   test('the composer refuses it — so nothing was ever queued, and nothing said so', () => {
     expect(refusalFor(null)).toBeInstanceOf(MissingCreditorError);
-    /* A BLANK code is the same hole as a missing one: `present()` drops blank
-       keys on the transfer branch, so an empty string reaches AutoCount as an
-       absent CreditorCode either way. */
     expect(refusalFor('   ')).toBeInstanceOf(MissingCreditorError);
   });
 
@@ -236,10 +187,6 @@ describe('a supplier with no AutoCount creditor code', () => {
 });
 
 describe('what this module refuses to say', () => {
-  /* An operator warned about something that did not happen stops reading
-     warnings, so an exception the composer did not raise as a NAMED refusal
-     produces no sentence at all. autocount-outbox.ts's own handler takes the
-     same view, and this is the line that keeps the two aligned. */
   test('an error the composer never named produces no warning', () => {
     expect(acNotSentProblems(new TypeError('x is not a function'), 'sales order')).toEqual([]);
     expect(acNotSentProblems(null)).toEqual([]);
@@ -251,15 +198,6 @@ describe('what this module refuses to say', () => {
   });
 });
 
-/* ── THE OTHER VERDICT: it ARRIVED, and part of it did not ───────────────────
-   Everything above is about a document the accounts will not take. A
-   TRANSFERRED document is the opposite case and needs the opposite sentence:
-   the book holds it, and the transfer route — a strictly narrower set of header
-   fields than /edit applies — left some of it behind.
-
-   THE CONTROL THAT MATTERS MOST is that this never claims the document is
-   missing. An operator told their goods receipt is ERP-only goes and raises it
-   again, into a book that already has it. */
 describe('it IS in the accounts, and part of it is not', () => {
   test('its own code, because the other one would be a false sentence', () => {
     expect(AC_SENT_INCOMPLETE).toBe('ac_sent_incomplete');
@@ -271,9 +209,6 @@ describe('it IS in the accounts, and part of it is not', () => {
     expect(p.message).not.toContain('NOT reached');
   });
 
-  /* ONE PER FIELD, for ItemCodeError's reason: a person who fixes the first of
-     three and re-saves into the second is how a divergence outlives everyone
-     who remembers it. */
   test('one problem per field, never one listing them all', () => {
     const ps = acNotCarriedProblems(['A: x', 'B: y', 'C: z'], 'delivery order');
     expect(ps).toHaveLength(3);
@@ -287,17 +222,11 @@ describe('it IS in the accounts, and part of it is not', () => {
     expect(acNotCarriedProblems([])).toEqual([]);
   });
 
-  /* THE SENTENCES ARE THE COMPOSER'S, not this module's second opinion — the
-     same rule the not-sent half runs under. Fed straight from
-     `downstreamNotCarried`, so a fact added to a spec reaches the operator with
-     no edit here. */
   test('the wording comes from the composer, and both silences reach the operator', () => {
     const bare = { id: 'x', grn_number: 'GR-1', received_at: '2026-08-18' };
     const ps = acNotCarriedProblems(downstreamNotCarried('GR', bare), 'goods receipt');
     expect(ps.length).toBeGreaterThan(0);
-    /* "the ERP has none of this" — fixable by the person holding the document. */
     expect(messages(ps)).toContain('SupplierDONo: the ERP document has none');
-    /* and the other silence, on a route that has no field for the fact at all. */
     const sales = acNotCarriedProblems(
       downstreamNotCarried('DO', { id: 'x', do_number: 'DO-1', do_date: '2026-08-19' }),
       'delivery order',
@@ -306,24 +235,7 @@ describe('it IS in the accounts, and part of it is not', () => {
   });
 });
 
-/* ── the two lists that must not drift apart ────────────────────────────────
-   A refusal is surfaced TWICE and by two different mechanisms, and each one is
-   an instanceof chain someone has to remember to extend:
-
-     noteReadFailure (autocount-outbox.ts)  -> the durable outbox row, which is
-       what an ENGINEER reads. Anything missing from its chain is written as a
-       class-named "compose failed" row, not as the refusal it is (until 0888 it
-       hit an early return: no row, no console line, nothing).
-     acNotSentProblems (this module)        -> the sentence the OPERATOR reads.
-       Anything missing from its chain returns [] — saved, not sent, nobody told.
-
-   Both were silently incomplete for the same error class on 2026-08-20
-   (`AcSoToPoAlignmentError`, added by the SO-to-PO whole-master change), which
-   is what this test exists to make impossible to repeat. It reads the two
-   SOURCES rather than calling the functions, because the failure is a missing
-   branch and a missing branch cannot be provoked by any input. */
 describe('every refusal reaches BOTH the queue and the operator', () => {
-  /** The error classes an `e instanceof X` chain names, inside one function. */
   const instanceOfChain = (source: string, from: string, to: string): string[] => {
     const a = source.indexOf(from);
     expect(a, `anchor missing: ${from}`).toBeGreaterThanOrEqual(0);
@@ -342,16 +254,13 @@ describe('every refusal reaches BOTH the queue and the operator', () => {
     const operator = instanceOfChain(
       rawPreflight.replace(/\r\n/g, '\n'),
       'export function acNotSentProblems(',
-      'Anything else is not a refusal the composer named',
+      '\n  return [];\n}\n',
     );
 
-    /* Named both ways round, so the failure says WHICH side is short rather
-       than printing two sorted arrays and leaving the reader to diff them. */
     const noSentence = queue.filter((k) => !operator.includes(k));
     const noQueueRow = operator.filter((k) => !queue.includes(k));
     expect(noSentence, `refused into the outbox with no operator sentence: ${noSentence.join(', ')}`).toEqual([]);
     expect(noQueueRow, `has an operator sentence but is swallowed by the enqueue: ${noQueueRow.join(', ')}`).toEqual([]);
-    // A positive control: an empty chain on either side would satisfy both filters.
     expect(queue.length, 'the chain was read, not missed').toBeGreaterThan(5);
   });
 });

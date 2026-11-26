@@ -1,8 +1,3 @@
-/* The printed corrections report, decided without a PDF. Every line the
-   document prints comes out of `correctionsDocument`, so what is pinned here
-   is exactly what Finance reads on paper: the words the audit's field names
-   become, how a delete reads, how the ledger pair reads with a half missing,
-   and that an empty month prints a sentence rather than an empty table. */
 import { describe, expect, it } from 'vitest';
 import {
   correctionsDocument, ledgerText, monthText, reasonText, recordedText, whatChanged, type CorrectionRowInput,
@@ -132,9 +127,6 @@ describe('correctionsDocument', () => {
     ]);
   });
 
-  /* The screen keeps → and −; on paper helvetica has neither and neither subset
-     carries them, so the guard refused the whole report ("a character we cannot
-     print yet") for any month with one edit. What the PDF gets is WinAnsi. */
   it('prints nothing helvetica cannot paint: the arrows and the minus are folded for paper', () => {
     const doc = correctionsDocument({ month: '2026-09', rows: [row(), row({ reason: 'Bank → cash, per receipt' })], summary: { ...summary, netMovedSen: -161_000 } });
     const printed = [...doc.summary.map((s) => s.value), ...doc.lines.flat()].join('\n');

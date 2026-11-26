@@ -25,7 +25,6 @@ export interface CaseAddressFieldsClasses {
   field: string;
   label: string;
   input: string;
-  /** The postcode dropdown's wrapper + chevron (AddressPostcodeField). */
   selectWrap: string;
   chevron: string;
   actions: string;

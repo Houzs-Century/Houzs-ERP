@@ -1,8 +1,3 @@
-/* Sister-ERP gap review G13 + G11.
-   - Every jsPDF the app constructs spreads PDF_COMPRESS, and that really shrinks
-     the file (the sample batch's sizes are printed for the PR).
-   - A batch print numbers each document's own pages: the second GRN in a
-     combined file starts at "Page 1", not "Page 2 of 2". */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';

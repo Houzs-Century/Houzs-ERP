@@ -16,11 +16,6 @@ import {
   type CountableRow,
 } from './outstanding-po-lines';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
-// Source text of BOTH files, so the WIRING is asserted too — the old code read
-// fine and was wrong about which rows it had. The QUERY assertions read this
-// module's own source (that is where the SQL lives); the CALL assertions read the
-// router's (that is where it is reached, and where the predicates are handed in).
-// Splitting them that way is what makes each one fail for exactly one reason.
 import grnRouterSrc from '../routes/grns.ts?raw';
 import libSrc from './outstanding-po-lines.ts?raw';
 
@@ -29,16 +24,10 @@ const row = (poId: string, qty: number, received: number, status = 'SUBMITTED', 
   po: { po_number: `PO-${poId}`, status, on_hold: onHold },
 });
 
-/* The predicate the ROUTE owns. Passed in on purpose: this module must not hold
-   a second copy of the receivable set (see the module header).
-
-   It takes the PO ROW since mig 0324 — the hold is a MARKER beside the status,
-   so a held PO reads SUBMITTED and a status-only predicate cannot see it. */
 const isReceivable = (po: { status?: string | null; on_hold?: boolean | null } | null): boolean =>
   po?.on_hold !== true && (po?.status === 'SUBMITTED' || po?.status === 'PARTIALLY_RECEIVED');
 
 describe('MECHANISM 1 — the read is paged, and says so when it stops early', () => {
-  /* A fake page source: hands out `total` rows in windows, counting the calls. */
   const source = (total: number) => {
     let calls = 0;
     return {
@@ -61,7 +50,6 @@ describe('MECHANISM 1 — the read is paged, and says so when it stops early', (
   });
 
   test('a set LARGER than the old 500 cap is now read in full', async () => {
-    // The exact regression. 1,400 candidate lines used to arrive as 500.
     const s = source(1_400);
     const r = await pageWithTruncation<{ id: number }>(s.query);
     expect(r.data).toHaveLength(1_400);
@@ -74,7 +62,6 @@ describe('MECHANISM 1 — the read is paged, and says so when it stops early', (
     const s = source(ceiling + 1);
     const r = await pageWithTruncation<{ id: number }>(s.query);
     expect(r.data).toHaveLength(ceiling);
-    // THE POINT. `paginateAll` cannot express this, which is why it is not used.
     expect(r.truncated).toBe(true);
   });
 
@@ -89,8 +76,6 @@ describe('MECHANISM 1 — the read is paged, and says so when it stops early', (
 
 describe('MECHANISM 2 — the SQL status filter is the form already proven in production', () => {
   test('only DRAFT and CANCELLED are excluded in SQL; the exact set stays the JS gate', () => {
-    // Narrower than the complement of RECEIVABLE on purpose — the module header
-    // gives the reason (an `.in()` on an embedded path is an unproven form).
     expect([...PO_DEAD_FOR_RECEIPT]).toEqual(['DRAFT', 'CANCELLED']);
   });
 
@@ -102,12 +87,6 @@ describe('MECHANISM 2 — the SQL status filter is the form already proven in pr
     expect(libSrc).toContain(".not('po.status', 'in', poDeadForReceiptSql())");
   });
 
-  /* THE PREDICATE TAKES THE ROW, NOT THE STATUS, since mig 0324. A hold is a
-     MARKER beside the status now, so a held PO reads SUBMITTED here — a
-     status-only predicate could no longer see one, in the permissive direction,
-     and the block migration 0318 described as coming "for free" would have gone
-     silently missing. Asserting on `r.po` rather than `r.po.status` is what
-     pins that. */
   test('the JS gate is still the authority on the exact receivable set', () => {
     expect(libSrc).toContain('.filter((r) => isReceivable(r.po))');
   });
@@ -136,32 +115,20 @@ describe('MECHANISM 3 — the ?poId scope reaches SQL', () => {
   });
 
   test('the window is ordered by the LINE key, not by the parent id', () => {
-    // `purchase_order_id DESC` was a key order masquerading as "newest first",
-    // and it is not a total order, so pages could overlap or skip.
     expect(libSrc).not.toContain("order('purchase_order_id', { ascending: false })");
     expect(libSrc).toContain("q.order('id').range(from, to)");
-    // And it is gone from the router, which is where it used to live.
     expect(grnRouterSrc).not.toContain("order('purchase_order_id', { ascending: false })");
   });
 
   test('the old silent cap is gone from this handler', () => {
     const start = grnRouterSrc.indexOf("grns.get('/outstanding-po-items'");
-    // `grnLineDownstream` is CALLED earlier in the file than it is declared, so
-    // slice forward from the handler rather than to the first mention of it — a
-    // backwards window would be empty and this whole assertion would vacuously
-    // pass, which is the "verdict computed over nothing" trap in CLAUDE.md. The
-    // length check below is the tripwire for that.
     const end = grnRouterSrc.indexOf('export async function grnLineDownstream', start);
     const handler = grnRouterSrc.slice(start, end);
     expect(start).toBeGreaterThan(0);
     expect(handler.length).toBeGreaterThan(500);
-    /* Strip comments before asserting. The handler DESCRIBES the cap it removed,
-       and a raw substring match on the prose would fail while the code is right
-       — which teaches the next person to delete the provenance to get green. */
     const code = handler.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     expect(code).not.toMatch(/\.limit\(/);
     expect(code).toContain('loadOutstandingPoLines');
-    // ... and the module it moved to caps nothing either.
     expect(libSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''))
       .not.toMatch(/\.limit\(/);
   });
@@ -210,11 +177,6 @@ describe('THE REPORT — an empty answer must be able to say WHY', () => {
     expect(s.pos[0]!.status).toBe('RECEIVED');
   });
 
-  /* THE MARKER, mig 0324. Before the flag this case could not exist: putting a
-     PO on hold overwrote SUBMITTED, so the allow-list refused it for free. Now
-     the status says SUBMITTED and only the marker says stop — and getting this
-     wrong writes stock IN against a purchase order somebody deliberately
-     halted. */
   test('a HELD PO still reads SUBMITTED and is reported NOT receivable', () => {
     const s = explainOutstanding(
       ['p1'], [row('p1', 5, 0, 'SUBMITTED', true)], new Map(), false, isReceivable,
@@ -233,9 +195,6 @@ describe('THE REPORT — an empty answer must be able to say WHY', () => {
   });
 
   test('a DRAFT PO produces no candidate rows, so its status comes from the HEADER read', () => {
-    // The SQL filter drops it, so without the header read "your PO is a draft"
-    // is indistinguishable from "your PO does not exist" — and both used to
-    // render as "every line has been received".
     const s = explainOutstanding(
       ['p1'], [], new Map([['p1', { poDocNo: 'PO-9', status: 'DRAFT', onHold: false }]]), false, isReceivable,
     );
@@ -257,8 +216,6 @@ describe('THE REPORT — an empty answer must be able to say WHY', () => {
   });
 
   test('the caller\'s predicate is what decides receivable — this module holds no copy', () => {
-    // A caller whose rule is "SUBMITTED only" must get SUBMITTED only. If this
-    // module ever grows its own list, this test fails.
     const submittedOnly = (po: { status?: string | null } | null) => po?.status === 'SUBMITTED';
     const r = explainOutstanding(
       ['p1'], [row('p1', 5, 0, 'PARTIALLY_RECEIVED')], new Map(), false, submittedOnly,
@@ -307,7 +264,6 @@ describe('loadOutstandingPoLines — the statement, recorded', () => {
     ...over,
   });
 
-  /** Records the chain instead of interpreting it. `pages` feeds `.range()`. */
   function recordingSb(pages: unknown[][], opts: { error?: { message: string } } = {}) {
     const calls: Call[] = [];
     const tables: string[] = [];
@@ -318,9 +274,6 @@ describe('loadOutstandingPoLines — the statement, recorded', () => {
       for (const m of ['select', 'eq', 'in', 'not', 'order', 'limit']) {
         b[m] = (...args: unknown[]) => {
           calls.push({ method: m, args: [table, ...args] });
-          /* The HEADER read has no .range(): it awaits the builder itself, so the
-             builder has to be thenable. `purchase_orders` resolves to nothing
-             here — every test below asks about a PO the line read already saw. */
           return table === 'purchase_orders'
             ? Object.assign(b, { then: (r: (v: unknown) => unknown) => r({ data: [], error: null }) })
             : b;
@@ -339,7 +292,6 @@ describe('loadOutstandingPoLines — the statement, recorded', () => {
   }
 
   const used = (calls: Call[], method: string) => calls.filter((x) => x.method === method);
-  /** The caller's company predicate, the real one — not a stub. */
   const scopeQuery = (c: CompanyScopeCtx) => <Q,>(q: Q): Q => scopeToCompany(q, c);
   const activeCompany: CompanyScopeCtx = { get: (k: string) => (k === 'companyId' ? 1 : undefined) };
 
@@ -355,9 +307,6 @@ describe('loadOutstandingPoLines — the statement, recorded', () => {
   test('never asks for a fixed number of rows — that is what hid 168 lines', async () => {
     const { sb, calls } = recordingSb([[line()]]);
     await run(sb);
-    /* A `.limit(500)` reads an arbitrary slice; a `.limit(5000)` reads an
-       arbitrary 1000, because PostgREST caps a response at 1000 rows whatever the
-       limit says and drops the rest with no error. */
     expect(used(calls, 'limit')).toHaveLength(0);
     expect(used(calls, 'range')).not.toHaveLength(0);
   });
@@ -374,16 +323,12 @@ describe('loadOutstandingPoLines — the statement, recorded', () => {
   test('sorts by a TOTAL order, so a paged read cannot repeat or skip a row', async () => {
     const { sb, calls } = recordingSb([[line()]]);
     await run(sb);
-    /* Every line of one purchase order shares purchase_order_id, so it is not a
-       total order on its own and page boundaries land mid-group. */
     const cols = used(calls, 'order').map((x) => x.args[1]);
     expect(cols).toEqual(['id']);
     expect(cols).not.toContain('purchase_order_id');
   });
 
   test('reads EVERY page, not just the first', async () => {
-    /* A FULL page is the only thing that asks for another, so the first page has
-       to be genuinely full or this proves nothing. */
     const full = Array.from({ length: OUTSTANDING_PAGE }, (_, i) => line({ id: `a-${i}` }));
     const { sb, calls } = recordingSb([full, [line({ id: 'b-0' })]]);
     const r = await run(sb);
@@ -396,8 +341,6 @@ describe('loadOutstandingPoLines — the statement, recorded', () => {
   });
 
   test('still drops a line whose balance is zero, and an over-received one', async () => {
-    /* The one filter that cannot move into the statement — it compares two
-       COLUMNS, which PostgREST has no filter for. */
     const { sb } = recordingSb([[
       line({ id: 'open', qty: 2, received_qty: 1 }),
       line({ id: 'done', qty: 1, received_qty: 1 }),
@@ -410,8 +353,6 @@ describe('loadOutstandingPoLines — the statement, recorded', () => {
   });
 
   test('drops a line whose parent status the CALLER does not accept', async () => {
-    // RECEIVED survives the SQL filter (only DRAFT/CANCELLED are excluded there),
-    // so the JS gate is what keeps the picker and the converter in step.
     const { sb } = recordingSb([[
       line({ id: 'open', qty: 2, received_qty: 0 }),
       line({ id: 'closed', qty: 2, received_qty: 0, po: { id: 'po-9', po_number: 'PO-9', status: 'RECEIVED' } }),
@@ -433,27 +374,18 @@ describe('loadOutstandingPoLines — the statement, recorded', () => {
     await run(scoped.sb);
     expect(used(scoped.calls, 'eq').find((x) => x.args[1] === 'company_id')?.args[2]).toBe(1);
 
-    /* companyId unset but allowedCompanyIds RESOLVED = the caller may see
-       nothing. The SCM client is service-role and bypasses RLS, so this predicate
-       is the whole tenant boundary and it must match nothing rather than
-       everything. It is ALSO why the picker's empty state may not claim the work
-       is done: `.in('company_id', [])` returns `[]` with `error: null`, which is
-       byte-identical to a company that genuinely has nothing outstanding. */
     const closed = recordingSb([[line()]]);
     await run(closed.sb, { ctx: { get: (k: string) => (k === 'allowedCompanyIds' ? [] : undefined) } });
     expect(used(closed.calls, 'in').find((x) => x.args[1] === 'company_id')?.args[2]).toEqual([]);
   });
 
   test('reports a read error instead of returning an empty list', async () => {
-    /* An error rendered as emptiness is the same failure the empty-state copy
-       had: "we could not look" must never arrive as "there is nothing". */
     const { sb } = recordingSb([[line()]], { error: { message: 'boom' } });
     const r = await run(sb);
     expect(r.error).toBe('boom');
   });
 
   test('a scoped PO that produced NO candidate rows triggers the HEADER read', async () => {
-    // The read that tells "your PO is a draft" from "your PO does not exist".
     const { sb, tables, calls } = recordingSb([[]]);
     await run(sb, { requestedPoIds: ['po-missing'] });
     expect(tables).toContain('purchase_orders');

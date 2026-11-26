@@ -25,7 +25,6 @@ import tokens from './finance/finance-ui.module.css';
 import b from './books/Books.module.css';
 import s from './books/StockClose.module.css';
 
-/** The five closing stocks, in account order (-0001 … -0005), as the screen names them. */
 const BUCKETS: ReadonlyArray<{ bucket: keyof StockBucketValues; name: string; short: string; swatch: string }> = [
   { bucket: 'customer', name: 'Customer stock', short: 'Customer', swatch: s.customer },
   { bucket: 'display', name: 'Display stock', short: 'Display', swatch: s.display },
@@ -93,7 +92,6 @@ export const StockCloseTab = () => {
   const runs = useMemo(() => data?.runs ?? [], [data]);
   const months = useMemo(() => data?.months ?? [], [data]);
 
-  /* The months the select offers: the two the nightly run re-checks, then every month with a run, then any other. */
   const monthOptions = useMemo(() => {
     const sweep = data?.sweepMonths ?? (data ? [data.defaultMonth] : []);
     const seen = new Set(sweep);
@@ -138,14 +136,12 @@ export const StockCloseTab = () => {
     </div>
   );
 
-  /* Stock now: the live value, split by bucket on a share bar. */
   const live = data?.liveBuckets ?? null;
   const positive = live ? BUCKETS.reduce((t, x) => t + Math.max(0, live[x.bucket]), 0) : 0;
   const shares = live ? wholeShares(BUCKETS.map((x) => live[x.bucket])) : [];
   const thisMonth = today.slice(0, 7);
   const nowNote = `${monthName(thisMonth).split(' ')[0]} is booked on ${fmtDate(monthStart(`${thisMonth}-01`, 1))} at 00:05 and re-checked every night until ${fmtDate(monthEnd(`${thisMonth}-01`, 2))}`;
 
-  /* A bucket nothing was ever booked on stays out of the table until asked for. */
   const emptyBucket = (k: keyof StockBucketValues): boolean => months.every((m) => m.buckets[k] === 0);
   const monthCols: Column<ClosedStockMonth>[] = [
     { key: 'month', label: 'Month', getValue: (m) => m.month, render: (m) => monthName(m.month) },

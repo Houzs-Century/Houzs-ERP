@@ -1,22 +1,3 @@
-// ---------------------------------------------------------------------------
-// mobileDeliveryFields — the mobile "Delivery details" card's PATCH builder.
-//
-// WHY A PURE HELPER IS THE THING UNDER TEST
-// The desktop drawer (vendor/scm/components/DeliveryFieldsDrawer.tsx) decides
-// three things before it ever calls the API: which keys go in the body, whether
-// the DO-execution group is even eligible, and whether the Replacement /
-// Disposal change must be diverted into an SO Amendment instead of the direct
-// PATCH. Mobile had none of that — it sent the 8 DO-execution keys and nothing
-// else. Reproducing the decision inside a component would make it testable only
-// through a render; extracting it makes the RULE itself assertable, which is
-// what actually has to match desktop.
-//
-// THE ROUTING THAT MATTERS
-// backend/src/scm/routes/delivery-planning.ts returns 409 `so_locked_processing`
-// for a GENUINE replacement_disposal change on a processing- or PO-locked SO.
-// A client that just PATCHes the field gets a refusal with no way forward, so
-// the client must recognise the lock and raise the amendment itself.
-// ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
 import {
@@ -24,14 +5,11 @@ import {
   type DeliveryFieldsForm,
 } from "./MobileDeliveryFieldsCard";
 
-/* A form with every field blank — the shape a never-filled-in order seeds. */
 const BLANK: DeliveryFieldsForm = {
-  // SO-context
   possessionDate: "",
   houseType: "",
   referral: "",
   replacementDisposal: "",
-  // DO-execution
   timeRange: "",
   timeConfirmed: false,
   arrivalAt: "",
@@ -103,8 +81,6 @@ describe("buildDeliveryFieldsPatch — replacement_disposal routing", () => {
     const { body, amendmentDisposal, disposalViaAmendment } =
       buildDeliveryFieldsPatch(BLANK, next, LOCKED);
 
-    // The backend 409s `so_locked_processing` on this exact write — it must not
-    // be attempted.
     expect(body).not.toHaveProperty("replacementDisposal");
     expect(disposalViaAmendment).toBe(true);
     expect(amendmentDisposal).toBe("Dispose old 5ft set");
@@ -166,11 +142,8 @@ describe("buildDeliveryFieldsPatch — replacement_disposal routing", () => {
       buildDeliveryFieldsPatch(initial, BLANK, LOCKED);
 
     expect(body).not.toHaveProperty("replacementDisposal");
-    // The routing FLAG is what disambiguates "clear it" from "nothing to do" —
-    // the value alone is null in both cases.
     expect(disposalViaAmendment).toBe(true);
     expect(amendmentDisposal).toBeNull();
-    // A cleared disposal is still a change — `empty` must not swallow it.
     expect(empty).toBe(false);
   });
 });
@@ -190,7 +163,6 @@ describe("buildDeliveryFieldsPatch — the DO-execution group needs a DO", () =>
 
     expect(body).not.toHaveProperty("timeRange");
     expect(body).not.toHaveProperty("deliverySubstatus");
-    // The SO-context half is editable with or without a DO — the desktop rule.
     expect(body.houseType).toBe("New House");
   });
 

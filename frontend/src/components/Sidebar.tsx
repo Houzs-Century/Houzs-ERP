@@ -2,10 +2,6 @@ import { NavLink, useLocation } from "react-router-dom";
 import { BACKDATE_DECIDER_PERMS } from "../vendor/scm/lib/payment-backdate-perms";
 import { markWorkspaceOpenIntent } from "../lib/workspaceTabs";
 
-// Workspace tab strip: a plain left-click on a sidebar destination is the ONE
-// gesture that opens/activates a tab (lib/workspaceTabs.ts). Modified clicks
-// (Ctrl/Cmd/Shift/Alt — a real browser window) must not mark, and the mark
-// itself expires if no navigation follows.
 function markOpenIntentOnPlainClick(e: { button?: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }): void {
   if ((e.button ?? 0) === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
     markWorkspaceOpenIntent();
@@ -87,26 +83,14 @@ import {
   BADGE_MEANING,
 } from "../hooks/useAmendmentApprovals";
 
-/* Hover prefetch, behind a dynamic import. The route map in lib/prefetch-routes
-   holds an import() per route, so importing it statically drags the whole table
-   into the initial bundle — that put initial JS at 131.5/130 KB gzip and failed
-   the budget gate. Deferring it costs nothing real: the table's own chunk is
-   fetched on Layout's idle warm, long before a hand reaches the rail.
-   Swallow everything — a prefetch must never surface an error, least of all
-   from a mouse-over (RouteFallback treats a chunk error as cause to unregister
-   the SW and reload the page). */
 function prefetchRoute(href: string): void {
   void import("../lib/prefetch-routes").then((m) => m.prefetchRoute(href)).catch(() => {});
 }
 
 interface Props {
-  /** Desktop-only collapsed state (lg+). */
   collapsed: boolean;
-  /** Toggles the desktop collapsed state. */
   onToggle: () => void;
-  /** Mobile-only drawer open state (below lg). */
   mobileOpen?: boolean;
-  /** Closes the mobile drawer. Called when the backdrop is tapped. */
   onMobileClose?: () => void;
 }
 
@@ -116,64 +100,21 @@ interface Props {
  * two never drift. Add a route here, it shows up in both places.
  */
 export interface NavTab {
-  /** Which sidebar section this TOP-LEVEL item sits in — drives the
-   *  Workspace / Operations / System grouping. Defaults to "operations". */
   section?: "workspace" | "operations" | "system";
-  /** Click target. Omit when this is a pure group header with `children`. */
   to?: string;
   label: string;
   icon: LucideIcon;
   end?: boolean;
-  /** Permission key required to see/use this tab. Omit = always visible. */
   perm?: string;
-  /** Show when the user has at least one of the listed permissions.
-   *  Paired with `perm` it's `any` OR `perm` — rarely needed together. */
   anyPerm?: string[];
-  /** ADDITIVE page-access OR-gate. Show when ANY listed page-access key
-   *  resolves to !== 'none'. When combined with `anyPerm` on the same tab,
-   *  the tab is shown if EITHER the permission OR a page-access key passes
-   *  (OR semantics — used for the SCM nav so a position granted just one
-   *  SCM area sees it without holding the broad `scm.access` permission).
-   *  Wildcard `*` short-circuits inside `pageAccess(...)` to 'full'. */
   anyAccess?: string[];
-  /** If the user has this permission, the tab is hidden — used to suppress
-   *  legacy entries when a richer replacement is available (e.g. hide the
-   *  flat Delivery list from dispatchers who already have the Trips Queue
-   *  tab). */
   hidePerm?: string;
-  /** Page-access key required (default minLevel: partial). Use for tabs
-   *  whose visibility should follow the new per-page matrix instead of
-   *  legacy permission keys. */
   pageAccess?: string;
-  /** Same as `pageAccess` but requires `full` access — for admin-only
-   *  tabs (e.g. Project Maintenance). */
   pageAccessFull?: string;
-  /** Additionally require the DIRECTOR-level finance-viewer flag
-   *  (`user.project_finance_viewer`). ANDed with any `pageAccess` gate —
-   *  used to hide the Projects "Finances" sub-page from sales staff. */
   requireFinanceViewer?: boolean;
-  /** Show ONLY to the Fair Report cohort — management + the Sales Director
-   *  (auth/salesAccess.canViewFairReport), the exact union the backend
-   *  fairReportAccess admits. A hard gate keyed off org fields (no `perm` /
-   *  `pageAccess`), so ordinary sales AND non-director office never see it. */
   requireFairReport?: boolean;
-  /** Sales-access model (code-keyed off org fields — auth/salesAccess.ts):
-   *  hide this entry from ALL Sales-department users, INCLUDING the Sales
-   *  Director (owner rule 2026-07 — Delivery Returns is off for the whole Sales
-   *  cohort, director too). Non-sales staff are unaffected. Only Delivery
-   *  Returns gets this treatment; every other sales-restricted item stays
-   *  director-visible. */
   hideForSales?: boolean;
-  /** Sales-access model: ADDITIVELY show this entry to Sales-department users
-   *  even when they lack the usual `perm` / `anyPerm` / `pageAccess` gate —
-   *  keyed off department, NOT the permission matrix. Used so "My Cases"
-   *  appears for Sales staff without granting them `service_cases.read`. */
   showForSales?: boolean;
-  /** Sales-access model: ADDITIVELY show this entry to a Sales Director
-   *  (auth/salesAccess.isSalesDirectorUser) even without the usual
-   *  `perm`/`pageAccess` gate — keyed off the exact "Sales Director" position.
-   *  Used for the scoped Team entries (Members / Org Chart / Departments); the
-   *  Positions leaf deliberately OMITS this so it stays hidden from him. */
   showForSalesDirector?: boolean;
   /** Sales-access model: ADDITIVELY show this entry to ANY director
    *  (auth/salesAccess.isDirectorUser — Sales Director / Super Admin / Finance
@@ -184,19 +125,7 @@ export interface NavTab {
    *  already shows. Broader than showForSalesDirector, which is anchored to the
    *  exact "Sales Director" position only. */
   showForDirector?: boolean;
-  /** Sales-access model (owner rule 2026-07): HIDE this entry from a
-   *  NON-director Sales user (auth/salesAccess.isSalesNonDirector). Keyed off
-   *  the org chart in code, NOT the config matrix — so a rep sees exactly the
-   *  owner-approved cut regardless of their page-access grants. Used to trim the
-   *  Supply Chain nav down to Sales-Orders-only and to drop the Service-Cases
-   *  board / metrics / maintenance leaves for reps. Sales Directors + office are
-   *  UNAFFECTED (they keep the broad view). Checked before the show-bypasses. */
   hideForSalesRep?: boolean;
-  /** Sales-access model: ADDITIVELY show this entry to a NON-director Sales user
-   *  even without the usual `perm`/`anyPerm`/`anyAccess`/`pageAccess` gate —
-   *  keyed off org fields, NOT the matrix. Used so the Supply Chain GROUP header
-   *  survives for a rep (its only surviving child is the rep Sales-Orders leaf)
-   *  no matter what SCM page-access the rep's position happens to hold. */
   showForSalesRep?: boolean;
   /** Live red count rendered on this entry. The only source today is
    *  amendments waiting for THIS user's signature, SO or PO (owner 2026-09-09).
@@ -206,42 +135,13 @@ export interface NavTab {
    *  the entry survives the visibility filter. Renders nothing at 0, which is
    *  also what a non-approver and a failed poll both produce. */
   badge?: ApprovalBadgeSource;
-  /** Hide this entry unless the server resolved this capability to true on
-   *  /auth/me. Checked before every `showFor*` bypass, so a show-flag cannot
-   *  re-open it. The backend is still the control — this only avoids offering a
-   *  tap that 403s. Preferred over a position-name list: the answer is decided
-   *  once, server-side, and cannot drift from the gate it describes. */
   requireCapability?: CapabilityKey;
-  /** Sales-access model: show this entry ONLY to a NON-director Sales user and
-   *  hide it from everyone else (office/director). Bypasses the permission
-   *  gates. Used for the single rep-facing "Sales Orders" leaf mounted directly
-   *  under Supply Chain so a rep's SCM tree is exactly one item deep. */
   salesRepOnly?: boolean;
-  /** Sales-access model: for a NON-director Sales user, override this group
-   *  header's click target with `salesRepTo` (the plain `to` still applies to
-   *  everyone else). Used so a rep clicking "Supply Chain" lands on the
-   *  reachable /scm/sales-orders list instead of the /scm Hub (which 403s on
-   *  `scm` area) and "Service Cases" lands on /my-cases instead of the board
-   *  hub. Non-Sales / director behaviour is unchanged. */
   salesRepTo?: string;
-  /** Optional sub-entries. When present, this tab renders as an
-   *  expandable group header instead of a click target. */
   children?: NavTab[];
-  /** Stable id used for the per-group expanded/collapsed memory. Only
-   *  required when `children` is present. */
   groupId?: string;
-  /** A group shown as ONE entry (Finance › Reports, batch 6 §1.1): its
-   *  `children` are members, each with its own gate, hidden from the rail. The
-   *  entry shows when any member passes the filter, links to the member opened
-   *  last (else the first visible one — collapsedEntryTo) and is lit while any
-   *  member, or `alsoActive`, is the current page. */
   collapsed?: boolean;
-  /** One more address that lights a collapsed entry (the Books pages opened
-   *  from the report list: `/scm/accounting?in=reports`). */
   alsoActive?: string;
-  /** A leaf that does NOT light while the address carries this query
-   *  parameter (Books' Journal entries / General ledger / Trial balance opened
-   *  from the report list carry `in`, and the Reports entry lights instead). */
   notWithParam?: string;
 }
 
@@ -252,7 +152,6 @@ export interface NavTab {
  * filter recurses so groups with no visible kids hide entirely.
  */
 export const NAV_TABS: NavTab[] = [
-  // ══ WORKSPACE ════════════════════════════════════════════════
   {
     section: "workspace",
     to: "/",
@@ -260,8 +159,6 @@ export const NAV_TABS: NavTab[] = [
     icon: LayoutDashboard,
     end: true,
   },
-  // Sales Orders promoted to a top-level shortcut (also reachable under
-  // Supply Chain → Sales Order).
   {
     section: "workspace",
     to: "/scm/sales-orders",
@@ -269,9 +166,6 @@ export const NAV_TABS: NavTab[] = [
     icon: ShoppingCart,
     anyPerm: ["*", "scm.access"],
     anyAccess: ["scm.sales.orders"],
-    // A rep always keeps this top-level shortcut even if their position lacks
-    // the scm.sales.orders page-access (the route itself allows Sales — see
-    // App.tsx ScmGuard allowSales).
     showForSalesRep: true,
   },
   // 申请付款 (owner 2026-09-30): whoever holds scm.payment_request.create — a PIC
@@ -303,9 +197,6 @@ export const NAV_TABS: NavTab[] = [
   //   { section: "workspace", to: "/sales", label: "Sales Entries",
   //     icon: ReceiptText, pageAccess: "sales" },
 
-  // ══ OPERATIONS ═══════════════════════════════════════════════
-  // ── Service — quality + ASSR. Header links to the Cases page; the
-  // chevron still expands the sub-menu (Quality Metrics / Maintenance).
   {
     section: "operations",
     label: "Service Cases",
@@ -313,15 +204,7 @@ export const NAV_TABS: NavTab[] = [
     groupId: "service",
     to: "/assr?view=hub",
     anyPerm: ["service_cases.read"],
-    // Sales-access model: Sales staff see this group (for My Cases) even
-    // without service_cases.read. The child gates below still hide the
-    // permission-only sub-tabs (Cases / Metrics / Maintenance) from them, so
-    // only the sales-visible My Cases leaf survives.
     showForSales: true,
-    // Owner rule 2026-07: a NON-director Sales rep gets ONLY "My Cases" here —
-    // never the full board hub. Retarget the group header to /my-cases (the
-    // /assr?view=hub board stays for office/director) and hide the board /
-    // metrics / maintenance leaves for reps (below).
     salesRepTo: "/my-cases",
     children: [
       {
@@ -349,10 +232,6 @@ export const NAV_TABS: NavTab[] = [
         showForDirector: true,
       },
       {
-        // Lead Time Portal merged into Service Maintenance as a tab.
-        // Sidebar entry removed; reach it via Service Maintenance →
-        // Lead Time tab. Old /assr?view=lead_time URL still works
-        // (redirects in ServiceCases.tsx).
         to: "/assr?view=settings",
         label: "Service Maintenance",
         icon: Wrench,
@@ -367,23 +246,15 @@ export const NAV_TABS: NavTab[] = [
         hideForSalesRep: true,
       },
       {
-        // Sales-side view of the cases the current user raised.
-        // Filter is server-side (LOWER(sales_agent) contains user's name);
-        // any user with service_cases.read gets the tab but they'll see
-        // an empty list until a case's sales_agent matches their name.
         to: "/my-cases",
         label: "My Cases",
         icon: ClipboardCheck,
         perm: "service_cases.read",
-        // Sales staff get My Cases without the service_cases.read permission.
         showForSales: true,
       },
     ],
   },
 
-  // ── Projects — exhibitions, solo events ──────────────────────
-  // Gated on page-access (mig 073). Each sub-tab uses `pageAccess`
-  // so a role with calendar-only access only sees the Calendar entry.
   {
     section: "operations",
     label: "Projects",
@@ -434,21 +305,13 @@ export const NAV_TABS: NavTab[] = [
   //    finance/reporting page, and the top-level slot was overloading the
   //    left rail). The entry now lives inside the Finance group's children.
 
-  // ── Supply Chain — ported 2990's furniture SCM (/api/scm) ────
-  // Header links to the /scm Hub; chevron expands the inline subtree.
   {
     section: "operations",
     label: "Supply Chain",
     icon: Boxes,
     groupId: "scm",
-    // Points at the Hub landing page instead of expanding inline (the Hub
-    // surfaces every module one click deep). The children stay here as the
-    // single source of truth the Hub renders from + for visibility filtering.
     to: "/scm",
     anyPerm: ["*", "scm.access"],
-    // Umbrella shows if ANY SCM area is granted per-position (additive). The
-    // recursive filter also hides this group when no child survives, so this
-    // list is belt-and-suspenders with the children's own anyAccess keys.
     anyAccess: [
       "scm",
       "scm.sales",
@@ -458,21 +321,9 @@ export const NAV_TABS: NavTab[] = [
       "scm.warehouse",
       "scm.finance",
     ],
-    // Owner rule 2026-07: a NON-director Sales rep's Supply Chain nav is trimmed
-    // to ONLY "Sales Orders". showForSalesRep keeps this group header visible
-    // for the rep (its only surviving child is the rep Sales-Orders leaf below),
-    // and salesRepTo sends the header straight to the reachable /scm/sales-orders
-    // list instead of the /scm Hub (which 403s on the `scm` area for a rep).
-    // Every OTHER SCM subgroup below carries hideForSalesRep. Office / director
-    // are unaffected.
     showForSalesRep: true,
     salesRepTo: "/scm/sales-orders",
     children: [
-      // Rep-only Sales-Orders leaf — the single SCM entry a non-director Sales
-      // rep sees under Supply Chain (salesRepOnly hides it from office/director,
-      // who reach Sales Orders via the Sales Order subgroup below). Bypasses the
-      // page-access gate; the route itself allows Sales (App.tsx ScmGuard
-      // allowSales).
       {
         to: "/scm/sales-orders",
         label: "Sales Orders",
@@ -527,24 +378,7 @@ export const NAV_TABS: NavTab[] = [
         icon: FileText,
         salesRepOnly: true,
       },
-      // 1:1 with 2990's backend Sidebar sectioning + order: Sales Order ->
-      // Consignment -> Procurement -> Transportation -> Warehouse (then Finance,
-      // which 2990 keeps top-level; Houzs nests it under Supply Chain). MRP +
-      // Products & Maintenance live under Procurement exactly as in 2990.
-      // Product Models + Fabric Tracking are tabs-in-Products in 2990 → NOT
-      // separate nav items here either (reach them via Products & Maintenance /
-      // their /scm/* routes). Consignment labels match 2990 verbatim: singular
-      // "Consignment Order/Note/Return" + full "Purchase Consignment ...".
-      // Each leaf carries its own L2 page-access key (additive — still ORed
-      // with ["*","scm.access"]). The GROUP header keeps its L1 key AND lists
-      // every child L2 key in `anyAccess`, so granting either the L1 area or
-      // any single L2 child shows the group; the recursive filter then hides
-      // any leaf whose own L2 key resolves to "none". Result: set scm.sales =
-      // full → all four sales leaves show (inherit); override scm.sales.delivery
-      // = none → just Delivery Orders disappears while the rest stay.
       {
-        // A rep never sees this subgroup (they get the flat rep Sales-Orders
-        // leaf above instead); office/director keep the full Sales-Order flow.
         hideForSalesRep: true,
         label: "Sales Order",
         icon: ShoppingCart,
@@ -558,10 +392,6 @@ export const NAV_TABS: NavTab[] = [
           // 「先做 Fair links to settle 菜单」). The page existed only by URL; the
           // red number is how many it lists, from the same server read.
           { to: "/scm/fair-pending", label: "Fair Links to Settle", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true, badge: "fair-links-to-settle" },
-          // The office / director path to Amendments. A rep reaches it via the
-          // rep-only leaf above instead, so this carries hideForSalesRep like its
-          // DO / SI siblings — belt-and-braces against the parent's flag being
-          // removed, which would otherwise render the row TWICE for a rep.
           { to: "/scm/amendments", label: "Sales Order Amendment", icon: History, anyPerm: ["*", "scm.access", "scm.amendment.create", "scm.amendment.supplier_confirm", "scm.amendment.approve_so", "scm.amendment.approve_po", "scm.so_cancel.approve_l1", "scm.so_cancel.approve_l2"], anyAccess: ["scm.sales.orders"], hideForSalesRep: true, badge: "amendment-approvals" },
           { to: "/scm/payment-backdate-requests", label: "Payment Backdate Requests", icon: ClipboardCheck, anyPerm: BACKDATE_DECIDER_PERMS, hideForSalesRep: true, badge: "payment-backdate-approvals" },
           { to: "/scm/delivery-orders", label: "Delivery Orders", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.sales.delivery"], hideForSalesRep: true },
@@ -620,13 +450,8 @@ export const NAV_TABS: NavTab[] = [
         anyPerm: ["*", "scm.access"],
         anyAccess: ["scm.transportation", "scm.transportation.drivers", "scm.transportation.overview", "scm.transportation.planning", "scm.transportation.dp_orders", "scm.transportation.last_mile", "scm.transportation.lorry_map", "scm.transportation.lorry_capacity", "scm.transportation.crew_leave", "scm.transportation.coverage"],
         children: [
-          // Daily dispatch flow — the pages used every day, in workflow order.
           { to: "/scm/logistic-overview", label: "Logistic Overview", icon: LayoutDashboard, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.overview"], hideForSalesRep: true },
           { to: "/scm/delivery-planning", label: "Delivery Planning", icon: Send, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.planning"], hideForSalesRep: true },
-          // "Last Mile Delivery (Driver)" (added on main) is the driver-facing view of
-          // the same last-mile delivery, so it shares scm.transportation.last_mile with
-          // the office "Last Mile Delivery" (/scm/fleet-day) below. Zero-change on deploy
-          // (last_mile inherits drivers), and the two last-mile views toggle together.
           { to: "/scm/delivery-planning-driver", label: "Last Mile Delivery (Driver)", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.last_mile"], hideForSalesRep: true },
           { to: "/scm/dp-orders", label: "DP Orders", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.dp_orders"], hideForSalesRep: true },
           // Delivery Date / Time Arrangement menu entries removed (owner 2026-10-20):
@@ -634,22 +459,7 @@ export const NAV_TABS: NavTab[] = [
           // which schedules onto trips directly. The /scm/auto-schedule and
           // /scm/trips routes still resolve by direct URL (auto-propose optimiser).
           { to: "/scm/fleet-day", label: "Last Mile Delivery", icon: MapPinned, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.last_mile"], hideForSalesRep: true },
-          // Fleet operations — capacity and leave. Fleet Health moved DOWN into
-          // Maintenance (2026-08-02): it is reference-data upkeep on the in-house
-          // lorries, not a daily dispatch view. The lorry/driver REGISTRY
-          // (/scm/fleet) is in Maintenance too.
           { to: "/scm/driver-leave", label: "Crew Leave", icon: CalendarOff, anyPerm: ["*", "scm.access"], anyAccess: ["scm.transportation.crew_leave"], hideForSalesRep: true },
-          /* "Drivers" (/scm/drivers) retired 2026-07-17 — it duplicated the Drivers
-             section of Fleet above, and sat here with the SAME Truck icon and the
-             SAME scm.transportation.drivers access key, which is what made the
-             duplication invisible. The area key is unchanged and still gates every
-             row in this group, so no permission moves. Do not re-add. */
-          // Set-once master-data + the lorry/driver/helper REGISTRY (/scm/fleet) —
-          // tucked into a collapsible "Maintenance" sub-group (the ERP's own word
-          // for reference-data upkeep, cf. SO Maintenance) so the daily-use rows
-          // above stay uncluttered. Fleet lives here (you record a lorry) while
-          // Fleet Health above is the read-only board (you monitor the fleet).
-          // Pure header (no `to`); the groupId gives it expand/collapse memory.
           /* SIX rows become THREE, and each one goes to a real page. Owner
              2026-08-01: "我们需要把 Sidebar 以及它的整个模块——包括 3PL Company 和
              Rate Card——统一整合在一个模块里", then 2026-08-02 on what the three
@@ -698,8 +508,6 @@ export const NAV_TABS: NavTab[] = [
           // load" queue (no prices). Same gate as Inventory (scm.warehouse.inventory,
           // the Storekeeper's grant) so the warehouse line sees it first.
           { to: "/scm/loading-list", label: "Loading List", icon: ClipboardList, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.inventory"], hideForSalesRep: true },
-          // Warehouses master sits at the TOP of the group (2990 parity) — it's
-          // the location registry every other warehouse doc binds against.
           { to: "/scm/warehouses", label: "Warehouses", icon: Warehouse, anyPerm: ["*", "scm.access"], anyAccess: ["scm.warehouse.inventory"], hideForSalesRep: true },
           // Racks & Bins (owner 2026-09-11) — promoted from a button on the
           // Warehouses page to its own nav item, sitting under Warehouses. Same
@@ -749,9 +557,6 @@ export const NAV_TABS: NavTab[] = [
     anyPerm: ["*", "scm.access"],
     anyAccess: ["scm.finance", "scm.finance.accounting", "scm.finance.outstanding"],
     children: [
-      // ── To do and Money today lead (the owner's Claude Design redesign,
-      //    2026-11-02): Finance's home is what is waiting on you, with its count;
-      //    Money today opens the Daily Bank board, as the design's single entry.
       { to: "/scm/finance", end: true, label: "To do", icon: ListChecks, badge: "finance-todo", anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/daily-bank?view=board", label: "Money today", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.bank"] },
       // ── SIX GROUPS, BY THE JOB (owner 2026-09-12: finance 的 function 分到很散,
@@ -768,10 +573,6 @@ export const NAV_TABS: NavTab[] = [
         icon: HandCoins,
         groupId: "scm-finance-in",
         children: [
-          // Receipts (the owner's Claude Design, batch 5 step 4): every ringgit in on
-          // one page — the official receipts folded in as its first kind, so the
-          // gate is the two old entries' together; inside, each kind shows to
-          // whoever saw its old entry. /scm/official-receipts redirects here.
           { to: "/scm/receipts", label: "Receipts", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
           // Invoices (owner 2026-09-29: AR invoices, the AP list's twin; the
           // owner's Claude Design, batch 5 step 5): the sales invoices mirrored
@@ -797,9 +598,6 @@ export const NAV_TABS: NavTab[] = [
         icon: Wallet,
         groupId: "scm-finance-out",
         children: [
-          // The redesign's order and names (owner's Claude Design, batch 4): the
-          // design's three pages first, then the ERP's own, kept where the owner
-          // put them. Every permission gate is as it was.
           { to: "/scm/payment-vouchers", label: "Payment vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.money_out"] },
           // The day's payments, a line each with the bank (owner 2026-11-08: 每天要过账的listing).
           { to: "/scm/payment-listing", label: "Payment listing", icon: ListChecks, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.money_out"] },
@@ -821,8 +619,6 @@ export const NAV_TABS: NavTab[] = [
         icon: Landmark,
         groupId: "scm-finance-bank",
         children: [
-          // The redesign's order and names (owner's Claude Design, batch 3): the two
-          // uploads first, then the day's board; Unmatched Payments stays last.
           { to: "/scm/merchant-recon", label: "Merchant reports", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
           { to: "/scm/bank-recon", label: "Bank statements", icon: Banknote, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.bank"] },
           { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.bank"] },
@@ -835,9 +631,6 @@ export const NAV_TABS: NavTab[] = [
         ],
       },
       {
-        // The owner's Claude Design (batch 6 §1.1): the design's order and names.
-        // Opened from the report list (`in=reports`) Journal entries, the General
-        // ledger and the Trial balance light the Reports entry, not these.
         label: "Books",
         icon: BookOpen,
         groupId: "scm-finance-books",
@@ -851,12 +644,6 @@ export const NAV_TABS: NavTab[] = [
         ],
       },
       {
-        // ONE entry (batch 6 §1.1: Reports keeps its own report list). Its
-        // members are the reports of pages/scm-v2/reports-catalog — the old
-        // Reports and Forecasting groups' entries, each with the gate it had —
-        // hidden here: the entry shows when any member passes, opens the report
-        // opened last (else the first the reader may open), and is lit on any
-        // of them or on a Books page opened from the list.
         label: "Reports",
         icon: BarChart3,
         groupId: "scm-finance-reports",
@@ -878,7 +665,6 @@ export const NAV_TABS: NavTab[] = [
           // The deposit invoice switch (owner 2026-09-12; docs/bugs/0828), moved off the old
           // Deposit invoices page (Claude Design, batch 5 step 5) — gated as that row was.
           { to: "/scm/finance/deposit-invoices", label: "Deposit invoices", icon: Receipt, anyPerm: ["*", "scm.access", "scm.payment_voucher.post", "scm.sales_order.write"], anyAccess: ["scm.finance.money_in"] },
-          // What fills To do: its built-in rules, the month's routines, Finance's own groups (redesign batch 2).
           { to: "/scm/finance/rules", label: "To do rules", icon: ListChecks, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
         ],
       },
@@ -906,18 +692,6 @@ export const NAV_TABS: NavTab[] = [
     label: "HR",
     icon: Users,
     groupId: "scm-hr",
-    // Pure header (no `to`): Commission and Employees & Attendance are granted
-    // separately, so no single child is a landing page everyone can open.
-    // FLAT keys only, deliberately no `scm.access` and no `anyAccess`: HR has
-    // no L2 page-access area, and /commission returns every colleague's pay.
-    // Riding the SCM umbrella here is exactly the mistake scm/index.ts warns
-    // about ("READ-ONLY IS NOT THE SAME AS SAFE").
-    //
-    // These are the two ENTRY keys. HR has four in total — scm.hr.close and
-    // scm.hr.reopen gate the payout approval actions and are checked on the
-    // Commission page itself (per-button), not here: they grant an action
-    // inside the module, never admittance to it. Neither is usable without
-    // scm.hr.read anyway, since the API refuses to show the period first.
     anyPerm: ["*", "scm.hr.read", "scm.hr.manage", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"],
     children: [
       // Employees & Attendance (HC-0125): its own flat keys, payroll is granted
@@ -925,14 +699,10 @@ export const NAV_TABS: NavTab[] = [
       // open it to the Attendance / OT tabs alone (see HrEmployees narrow mode).
       { to: "/hr/employees", label: "Employees & Attendance", icon: Users, anyPerm: ["*", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"] },
       { to: "/scm/hr/commission", label: "Commission", icon: DollarSign, anyPerm: ["*", "scm.hr.read", "scm.hr.manage"] },
-      // Settings is an EDITOR — read-only holders are not shown a page whose
-      // every control the API would reject (2990 bounces them to the report).
       { to: "/scm/hr/settings", label: "HR Settings", icon: SlidersHorizontal, anyPerm: ["*", "scm.hr.manage"] },
     ],
   },
 
-  // ── Mail Center — in-ERP shared inbox (ported from Hookka). Flat entry;
-  // the page carries its own Inbox/Sent/folder rail.
   {
     section: "operations",
     to: "/mail-center",
@@ -968,14 +738,7 @@ export const NAV_TABS: NavTab[] = [
     icon: Megaphone,
   },
 
-  // Fleet Health moved into SCM > Transportation (2026-07-26) so the fleet-wide
-  // compliance/health board sits with the other daily fleet views instead of
-  // floating as a top-level operations item. It keeps its fleet.read gate — see
-  // the Transportation children above. The /fleet-health route is unchanged.
 
-  // ══ SYSTEM ═══════════════════════════════════════════════════
-  // ── Team — header links to the Team Hub; chevron expands the sub-pages
-  // (which are tabs on the Team page). Mirrors the Supply Chain pattern.
   {
     section: "system",
     label: "Team",
@@ -984,10 +747,6 @@ export const NAV_TABS: NavTab[] = [
     to: "/team?tab=hub",
     anyPerm: ["users.read", "roles.read"],
     pageAccess: "team",
-    // Sales Director → scoped Team (own-dept Members / Org Chart / Departments +
-    // Invite). Bypasses the perm/pageAccess gate on the group header + those
-    // three leaves ONLY; Mailboxes deliberately omits the flag so it stays
-    // hidden. Backend scopes every leaf to his department.
     showForSalesDirector: true,
     children: [
       // Redesigned Team screens (2026-08 handoff). The classic tabs stay
@@ -1012,8 +771,6 @@ export const NAV_TABS: NavTab[] = [
       { to: "/team?tab=permissions", label: "Roles & Permissions", icon: ShieldCheck, perm: "roles.read", pageAccess: "team.roles" },
     ],
   },
-  // IT pages (DEV-35). The header and both leaves carry the same capability, so
-  // nobody outside IT sees an empty group.
   {
     section: "system",
     label: "IT",
@@ -1034,11 +791,6 @@ export const NAV_TABS: NavTab[] = [
     label: "AI Connector",
     icon: Bot,
   },
-  // Next to System Health because it answers the same shape of question — "is
-  // the thing that runs in the background still working" — and because the
-  // owner's is "did my sales order reach AutoCount". anyPerm mirrors the two
-  // keys GET /api/scm/autocount-outbox accepts; the server is still the
-  // boundary, this only decides whether the row is worth showing.
   {
     section: "system",
     to: "/autocount-sync",
@@ -1046,16 +798,6 @@ export const NAV_TABS: NavTab[] = [
     icon: RefreshCw,
     anyPerm: ["*", "scm.autocount.read", "settings.manage"],
   },
-  // Beside AutoCount Sync because it is the same shape of question pointed at a
-  // different system: that one is "did my document reach the account book",
-  // this one is "did the Venture Portal get my sales orders" — and the portal
-  // works out Revenue Department commission from them, so an order it never
-  // received is money somebody is not paid. The row also carries the feed's
-  // SETTINGS (receiver address, shared secret, which companies, the start
-  // date), because the alternative the hand-off contract assumed was somebody
-  // pasting SQL into a database console. anyPerm mirrors the two keys the
-  // endpoint's READ half accepts; changing anything needs
-  // scm.venture_portal.manage, checked by the server per request.
   {
     section: "system",
     to: "/venture-portal-feed",
@@ -1063,10 +805,6 @@ export const NAV_TABS: NavTab[] = [
     icon: Send,
     anyPerm: ["*", "scm.venture_portal.read", "settings.manage"],
   },
-  // Beside AutoCount Sync because it answers the neighbouring question. That
-  // one is "did my document reach the account book"; this one is "who changed
-  // my document, and to what" — the supervision the owner asked for when he
-  // opened sales, delivery, purchase and receipt documents to staff.
   {
     section: "system",
     to: "/change-log",
@@ -1092,13 +830,6 @@ export const NAV_TABS: NavTab[] = [
     icon: Bot,
     anyPerm: ["*"],
   },
-  // No gate, like Announcements: every signed-in user reports problems to IT
-  // and reads only their OWN requests (the server takes the reporter from the
-  // session — backend routes/itSupport.ts), so a permission here would only be
-  // a way to lock someone out of asking for help. The row is dropped at render
-  // where this environment is not connected to the IT Hub (see visibleTabs).
-  // No gate: every signed-in user books meeting rooms and sees the shared calendar
-  // (backend routes/meetings.ts). Dropped with IT Support where the IT Hub is not connected.
   {
     section: "system",
     to: "/meetings",
@@ -1113,7 +844,6 @@ export const NAV_TABS: NavTab[] = [
     icon: LifeBuoy,
     badge: "it-support-replies",
   },
-  // Under IT Support (owner's ask); IT pages only, like System Health and AI Usage.
   {
     section: "system",
     to: "/ocr",
@@ -1128,7 +858,6 @@ export const NAV_TABS: NavTab[] = [
     icon: SettingsIcon,
     perm: "settings.manage",
   },
-  // Houzs POS Admin (the cash & carry booth app's ERP side): owner / admin.
   {
     section: "system",
     to: "/pos-admin",
@@ -1138,9 +867,6 @@ export const NAV_TABS: NavTab[] = [
   },
 ];
 
-// Accordion sibling map — each expandable group's same-level peers. Opening a
-// group collapses its siblings (top-level groups are mutually exclusive; so are
-// the SCM sub-groups) so the rail never piles up. Built once from NAV_TABS.
 const GROUP_SIBLINGS: Record<string, string[]> = (() => {
   const m: Record<string, string[]> = {};
   const walk = (tabs: NavTab[]) => {
@@ -1156,7 +882,6 @@ const GROUP_SIBLINGS: Record<string, string[]> = (() => {
   return m;
 })();
 
-// Section labels for the Workspace / Operations / System grouping.
 const SECTION_LABELS: Record<NonNullable<NavTab["section"]>, string> = {
   workspace: "Workspace",
   operations: "Operations",
@@ -1172,12 +897,8 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
      step with the backend's. */
   const badgeCounts = useApprovalBadgeCounts();
   const location = useLocation();
-  // On mobile the drawer is always full-width — collapsed state is
-  // a desktop-only concept.
   const effectiveCollapsed = collapsed;
 
-  // Per-group expanded memory (accordion). undefined = auto (open iff the group
-  // holds the current route); true/false = explicit after a click.
   const [groupExpanded, setGroupExpanded] = useIdentityPreference(
     "sidebar:groups:v2-accordion",
     {},
@@ -1187,8 +908,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
     const v = groupExpanded[id];
     return v === undefined ? active : v;
   }
-  // Opening a group collapses its same-level siblings (accordion). `active`
-  // resolves the auto/default state before flipping.
   function toggleGroup(id: string, active: boolean) {
     setGroupExpanded((prev) => {
       const cur = prev[id] === undefined ? active : prev[id];
@@ -1198,8 +917,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
       return next;
     });
   }
-  // Force a group open + collapse siblings — used when clicking a group's own
-  // link (e.g. Supply Chain → Hub) so the tree settles to just that branch.
   function openGroup(id: string) {
     setGroupExpanded((prev) => {
       const next = { ...prev, [id]: true };
@@ -1208,50 +925,29 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
     });
   }
 
-  /** True when a tab's `to` matches the current pathname + relevant query
-   *  params. NavLink doesn't compare query strings on its own, so for
-   *  entries like /projects?view=calendar we have to match manually. */
   function tabIsActive(to: string, end?: boolean, notWithParam?: string): boolean {
     return navToIsActive(to, location, end, notWithParam);
   }
-  /** A collapsed entry (Finance › Reports) is lit on any of its members, or on
-   *  its `alsoActive` address. */
   const collapsedLit = (tab: NavTab): boolean => collapsedEntryIsLit(tab, location);
 
-  // Filter tabs the current user can't access, plus tabs explicitly
-  // suppressed by hidePerm. Recursive — a group with no visible children is
-  // itself hidden. The full gate logic lives in ./navFilter so the mobile
-  // MenuModal (MobileTabBar) filters identically and can never drift.
   const filterTab = makeNavFilter({ user, can, pageAccess });
 
-  // IT Support is listed only where this environment is connected to the IT
-  // Hub; production has no row until its two secrets are set.
   const itSupportConnected = useItSupportConnected();
   const visibleTabs = withoutUnconnectedItSupport(
     NAV_TABS.map(filterTab).filter((t): t is NavTab => t !== null),
     itSupportConnected,
   );
 
-  // Recursive renderer for tabs — handles plain links and nested groups.
   function renderTab(tab: NavTab, depth = 0, lit?: boolean): React.ReactNode {
     const Icon = tab.icon;
 
-    // A collapsed group (Finance › Reports, batch 6 §1.1) is ONE entry: to the
-    // member opened last, else the first the reader may open; its members
-    // never render here.
     if (tab.collapsed && tab.children && tab.children.length > 0) {
       const target = collapsedEntryTo(tab.children, readLastReport());
       return target ? renderTab({ ...tab, children: undefined, to: target }, depth, collapsedLit(tab)) : null;
     }
 
-    // Group header (has children) — expandable section. A group that ALSO
-    // carries its own `to` (Supply Chain → /scm Hub) makes its LABEL a link to
-    // the Hub while the chevron still toggles the inline subtree — so the
-    // sidebar keeps the submenu AND the Hub is one click away.
     if (tab.children && tab.children.length > 0) {
       const gid = tab.groupId || tab.label;
-      // Bound once so the hover handlers below close over a narrowed string
-      // (TS drops narrowing on `tab.to` inside a callback).
       const headerTo = tab.to;
       const hasActiveDescendant = (n: NavTab): boolean => (
         n.collapsed
@@ -1262,8 +958,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
       const headerActive = selfActive || tab.children.some(hasActiveDescendant);
       const open = isGroupOpen(gid, headerActive);
       if (collapsed) {
-        // Collapsed: children render flat. A Hub-linked group leads with its
-        // icon as a link to the Hub so it's still reachable.
         return (
           <div key={gid}>
             {headerTo && (
@@ -1294,7 +988,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
       );
       return (
         <div key={gid} className="my-0.5">
-          {/* Header row: label = link (when `to`) or toggle; chevron always toggles. */}
           <div
             className={cn(
               "group relative flex w-full items-center gap-3 rounded-md pl-3 pr-1.5 text-left text-[12.5px] font-medium transition-all duration-150",
@@ -1338,7 +1031,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
               {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             </button>
           </div>
-          {/* Children: always visible on mobile; on lg+ obey the `open` flag. */}
           <div
             className={cn(
               "ml-3 border-l border-sidebar-border pl-2",
@@ -1351,7 +1043,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
       );
     }
 
-    // Leaf — needs `to`. (filterTab + types ensure it.)
     if (!tab.to) return null;
     const to = tab.to;
     const active = lit ?? tabIsActive(to, tab.end, tab.notWithParam);
@@ -1369,7 +1060,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
               ? tab.label
               : undefined
         }
-        // We compute active state ourselves so query strings match.
         className={() =>
           cn(
             "group relative my-0.5 flex items-center gap-3 rounded-md px-3 py-2 text-[12.5px] font-medium transition-all duration-150",
@@ -1390,11 +1080,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
         />
         {!collapsed && <span className="flex-1">{tab.label}</span>}
         {tab.badge && badgeCounts[tab.badge] > 0 && (
-          /* Red, because it is work that has stopped moving until this person
-             acts — the same `bg-err` the notification bell's count uses, so the
-             two red numbers on screen mean the same kind of thing. Collapsed,
-             the rail has no room for a label, so the count rides the icon as a
-             corner pip and the title attribute carries the words. */
           <span
             className={cn(
               "flex items-center justify-center rounded-full bg-err font-mono text-[9px] font-bold text-white shadow-sm",
@@ -1412,7 +1097,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
 
   return (
     <>
-      {/* Mobile backdrop — only rendered when the drawer is open. */}
       {mobileOpen && (
         <button
           onClick={onMobileClose}
@@ -1424,21 +1108,14 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
       <aside
         className={cn(
           "flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-ink transition-transform duration-200",
-          // Mobile: fixed drawer that slides in from the left. Width is
-          // 88vw with a 280 px ceiling so a 320 px device retains a
-          // ~38 px tap-out gutter. On `lg+` the explicit w-* below
-          // overrides this entirely.
           "fixed inset-y-0 left-0 z-50 w-[88vw] max-w-[280px]",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
-          // Desktop (lg+): static, takes part in flex layout, no transform.
           "lg:relative lg:max-w-none lg:translate-x-0 lg:transition-[width]",
           effectiveCollapsed ? "lg:w-16" : "lg:w-[232px]"
         )}
       >
-      {/* Brass hairline along the right edge — refined separator on top of the border */}
       <div className="pointer-events-none absolute right-0 top-0 h-full w-px bg-gradient-to-b from-transparent via-accent/35 to-transparent" />
 
-      {/* ── Brand header ────────────────────────────────────── */}
       <div
         className={cn(
           "relative flex h-20 items-center border-b border-sidebar-border",
@@ -1446,10 +1123,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
         )}
       >
         {collapsed ? (
-          // Collapsed: just the square mark. HOUZS keeps the bundled asset
-          // (whitewashed by brightness-0 invert, as before); another company's
-          // UPLOADED logo skips the whitewash (it would blank a colour logo),
-          // and the no-logo fallback is a two-letter glyph.
           <CompanyMark
             variant="mark"
             imgClassName="h-9 w-9 object-contain brightness-0 invert"
@@ -1457,8 +1130,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
             textClassName="text-[15px] font-bold tracking-wide text-sidebar-ink"
           />
         ) : (
-          // Expanded: the horizontal wordmark fills the available width.
-          // The 1:4 aspect ratio + h-10 yields a comfortable ~40×160 box.
           <CompanyMark
             variant="wordmark"
             imgClassName="h-10 w-auto max-w-[160px] object-contain brightness-0 invert"
@@ -1475,7 +1146,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
             <PanelLeftClose size={16} />
           </button>
         )}
-        {/* Mobile drawer close button — only visible below lg */}
         {onMobileClose && (
           <button
             onClick={onMobileClose}
@@ -1506,7 +1176,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
         </button>
       )}
 
-      {/* ── Global search trigger (mobile drawer only; desktop nav bar owns it) */}
       <div
         className={cn(
           "border-b border-sidebar-border lg:hidden",
@@ -1516,7 +1185,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
         <GlobalSearchTrigger collapsed={collapsed} />
       </div>
 
-      {/* ── Flat root nav ─────────────────────────────────────── */}
       <nav className="no-scrollbar flex-1 overflow-y-auto px-2 pb-4 pt-3">
         {SECTION_ORDER.map((sec) => {
           const items = visibleTabs.filter((t) => (t.section ?? "operations") === sec);
@@ -1534,7 +1202,6 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
         })}
       </nav>
 
-      {/* ── Notification bell (mobile drawer only; desktop nav bar owns it) */}
       {user && (
         <div
           className={cn(
@@ -1546,14 +1213,12 @@ export function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: Prop
         </div>
       )}
 
-      {/* ── Active members (mobile drawer only; desktop nav bar owns it) */}
       {user && (
         <div className="lg:hidden">
           <PresencePanel collapsed={collapsed} />
         </div>
       )}
 
-      {/* ── User identity + sign out (mobile drawer only; desktop nav bar owns the avatar) */}
       {user && (
         <div className="border-t border-sidebar-border lg:hidden">
           {collapsed ? (

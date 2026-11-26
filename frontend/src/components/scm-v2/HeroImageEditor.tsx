@@ -1,34 +1,3 @@
-// ----------------------------------------------------------------------------
-// HeroImageEditor — category hero image with a draggable focal-point.
-//
-// Backend endpoints (all live; PUBLIC_ASSETS R2 binding wired since 2026-06-18):
-//   POST   /scm/admin/categories/:id/hero-image   raw image body, content-type
-//                                                 drives format; writes to the
-//                                                 PUBLIC_ASSETS R2 bucket and
-//                                                 sets scm.categories.hero_image_key
-//   DELETE /scm/admin/categories/:id/hero-image   removes the R2 object and
-//                                                 nulls hero_image_key/focal/alt
-//   GET    /scm/categories/:id/hero-meta          { url, focal_x, focal_y, alt }
-//   PATCH  /scm/categories/:id/hero-meta          { focal_x, focal_y, alt }
-//   GET    /scm/categories/:id/hero-blob          streams the R2 blob. Loaded
-//                                                 via <img src>; the browser's
-//                                                 session cookie carries the
-//                                                 /api/scm auth (the route
-//                                                 lives under the same gated
-//                                                 tree — not truly public).
-//
-// The classifyLoadError-driven "not wired" fallback state is kept for defense
-// in depth: if the binding is ever unbound or the bucket is missing, the
-// hero-meta load surfaces a clear setup-notes UI instead of a blank crash.
-//
-// Layout (Final F4):
-//   · 16:7 preview area with a draggable crosshair (gold ring) at focal x,y
-//   · Replace / Remove buttons above
-//   · Aspect preset row (16:7 / 4:3 / 1:1) — selected = primary-soft
-//   · Alt-text field
-//   · "Setup notes" link in the section header (shared infra-dep pattern)
-//   · "Apply cover" CTA
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -47,12 +16,11 @@ import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { cn } from "../../lib/utils";
 import { classifyLoadError, errMsg } from "./PhotoGallery";
 
-// ── Types ───────────────────────────────────────────────────────────────────
 
 export type HeroMeta = {
   url: string | null;
-  focal_x: number; // 0–1
-  focal_y: number; // 0–1
+  focal_x: number;
+  focal_y: number;
   alt: string;
 };
 
@@ -63,11 +31,10 @@ const ASPECTS: Array<{ key: Aspect; label: string; css: string; aspect: string }
   { key: "1/1", label: "1 : 1", css: "1/1", aspect: "1 / 1" },
 ];
 
-const MAX_BYTES = 4 * 1024 * 1024; // hero endpoint caps at 4 MB
+const MAX_BYTES = 4 * 1024 * 1024;
 const ACCEPT = "image/jpeg,image/png";
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
-// ── Component ───────────────────────────────────────────────────────────────
 
 export function HeroImageEditor({
   categoryId,
@@ -80,11 +47,6 @@ export function HeroImageEditor({
 }) {
   const qc = useQueryClient();
 
-  // Fetch the saved hero meta. Endpoint shape (expected):
-  //   GET /scm/categories/:id/hero-meta → { url, focal_x, focal_y, alt }
-  // Until backend ships the meta route we fall back to "blob URL only" (a
-  // GET /hero-image with no focal/alt) which still lets the operator upload +
-  // see the existing image.
   const metaQ = useQuery({
     queryKey: ["category-hero-meta", categoryId],
     queryFn: async (): Promise<HeroMeta> => {
@@ -97,7 +59,6 @@ export function HeroImageEditor({
           alt: r.alt ?? "",
         };
       } catch (e) {
-        // Surface the classification so the page can render the right state.
         throw e;
       }
     },
@@ -106,8 +67,6 @@ export function HeroImageEditor({
   });
   const metaStatus = metaQ.error ? classifyLoadError(metaQ.error) : "ok";
 
-  // Local working copy (so the operator can drag the crosshair / edit alt
-  // even when backend hasn't shipped yet).
   const [focal, setFocal] = useState({ x: 0.5, y: 0.5 });
   const [alt, setAlt] = useState("");
   const [aspect, setAspect] = useState<Aspect>("16/7");
@@ -134,16 +93,10 @@ export function HeroImageEditor({
     return () => URL.revokeObjectURL(url);
   }, [pendingFile]);
 
-  // The image url shown in the preview: pending upload wins, then saved hero.
   const previewUrl = pendingPreview || metaQ.data?.url || null;
 
-  // Mutations
   const uploadMut = useMutation({
     mutationFn: async (file: File) => {
-      // Raw body upload — backend POST /:id/hero-image expects content-type:
-      // image/jpeg|png + raw arrayBuffer in the body. authedFetch treats a
-      // non-FormData/non-string body as a passthrough and stamps the
-      // content-type from the file.
       const buf = await file.arrayBuffer();
       return authedFetch<{ ok: true; key: string }>(
         `/admin/categories/${categoryId}/hero-image`,
@@ -221,7 +174,6 @@ export function HeroImageEditor({
 
   const aspectCss = ASPECTS.find((a) => a.key === aspect)!.aspect;
 
-  // Drag the crosshair
   const previewRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
   const onDragStart = (e: React.PointerEvent) => {
@@ -253,7 +205,6 @@ export function HeroImageEditor({
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-brand text-accent">
@@ -320,7 +271,6 @@ export function HeroImageEditor({
         </div>
       )}
 
-      {/* Error banner (upload failure / not-configured) */}
       {(uploadError ||
         metaStatus === "error" ||
         uploadMut.isError ||
@@ -343,7 +293,6 @@ export function HeroImageEditor({
           </div>
         )}
 
-      {/* Aspect presets */}
       <div className="flex items-center gap-2">
         <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
           Aspect
@@ -370,7 +319,6 @@ export function HeroImageEditor({
         </div>
       </div>
 
-      {/* Preview area */}
       <div
         ref={previewRef}
         onPointerDown={onDragStart}
@@ -419,7 +367,6 @@ export function HeroImageEditor({
         )}
 
         {previewUrl && (
-          // Focal crosshair — gold ring with hairlines.
           <div
             className="pointer-events-none absolute"
             style={{
@@ -435,7 +382,6 @@ export function HeroImageEditor({
           </div>
         )}
 
-        {/* Hairline guides for clarity at edge focal points */}
         {previewUrl && (
           <>
             <div
@@ -451,7 +397,6 @@ export function HeroImageEditor({
           </>
         )}
 
-        {/* Not-configured overlay */}
         {showOverlay && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-surface/70 to-surface/95 px-6 text-center">
             <div className="flex h-10 w-10 items-center justify-center rounded-[10px] border border-amber-300 dark:border-amber-800 bg-warning-bg text-warning-text">
@@ -481,7 +426,6 @@ export function HeroImageEditor({
         )}
       </div>
 
-      {/* Replace / Remove */}
       <div className="flex flex-wrap items-center gap-2">
         <input
           ref={fileInputRef}
@@ -516,7 +460,6 @@ export function HeroImageEditor({
         </div>
       </div>
 
-      {/* Alt text */}
       <label className="block">
         <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
           Alt text
@@ -532,7 +475,6 @@ export function HeroImageEditor({
         <div className="mt-1 text-[10px] text-ink-muted">{alt.length} / 200</div>
       </label>
 
-      {/* Apply CTA */}
       <div className="flex items-center justify-end gap-2">
         {patchMetaMut.isSuccess && !isSavePending && (
           <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-primary">

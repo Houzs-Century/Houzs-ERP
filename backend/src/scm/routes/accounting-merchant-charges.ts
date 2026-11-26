@@ -38,11 +38,7 @@ const MONTH = /^\d{4}-\d{2}$/;
 /** The two channels no merchant carries, as the rows name them. */
 export const CASH_CHANNEL = 'CASH';
 export const ONLINE_CHANNEL = 'ONLINE';
-/** Payment methods behind each channel — `transfer` is every online kind
-    (DuitNow, TNG, bank transfer …); `merchant` and `installment` ride the
-    acquirers' reports and are never counted here. */
 const CHANNEL_METHODS: Record<string, string> = { cash: CASH_CHANNEL, transfer: ONLINE_CHANNEL };
-/** Acquirers first, alphabetically; then cash, then online. */
 const channelRank = (acquirer: string): number => (acquirer === CASH_CHANNEL ? 1 : acquirer === ONLINE_CHANNEL ? 2 : 0);
 
 type LineRow = { batch_id: number | null; acquirer_code: string | null; txn_date: string; gross_sen: number | null; fee_sen: number | null; net_sen: number | null; confirmed_at: string | null };
@@ -77,7 +73,6 @@ const finish = <T extends ChargeFigures>(f: T): T => {
 const addLine = (f: ChargeFigures, l: LineRow) => {
   f.lines += 1; f.grossSen += Number(l.gross_sen ?? 0); f.feeSen += Number(l.fee_sen ?? 0); f.netSen += Number(l.net_sen ?? 0);
 };
-/** A keyed payment costs nothing: gross and net are the amount, no fee. */
 const addPayment = (f: ChargeFigures, p: ChargePayment) => {
   f.lines += 1; f.grossSen += p.amountSen; f.netSen += p.amountSen;
 };
@@ -110,7 +105,6 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
     .filter((l) => !confirmedOnly || l.confirmed_at != null)
     .filter((l) => onlyAcquirer == null || String(l.acquirer_code ?? '').toUpperCase() === onlyAcquirer);
 
-  /* The bank's own charge on a payout day, by the day the payout landed. */
   const payouts = await paginateAll<PayoutRow>((f, t) =>
     sb.from('acc_settlement_payout_batches')
       .select('batch_id, settled_on, charge_sen')
@@ -119,10 +113,6 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
   if (payouts.error) return failed('payouts', payouts.error);
   const charged = ((payouts.data ?? []) as PayoutRow[]).filter((p) => Number(p.charge_sen ?? 0) !== 0 && p.batch_id != null);
 
-  /* …and what an acquirer kept off a CREDIT when it sends no advice (owner
-     2026-09-30, GHL's RM 54) — carried on the receipt, and dated, as its entry
-     is, by the report's settlement day (filtered to the range once the reports
-     are read below). */
   const keptOff = await paginateAll<KeptRow>((f, t) =>
     sb.from('acc_settlement_receipts')
       .select('batch_id, charge_sen')
@@ -172,7 +162,6 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
     keyed = keyed.filter((p) => !cancelled.has(p.so_doc_no));
   }
 
-  /* month → acquirer → report. */
   const months = new Map<string, Map<string, Map<number, ChargeReport>>>();
   const at = (month: string, acquirer: string, batchId: number): ChargeReport => {
     const byAcq = months.get(month) ?? new Map<string, Map<number, ChargeReport>>();
@@ -204,7 +193,6 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
     at(day.slice(0, 7), acquirer, Number(k.batch_id)).bankChargeSen += Number(k.charge_sen ?? 0);
   }
 
-  /* month → channel → the payments. */
   const channels = new Map<string, Map<string, ChargePayment[]>>();
   for (const p of keyed) {
     const channel = CHANNEL_METHODS[String(p.method)];

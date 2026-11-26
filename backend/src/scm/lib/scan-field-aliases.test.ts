@@ -7,7 +7,6 @@ import { aliasHint, readSlipWithAliases, slipAliasPairs } from './scan-field-ali
 
 type Row = Record<string, unknown>;
 
-/* PostgREST stand-in: select/eq/not/or/limit/order/update/upsert. */
 function fakeDb(tables: Record<string, Row[]>) {
   class Q {
     private preds: Array<(r: Row) => boolean> = [];
@@ -57,7 +56,6 @@ function fakeDb(tables: Record<string, Row[]>) {
 const DOC = 'SO-2610-001';
 const COMPANY = 1;
 
-/** What the model reads off the slip, every time. */
 const modelRead = (): Row => ({
   customerName: 'Tan Ah Kow',
   phones: ['012-777 8880'],
@@ -78,12 +76,10 @@ describe('readSlipWithAliases + noteScanDraftAccepted: correct once, right next 
     const db = fakeDb(tables);
     const model = vi.fn(async (_hint: string) => ({ parsed: modelRead() }));
 
-    // Scan 1: nothing learnt yet, so the model's read stands.
     const first = await readSlipWithAliases(db, COMPANY, model);
     expect(first.parsed.customerName).toBe('Tan Ah Kow');
     expect(model.mock.calls[0]![0]).toBe('');
 
-    // The draft built from it; the operator fixes three fields and confirms.
     tables.scan_jobs = [{ so_doc_no: DOC, sample_id: 'S1', created_at: '2026-10-14' }];
     tables.so_scan_samples = [{ id: 'S1', extracted: first.parsed, status: 'EXTRACTED' }];
     tables.mfg_so_audit_log = [{ so_doc_no: DOC, action: 'UPDATE_DETAILS', source: 'web' }];
@@ -97,14 +93,12 @@ describe('readSlipWithAliases + noteScanDraftAccepted: correct once, right next 
     expect(tables.scan_field_aliases).toHaveLength(3);
     expect(tables.scan_field_aliases!.every((a) => a.company_id === COMPANY && a.kind === 'so')).toBe(true);
 
-    // Scan 2: same misread from the model; the table fixes it, and the model was told.
     const second = await readSlipWithAliases(db, COMPANY, model);
     expect(second.parsed.customerName).toBe('Tan Ah Kau');
     expect((second.parsed.phones as string[])[0]).toBe('127778881');
     expect((second.parsed.lines as Row[])[0]!.skuMatch).toMatchObject({ code: 'BC-KING', confidence: 1 });
     expect(model.mock.calls[1]![0]).toContain('Tan Ah Kau');
 
-    // Another company's scan learns nothing from this one.
     const other = await readSlipWithAliases(db, 2, model);
     expect(other.parsed.customerName).toBe('Tan Ah Kow');
   });

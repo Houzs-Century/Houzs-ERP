@@ -60,7 +60,6 @@ export type ConfirmOpts = {
   body?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** Red Confirm button for destructive actions (delete / void). */
   danger?: boolean;
   /** Ask for a line of text with the confirm (owner 2026-09-10: a payment
       correction made on the amend right owes a reason). When `required`,
@@ -72,7 +71,6 @@ export type ConfirmOpts = {
 export type ConfirmDialogProps = ConfirmOpts & {
   onConfirm: () => void;
   onCancel: () => void;
-  /** The typed text, when `input` is set. Controlled by the provider. */
   value?: string;
   onValueChange?: (v: string) => void;
 };
@@ -129,9 +127,6 @@ export const ConfirmDialog = ({
   );
 };
 
-/* One provider, two hooks. `confirm` answers yes/no; `prompt` answers with the
-   text typed, or null when dismissed. Both go through the same dialog so a
-   prompt supersedes an open confirm the way two confirms already do. */
 type Settled = { ok: boolean; text: string };
 type AskFn = (opts: ConfirmOpts) => Promise<Settled>;
 type ConfirmFn = (opts: ConfirmOpts) => Promise<boolean>;
@@ -139,13 +134,10 @@ type PromptFn = (opts: ConfirmOpts & { input: NonNullable<ConfirmOpts['input']> 
 
 const AskContext = createContext<AskFn | null>(null);
 
-/* Mount once at the app root. Holds the live prompt state, renders the modal,
-   and hands every descendant a confirm() / prompt() through context. */
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<(ConfirmOpts & { resolve: (v: Settled) => void; text: string }) | null>(null);
   const ask = useCallback<AskFn>(
     (opts) => new Promise<Settled>((resolve) => {
-      // A new prompt supersedes any open one (resolve the old as cancelled).
       setState((prev) => { prev?.resolve({ ok: false, text: '' }); return { ...opts, resolve, text: '' }; });
     }),
     [],
@@ -172,17 +164,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/* Gate an action behind an in-app confirm: `if (await confirm({…})) doIt()`. */
 export function useConfirm(): ConfirmFn {
   const ask = useContext(AskContext);
   if (!ask) throw new Error('useConfirm must be used within <ConfirmProvider>');
   return useCallback<ConfirmFn>(async (opts) => (await ask(opts)).ok, [ask]);
 }
 
-/* Ask for a line of text: `const reason = await prompt({…, input: {…}})` —
-   the trimmed text on Confirm, null on Cancel / backdrop / supersession. A
-   required input that is blank cannot be confirmed, so a non-null answer is
-   never empty when `required` was set. */
 export function usePrompt(): PromptFn {
   const ask = useContext(AskContext);
   if (!ask) throw new Error('usePrompt must be used within <ConfirmProvider>');

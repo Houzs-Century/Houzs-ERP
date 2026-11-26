@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// entity-audit.ts — the audit-trail writer for every SCM document that is NOT a
-// Sales Order. Sibling of lib/so-audit.ts, writing scm.entity_audit_log
-// (migration 0139) keyed by (entity_type, entity_id) instead of so_doc_no.
-//
-// Owner's rule: every edit records WHO, WHEN to the minute, and WHAT changed
-// from-value -> to-value. so-audit.ts is the only place in this tree that has
-// ever obeyed it; this is that same mechanism pointed at money and stock.
-//
-// `diffFields` is IMPORTED from so-audit rather than reimplemented. Two differs
-// would drift, and the whole point of a from->to record is that both tables
-// answer the question the same way.
-// ----------------------------------------------------------------------------
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { diffFields, type FieldChange } from './so-audit';
@@ -20,28 +7,16 @@ import { isMissingRpc, isUnsupportedTransactionRpc } from './rpc-missing';
 export { diffFields };
 export type { FieldChange };
 
-/* The documents this log covers. A closed union rather than a free string so a
-   typo cannot silently create a second, invisible history for the same module —
-   the read endpoint filters on this exact value. */
 export const ENTITY_TYPES = [
   'PAYMENT_VOUCHER',
   'GRN',
   'STOCK_TAKE',
   'STOCK_TRANSFER',
   'INVENTORY_ADJUSTMENT',
-  /* The document modules, added after the money/stock set. entity_type is plain
-     text in migration 0139 with NO check constraint, deliberately (see the
-     migration header), so extending this list needs no migration — but it is
-     still the ONLY list, because the read endpoint rejects anything not in it. */
   'SALES_INVOICE',
   'PURCHASE_ORDER',
   'PURCHASE_INVOICE',
   'DELIVERY_ORDER',
-  /* Write-only so far, exactly like DELIVERY_ORDER: purchase-returns.ts records
-     RECOUNT_FAILED here when a line change's delta movement is refused. Nothing
-     reads it through the History drawer (the frontend's AuditEntityType union
-     does not carry it either), so the row exists for an investigator and for
-     /inventory/reconcile, not for a tab. */
   'PURCHASE_RETURN',
   /* 申请付款 (owner 2026-09-30): a payment request's own trail — submitted,
      edited, withdrawn, returned by Finance with the why, answered by a voucher. */
@@ -56,17 +31,8 @@ export const ENTITY_TYPES = [
      its accounts and stock re-posted, a paper added, changed or cancelled, the
      opening locked or unlocked. Write-only so far. */
   'OPENING_BALANCE',
-  /* A lorry taken off the road by hand and put back (Fleet, 2026-11-10), keyed
-     by the scm.lorry_maintenance row id. Write-only so far. */
   'LORRY_OFF_ROAD',
-  /* A Chart of Accounts code (2026-11-10), keyed by the account code: created,
-     its definition edited, ticked on or off for a company, renamed (the row
-     sits under the NEW code), deleted. One row per company touched. Write-only
-     so far. */
   'GL_ACCOUNT',
-  /* A credit or debit note's knock-off (2026-11-10): an application given back
-     to the note, or a posted note's knock-off changed — the invoice owes again.
-     Write-only so far. */
   'CREDIT_NOTE',
   /* Daily Bank's cash book (owner 2026-11-23): a money account's starting
      balance, keyed by the account code (set, changed, removed), and a typed
@@ -83,29 +49,6 @@ export function isEntityType(v: unknown): v is EntityType {
   return (ENTITY_TYPES as readonly string[]).includes(String(v));
 }
 
-/* Stable verbs, shared across every module. so-audit.ts uses per-module verbs
-   (ADD_PAYMENT, UPDATE_LINE...) because it describes ONE document type; this log
-   spans five, so the verb answers "what kind of event" and the entity_type
-   answers "to what". A renderer can label six verbs; it cannot label an open set. */
-/* SEND is the only verb here whose event leaves the building: it records that a
-   document was transmitted to an EXTERNAL party (today, a PO emailed to its
-   supplier). It is a separate verb rather than an UPDATE because the question it
-   answers is different — "who told the supplier, and when" is asked long after
-   nobody cares which column changed. */
-/* AMENDMENT_PO_APPROVED is the one document-revision verb — a Purchase Order
-   amendment was approved and APPLIED (snapshot + line diffs + revision bump),
-   the PO-side mirror of the SO trail's 'AMENDMENT_PO_APPROVED' recordSoAudit
-   action. It answers "who revised this PO, and to which revision", which UPDATE
-   (a field edit) does not. See lib/po-revision.ts applyPoAmendment. */
-/* RECOUNT_FAILED is the only verb here that records something the system FAILED
-   to do rather than something someone did. It exists because the alternative is
-   the silence that let 2026-07-14..22 happen: eleven GRNs posted, their stock
-   entered inventory, and not one of their POs was ever told — because
-   recomputePoReceived's recount runs AFTER the GRN is already POSTED and its
-   failure path was a console.error into a log nobody reads and nothing retains.
-   By the time an operator noticed (2026-07-31, by opening one order), the only
-   surviving evidence was the drift itself. A row here means the next occurrence
-   names its own GRN, in the trail an investigator already opens. */
 /* BIND_SHADOW records an OBSERVATION, not a change: the DO-time live allocator
    (soft-until-DO stage 2, Decision 2026-08-06 — docs/modules/purchase-order.md
    §Decision) runs in SHADOW beside the stored-link resolution in
@@ -130,9 +73,6 @@ export function isEntityType(v: unknown): v is EntityType {
 export const AUDIT_ACTIONS = ['CREATE', 'UPDATE', 'POST', 'CANCEL', 'REVERSE', 'DELETE', 'SEND', 'AMENDMENT_PO_APPROVED', 'RECOUNT_FAILED', 'BIND_SHADOW', 'SUBMIT_FOR_APPROVAL', 'WITHDRAW_FROM_APPROVAL', 'CHECK', 'APPROVE', 'REJECT', 'REMIND_APPROVER'] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-/* The Houzs caller, as middleware/auth.ts stashes it. Deliberately structural:
-   the writer needs three fields and taking the whole Variables type would couple
-   every caller's import graph to Hono's context generics. */
 export type AuditActor = {
   id?: number | null;
   name?: string | null;
@@ -144,9 +84,6 @@ export type RecordEntityAuditArgs = {
   entityId: string;
   entityDocNo?: string | null;
   action: AuditAction;
-  /* The REAL Houzs user (c.get('houzsUser')), never c.get('user'). See the actor
-     resolution note below — this distinction is the difference between an audit
-     trail and a list of identical rows. */
   actor?: AuditActor | null;
   companyId?: number | null;
   fieldChanges?: FieldChange[];
@@ -157,9 +94,7 @@ export type RecordEntityAuditArgs = {
 
 /** What actually happened to the history row. See recordEntityAudit. */
 export type AuditWriteResult = {
-  /** true only when the row is committed. */
   recorded: boolean;
-  /** Machine-readable cause, for logging. Never shown to an operator. */
   reason?: string;
 };
 
@@ -201,28 +136,14 @@ export async function recordEntityAudit(
   args: RecordEntityAuditArgs,
 ): Promise<AuditWriteResult> {
   try {
-    /* ACTOR RESOLUTION — the reason this writer takes `houzsUser` and not the
-       Supabase-shaped `user`. Inside /api/scm/*, middleware/auth.ts PINS
-       c.get('user').id to one seeded system staff uuid for every caller (a type
-       shim: 2990's routes expect a uuid, Houzs users are integers). so-audit.ts's
-       47 call sites pass that pinned id, so mfg_so_audit_log.actor_id names the
-       same system row on every entry ever written — only its
-       actor_name_snapshot is personalised, and that was itself a later fix.
-       Copying that would ship a money-movement log whose actor column is a
-       constant. The mig-0066 bridge gives every non-disabled user a real staff
-       uuid; resolveCallerStaffId is the documented way to reach it. */
     let actorId: string | null = null;
     if (args.actor?.id != null) {
       try {
         actorId = await resolveCallerStaffId(sb, args.actor.id);
       } catch {
-        /* swallow — an unattributed row still records WHEN and WHAT. */
       }
     }
 
-    /* Snapshotted at write time so renaming or disabling the user later cannot
-       rewrite history. Falls back to the email because a row that says WHO in
-       any form beats one that says nobody. */
     const actorName = args.actor?.name ?? args.actor?.email ?? null;
 
     const { error } = await sb.from('entity_audit_log').insert({
@@ -239,9 +160,6 @@ export async function recordEntityAudit(
       note:                args.note ?? null,
     });
     if (error) {
-      /* Reported, not swallowed, and not thrown — the business write is already
-         committed by the time we are here. The pre-flight is what prevents this;
-         reaching this branch means the sink died inside that window. */
       // eslint-disable-next-line no-console
       console.error(
         '[entity-audit] insert failed AFTER the business write committed:',
@@ -260,9 +178,6 @@ export async function recordEntityAudit(
   }
 }
 
-/* ──────────────────────────────────────────────────────────────────────
-   THE PRE-FLIGHT — the mechanism that makes the owner's ruling honest.
-   ────────────────────────────────────────────────────────────────────── */
 
 /**
  * The refusal an operator sees when the audit trail is not writable and the
@@ -287,18 +202,6 @@ export const AUDIT_UNAVAILABLE_ERROR = 'audit_trail_unavailable';
 export const AUDIT_UNAVAILABLE_MESSAGE =
   'This change was not saved, because the record of who changed what could not be written. Nothing has changed. Please try again in a moment, and tell IT if it keeps happening.';
 
-/* THE RESIDUAL CASE IS NOT CLOSED BY THIS FILE, AND IS NOT PRETENDED TO BE.
-   If the sink dies in the window between a green pre-flight and the insert, the
-   change is saved and unrecorded, and the operator is told nothing. Telling them
-   would need a warning carried on a SUCCESS response — and this API has no such
-   convention (every route reports trouble only through an error status, which
-   humanApiError then maps). Inventing one here means a new response field plus a
-   display path in every SCM page that saves, which is a different change than
-   this one. recordEntityAudit returns AuditWriteResult so that work has a hook;
-   until it is done the window is logged loudly and listed as an open gap in
-   BUG-HISTORY. It is narrow — microseconds against a probe taken moments before —
-   but it is real, and a comment saying so beats a message that implies it is
-   handled. */
 
 /** The 409 body for a pre-flight refusal. One shape, so every handler refuses identically. */
 export function auditUnavailableBody(): { error: string; message: string } {
@@ -335,8 +238,6 @@ export async function assertAuditWritable(
   try {
     const { data, error } = await sb.rpc('entity_audit_writable', {
       p_entity_type: args.entityType,
-      /* A CREATE has no id yet — the probe row is rolled back, so a placeholder
-         costs nothing and still exercises the NOT NULL on entity_id. */
       p_entity_id: args.entityId ?? 'preflight',
       p_action: args.action,
       p_company_id: args.companyId ?? null,
@@ -346,25 +247,12 @@ export async function assertAuditWritable(
       return { ok: false, reason: 'probe_reported_not_writable' };
     }
     if (!isMissingRpc(error)) {
-      /* The function exists and the call failed: the sink is unreachable or the
-         database is refusing us. Refuse. */
       // eslint-disable-next-line no-console
       console.error('[entity-audit] pre-flight probe failed:', args.entityType, error.message);
       return { ok: false, reason: error.message };
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    /* The atomic-transaction client (pg-supabase-transaction) THROWS
-       `Unsupported SCM transaction RPC: …` for any rpc() outside its
-       advisory-lock whitelist — which is exactly what happens when a command
-       wrapped in runScmPgCommand (the PO-amendment approve / the SO-amendment
-       PO follow-up confirm) runs this pre-flight. That is NOT "audit is
-       unwritable", it is "the probe RPC isn't callable in THIS client", so it
-       degrades to the reachability read below (which uses .from(), which the
-       atomic client DOES support) — identical to the missing-RPC path. Every
-       OTHER throw (a genuine socket/transport failure) stays fail-closed: a
-       real outage must block the write, not silently downgrade to a weaker
-       check. */
     if (!isUnsupportedTransactionRpc(msg)) {
       // eslint-disable-next-line no-console
       console.error('[entity-audit] pre-flight probe threw:', args.entityType, e);
@@ -374,7 +262,6 @@ export async function assertAuditWritable(
     console.error('[entity-audit] probe RPC not callable in this transaction client, using reachability fallback:', args.entityType);
   }
 
-  /* RPC missing or un-invokable here — reachability-only fallback. */
   try {
     const { error } = await sb.from('entity_audit_log').select('id').limit(1);
     if (error) {
@@ -390,9 +277,6 @@ export async function assertAuditWritable(
   }
 }
 
-/* ──────────────────────────────────────────────────────────────────────
-   Pure helpers for building FieldChange arrays outside a patch-body diff.
-   ────────────────────────────────────────────────────────────────────── */
 
 /**
  * One explicit from->to pair, or null when nothing moved.

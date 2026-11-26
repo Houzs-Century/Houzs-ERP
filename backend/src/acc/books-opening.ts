@@ -32,14 +32,10 @@ import { STOCK_BUCKETS, emptyBuckets, type StockBucket } from '../scm/lib/stock-
 type Db = any;
 
 export type BooksOpening = {
-  /** The books' first day, YYYY-MM-DD. */
   booksStart: string;
-  /** The day the opening is dated: the day before the start — the old book's last day. */
   openingDate: string;
-  /** The stock the books opened with, per bucket, in sen. */
   stock: Record<StockBucket, number>;
   stockTotalSen: number;
-  /** Set once the owner calls the opening final; the Opening Balance page then refuses every change. */
   lockedAt: string | null;
   lockedBy: string | null;
 };
@@ -100,7 +96,6 @@ export const openingDocumentRefusal = (docNo: string): { error: 'opening_documen
   message: `${docNo} is part of the books' opening balance — change it on Finance › Opening Balance.`,
 });
 
-/* ── Where a statement's stock comes from ───────────────────────────────── */
 
 /** The engine as of the end of a date, or a figure the books fix (the opening stock, or nothing). */
 export type StockFrom =

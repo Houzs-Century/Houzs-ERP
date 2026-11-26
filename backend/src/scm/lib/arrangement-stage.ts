@@ -62,11 +62,8 @@ export type DateArrangement = 'PENDING_DATE' | 'DATE_ARRANGED';
 export type TimeArrangement = 'PENDING_TIME' | 'TIME_ARRANGED';
 
 export function deriveArrangementStage(input: {
-  /** The row's derived (or overridden) 4-state — derivePlanningState's output. */
   deliveryState: string | null | undefined;
-  /** A confirmed delivery date exists (amended_delivery_date / requested_date). */
   dateConfirmed: boolean;
-  /** A DELIVERY stop on a non-CANCELLED trip references this order. */
   onActiveTrip: boolean;
 }): ArrangementStage | null {
   if (input.deliveryState !== 'PENDING_SCHEDULE') return null;
@@ -75,9 +72,6 @@ export function deriveArrangementStage(input: {
   return 'PENDING_DATE';
 }
 
-/* The two side-views, kept beside the stage rule so a tab can never disagree
-   with the stage it was computed from. PENDING_TIME *is* "Date arranged" — the
-   same order seen from the other side of the hand-off. */
 export function dateSideOf(stage: ArrangementStage | null): DateArrangement | null {
   if (stage == null) return null;
   return stage === 'PENDING_DATE' ? 'PENDING_DATE' : 'DATE_ARRANGED';
@@ -86,5 +80,5 @@ export function dateSideOf(stage: ArrangementStage | null): DateArrangement | nu
 export function timeSideOf(stage: ArrangementStage | null): TimeArrangement | null {
   if (stage === 'PENDING_TIME') return 'PENDING_TIME';
   if (stage === 'TIME_ARRANGED') return 'TIME_ARRANGED';
-  return null; // PENDING_DATE / out of pipeline — not the Time page's yet
+  return null;
 }

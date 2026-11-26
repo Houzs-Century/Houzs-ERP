@@ -71,7 +71,7 @@ beforeEach(() => {
   soQ = { data: undefined, isLoading: false, error: null };
   poQ = { data: undefined, isLoading: false, error: null };
   superAdmin = false;
-  try { window.localStorage.clear(); } catch { /* jsdom without storage */ }
+  try { window.localStorage.clear(); } catch { }
 });
 
 describe('AmendmentQuickView — a Sales Order amendment', () => {
@@ -101,7 +101,6 @@ describe('AmendmentQuickView — a Sales Order amendment', () => {
     expect(screen.getByText('Added line')).toBeTruthy();
     expect(screen.getByText('TRANSPORTATION CHARGES')).toBeTruthy();
     expect(screen.getByText('New line — nothing before')).toBeTruthy();
-    /* A new line with no remark and no discount has nothing to clear. */
     expect(screen.queryByText('Remark cleared')).toBeNull();
     expect(screen.queryByText('Discount cleared')).toBeNull();
   });

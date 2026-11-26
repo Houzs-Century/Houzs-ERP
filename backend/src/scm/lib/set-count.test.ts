@@ -32,7 +32,7 @@ describe('deriveSetCount', () => {
       { category: 'MATTRESS', qty: 2 },
       { category: 'SOFA', qty: 1 },
     ]);
-    expect(r.sets).toBe(3); // max(2,2) + 1
+    expect(r.sets).toBe(3);
     expect(r.sofas).toBe(1);
   });
 

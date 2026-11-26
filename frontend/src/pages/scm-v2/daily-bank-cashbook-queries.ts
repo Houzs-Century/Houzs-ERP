@@ -1,8 +1,3 @@
-// Daily Bank's cash book, a second Daily Bank beside the original (owner
-// 2026-11-23): its board, each money account's starting balance and the
-// receipts typed by hand (backend routes/accounting-daily-bank-cashbook.ts).
-// Every write refreshes the day and the cash-book board; the original board
-// never reads them.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
@@ -16,9 +11,7 @@ export type CashbookReceiptRow = {
   id: string; accountCode: string; accountName: string; date: string; amountSen: number; note: string;
   createdBy: string | null; createdAt: string | null; updatedBy: string | null; updatedAt: string | null;
   deletedBy: string | null; deletedAt: string | null;
-  /** On the board: its account's start is on or before it, and it is not deleted. */
   counted: boolean;
-  /** The grid's column it was keyed in (online, cash, cheque, card:<code>); null = typed with a note. */
   method: string | null;
 };
 /** A way money comes in: one column of the day's grid. */
@@ -26,7 +19,6 @@ export type CashbookMethod = { key: string; label: string };
 export type CashbookDay = {
   date: string; today: string; canWrite: boolean;
   accounts: CashbookAccount[]; receipts: CashbookReceiptRow[]; deleted: CashbookReceiptRow[];
-  /** The grid's columns: Online, Cash, Cheque, then the company's active card terminals. */
   methods: CashbookMethod[];
 };
 

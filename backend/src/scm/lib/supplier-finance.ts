@@ -23,7 +23,6 @@ type Db = any;
 export const isSupplierFinanceCaller = (c: { get: (key: 'houzsUser') => unknown }): boolean =>
   hasCapability(c.get('houzsUser') as CapabilityCaller | null | undefined, 'scm.money.move');
 
-/** The documents that carry a supplier by id, in the words an operator uses for them. */
 const SUPPLIER_DOCUMENTS: ReadonlyArray<readonly [table: string, label: string]> = [
   ['purchase_orders', 'purchase orders'],
   ['grns', 'goods received notes'],

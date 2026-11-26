@@ -1,9 +1,5 @@
 import { useIdleSessionFilter } from "../hooks/useIdleSessionFilter";
 
-/* Opening a card replaces the list screen, so the list remounts on Back: its search,
-   chips and sort are kept per list for the session (cleared on logout or after an
-   hour away), the phone side of the desktop lists' Back-keeps-your-place
-   (Conts-ERP #406). */
 export function useMobileListView(listId: string, defaultSort: string) {
   const [view, patch] = useIdleSessionFilter(
     `mobile-list:${listId}`,

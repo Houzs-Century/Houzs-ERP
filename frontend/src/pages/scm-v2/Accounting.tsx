@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// Accounting page — the ledger's face (accounting module, phase 1).
-//
-// Tab strip:
-//   1. Chart of Accounts — the ACTIVE company's tree, read-only (maintenance
-//      lives on the union page /scm/chart-of-accounts — one door only)
-//   2. Journal Entries — list w/ filter, drill into lines, NEW manual journal,
-//      post a draft, reverse a posted manual journal
-//   3. General Ledger — flat GL stream, filter by account / date
-//   4. Trial Balance — Σ Dr / Σ Cr per account + the report's own self-check:
-//      the difference tile is 0.00 or the ledger is broken (brief §3.7)
-//   5. AR Aging / 6. AP Aging — outstanding SI / PI bucketed
-//   7. Self-check — reconciliation layer 1: control account vs documents,
-//      drift named to the document (brief §3.5)
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -55,7 +40,6 @@ import { DateField } from "../../vendor/scm/components/DateField";
 
 type Tab = AccountingTab;
 
-/* The tabs that draw their own head, with their actions in it. */
 const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je', 'gl', 'check', 'close', 'commrel']);
 
 export const Accounting = () => {
@@ -73,9 +57,6 @@ export const Accounting = () => {
     if (wanted && wanted !== tab) setTabState(wanted);
   }, [wanted, tab]);
 
-  /* A report tab is drawn in the report shell — the report list and the
-     report's own header (batch 6 §4.3); Journal entries, the General ledger
-     and the Trial balance too when opened from the list (`in=reports`). */
   const report = reportOfAccountingTab(tab, params.get('in') === 'reports');
 
   return (
@@ -113,10 +94,6 @@ export const Accounting = () => {
   );
 };
 
-/* The frame a tab is drawn in: a report in the report shell (a tab that draws
-   its own head keeps it, the shell adds the report list), any other tab under
-   the redesign's head (batch 6 §1.2) — "Finance · <section>" over the tab's
-   own name, unless the tab draws its own with its actions in it. */
 const AccountingFrame = ({ tab, report, children }: { tab: Tab; report: ReportItem | null; children: ReactNode }) => (
   report
     ? <ReportShell report={report.id} ownHeader={OWN_HEADER.has(tab)}>{children}</ReportShell>
@@ -128,7 +105,6 @@ const AccountingFrame = ({ tab, report, children }: { tab: Tab; report: ReportIt
     )
 );
 
-/* ── Chart of Accounts ───────────────────────────────────────────────── */
 const ACCOUNT_TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
 
 const CoaTab = () => {
@@ -236,13 +212,11 @@ const CoaTab = () => {
   );
 };
 
-/* ── Journal Entries ─────────────────────────────────────────────────── */
 
 /* The Journal page grouped per entry — the AutoCount way (docs/bugs/0935).
    Its filters live in the URL; the entry card and the draft form ride with it. */
 const JeTab = () => <JournalTab />;
 
-/* ── GL ──────────────────────────────────────────────────────────────── */
 /* The General Ledger the AutoCount way — per-account blocks, BALANCE B/F, a
    running balance, the journal's references (docs/bugs/0924). Its filters
    live in the URL, so a figure on a statement opens it on that account. */

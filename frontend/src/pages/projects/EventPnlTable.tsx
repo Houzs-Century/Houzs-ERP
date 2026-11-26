@@ -24,7 +24,6 @@ type Editable = { onSave: (n: number) => Promise<void> } | undefined;
 
 const pct = (n: number): string => `${Number.isInteger(n) ? n.toFixed(0) : String(n)}%`;
 
-/** Where a % row's figure came from, in a few words. */
 function pctNote(r: PnlPctRow & { boost?: boolean }): string | undefined {
   if (r.from === "books") return "booked";
   if (r.from === "typed") return "typed";
@@ -32,7 +31,6 @@ function pctNote(r: PnlPctRow & { boost?: boolean }): string | undefined {
   return undefined;
 }
 
-/** The rate-card note, plus the orders' service cost the row carries. */
 function transportNote(r: PnlPctRow & { serviceCost: number }): string | undefined {
   const base = pctNote(r);
   if (!r.serviceCost) return base;
@@ -73,7 +71,6 @@ export function SourceTag({ source }: { source: LineSource }) {
   );
 }
 
-/** Set or clear one line's Forecast, inline under its label. Shows its failure. */
 function ForecastEditor({ line, current, onForecast }: {
   line: ForecastLine;
   current: number | null;
@@ -136,11 +133,8 @@ function Cell({ value, note, editable, busy, tone, bold, source, draftFrom, edit
   busy?: boolean;
   tone?: "synced" | "err";
   bold?: boolean;
-  /** The layer the shown figure came from; an actual shows no tag. */
   source?: LineSource;
-  /** What the typed-row editor starts from (the actual, not an estimate). */
   draftFrom?: number;
-  /** The hover note when the click does something other than edit the actual. */
   editTitle?: string;
 }) {
   const [editing, setEditing] = useState(false);
@@ -192,14 +186,10 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, 
    *  Sales column - Sales included - sets that line's FORECAST; after it ends a
    *  click edits the actual, as before. */
   forecastByClick: boolean;
-  /** The three layers over the Total Sales column; null = actuals only. */
   layers: DetailForecast | null;
-  /** Set / clear a line's Forecast; null when the caller may not. */
   onForecast: ((line: ForecastLine, amount: number | null) => Promise<void>) | null;
-  /** The typed row's save, or undefined when the books fill it. */
   editable: (category: string, row: string) => Editable;
   busyCategory: string | null;
-  /** Rows the books fill. */
   books: ReadonlySet<string>;
   rentalNote?: string;
 }) {
@@ -264,7 +254,6 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, 
     const va = held != null ? held : layered ? layered.amount : total ? total.amount : actualA;
     const noteA = total?.estimated ? [opts.noteA, ESTIMATE_NOTE].filter(Boolean).join(" · ") : layered && layered.source !== "actual" ? undefined : opts.noteA;
     const vb = b ? pick(b) : null;
-    /* A real figure (books, typed cost, real sales) is never replaced by a click. */
     const byClick = forecastByClick && saveForecast !== null && !!layered && layered.source !== "actual";
     const line = opts.line;
     const clickForecast = byClick && line ? { onSave: (n: number) => saveForecast(line, n) } : null;
@@ -300,7 +289,6 @@ export function EventPnlTable({ pnl, editable, busyCategory, books, rentalNote, 
     );
   };
   const profitTone = (n: number): "synced" | "err" => (n >= 0 ? "synced" : "err");
-  /* The Total Sales column's own figures — the layered ones when sent. */
   const salesA = layers ? layers.lines.sales.amount : a.sales;
   const gpA = layers ? layers.totals.gross_profit.amount : a.grossProfit;
   const npA = layers ? layers.totals.net_profit.amount : a.netProfit;

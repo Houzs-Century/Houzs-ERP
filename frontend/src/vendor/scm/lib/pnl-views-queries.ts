@@ -17,7 +17,6 @@ import type { LaidNode } from './report-layout';
 /** One view on the P&L's tree — what report-monthly's pnlLines prints from. */
 export type PnlViewSide = {
   layout: { baseSen: number | null; tradingIncome: LaidNode[]; costOfSales: LaidNode[]; otherIncome: LaidNode[]; expenses: LaidNode[]; taxation: LaidNode[] };
-  /** The taxation lines: the block prints only when there are some. */
   taxation: Array<{ code: string; name: string; amountSen: number }>;
   totals: {
     tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number;
@@ -27,11 +26,9 @@ export type PnlViewSide = {
 
 export type PnlViewsPayload = {
   from: string; to: string;
-  /** The months the views cover, YYYY-MM. */
   months: string[];
   actual: PnlViewSide;
   performance: PnlViewSide;
-  /** Null when none of the months has a forecast. */
   forecast: PnlViewSide | null;
 };
 

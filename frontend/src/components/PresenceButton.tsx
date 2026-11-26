@@ -24,9 +24,6 @@ import type { ActiveMember } from "../types";
 
 const AVATAR_BG = ["bg-primary", "bg-primary-ink", "bg-ink-secondary"];
 
-/* Path tails that read as document numbers ("SO-2990-2607-022") get shown
-   after the page label — real doc-in-path routes only; ULID-ish or numeric
-   ids stay hidden. */
 const DOC_TAIL = /^[A-Z]{2,4}-[A-Z0-9][A-Z0-9-]{3,}$/i;
 
 function initialsOf(m: ActiveMember): string {
@@ -36,7 +33,6 @@ function initialsOf(m: ActiveMember): string {
   return src.slice(0, 2).toUpperCase();
 }
 
-/* last_seen_at is SQLite "YYYY-MM-DD HH:MM:SS" in UTC with no marker. */
 function minutesSince(lastSeenAt: string): number | null {
   const t = Date.parse(lastSeenAt.replace(" ", "T") + "Z");
   if (!Number.isFinite(t)) return null;
@@ -72,7 +68,6 @@ export function PresenceButton() {
   const online = members.filter((m) => !m.is_self);
   const awayList = away.filter((m) => !m.is_self);
 
-  // Close on outside click (same idiom as NotificationBell).
   useEffect(() => {
     if (!open) return;
     function onDown(e: MouseEvent) {
@@ -84,7 +79,6 @@ export function PresenceButton() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  // Esc closes and hands focus back to the button.
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent) {
@@ -97,7 +91,6 @@ export function PresenceButton() {
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
-  // Route change closes (a row click navigates; so can anything else).
   useEffect(() => {
     setOpen(false);
   }, [location.key]);
@@ -135,7 +128,6 @@ export function PresenceButton() {
         )}
       </button>
 
-      {/* Hover tooltip — closed state only; CSS-delayed, no JS timer. */}
       {!open && (
         <span className="pointer-events-none absolute right-0 top-11 z-20 whitespace-nowrap rounded-md bg-ink px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider text-white opacity-0 shadow-slab transition-opacity delay-[400ms] group-hover:opacity-100">
           {online.length} teammates online
@@ -148,7 +140,6 @@ export function PresenceButton() {
           aria-label="Team activity"
           className="absolute right-0 top-11 z-20 w-[360px] overflow-hidden rounded-lg border border-border bg-surface shadow-slab animate-fade-in"
         >
-          {/* Header — title + online/away chips */}
           <div className="flex items-center justify-between bg-primary px-4 py-3.5">
             <span className="font-mono text-[11px] uppercase tracking-wider text-white">
               Team activity
@@ -284,7 +275,6 @@ export function PresenceButton() {
             </>
           )}
 
-          {/* Footer — idle rule + team admin */}
           <div className="flex items-center justify-between border-t border-border-subtle bg-surface-2 px-4 py-2.5">
             <span className="text-[11px] text-ink-muted">
               Away after 2 min quiet · gone after 15

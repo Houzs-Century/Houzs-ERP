@@ -1,7 +1,3 @@
-// A PO raised at 01:30 Malaysia time on 1 Dec is 17:30 UTC on 30 Nov. The
-// Worker clock is UTC, so the PO date (column default now()) and the month in
-// the PO number (getMonth()) both landed in November. Drives the real create
-// handler through the fake PostgREST client, as mfgPoBlankExpectedAt.test.ts.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';

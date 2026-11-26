@@ -42,8 +42,6 @@ import { doCountsAsDelivered } from '../shared/do-shipped-states';
 import { chunkIn, paginateAll } from './paginate-all';
 import { readFailureError } from './read-failure';
 
-/** Same normalisation so-line-relink.ts and the repair script match on, so all
- *  three agree about what "the same SKU" means. */
 const normCode = (code: string | null | undefined): string => String(code ?? '').trim().toUpperCase();
 
 export type CoverageSoLine = { id: string; docNo: string; itemCode: string | null; qty: number };
@@ -73,15 +71,12 @@ export function attributeUnlinkedDoLines(
 ): AttributedDelivery[] {
   if (unlinked.length === 0) return [];
 
-  /* Bucket by (SO doc, item code). The doc is half the key on purpose: a DO
-     header names ONE order, so a line can never reach across to another
-     customer's identical SKU. */
   const bucket = (docNo: string, itemCode: string | null) => `${docNo}::${normCode(itemCode)}`;
   const openBySlot = new Map<string, Array<{ id: string; open: number }>>();
   for (const s of soLines) {
     const already = linkedDeliveredBySoItem.get(s.id) ?? 0;
     const open = Number(s.qty ?? 0) - Math.max(0, already);
-    if (!(open > 0)) continue; // fully covered by real links — nothing to fill
+    if (!(open > 0)) continue;
     const key = bucket(s.docNo, s.itemCode);
     const arr = openBySlot.get(key) ?? [];
     arr.push({ id: s.id, open });
@@ -94,16 +89,8 @@ export function attributeUnlinkedDoLines(
     let left = Number(d.qty ?? 0);
     if (!(left > 0)) continue;
     const slot = openBySlot.get(bucket(d.docNo, d.itemCode));
-    if (!slot) continue; // no SO line of that SKU still open — attribute nothing
+    if (!slot) continue;
 
-    /* Fill in the order the caller handed the SO lines over (their listing
-       order), so the result is deterministic. A DO line bigger than one SO
-       line's opening spills onto the next line of the SAME SKU — the shape a
-       merged/multi-line order produces — and anything still left over after the
-       whole bucket is exhausted is DROPPED, never forced onto an unrelated
-       line. Dropping is the conservative direction: it under-counts coverage,
-       which at worst leaves the old (wrong) "still owing" reading in place,
-       instead of over-counting and hiding a genuine shortage. */
     for (const line of slot) {
       if (left <= 0) break;
       if (line.open <= 0) continue;
@@ -134,40 +121,6 @@ export async function netDeliveredBySoItem(
   soLines: CoverageSoLine[],
 ): Promise<{ deliveredBySoItem: Map<string, number>; doLineToSoItem: Map<string, string> }> {
   type LinkedRow = { id: string; so_item_id: string | null; qty: number; parent: { status: string | null } | null };
-  // Σ delivered — DO lines linked by so_item_id whose parent DO is NOT
-  // cancelled (nor DRAFT — a draft hasn't shipped). PERF: collapsed from a
-  // two-step "pull DO lines, then re-fetch their parent DOs to read status"
-  // into ONE round-trip by embedding the parent status (PostgREST to-one
-  // embed → row count unchanged, so paginateAll stays exact). The
-  // CANCELLED/DRAFT decision is still made HERE in JS with the same
-  // .toUpperCase() compare, and a missing parent (orphan) is excluded exactly
-  // as before (its id used to be absent from the delivery_orders lookup, so
-  // it never entered activeDoIds) — the delivered sum is byte-identical.
-  /* THE ERROR IS BOUND AND THROWN, which the version of this read that lived in
-     the route was not. supabase-js does not throw: with only `data` destructured,
-     "the query failed" and "nothing is delivered" arrive as the same empty array
-     — and on THIS read that silence means every line reads as undelivered, which
-     is the exact false reading (goods shipped, order still owing, MRP re-orders)
-     this module exists to end. Failing loudly is the honest option: the callers
-     are already wrapped, and a planning page that errors is recoverable in a way
-     that a planning page confidently reporting phantom demand is not. */
-  /* CHUNKED, because paginateAll bounds the wrong end of this read. It bounds
-     the RESPONSE — the 1000-row page cap — while the SO-line ids go into the
-     REQUEST, one uuid each, straight into `.in('so_item_id', …)`. Those are two
-     different limits and only the first one was guarded: MRP hands this function
-     ~1000 lines per batch, so the un-chunked filter built a ~39KB request line
-     and PostgREST answered 400. Live on 2026-08-17, Houzs Century (2,726 sales
-     orders): GET /api/scm/mrp?category=SOFA returned
-     `delivered-sum read failed: Bad Request` while the same code answered 200 in
-     the 100-order tenant next door. Invisible small, permanent large, and worse
-     with every import.
-
-     chunkIn is the repo's existing helper for exactly this and it PAGES each
-     batch, so the response cap stays guarded too. Nothing about the answer
-     changes: the rows of two batches are disjoint (the id list is de-duplicated
-     first, so no row can match twice), and both things built below — a Σ per
-     so_item_id and a DO-line → SO-line map — are order-independent, so a merged
-     read and a single read produce byte-identical maps. */
   const soItemIds = [...new Set(soLines.map((l) => l.id))];
   const { data: doLines, error: linkedErr } = await chunkIn<LinkedRow>(soItemIds, (batch, from, to) => sb
     .from('delivery_order_items')
@@ -179,33 +132,19 @@ export async function netDeliveredBySoItem(
     throw readFailureError('delivered_sum', linkedErr, {
       table: 'delivery_order_items',
       filter: 'so_item_id',
-      // The size of this `.in()` list is what a gateway rejection is made of.
       in_list_size: soLines.length,
       so_docs: soDocNos.length,
     });
   }
-  // DO line id → SO item id (only for active DOs), used to trace returns.
   const doLineToSoItem = new Map<string, string>();
   const deliveredBySoItem = new Map<string, number>();
   for (const l of doLines) {
     if (!l.so_item_id || !l.parent) continue;
-    /* LEAK GUARD (PRE-SHIP): a DO that has not shipped must NOT consume the SO
-       line's deliverable remaining (else the real DO can't be raised and the
-       picker shows phantom-delivered qty). That is DRAFT *and* LOADED — this
-       line named only DRAFT until 2026-08-20, so a LOADED DO counted its own
-       lines as delivered and the confirm gate then refused it against itself.
-       doCountsAsDelivered is the one home; see its block in
-       shared/do-shipped-states.ts. */
     if (!doCountsAsDelivered(l.parent.status)) continue;
     doLineToSoItem.set(l.id, l.so_item_id);
     deliveredBySoItem.set(l.so_item_id, (deliveredBySoItem.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
   }
 
-  /* The second reading — see this module's header. Capped by the linked sum
-     just built, so a repaired line and its unlinked twin can never both count.
-     Attributed lines are registered in doLineToSoItem too, so a Delivery Return
-     against one nets out exactly as it does for a linked line: a returned unit
-     must re-open the order however its delivery was counted. */
   for (const a of await loadUnlinkedDoCoverage(sb, soDocNos, soLines, deliveredBySoItem)) {
     doLineToSoItem.set(a.doLineId, a.soItemId);
     deliveredBySoItem.set(a.soItemId, (deliveredBySoItem.get(a.soItemId) ?? 0) + a.qty);
@@ -250,16 +189,6 @@ export async function readUnlinkedDoLinesUnder(
   const docs = [...new Set(soDocNos.filter(Boolean))];
   if (docs.length === 0) return [];
   try {
-    /* TWO PLAIN READS, NOT ONE EMBEDDED-FILTER READ, deliberately. The elegant
-       version is `.select('…, parent:delivery_orders!inner(so_doc_no, status)')`
-       with `.in('parent.so_doc_no', docs)` — one round-trip. But an
-       embedded-column filter is the one PostgREST shape this repo cannot
-       exercise locally (the fake PostgREST in the route tests does not
-       implement it), and this function's own best-effort contract turns a
-       malformed query into `[]` — i.e. into "no unlinked coverage found",
-       which is indistinguishable from a healthy system. A silent no-op is
-       exactly the failure this whole module exists to end, so the read is
-       written in the boring way that cannot have that bug. */
     const { data: headers, error: hErr } = await chunkIn<DoHeaderRow>(docs, (batch, from, to) => sb
       .from('delivery_orders')
       .select('id, so_doc_no, status')
@@ -271,11 +200,6 @@ export async function readUnlinkedDoLinesUnder(
     const docByDoId = new Map<string, string>();
     for (const h of headers ?? []) {
       if (!h.so_doc_no) continue;
-      /* The same gate the linked sum applies, through the same predicate: a
-         CANCELLED delivery took nothing back out of stock and a PRE-SHIP one
-         (DRAFT or LOADED) has not shipped at all. Wrong in the lenient
-         direction, a draft would mark an order DELIVERED — the leak the linked
-         path already documents. */
       if (!doCountsAsDelivered(h.status)) continue;
       docByDoId.set(h.id, h.so_doc_no);
     }
@@ -298,10 +222,6 @@ export async function readUnlinkedDoLinesUnder(
     }
     return unlinked;
   } catch (e) {
-    /* Degrade to the previous link-only answer rather than 500 a planning page
-       — but SAY SO. Swallowed silently, a broken read here reads as "this order
-       has no lost shipments", which is the same sentence a healthy system
-       produces and the reason the original defect went unnoticed for a month. */
     // eslint-disable-next-line no-console
     console.error('[do-unlinked-coverage] read failed; falling back to link-only coverage:', e);
     return [];

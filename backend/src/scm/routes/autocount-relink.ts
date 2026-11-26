@@ -34,13 +34,8 @@ import { bindingsFor } from '../lib/autocount-outbox';
 import { resolveAcItemCode } from '../../services/autocount-item-code';
 import { NEW_LINE_TABLE } from '../lib/autocount-line-keys';
 
-/* The same keys as Send again and /book-doc, for the same reason: this reads a
-   licensed account book, and it writes line identity. */
 const RELINK_KEYS = ['scm.autocount.requeue', '*'] as const;
 
-/* The line table comes from NEW_LINE_TABLE — the same two-entry answer the key
-   store uses, and for the same reason: these are the two documents whose lines a
-   route inserts by hand. Only the parent/header columns are local. */
 const DOC = {
   /* `headerCols` is per-document and REQUIRED, because the two headers are not
      shaped alike: scm.purchase_orders is keyed by a uuid `id` that its lines
@@ -103,10 +98,6 @@ export const autocountRelinkLinesHandler = async (
   const sb = c.get('supabase');
   const companyId = activeCompanyId(c);
 
-  /* A conversion document's queue doc_no is not a uniform shape (unnumbered DO =
-     header uuid, GR = business number), so its header is found through the
-     outbox row's doc_id — the header uuid enqueueConvert always stores. SO/PO
-     key on the request's docNo directly. */
   let headerKeyValue = docNo;
   if (spec.resolve === 'outboxDocId') {
     const { data: ob, error: obErr } = await sb.from('autocount_outbox')
@@ -124,17 +115,11 @@ export const autocountRelinkLinesHandler = async (
     headerKeyValue = docId;
   }
 
-  /* The document has to be OURS before we read it out of the book — the company
-     predicate is the whole tenant boundary on this client (it is the service
-     role, so no policy is evaluated). */
   const { data: header, error: headerErr } = await sb.from(spec.headerTable)
     .select(spec.headerCols)
     .eq(spec.headerKey, headerKeyValue)
     .eq('company_id', companyId)
     .maybeSingle();
-  /* BOUND AND BRANCHED, not `?? null`. A failed read and "no such document" are
-     opposite facts, and reporting the first as the second sends the operator
-     looking for a document that is right there. */
   if (headerErr) return c.json({ error: 'read_failed', reason: headerErr.message }, 500);
   if (!header) return c.json({ error: 'not_found' }, 404);
 
@@ -150,18 +135,12 @@ export const autocountRelinkLinesHandler = async (
   }
   const bookLines = Array.isArray(read.body?.lines) ? (read.body?.lines as BookLine[]) : [];
 
-  /* Read off the spec for the same reason `headerCols` is: a per-document fact
-     settled by testing a column NAME silently takes the wrong branch the moment
-     a third document type is added, and nothing fails to compile. */
   const parentValue = spec.resolve === 'docNo'
     ? docNo
     : String((header as { id?: unknown }).id ?? '');
   const { data: rows, error: rowsErr } = await sb.from(spec.lineTable)
     .select('id, item_code, description2, linked_ac_dtlkey')
     .eq(spec.parentCol, parentValue);
-  /* Same rule, and it matters more here: an unbound failure would reach the
-     planner as "this document has no lines", which reports "nothing could be
-     matched" — a sentence that is indistinguishable from the honest answer. */
   if (rowsErr) return c.json({ error: 'read_failed', reason: rowsErr.message }, 500);
 
   const rowsIn = (rows ?? []) as Array<Record<string, unknown>>;
@@ -201,9 +180,6 @@ export const autocountRelinkLinesHandler = async (
     const { error } = await sb.from(spec.lineTable)
       .update({ linked_ac_dtlkey: a.dtlKey })
       .eq('id', a.id)
-      /* Only ever fills a BLANK. Two operators pressing this at once, or a
-         backfill landing in between, must not repoint a key that is already
-         there. */
       .is('linked_ac_dtlkey', null);
     if (error) failed.push(`${a.itemCode}: ${error.message}`);
     else stamped += 1;
@@ -216,8 +192,6 @@ export const autocountRelinkLinesHandler = async (
     bookLines: bookLines.length,
     alreadyKeyed: plan.alreadyKeyed,
     matched: stamped,
-    /* NAMED, not counted. Each one is a line the operator still has to deal
-       with, and "2 lines could not be matched" sends him hunting. */
     couldNotMatch: [...plan.refused, ...failed],
     /* NO `canRebuild` FLAG. It was here for part of 2026-09-02, so the screen
        could offer the operator a rebuild — and `docs/bugs/0610` removed the need

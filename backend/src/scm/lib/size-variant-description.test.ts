@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { correctedSizeDescription, type SizeSkuRow } from './size-variant-description';
 
-/* The real 2990 mattress family that exposed the bug (2990-PO-2608-005): five
-   sizes under one Model, each with its OWN dimensions in the name. The POS
-   catalog card is the K row, so the K name is what a mis-snapshotted line of
-   any size carries. */
 const row = (over: Partial<SizeSkuRow> & Pick<SizeSkuRow, 'code' | 'name'>): SizeSkuRow => ({
   model_id: 'model-arrus-firm',
   base_model: 'ARRUS-FIRM',
@@ -58,8 +54,6 @@ describe('correctedSizeDescription', () => {
   });
 
   it('never touches a hand-written description', () => {
-    // The whole reason the rule is "verbatim another size's name" and not
-    // "differs from the master name": sales edit these on purpose.
     expect(correctedSizeDescription(
       '2990 ARRUS-FIRM MATT (Q)',
       'ARRUS Queen — customer wants the firmer top layer',
@@ -92,7 +86,6 @@ describe('correctedSizeDescription', () => {
         model_id: 'model-akka-soft', base_model: 'AKKA-SOFT',
       }),
     ]);
-    // AKKA's name on an ARRUS line is not a size mix-up — leave it for a human.
     expect(correctedSizeDescription(
       '2990 ARRUS-FIRM MATT (Q)',
       '2990 AKKA-SOFT MATTRESS (183X190X31CM)',

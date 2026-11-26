@@ -1,5 +1,3 @@
-// Verdicts for the System Health "Background jobs" and "Queues" panels.
-// Pure functions, so the thresholds are tested without a database.
 
 export type Verdict = "ok" | "warning" | "critical";
 
@@ -73,8 +71,8 @@ export function missedAfterMin(cadenceMin: number): number {
 }
 
 export interface JobFacts {
-  cadenceMin: number | null; // null = not in the catalogue, so no missed rule
-  lastStartMs: number | null; // null = no run recorded in the retention window
+  cadenceMin: number | null;
+  lastStartMs: number | null;
   lastStatus: "running" | "ok" | "error" | null;
   lastDurationMs: number | null;
   median7dMs: number | null;

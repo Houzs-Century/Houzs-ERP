@@ -6,7 +6,6 @@ describe("soOffersTransferToDo", () => {
     expect(soOffersTransferToDo({ status: "CONFIRMED", on_hold: false, has_undelivered: true })).toBe(true);
   });
 
-  /* Conts #699: the fully delivered order that opened an empty DO form. */
   it("does not offer it when nothing is left to deliver", () => {
     expect(soOffersTransferToDo({ status: "DELIVERED", on_hold: false, has_undelivered: false })).toBe(false);
     expect(soOffersTransferToDo({ status: "CONFIRMED", on_hold: false, has_undelivered: false })).toBe(false);

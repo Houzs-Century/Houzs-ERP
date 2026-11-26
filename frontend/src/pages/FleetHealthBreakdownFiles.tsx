@@ -1,6 +1,3 @@
-/* Breakdown & incident media: the scene photos and videos kept ON the case.
-   Backend: /api/fleet-breakdown-files. Own file because FleetHealth.tsx is near
-   its size ceiling. */
 import { useState } from "react";
 import { X } from "lucide-react";
 import { api } from "../api/client";
@@ -33,7 +30,6 @@ export function BreakdownFiles({ caseId, refs, onChanged }: { caseId: string; re
     if (busy || files.length === 0) return;
     setBusy(true); setErr(null);
     try {
-      // One at a time: the route appends to media_refs.
       for (const f of files) await uploadBreakdownFile(caseId, f);
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); onChanged(); }
   };

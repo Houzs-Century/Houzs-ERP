@@ -35,7 +35,6 @@ import {
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Before /:refNo — a literal segment must not be swallowed by the param route.
 app.get("/document-refs/next", async (c) => {
   const typeCode = normaliseCode(c.req.query("typeCode"));
   if (!typeCode) return c.json({ success: false, error: "typeCode must be 2–4 letters (e.g. ANN, MEMO)." }, 400);
@@ -43,7 +42,6 @@ app.get("/document-refs/next", async (c) => {
   let deptCode: string | null;
   let deptName: string | null = null;
   if (deptGiven == null || deptGiven === "") {
-    // The submitter's department — the [DEPT] segment an approval would use.
     const user = c.get("user");
     // company-scope: one user row by primary key, joined to the global departments table.
     const row = await c.env.DB.prepare(

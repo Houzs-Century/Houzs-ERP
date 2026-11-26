@@ -1,5 +1,3 @@
-// The dialogs of the combo screen. Each write shows its failure and keeps the dialog
-// open, so nothing typed is lost.
 
 import { useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { X } from 'lucide-react';
@@ -54,7 +52,6 @@ export function Dialog({ title, subtitle, width, onClose, footer, children }: {
   );
 }
 
-// ─── New combo ─────────────────────────────────────────────────────────
 
 const PRESET = 'preset';
 const BY_HAND = 'by-hand';
@@ -64,7 +61,6 @@ type Candidate = { key: string; name: string; label?: string; note: string; modu
 export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierId, today, onHand, onClose }: {
   model: string;
   lines: readonly ComboLine[];
-  /** Combos to copy from, by model. */
   sourceBook: ReadonlyMap<string, ComboLine[]>;
   ownModules: readonly string[];
   supplierId: string | null;
@@ -77,7 +73,6 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
   const [source, setSource] = useState(PRESET);
   const [query, setQuery] = useState('');
   const [ticked, setTicked] = useState<Record<string, boolean>>({});
-  // The list comes from Products > Combo Pricing > Combos; only active ones are offered.
   const presetsQ = useComboPresets();
 
   const have = useMemo(() => new Set(lines.map((l) => comboSlotsKey(l.modules))), [lines]);
@@ -97,7 +92,6 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
   const options = [
     { value: PRESET, label: 'Combos' },
     { value: BY_HAND, label: 'Build by hand' },
-    // A supplier starts from the master combos of the very model it is pricing.
     ...[...sourceBook.keys()].filter((m) => supplierId !== null || m !== model).sort().map((m) => ({ value: m, label: `Copy from model: ${m}` })),
   ];
 
@@ -172,13 +166,10 @@ export function NewComboDialog({ model, lines, sourceBook, ownModules, supplierI
   );
 }
 
-// ─── Compartments ──────────────────────────────────────────────────────
 
 export function ModulePicker({ codes, names, picked, plainLabel, listHeight, onToggle }: {
   codes: readonly string[]; names: Readonly<Record<string, string>>; picked: readonly string[];
-  /** The button for a module with no side: "Add" on a combo, "Either side" on the Combos list. */
   plainLabel: string;
-  /** Height of the module list, in px. */
   listHeight: number;
   onToggle: (code: string) => void;
 }) {
@@ -233,10 +224,8 @@ const compartmentNote = (editing: boolean, onSupplier: boolean, today: string): 
 
 export function CompartmentDialog({ model, editing, codes, names, supplierId, today, onClose }: {
   model: string;
-  /** null = a new combo built by hand. */
   editing: ComboLine | null;
   codes: readonly string[];
-  /** Module code to its name, for the search. */
   names: Readonly<Record<string, string>>;
   supplierId: string | null;
   today: string;
@@ -321,7 +310,6 @@ export function CompartmentDialog({ model, editing, codes, names, supplierId, to
   );
 }
 
-// ─── Assign to supplier ────────────────────────────────────────────────
 
 export function AssignDialog({ model, chosen, today, onDone, onClose }: {
   model: string; chosen: readonly ComboLine[]; today: string; onDone: (text: string) => void; onClose: () => void;
@@ -389,7 +377,6 @@ export function AssignDialog({ model, chosen, today, onDone, onClose }: {
   );
 }
 
-// ─── Delete ────────────────────────────────────────────────────────────
 
 export function DeleteDialog({ chosen, modelName, supplierId, onDone, onClose }: {
   chosen: readonly ComboLine[]; modelName: string; supplierId: string | null; onDone: (text: string) => void; onClose: () => void;
@@ -428,7 +415,6 @@ export function DeleteDialog({ chosen, modelName, supplierId, onDone, onClose }:
   );
 }
 
-// ─── Adjust by % ───────────────────────────────────────────────────────
 
 export function AdjustDialog({ chosen, tier, supplierId, today, onDone, onClose }: {
   chosen: readonly ComboLine[]; tier: SofaPriceTier; supplierId: string | null; today: string; onDone: (text: string) => void; onClose: () => void;
@@ -481,7 +467,6 @@ export function AdjustDialog({ chosen, tier, supplierId, today, onDone, onClose 
   );
 }
 
-// ─── Export ────────────────────────────────────────────────────────────
 
 export function ExportDialog({ model, book, supplierName, sizesOf, today, onClose }: {
   model: string | null;
@@ -535,7 +520,6 @@ export function ExportDialog({ model, book, supplierName, sizesOf, today, onClos
   );
 }
 
-// ─── Import ────────────────────────────────────────────────────────────
 
 const PREVIEW_ROWS = 200;
 

@@ -1,17 +1,3 @@
-// The AutoCount Sync register's shared logic — the part both surfaces read.
-//
-// Everything here is PURE, and that is why it is worth its own file: the column
-// set, the account book's verdict on a document number, the day a row belongs
-// to, the two lenses and the footer sentence are all decisions the desktop
-// register and the phone cards have to make IDENTICALLY. A defect in any of
-// them shows up as the two surfaces disagreeing about one row, which is the
-// recurring bug class CLAUDE.md names, and it is far cheaper to catch here than
-// in two rendering tests that both pass.
-//
-// TIMEZONE. Every date below goes through `fmtDate`, which renders a zoned
-// instant in MYT (UTC+8). `2026-08-20T20:00:00Z` is therefore 08/21 in this
-// app's own words, and the fixtures are written to say so out loud rather than
-// to look tidy in UTC.
 import { describe, expect, it } from "vitest";
 
 import type { AcDocGroup, AcOutboxRow } from "./autocountOutbox";
@@ -63,7 +49,6 @@ const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
 
 const groupOf = (...rows: AcOutboxRow[]): AcDocGroup => acGroupByDocument(rows)[0]!;
 
-/** MYT noon on 21 August 2026 — so "today" is unambiguously 2026/08/21. */
 const NOW = Date.parse("2026-08-21T04:00:00.000Z");
 
 describe("the eight columns", () => {
@@ -79,8 +64,6 @@ describe("the eight columns", () => {
     ]);
   });
 
-  /* THE FOUR THAT ARE DELIBERATELY NOT COLUMNS. Named here so a later tidy-up
-     that "restores" one has to delete an assertion and read why. */
   it("carries no column for the try count, the reason, the raw keys or the company", () => {
     const keys = AC_REGISTER_COLUMNS.map((c) => c.key);
     for (const absent of ["attempts", "tries", "reason", "reason_kind", "remedy", "company"]) {
@@ -90,8 +73,6 @@ describe("the eight columns", () => {
 });
 
 describe("what the account book answered with", () => {
-  /* THE INCIDENT THIS COLUMN EXISTS FOR. HC-PO-2608-001 is in AED_HOUZS as
-     PO-009968 and nobody saw it for three days. */
   it("is LOUD when AutoCount filed the document under a number of its own", () => {
     const v = acBookNumber(row({ doc_no: "HC-PO-2608-001", ac_doc_no: "PO-009968" }));
     expect(v).toEqual({ verdict: "different", number: "PO-009968", flagged: true });
@@ -102,9 +83,6 @@ describe("what the account book answered with", () => {
     expect(v).toEqual({ verdict: "same", number: "HC-SO-2608-009", flagged: false });
   });
 
-  /* A FLAG THAT CRIES WOLF IS A FLAG NOBODY READS. Case and surrounding space
-     are not a different document, and treating them as one would light up
-     every row in the register. */
   it("does not invent a mismatch out of case or whitespace", () => {
     expect(acBookNumber(row({ doc_no: "HC-SO-2608-009", ac_doc_no: " hc-so-2608-009 " })).flagged)
       .toBe(false);
@@ -116,28 +94,10 @@ describe("what the account book answered with", () => {
     expect(acBookNumber(row({ state: "sent", ac_doc_no: "   " })).verdict).toBe("not-recorded");
   });
 
-  /* THE FALSE POSITIVE THIS FLAG WAS ABOUT TO FIRE ON EVERY MIGRATED DOCUMENT.
-     Measured against production on 2026-09-08: all three documents in Houzs
-     Century's queue were flagged DIFFERENT NUMBER — HC-SO-013361 against
-     SO-013361, and the same for -013393 and -013394 — and none of them is a
-     mismatch. A document imported from the account book is numbered
-     `HC-` + the AutoCount number BY CONSTRUCTION
-     (backend/scripts/import-ac-outstanding-so.mjs:342, `docNo: "HC-" + acDoc`),
-     and backend/scripts/check-migrated-numbering.mjs asserts exactly that
-     equality across the corpus. So the two numbers differing by the company
-     prefix is the DESIGN, not a divergence.
-
-     It matters more than three rows. 2,877 outstanding documents came across in
-     the cutover; every one of them that staff touch after go-live queues an
-     edit and lights this flag. This file's own comment says why that is worse
-     than not flagging at all: "a false flag on a healthy row teaches everyone
-     to ignore the flag, and then the real one is invisible too." */
   it("does not cry mismatch when the book number is the ERP number without its company prefix", () => {
     const v = acBookNumber(row({ doc_no: "HC-SO-013361", ac_doc_no: "SO-013361" }));
     expect(v.verdict).toBe("prefixed");
     expect(v.flagged).toBe(false);
-    /* The BOOK's number is still what the cell shows — it is the string
-       somebody has to type into AutoCount to find the document. */
     expect(v.number).toBe("SO-013361");
   });
 
@@ -146,18 +106,11 @@ describe("what the account book answered with", () => {
       .toBe(false);
   });
 
-  /* THE REAL MISMATCH MUST SURVIVE THIS, and it is the same document the first
-     test in this block is about: HC-PO-2608-001 does NOT end with PO-009968, so
-     no prefix rule can explain it away. */
   it("still shouts about the incident it was built for", () => {
     expect(acBookNumber(row({ doc_no: "HC-PO-2608-001", ac_doc_no: "PO-009968" })).flagged)
       .toBe(true);
   });
 
-  /* A SUFFIX MATCH IS NOT ENOUGH. `SO-013361` ends with `13361`, and calling
-     that a prefixed number would quietly excuse a book number that is a
-     genuinely different, shorter document number. What separates them is that
-     the part in front has to END at a separator, i.e. be a real prefix. */
   it("does not accept a bare suffix as a prefix match", () => {
     expect(acBookNumber(row({ doc_no: "HC-SO-013361", ac_doc_no: "13361" })).flagged)
       .toBe(true);
@@ -169,8 +122,6 @@ describe("what the account book answered with", () => {
     }
   });
 
-  /* The sentence has to name BOTH numbers: one to look up, one that will not be
-     found. Half of it is not an answer. */
   it("names both numbers in the sentence beside the flag", () => {
     const note = acBookDifferentNote("HC-PO-2608-001", "PO-009968");
     expect(note).toContain("HC-PO-2608-001");
@@ -198,7 +149,6 @@ describe("when a document landed", () => {
       .toBe("2026-08-15T00:00:00.000Z");
   });
 
-  /* The day separator above the row carries the year, so the cell does not. */
   it("prints the day and the time, without the year", () => {
     expect(acWhenText(row({ sent_at: "2026-08-16T08:31:00.000Z" }))).toBe("08/16 16:31");
   });
@@ -216,16 +166,10 @@ describe("the day a run of rows happened on", () => {
     expect(acDayLabel("2026/08/19", NOW)).toBe("2026/08/19");
   });
 
-  /* THE SEPARATOR IS `fmtDate` AND NOTHING ELSE — no month-name list, which
-     would be a third home for the Gregorian calendar and is what
-     check-duplicated-decisions refused. The label a day older than the queue is
-     the same rule as the label on a row from this morning. */
   it("dates a day from another year the same way as any other", () => {
     expect(acDayLabel("2025/08/19", NOW)).toBe("2025/08/19");
   });
 
-  /* THE SEPARATOR AND THE CELL ARE ONE RULE. Both come off `fmtDate`, so a row
-     can never be filed under a day the cell beside it does not print. */
   it("files a row under the day its own When cell shows", () => {
     const r = row({ sent_at: "2026-08-20T20:00:00.000Z" });
     expect(acWhenText(r)).toBe("08/21 04:00");
@@ -256,8 +200,6 @@ describe("the flat list of separators and documents", () => {
       .toEqual(["Today · 2026/08/21", "2026/08/19"]);
   });
 
-  /* A separator sharing a key with a document unmounts one of them, and a
-     windowed list is exactly where that would be invisible. */
   it("gives every item a key of its own", () => {
     const keys = acRegisterItems(three, NOW).map((i) => i.key);
     expect(new Set(keys).size).toBe(keys.length);
@@ -288,8 +230,6 @@ describe("the order of the register", () => {
     expect(acSortGroups(groups, "oldest").map((g) => g.docNo)).toEqual(["SO-B", "SO-C", "SO-A"]);
   });
 
-  /* The caller renders the array it was handed; mutating the input would sort
-     the loaded page underneath whatever else is reading it. */
   it("leaves what it was given alone", () => {
     const before = groups.map((g) => g.docNo);
     acSortGroups(groups, "oldest");
@@ -318,9 +258,6 @@ describe("the date lens", () => {
   const shown = (range: (typeof AC_DATE_RANGES)[number]) =>
     acGroupsInRange(groups, range, NOW).map((g) => g.docNo);
 
-  /* ALL TIME IS THE DEFAULT ON PURPOSE. A register that opened on This month
-     would hide a document stuck since July from the one screen whose job is
-     finding it. */
   it("opens on all time and hides nothing", () => {
     expect(AC_DEFAULT_DATE_RANGE).toBe("all");
     expect(shown("all")).toEqual(["SO-TODAY", "SO-WEEK", "SO-MONTH", "SO-OLD"]);
@@ -332,8 +269,6 @@ describe("the date lens", () => {
     expect(shown("month")).toEqual(["SO-TODAY", "SO-WEEK", "SO-MONTH"]);
   });
 
-  /* The seventh day back is IN the window and the eighth is not — an off-by-one
-     here silently drops a day's documents and nothing else would say so. */
   it("counts the last seven days inclusive of today", () => {
     const edge = [
       at("in", "SO-IN", "2026-08-15T02:00:00.000Z"),
@@ -360,7 +295,6 @@ describe("the line that closes the register", () => {
     expect(acShowingLine(1, 1)).toBe("Showing 1–1 of 1 document");
   });
 
-  /* Never "Showing 1–0". An empty register is a sentence, not arithmetic. */
   it("does not count from one when there is nothing to count", () => {
     expect(acShowingLine(0, 3412)).toBe("Showing none of 3412 documents");
   });

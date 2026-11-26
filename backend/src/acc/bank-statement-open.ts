@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// bank-statement-open — how much of each bank statement is still OPEN, for the
-// statements list (GET /accounting/bank/statements).
-//
-// This used to be one unpaged PostgREST read of every statement line the
-// company holds, tallied here. PostgREST answers at most `db-max-rows` (1,000,
-// lib/paginate-all.ts) per response with no error, so past 1,000 lines the
-// "still to decide" count and amount came out too low, silently.
-//
-// Now: one grouped SQL statement (company-scoped, OPEN only) over Hyperdrive;
-// when SQL is unavailable, the same rows read through PostgREST in full pages.
-// A read that fails, or stops before the end, is an error — never a 0.
-// ----------------------------------------------------------------------------
 
 import { paginateAll, type PageResult } from '../scm/lib/paginate-all';
 import { trySql } from '../scm/lib/list-sql';
@@ -83,7 +70,6 @@ export async function loadOpenTallies(
   const grouped = await readSql();
   if (grouped) return { ok: true, byStatement: fromGrouped(grouped) };
 
-  /* Ordered by id: unordered `.range()` pages can repeat and skip rows. */
   const paged = await paginateAll<OpenLine>((lo, hi) => sb.from('acc_bank_statement_lines')
     .select('statement_id, kind, amount_sen')
     .eq('company_id', companyId)

@@ -61,7 +61,6 @@ const labelCls =
   "mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
 
 export function MailboxesTab() {
-  // ── Data ──────────────────────────────────────────────────────────────
   const addressesQ = useQuery<MailAddress[]>("mailboxes-addresses", () => fetchAddresses());
   const membersQ = useQuery<{ users: TeamMember[] }>("/api/users", () =>
     api.get("/api/users"),
@@ -82,7 +81,6 @@ export function MailboxesTab() {
     [membersQ.data],
   );
 
-  // New-mailbox modal + edit-row panel.
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<MailAddress | null>(null);
 
@@ -121,7 +119,6 @@ export function MailboxesTab() {
 
       {sub === "mailboxes" && (
       <section>
-        {/* What an admin has to act on: address requests, then the Google Admin steps both ways. */}
         <div className="mb-4 flex flex-col gap-3 empty:hidden">
           <MailClaimRequests />
           <MailHostPending />
@@ -252,7 +249,6 @@ export function MailboxesTab() {
   );
 }
 
-// ── Region A modal: create a new mailbox (Person / Department) ─────────────
 function NewMailboxModal({
   users,
   departments,
@@ -266,8 +262,6 @@ function NewMailboxModal({
 }) {
   const toast = useToast();
   const branding = useBranding();
-  // The verified company domain (e.g. houzscentury.com) — derived from Branding
-  // so the address suggestion + the @-suffix hint track Settings.
   const domain = useMemo(() => {
     const fromEmail = (branding.email || "").split("@")[1];
     return (fromEmail || "houzscentury.com").trim().toLowerCase();
@@ -282,8 +276,6 @@ function NewMailboxModal({
 
   const selectedUser = users.find((u) => u.id === userId);
 
-  // Suggest a sensible local-part: person → their login local-part; dept → a
-  // slug of the dept name. Only fills when the field is still empty.
   function suggestFor(localPart: string) {
     if (address.trim()) return;
     const clean = localPart.toLowerCase().replace(/[^a-z0-9._-]+/g, "");
@@ -310,8 +302,6 @@ function NewMailboxModal({
           label: label.trim() || undefined,
         });
       } else {
-        // Department shared mailbox — send the dept NAME (string-matched
-        // server-side), a label, and NO user.
         await createAddress(addrTrim, {
           assignedDept: dept,
           label: label.trim() || `${dept} Team`,
@@ -359,7 +349,6 @@ function NewMailboxModal({
         </div>
 
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
-          {/* Person / Department toggle */}
           <div>
             <label className={labelCls}>Assign to</label>
             <div className="flex items-center rounded-md border border-border bg-surface p-0.5">
@@ -507,9 +496,6 @@ function NewMailboxModal({
   );
 }
 
-// ── Region A edit panel: reassign / relabel / toggle active ────────────────
-// Address is immutable after create (the backend PATCH can't rename), so the
-// address field is shown read-only.
 function EditMailboxPanel({
   address,
   users,
@@ -526,8 +512,6 @@ function EditMailboxPanel({
   const toast = useToast();
   const [label, setLabel] = useState(address.label || "");
   const [position, setPosition] = useState(address.assignedPosition || "");
-  // Keep the same person-vs-dept shape the row already has; an admin reassigns
-  // within that shape (changing kind entirely is rare — recreate instead).
   const isPerson = address.assignedUserId != null;
   const [userId, setUserId] = useState<number | "">(
     address.assignedUserId ?? "",
@@ -659,7 +643,6 @@ function EditMailboxPanel({
                   {d.name}
                 </option>
               ))}
-              {/* Preserve a current dept value not in the live list. */}
               {dept &&
                 !departments.some((d) => d.name === dept) && (
                   <option value={dept}>{dept}</option>

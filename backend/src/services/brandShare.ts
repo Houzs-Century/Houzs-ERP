@@ -1,9 +1,3 @@
-// Brand calendar share links — the unguessable token behind each brand's
-// public, no-login calendar. Same three moves as services/contractorShare.ts
-// (mint get-or-create, resolve, revoke) over `brand_share_tokens`. The token IS
-// the credential; `revoked_at` is the kill switch. The token grants a read of
-// exactly ONE brand's confirmed events — the brand NAME lives on the token row,
-// never in the request, and the public route filters `projects.brand` by it.
 import type { Env } from "../types";
 import { generateToken } from "./auth";
 

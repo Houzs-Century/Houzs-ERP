@@ -29,12 +29,6 @@ import { recomputeSoStockAllocation } from './so-stock-allocation';
 
 type Row = Record<string, any>;
 
-/* A minimal PostgREST fake, purpose-built for this module rather than extending
-   the shared `fake-postgrest` — the allocator needs `.not()`, `.or()` and
-   `.gt()`, and several sibling worktrees are editing that shared file today.
-   Only the operators this module actually issues are implemented; anything else
-   throws rather than silently returning every row, because a fake that answers
-   a filter it does not understand makes a green test meaningless. */
 function fakeSb(tables: Record<string, Row[]>) {
   const from = (table: string) => {
     const filters: Array<(r: Row) => boolean> = [];
@@ -72,19 +66,12 @@ function fakeSb(tables: Record<string, Row[]>) {
       gt: (c: string, v: unknown) => {
         filters.push((r) => Number(r[c] ?? 0) > Number(v)); return builder;
       },
-      /* `.not(col, 'in', '(A,B,C)')` — the PostgREST spelling the live-SO lens
-         uses. Embedded paths (`so.status`) are only issued on reads this test
-         serves as empty, so they are matched against the row's own column and
-         an absent column simply does not match the exclusion list. */
       not: (c: string, op: string, v: string) => {
         if (op !== 'in') throw new Error(`fake: unsupported not(${op})`);
         const set = new Set(String(v).replace(/^\(|\)$/g, '').split(',').map((s) => s.trim().replace(/^"|"$/g, '')));
         filters.push((r) => !set.has(String(r[c.includes('.') ? c.split('.').pop()! : c])));
         return builder;
       },
-      /* Only the lock row's availability predicate is issued through `.or()`.
-         The fake grants the lease unconditionally: single-flight is not what
-         these tests are about, and a contended lock would make them flaky. */
       or: () => builder,
       order: () => builder,
       range: () => builder,
@@ -103,16 +90,6 @@ function fakeSb(tables: Record<string, Row[]>) {
 const WH = 'WH-MAIN';
 const CODE = 'MATTRESS-TEST-SKU';
 
-/* The line is a MATTRESS: no variants, and not one of the bound groups
-   (bedframe/sofa), so it walks the plain pooled path and needs neither a PO link
-   nor a dye lot to become READY.
-
-   `lock_key` MUST be the allocator's own ALLOCATION_LOCK_ROW ('GLOBAL'). With
-   any other value the lease claim matches no row, the recompute returns early
-   with reason 'another_recompute_in_progress' and ok:true, and a test asserting
-   "the line stayed PENDING" passes without the allocator ever running. Both
-   negative tests below did exactly that until this was corrected, which is why
-   every test here also asserts `reason` is undefined. */
 const world = (header: Row) => fakeSb({
   stock_allocation_recompute_lock: [{ lock_key: 'GLOBAL', locked_by: null, locked_until: null }],
   mfg_sales_orders: [{
@@ -151,33 +128,22 @@ const lineOf = (sb: any) => sb.tables['mfg_sales_order_items'][0];
 
 describe('stock allocation gate — Processing Date', () => {
   test('an order with a Processing Date and no proceed stamp gets its stock', async () => {
-    /* The exact shape the detail screen produces: the operator picked a
-       Processing Date, so the order is released for purchasing. Nothing stamped
-       proceeded_at, because no shipped client ever writes it. Five units are on
-       the shelf in the line's own warehouse. */
     const sb = world({ processing_date: '2026-08-15', proceeded_at: null });
 
     const res = await recomputeSoStockAllocation(sb);
 
     expect(res.ok).toBe(true);
-    /* Non-vacuity: proves the recompute actually walked, rather than returning
-       early on a lock it could not claim. */
     expect(res.reason).toBeUndefined();
     expect(lineOf(sb).stock_status).toBe('READY');
     expect(lineOf(sb).stock_qty_ready).toBe(1);
   });
 
   test('an order with NO Processing Date is still refused stock', async () => {
-    /* The owner's rule, which the fix must preserve: nothing is prepared before
-       the order is released, so an SO with no Processing Date must not claim a
-       bucket however much stock is standing there. */
     const sb = world({ processing_date: null, proceeded_at: null });
 
     const res = await recomputeSoStockAllocation(sb);
 
     expect(res.ok).toBe(true);
-    /* Non-vacuity: proves the recompute actually walked, rather than returning
-       early on a lock it could not claim. */
     expect(res.reason).toBeUndefined();
     expect(lineOf(sb).stock_status).toBe('PENDING');
     expect(lineOf(sb).stock_qty_ready).toBe(0);
@@ -195,8 +161,6 @@ describe('stock allocation gate — Processing Date', () => {
     const res = await recomputeSoStockAllocation(sb);
 
     expect(res.ok).toBe(true);
-    /* Non-vacuity: proves the recompute actually walked, rather than returning
-       early on a lock it could not claim. */
     expect(res.reason).toBeUndefined();
     expect(lineOf(sb).stock_status).toBe('PENDING');
     expect(lineOf(sb).stock_qty_ready).toBe(0);
@@ -210,8 +174,6 @@ describe('stock allocation gate — Processing Date', () => {
    so the terminal-state lens cannot see it; the gate reads `isDocumentHeld`,
    the same reader MRP uses. */
 describe('stock allocation gate — an order on hold', () => {
-  /* One unit on the shelf; SO-1 promises the earlier date, so it wins the unit
-     whenever it is live. */
   const twoOrders = (first: Row) => {
     const sb = world({ doc_no: 'SO-1', version: 1, processing_date: '2026-08-15', customer_delivery_date: '2026-09-01', ...first });
     sb.tables.mfg_sales_orders.push({
@@ -255,8 +217,6 @@ describe('stock allocation gate — an order on hold', () => {
     expect(line(sb, 'line-2').stock_status).toBe('READY');
   });
 
-  /* The hold never moves status (document-hold.ts), so the header waits for
-     the release; the control proves the same shape DOES move when not held. */
   test('control: a READY_TO_SHIP order that loses its stock moves back', async () => {
     const sb = twoOrders({ on_hold: false, status: 'READY_TO_SHIP', customer_delivery_date: '2026-11-01' });
     const res = await recomputeSoStockAllocation(sb);

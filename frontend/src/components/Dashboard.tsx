@@ -45,9 +45,7 @@ export function DashboardBreakdown({
   items: Array<{ label: string; count: number; tone?: "default" | "success" | "warn" | "error" }>;
   emptyLabel?: string;
   formatCount?: (n: number) => string;
-  /** When set, each row becomes a button — click to drill down. */
   onItemClick?: (label: string) => void;
-  /** Highlight the currently-selected row. */
   activeLabel?: string;
 }) {
   const max = Math.max(1, ...items.map((i) => i.count));

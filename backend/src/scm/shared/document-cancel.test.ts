@@ -75,7 +75,6 @@ describe('the ladder', () => {
     expect(pendingLevel('REJECTED')).toBeNull();
     expect(statusAfterApproval('SO', 1)).toBe('L1_APPROVED');
     expect(statusAfterApproval('SO', 2)).toBe('APPROVED');
-    /* A Purchase Order takes one signature: the first is the last. */
     expect(statusAfterApproval('PO', 1)).toBe('APPROVED');
     expect(levelsFor('SO')).toBe(2);
   });
@@ -85,7 +84,6 @@ describe('the ladder', () => {
     expect(isReasonOnly('SO')).toBe(false);
     expect(CANCEL_APPROVE_KEY.PO[1]).toBeUndefined();
     expect(CANCEL_APPROVE_KEY.PO[2]).toBeUndefined();
-    /* No key signs it, so no wildcard does either. */
     expect(approvalRefusal(req({ doc_type: 'PO' }), signer(2, ['*']))).toMatchObject({ refusal: { error: 'not_pending', httpStatus: 409 } });
     expect(holdsAnyApproveKey('PO', signer(1, ['*']))).toBe(false);
   });
@@ -125,8 +123,6 @@ describe('approving', () => {
   it('level 1 needs the level-1 key for that document', () => {
     expect(approvalRefusal(req(), signer(2, ['scm.so_cancel.approve_l1']))).toEqual({ level: 1 });
     expect(approvalRefusal(req(), signer(2, ['scm.so_cancel.approve_l2']))).toMatchObject({ refusal: { error: 'approve_forbidden', httpStatus: 403 } });
-    /* The Purchase Order has no level at all: an old row still saying
-       REQUESTED or L1_APPROVED is not signable by anyone. */
     expect(approvalRefusal(req({ doc_type: 'PO' }), signer(2, ['scm.so_cancel.approve_l1']))).toMatchObject({ refusal: { error: 'not_pending' } });
     expect(approvalRefusal(req({ doc_type: 'PO', status: 'L1_APPROVED', l1_by: 2 }), signer(3, ['*']))).toMatchObject({ refusal: { error: 'not_pending', httpStatus: 409 } });
   });
@@ -154,7 +150,6 @@ describe('rejecting and withdrawing', () => {
   it('either approver desk may reject while a signature is pending', () => {
     expect(rejectRefusal(req(), signer(2, ['scm.so_cancel.approve_l2']))).toBeNull();
     expect(rejectRefusal(req({ status: 'L1_APPROVED', l1_by: 2 }), signer(2, ['scm.so_cancel.approve_l1']))).toBeNull();
-    /* Nobody may refuse a PO request, because nobody may sign one. */
     expect(rejectRefusal(req({ doc_type: 'PO' }), signer(2, ['*']))).toMatchObject({ error: 'reject_forbidden', httpStatus: 403 });
     expect(rejectRefusal(req({ status: 'APPROVED' }), signer(2, ['*']))).toMatchObject({ error: 'not_pending', httpStatus: 409 });
   });
@@ -210,8 +205,6 @@ describe('what may be asked about, and what may run', () => {
     expect(executionRefusal('SO', { status: 'REQUESTED' })?.message).toContain('0 of 2');
     expect(executionRefusal('SO', { status: 'L1_APPROVED' })?.message).toContain('1 of 2');
     expect(executionRefusal('SO', { status: 'APPROVED' })).toBeNull();
-    /* A purchase order waits for nobody: the guard gates it on the reason
-       instead, and this rule must never hold it up. */
     expect(executionRefusal('PO', null)).toBeNull();
     expect(executionRefusal('PO', { status: 'REQUESTED' })).toBeNull();
   });

@@ -1,8 +1,3 @@
-/* BUG-101 (Sim, 2026-10-10): HC-SO-2609-395 had PO-2610-025 out and its
- * Processing Date was still movable. Once a live PO exists the server flags
- * processing_date_po_locked; the editor freezes the Processing Date and leaves
- * the Delivery Date open, directly and in amendment mode.
- */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -39,7 +34,6 @@ vi.mock("../../components/scm-v2/DocumentRelationshipMapModal", () => ({
   DocumentRelationshipMapModal: () => null,
   DocumentChoiceDialog: () => null,
 }));
-/* Every grant except the PO exception, unless a test turns it on. */
 vi.mock("../../auth/AuthContext", () => ({
   useAuth: () => ({ user: { id: 1, name: "Desk" }, can: (p: string) => p !== "scm.so.override_po_processing_date" || auth.override }),
 }));

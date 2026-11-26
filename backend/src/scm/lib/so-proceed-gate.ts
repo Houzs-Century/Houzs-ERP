@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-proceed-gate — the DB reads the Processing-Date / Proceed gates need, and
-// the refusals they produce.
-//
-// WHY A MODULE AND NOT THREE MORE FUNCTIONS IN mfg-sales-orders.ts. That router
-// is ~11,900 lines and sits under a file-size ceiling that may only FALL
-// (scripts/file-size-ceilings.json), so new code there is new code that has to
-// go somewhere else. These three belong together anyway: each one turns a
-// docNo into the FACTS a shared pure rule module then judges
-// (shared/so-save-problems.ts), and none of them decides anything itself.
-//
-// `sb: any` is the PostgREST-shaped Supabase client, matching the routes that
-// call these. Constraining it recursively makes TypeScript expand the whole
-// generated schema and can hit TS2589 — the same reason scopeSoItemToDocument
-// in the router keeps its parameter unconstrained.
-// ----------------------------------------------------------------------------
 import {
   collectProceedGateProblems,
   collectProcessingGateProblems,
@@ -22,7 +6,6 @@ import {
 } from '../shared/so-save-problems';
 import { findColourKivLines, findIncompleteVariantLines } from './so-variant-check';
 
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 export async function soDepositFacts(
   sb: any,
   docNo: string,
@@ -72,8 +55,6 @@ export async function soProceedGateBlocked(
     customerName?: string | null;
     address1?: string | null; postcode?: string | null; deliveryDate?: string | null;
   },
-  /* Picks the deposit fraction (Houzs 30% / 2990 50%). Absent falls back to the
-     looser 30% — see processingDateThresholdFor for why never the stricter. */
   companyCode?: string | null,
 ): Promise<ReturnType<typeof proceedGateUnmetBody> | null> {
   const { paidSen, totalSen } = await soDepositFacts(sb, docNo);
@@ -91,19 +72,13 @@ export async function soProceedGateBlocked(
     hasAddress: !!eff.address1?.trim(),
     hasPostcode: !!eff.postcode?.trim(),
     hasDeliveryDate: !!eff.deliveryDate?.trim(),
-    /* soDepositFacts reads the centi ledger, which is the unit these amounts
-       are PRINTED in — see ProceedGateFacts on why the field names carry it. */
     paidSen,
     totalSen,
     companyCode,
   });
-  /* Identical verdict to the old `meetsProceedGate(...)` call: that predicate is
-     itself defined as "this list is empty" (order-rules.ts proceedGateFailures),
-     so no order's outcome moves — only the words do. */
   return problems.length === 0 ? null : proceedGateUnmetBody(problems);
 }
 
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 export async function soProcessingDateProblemsForDoc(
   sb: any,
   docNo: string,
@@ -151,8 +126,6 @@ export async function soProcessingDateProblemsForDoc(
     procDate,
     delivDate: String(header.deliveryDate ?? '').slice(0, 10) || null,
     todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
-    /* No orig* dates: this helper only runs when the order has NO stored
-       Processing Date, so the date is new and nothing can be grandfathered. */
     variantOffenders: findIncompleteVariantLines(lines),
     kivOffenders: findColourKivLines(lines),
     completeness: {

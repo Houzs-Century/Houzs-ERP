@@ -1,26 +1,18 @@
-// ----------------------------------------------------------------------------
-// propose-schedule-queries.ts — the frontend side of the Phase 3 "Propose times
-// + route" smart scheduler. One mutation hits POST /trips/propose-schedule
-// (which geocodes cache-first + makes ONE Distance Matrix call), and a PURE
-// forward-pass recomputes the per-stop times when the dispatcher drags the
-// sequence into a new order — WITHOUT another Google call. The travel matrix the
-// backend returns is reused for every reorder, so a drag costs nothing.
-// ----------------------------------------------------------------------------
 
 import { useMutation } from "@tanstack/react-query";
 import { authedFetch } from "./authed-fetch";
 
 /** One stop as the backend geocoded it (input order = matrix index i+1). */
 export type ProposeStop = {
-  ref: string;                 // SO doc_no
+  ref: string;
   debtorName: string | null;
   address: string;
   buildingType: string | null;
   lat: number;
   lng: number;
   serviceMinutes: number;
-  earliestTime: string | null; // HH:MM
-  latestTime: string | null;   // HH:MM
+  earliestTime: string | null;
+  latestTime: string | null;
 };
 
 /** One stop in the proposed (or recomputed) sequence, with clock times. */
@@ -29,10 +21,10 @@ export type ProposedStop = {
   order: number;
   travelMinutes: number;
   distanceMetres: number;
-  arrivalTime: string | null;      // HH:MM
+  arrivalTime: string | null;
   waitMinutes: number;
-  startServiceTime: string | null; // HH:MM
-  finishTime: string | null;       // HH:MM
+  startServiceTime: string | null;
+  finishTime: string | null;
   serviceMinutes: number;
   earliestTime: string | null;
   latestTime: string | null;
@@ -51,11 +43,11 @@ export type ProposeScheduleResponse = {
   configured: boolean;
   ok: boolean;
   reason?: string;
-  departTime: string;              // HH:MM
+  departTime: string;
   depot: { warehouseId: string | null; address: string; lat: number; lng: number } | null;
-  stops: ProposeStop[];            // geocoded, input order
+  stops: ProposeStop[];
   ungeocoded: Array<{ ref: string; debtorName: string | null; address: string; reason: string }>;
-  travelSeconds: number[][];       // (K+1)x(K+1), index 0 = depot
+  travelSeconds: number[][];
   distanceMetres: number[][];
   proposed: ProposedRoute | null;
 };
@@ -63,7 +55,7 @@ export type ProposeScheduleResponse = {
 export type ProposeScheduleVars = {
   soDocNos: string[];
   depotWarehouseId?: string | null;
-  departTime?: string;             // HH:MM
+  departTime?: string;
 };
 
 export function useProposeSchedule() {
@@ -76,7 +68,6 @@ export function useProposeSchedule() {
   });
 }
 
-// ── Pure clock helpers (mirror backend propose-route.ts) ────────────────────
 
 /** "HH:MM" -> minutes from midnight, or null. PURE. */
 export function timeToMinutes(hhmm: string | null | undefined): number | null {
@@ -118,7 +109,7 @@ export function recomputeSequenceTimes(
 ): ProposedRoute {
   const secToMin = (s: number) => Math.round((Number(s) || 0) / 60);
   let clock = departMin;
-  let currentIdx = 0; // depot
+  let currentIdx = 0;
   let totalTravel = 0;
   let totalDistance = 0;
   let windowViolations = 0;

@@ -1,18 +1,13 @@
 import { describe, expect, test } from 'vitest';
 import { mergePoGrnLinks } from './po-list-read';
 
-// The PO list "GRN No" column and has_children lock used to key off the GRN
-// header FK only. A supplier multi-receive (grns POST /from-po-items) heads one
-// GRN at the first PO while receiving lines across many, so every OTHER source
-// PO showed no GRN and read has_children=false (Edit/Cancel offered on a received
-// PO). mergePoGrnLinks unions the header FK with the grn_items line link.
 
 describe('mergePoGrnLinks — GRN column + downstream lock union header FK with the line link', () => {
   test('a cross-PO receipt shows on the PO whose LINE it received, though its header names another PO', () => {
     const header = [{ poId: 'po933', grnId: 'g057', grnNumber: 'HC-GRN-2609-057' }];
     const line = [{ poId: 'po052', grnId: 'g057', grnNumber: 'HC-GRN-2609-057', cancelled: false }];
     const { childIds, grnsByPo } = mergePoGrnLinks(header, line);
-    expect(childIds.has('po052')).toBe(true); // received -> downstream-locked
+    expect(childIds.has('po052')).toBe(true);
     expect(childIds.has('po933')).toBe(true);
     expect(grnsByPo.get('po052')).toEqual([{ id: 'g057', grnNumber: 'HC-GRN-2609-057', receivedAt: null }]);
     expect(grnsByPo.get('po933')).toEqual([{ id: 'g057', grnNumber: 'HC-GRN-2609-057', receivedAt: null }]);

@@ -30,7 +30,6 @@ export interface StageHistoryRow {
 
 interface StageDef { value: string; short: string }
 
-// Mirrors the canonical 9-stage order from mig 074.
 const STAGES: StageDef[] = [
   { value: "pending_review",            short: "Review" },
   { value: "under_verification",        short: "Verify" },
@@ -41,19 +40,16 @@ const STAGES: StageDef[] = [
   { value: "completed",                 short: "Done" },
 ];
 
-// Mirror toneForPct in the React component.
 function toneForPct(pct: number): "green" | "amber" | "red" {
   if (pct >= 1.0) return "red";
   if (pct >= 0.5) return "amber";
   return "green";
 }
 
-// Tailwind tone → hex for inline SVG. Approximate matches to the
-// frontend palette (synced/amber-500/err) so the print echoes the UI.
 const HEX = {
-  green: "#16a34a",  // synced
-  amber: "#d97706",  // amber-700 (darker than 500 for print contrast)
-  red:   "#dc2626",  // err
+  green: "#16a34a",
+  amber: "#d97706",
+  red:   "#dc2626",
   ink:   "#0f172a",
   muted: "#94a3b8",
   border:"#cbd5e1",
@@ -80,7 +76,6 @@ export function renderStageTrackerHtml({
   history: StageHistoryRow[];
   currentStage: string;
 }): string {
-  // Most-recent entry per stage wins, same as the React component.
   const lastByStage = new Map<string, StageHistoryRow>();
   for (const h of history ?? []) lastByStage.set(h.stage, h);
   const currentIdx = Math.max(
@@ -88,8 +83,6 @@ export function renderStageTrackerHtml({
     STAGES.findIndex((s) => s.value === currentStage),
   );
 
-  // SVG layout constants. viewBox is in arbitrary units; the
-  // container scales it via CSS (width: 100%; height: 90px).
   const N = STAGES.length;
   const W = 900;
   const H = 110;
@@ -108,13 +101,11 @@ export function renderStageTrackerHtml({
     const isCurrent = idx === currentIdx;
     const isSkipped = !!h?.skipped;
 
-    // Connector to the next node (skip the last one).
     if (idx < N - 1) {
       const nextX = PAD + stepX * (idx + 1);
       let strokeColor = HEX.border;
       let strokeDash = "";
       if (isPast || (isCurrent && !isSkipped)) {
-        // Coloured by this stage's tone if we have a target.
         let tone: "green" | "amber" | "red" = "green";
         if (h?.target_days && h?.entered_at) {
           const elapsed = daysBetween(h.entered_at, h.exited_at);
@@ -131,7 +122,6 @@ export function renderStageTrackerHtml({
       );
     }
 
-    // Node circle.
     let fill = "#fff";
     let stroke = HEX.border;
     let textColor = HEX.muted;

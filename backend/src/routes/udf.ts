@@ -5,23 +5,6 @@ import { requirePermission, requirePageAccessOrSalesView } from "../middleware/a
 
 const app = new Hono<{ Bindings: Env }>();
 
-/**
- * The allowed table namespace AND each table's read gate, in ONE registry —
- * keeping them as two lists is how they drift apart.
- *
- * GET /:table serves the table's own data (every field value for every row), so
- * it answers to the SAME gate as the table it mirrors. A single flat key cannot
- * express that: these tables gate on two different axes — assr / logs on a
- * permission key, sales_entries on PAGE ACCESS, because a code-keyed Sales user
- * holds no flat `sales.read` (positions get no permission backfill). Gating
- * sales_entries on a flat key would 403 exactly the Sales callers #671 admitted.
- *
- * Values are the existing middlewares, not re-implemented checks — dispatch
- * only, so these gates cannot drift from the ones on the tables' own routes.
- * The five AutoCount tables have no live reader since strip-to-core; their
- * legacy read keys survive only in the mig 001/009/014 role JSON, so they stay
- * closed to anyone the matrix can grant.
- */
 const READ_GATE: Record<string, MiddlewareHandler<{ Bindings: Env }>> = {
   sales_orders: requirePermission("sales_orders.read"),
   delivery_orders: requirePermission("delivery_orders.read"),
@@ -30,7 +13,6 @@ const READ_GATE: Record<string, MiddlewareHandler<{ Bindings: Env }>> = {
   balance: requirePermission("balance.read"),
   overdue: requirePermission("overdue.read"),
   logs: requirePermission("logs.read"),
-  // Rep-entered sales transactions. row_key = sales_entries.id (as string).
   sales_entries: requirePageAccessOrSalesView("sales"),
 };
 
@@ -40,32 +22,16 @@ function validateTable(table: string): boolean {
   return Object.prototype.hasOwnProperty.call(READ_GATE, table);
 }
 
-// Resolves the gate from the :table param, so an unknown table is rejected
-// before any gate runs (400, matching the handlers' own validateTable reply).
 const udfReadGate: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   const table = c.req.param("table");
   if (!table || !validateTable(table)) return c.json({ error: "Invalid table" }, 400);
   return READ_GATE[table](c, next);
 };
 
-// snake_case validator — letters, digits, underscores; must start with a letter
 function validateKey(key: string): boolean {
   return /^[a-z][a-z0-9_]{0,39}$/.test(key);
 }
 
-/**
- * GET /api/udf/:table → list all UDF fields + their values for that table.
- * Returns:
- *   {
- *     fields: [{ id, key, label, type, options }, ...],
- *     values: { [row_key]: { [field_key]: value } }
- *   }
- *
- * The values map covers every UDF row in this table — for tables in the
- * thousands of rows this is still small (UDF columns count is bounded by
- * what users actually create). If it ever gets large we can switch to
- * batched ?keys=... queries.
- */
 app.get("/:table", udfReadGate, async (c) => {
   const table = c.req.param("table");
   if (!validateTable(table)) return c.json({ error: "Invalid table" }, 400);
@@ -102,10 +68,6 @@ app.get("/:table", udfReadGate, async (c) => {
   return c.json({ fields, values });
 });
 
-/**
- * POST /api/udf/:table — create a new UDF field.
- * Body: { key, label, type, options? }
- */
 app.post("/:table", requirePermission("udf.manage"), async (c) => {
   const table = c.req.param("table");
   if (!validateTable(table)) return c.json({ error: "Invalid table" }, 400);
@@ -141,7 +103,6 @@ app.post("/:table", requirePermission("udf.manage"), async (c) => {
     .first();
   if (exists) return c.json({ error: "A field with that key already exists" }, 409);
 
-  // Position: append at the end
   const maxPos = await c.env.DB.prepare(
     `SELECT COALESCE(MAX(position), -1) + 1 as next FROM udf_fields WHERE table_name = ?`
   )
@@ -172,9 +133,6 @@ app.post("/:table", requirePermission("udf.manage"), async (c) => {
   });
 });
 
-/**
- * DELETE /api/udf/:table/:key — remove a field and all its values.
- */
 app.delete("/:table/:key", requirePermission("udf.manage"), async (c) => {
   const table = c.req.param("table");
   const key = c.req.param("key");
@@ -196,12 +154,6 @@ app.delete("/:table/:key", requirePermission("udf.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-/**
- * PUT /api/udf/:table/values/:rowKey — upsert one or more values for a row.
- * Body: { [field_key]: value | null }
- * Setting a value to null deletes the row's value for that field (so empty
- * cells don't accumulate dead rows).
- */
 app.put("/:table/values/:rowKey", requirePermission("udf.manage"), async (c) => {
   const table = c.req.param("table");
   const rowKey = c.req.param("rowKey");
@@ -212,7 +164,6 @@ app.put("/:table/values/:rowKey", requirePermission("udf.manage"), async (c) => 
     return c.json({ error: "Body must be an object of field_key → value" }, 400);
   }
 
-  // Validate all keys against the table's known fields
   const fieldsRes = await c.env.DB.prepare(
     `SELECT field_key FROM udf_fields WHERE table_name = ?`
   )

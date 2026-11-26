@@ -33,10 +33,7 @@ import { fairStateOf, recordFairChange } from './fair-audit';
 export type FairReconcileResult = {
   scanned: number;
   linked: number;
-  /** Still waiting for the fair to be created. The normal outcome for an order
-   *  written at an event PMS has not caught up with yet. */
   stillPending: number;
-  /** Needs a person: two booths fit, or the order's brand has no booth there. */
   needsAPerson: number;
   skipped: number;
 };
@@ -69,8 +66,6 @@ export async function reconcilePendingFairs(
   try {
     sb = getSupabaseService(env);
   } catch {
-    /* No SUPABASE_* secrets on this deployment — the job is simply dark, which
-       is a legitimate state and must not throw inside a cron slot. */
     return EMPTY;
   }
 
@@ -89,29 +84,16 @@ export async function reconcilePendingFairs(
     const venue = (raw.venue ?? '').trim();
     const soDate = String(raw.so_date ?? raw.soDate ?? '').slice(0, 10);
     const companyId = Number(raw.company_id ?? raw.companyId ?? NaN);
-    /* A row with no document, no place, no date or no company cannot be
-       resolved and must not be guessed at. Counted as skipped so a backlog that
-       is going nowhere is visible in the log rather than silently "scanned". */
     if (!docNo || !venue || !/^\d{4}-\d{2}-\d{2}$/.test(soDate) || !Number.isInteger(companyId)) {
       out.skipped += 1;
       continue;
     }
 
-    /* The ROW's own company is the tenant boundary here — a cron has no active
-       company context, and `projects` would otherwise be read unscoped. */
     const fair = await resolveFairForSave({
       db: env.DB as unknown as FairDb,
       companySql: ` AND p.company_id = ${companyId}`,
       venue,
-      /* No organizer: the order recorded a place, which is what the Others path
-         captures. Venue + date + brand resolves uniquely except where two
-         organizers share one venue on one day — 3 days in all of 2026 — and
-         those come back AMBIGUOUS for a person rather than being guessed. */
       organizer: null,
-      /* No picked event either, for the same reason: this order carries a place
-         and nothing else, so there is no occurrence to match and the venue
-         window is all there is. Explicit null rather than an omitted argument —
-         its absence decides which lookup runs. */
       picked: null,
       soDate,
       brand: raw.branding ?? null,
@@ -124,9 +106,6 @@ export async function reconcilePendingFairs(
       fair.projectId != null
         ? { project_id: fair.projectId, fair_match: 'PICKED' }
         : { fair_match: match };
-    /* Scoped on the write as well as the read: nothing re-checks between two
-       PostgREST round trips, and a scoped-read-then-open-update is exactly the
-       shape that shipped across this system once already. */
     const { error: updErr } = await sb
       .from('mfg_sales_orders')
       .update(patch)
@@ -135,7 +114,6 @@ export async function reconcilePendingFairs(
     if (updErr) { out.skipped += 1; continue; }
     if (fair.projectId != null) out.linked += 1;
     else out.needsAPerson += 1;
-    /* In the order's History, like every fair move (fair-audit.ts). */
     await recordFairChange({
       sb: sb as unknown as SupabaseClient, db: env.DB as unknown as FairDb, companySql: ` AND p.company_id = ${companyId}`, docNo,
       before: { projectId: null, fairMatch: 'PENDING' }, after: fairStateOf(patch), how: 'nightly', actorId: null, actorName: 'System',

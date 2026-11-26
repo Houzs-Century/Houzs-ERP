@@ -48,14 +48,11 @@ export function quarterStart(month: string): string {
 }
 
 export type DashboardPeriod = {
-  /** '2026-09' | '2026-Q3' */
   key: string;
-  /** '09/2026' | 'Q3 2026' — the house numeric spelling; the screen appends ' *' when partial. */
   label: string;
   from: string;
   to: string;
   months: string[];
-  /** Not finished as of today — the running month, a quarter not yet ended, or a future period. */
   partial: boolean;
 };
 
@@ -72,14 +69,10 @@ const quarterPeriod = (first: string, today: string): DashboardPeriod => {
 
 export type PeriodWindow = {
   granularity: Granularity;
-  /** How many periods back from today's when no range is named. */
   periods: number;
-  /** An explicit range of months, inclusive — both or neither. */
   from?: string | null;
   to?: string | null;
-  /** YYYY-MM-DD, the Malaysian day. */
   today: string;
-  /** Every month that carries a forecast row — a future one extends the default window. */
   forecastMonths?: string[];
   /** YYYY-MM, the company's first month with sales: the default window starts no earlier
       (owner 2026-09-22: 可以从 06/2026 开始吗 — the books' empty months stay out); a named range ignores it. */
@@ -121,7 +114,6 @@ export function periodsFor(w: PeriodWindow): DashboardPeriod[] {
   return out;
 }
 
-/* ── The figures a period carries ───────────────────────────────────────── */
 
 /** The P&L's totals as the Dashboard's Income Statement card reads them —
     the same eight the statement prints, with staff cost split out of the
@@ -152,7 +144,6 @@ export const pct1 = (part: number, whole: number): number | null => (whole !== 0
 /** A ratio, two decimals, null when there is nothing to divide by. */
 export const ratio2 = (part: number, whole: number): number | null => (whole !== 0 ? Math.round((part / whole) * 100) / 100 : null);
 
-/* ── Cost structure by product group ────────────────────────────────────── */
 
 /** The owner's four (2026-09-21: Sofa / Bedding / Accessories / Dining) —
     Bedding is mattress + bedframe — and Others for a line the four do not
@@ -202,14 +193,11 @@ export const emptyCostStructure = (): Record<CostGroupKey, CostStructureGroup> =
 export const costStructureList = (by: Record<CostGroupKey, CostStructureGroup>): CostStructureGroup[] =>
   COST_GROUPS.map((g) => by[g.key]).filter((g) => g.key !== 'others' || g.spendSen !== 0 || g.purchaseSen !== 0 || g.closingStockSen !== 0);
 
-/* ── The balance sheet's summary and the ratios ─────────────────────────── */
 
 export type BalanceSummary = {
   assetsSen: number; liabilitiesSen: number; equitySen: number; earningsSen: number;
   currentAssetsSen: number; currentLiabilitiesSen: number; inventorySen: number;
-  /** liabilities / assets, %, null with no assets. */
   debtToAssetPct: number | null;
-  /** The statement's own self-check: 0 or the ledger is broken. */
   checkSen: number;
 };
 
@@ -320,11 +308,8 @@ export const emptyCompare = (): Record<CompareGroupKey, CompareAcc> =>
 export type CompareHas = { actual: boolean; forecast: boolean };
 
 export type CompareTotals = {
-  /** The ledger: the group's sales accounts, credit-positive (a sales return keyed there reduces it). */
   actualSalesSen: number | null;
-  /** The Performance P&L: the orders' sales and cost for the group, by SO date. */
   performanceSalesSen: number | null; performanceCostSen: number | null; performanceGpSen: number | null; performanceGpPct: number | null;
-  /** The Forecast P&L: the group's accounts. */
   forecastSalesSen: number | null; forecastCostSen: number | null; forecastGpSen: number | null; forecastGpPct: number | null;
 };
 export type CompareGroup = CompareTotals & { key: CompareGroupKey; label: string };

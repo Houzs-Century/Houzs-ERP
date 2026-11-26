@@ -1,8 +1,3 @@
-/* The line cost a Sales Order price override recomputes its margin from.
- *
- * A FAILED read is not a zero cost: margin = new total - 0 books the whole price
- * as profit. So the result says which it was, and the override route refuses
- * (before its audit insert) instead of guessing. lib/failed-read-refusal.ts. */
 type PgError = { message?: string | null } | null;
 
 export async function readOverrideLineCost(

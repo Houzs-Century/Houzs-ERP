@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// brandShare — the OFFICE side of a brand's public calendar link: generate
-// (get-or-create) or revoke the unguessable token behind /b/<token>
-// (routes/publicBrandCalendar.ts). Mounted at /api/brand-share, behind `auth`.
-//
-// Lives in its own file rather than beside the brands routes in
-// routes/projects.ts because that file is at its size ceiling
-// (scripts/file-size-ceilings.json) — same permissions as the contractor
-// twin there (`projects.write` to copy, `projects.manage` to revoke).
-//
-// Minted against the brand NAME — the value projects.brand stores and the
-// public route filters on — so a rename would need a fresh link, which is
-// correct: the old link would otherwise keep showing the old name's events.
-// ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
@@ -21,8 +7,6 @@ import { issueBrandShareToken, revokeBrandShareTokens } from "../services/brandS
 
 export const brandShare = new Hono<{ Bindings: Env }>();
 
-/** The brand row, scoped to the caller's company the way GET /brands is
- *  (activeCompanySql degrades to no predicate when unresolved). */
 async function brandName(c: Context<{ Bindings: Env }>, id: number): Promise<string | null> {
   const coSql = activeCompanySql(c);
   const row = await c.env.DB.prepare(

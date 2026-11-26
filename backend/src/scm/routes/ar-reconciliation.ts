@@ -33,17 +33,8 @@ import { supabaseAuth } from '../middleware/auth';
 
 export const arReconciliation = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-// Attach the scm-scoped supabase-js client (c.get('supabase')) the handler reads.
-// This router is mounted in scm/index.ts WITHOUT the usual `scm.use(prefix,
-// scmAreaGuard(...))` line (it rides the coarse scm.access umbrella as a read-only
-// preview) and shipped without its own supabaseAuth too — so `c.get('supabase')`
-// was undefined and the first `sb.from('mfg_sales_orders')` threw a TypeError,
-// 500-ing the AR reconciliation preview for everyone. Same `.use('*', supabaseAuth)`
-// every other scm sub-router carries.
 arReconciliation.use('*', supabaseAuth);
 
-/** Orders still in play for receivables — a draft has no money story yet and a
- *  cancelled one is closed. */
 const AR_STATUSES = ['CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP', 'SHIPPED', 'DELIVERED', 'INVOICED'];
 
 interface SoRow {
@@ -61,7 +52,6 @@ const n = (v: unknown): number => {
   return Number.isFinite(x) ? x : 0;
 };
 
-/* GET /api/scm/ar/reconciliation — per-order AR truth + the release gate. */
 arReconciliation.get('/reconciliation', async (c) => {
   const sb = c.get('supabase');
   const onlyDrift = c.req.query('drift') === 'true';
@@ -81,9 +71,6 @@ arReconciliation.get('/reconciliation', async (c) => {
      (scm.finance.outstanding) was added at the mount in scm/index.ts. */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
 
-  /* PAGED: `.limit(2000)` was still cut at PostgREST's 1,000 rows, so every
-     order older than the newest 1,000 in play silently left the outstanding
-     total. A truncated read is refused, never summed. */
   const { data: soData, error: soErr, truncated: soCut } = await paginateAll<SoRow>((from, to) => {
     let soQ = sb
       .from('mfg_sales_orders')
@@ -100,9 +87,6 @@ arReconciliation.get('/reconciliation', async (c) => {
   const sos = (soData ?? []) as SoRow[];
   if (sos.length === 0) return c.json({ rows: [], summary: emptySummary() });
 
-  /* The payment LEDGER for those orders. paginateAll because PostgREST caps a
-     plain select at 1000 — a silent truncation here would understate what a
-     customer has paid, which is the worst direction to be wrong in. */
   const docNos = new Set(sos.map((s) => s.doc_no));
   const { data: payData, error: payErr, truncated: payCut } = await paginateAll<PayRow>((from, to) =>
     sb.from('mfg_sales_order_payments').select('so_doc_no, amount_sen').order('so_doc_no').range(from, to),
@@ -120,8 +104,6 @@ arReconciliation.get('/reconciliation', async (c) => {
     const paidLedgerSen = paidByDoc.get(s.doc_no) ?? 0;
     const paidHeaderSen = n(s.paid_sen);
     const remainingSen = Math.max(0, totalSen - paidLedgerSen);
-    // The gate is computed from the LEDGER, never the header stamp — the ledger
-    // is the record of money actually received.
     const gate = computeReleaseGate({ totalSen, paidSen: paidLedgerSen });
     return {
       doc_no: s.doc_no,
@@ -132,7 +114,6 @@ arReconciliation.get('/reconciliation', async (c) => {
       paid_ledger_sen: paidLedgerSen,
       paid_header_sen: paidHeaderSen,
       remaining_sen: remainingSen,
-      /* The header stamp vs the ledger. Reported, never reconciled here. */
       drift_sen: paidHeaderSen - paidLedgerSen,
       has_drift: paidHeaderSen !== paidLedgerSen,
       release_gate: {
@@ -152,8 +133,6 @@ arReconciliation.get('/reconciliation', async (c) => {
     withDrift: filtered.filter((r) => r.has_drift).length,
     held: filtered.filter((r) => r.release_gate.decision === 'HOLD').length,
     collectOnDeliverySen: filtered.reduce((s, r) => s + r.release_gate.collect_on_delivery_sen, 0),
-    // Named so nobody reads this preview as full AR-005: bank-receipt matching
-    // needs a feed that does not exist yet.
     receiptMatching: 'not available — no bank receipt feed is connected yet',
   };
 

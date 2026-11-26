@@ -1,6 +1,3 @@
-/* The photos a stop's crew have uploaded and not yet completed, shared by every
-   crew member of that stop (backend scm/routes/crew-stop-photos.ts). The driver
-   and the helper see the same list, with who took each photo. */
 import { authedFetch } from './authed-fetch';
 
 export type CrewStopPhoto = {

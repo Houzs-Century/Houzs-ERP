@@ -1,29 +1,3 @@
-// ----------------------------------------------------------------------------
-// PhotoGallery — multi-photo grid for product models. The backend SHIPPED; all
-// four endpoints are live (backend/src/scm/routes/product-models.ts:997-1102,
-// migration 0060 scm.product_model_photos), mounted at scm/index.ts:154:
-//
-//   GET    /scm/product-models/:id/photos          → { photos: PhotoRow[] }
-//   POST   /scm/product-models/:id/photos          (multipart `file`) → { photo }
-//   DELETE /scm/product-models/:id/photos/:photoId
-//   PATCH  /scm/product-models/:id/photos/:photoId (body: { is_primary?, order? })
-//
-// The R2 bucket is bound too (SO_ITEM_PHOTOS -> houzs-erp, prod + staging, keys
-// under product-model-photos/). So a 404 or a 500 photo_bucket_not_configured
-// here is a REGRESSION to debug, NOT the expected pre-backend state this header
-// used to describe — start at the route + the binding, not at this component.
-// The "Not yet wired · Setup notes" treatment is retained as the failure state.
-//
-// Layout (Final design · Batch 2 gallery variant):
-//   · Dashed primary drop zone — drag-and-drop OR click to choose files
-//   · Thumbnail grid below — Primary badge on the marked photo, hover actions
-//     (Set primary / Delete / move up / move down), in-progress tile with an
-//     accent-bright progress bar, error tile with retry
-//   · Mobile: "Take photo" / "From library" buttons at top, 2-col grid
-//
-// Pricing rule of thumb: ≤5MB per file, JPG / PNG / WebP. Server is the final
-// gate; the client cap is just to keep the UX honest.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -44,23 +18,15 @@ import {
 } from "lucide-react";
 import { Button } from "../Button";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-/* Set-primary, delete and reorder all invalidated on success and said nothing on
-   failure — the same shape as the fabric grid the owner reported as "I press it
-   and nothing happens". Inline mutations, so the first sweep could not resolve
-   them by name; they surfaced once the checker learned to read the component
-   they live in. */
 import { writeFailed } from "../../vendor/scm/lib/mutation-error";
 import { cn } from "../../lib/utils";
 import { prepareImageForUpload } from "../../lib/imagePipeline";
 
-// ── Types ───────────────────────────────────────────────────────────────────
 
 export type PhotoRow = {
   id: string;
   key: string;
   url: string;
-  /** WO-7 — proxy URL of the `.thumb` sibling; null for photos uploaded
-   *  before thumbnails shipped. Grid renders it first, full url on error. */
   thumbUrl?: string | null;
   is_primary: boolean;
   order: number;
@@ -77,7 +43,6 @@ type PendingUpload = {
   state: UploadState;
 };
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const ACCEPT = "image/jpeg,image/png,image/webp";
@@ -86,9 +51,6 @@ type LoadStatus = "ok" | "not-configured" | "error";
 
 function classifyLoadError(err: unknown): LoadStatus {
   const msg = err instanceof Error ? err.message : String(err ?? "");
-  // 501 / 500 not_configured / 404 endpoint-missing — all "backend not ready"
-  // The 404 path catches both the raw "not_found" body and humanApiError()'s
-  // formatted "could no longer be found" phrasing.
   if (
     /\b501\b|\b404\b|not[_\s-]?configured|not[_\s-]?found|could no longer be found/i.test(
       msg,
@@ -104,7 +66,6 @@ const errMsg = (e: unknown): string =>
 
 const newRid = () => `u${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-// ── Component ───────────────────────────────────────────────────────────────
 
 export function PhotoGallery({
   modelId,
@@ -115,7 +76,6 @@ export function PhotoGallery({
 }) {
   const qc = useQueryClient();
 
-  // List query
   const photosQ = useQuery({
     queryKey: ["product-model-photos", modelId],
     queryFn: () =>
@@ -123,7 +83,6 @@ export function PhotoGallery({
         `/product-models/${modelId}/photos`,
       ).then((r) =>
         [...r.photos].sort((a, b) => {
-          // Primary first, then by order asc, then by id for determinism.
           if (a.is_primary !== b.is_primary) return a.is_primary ? -1 : 1;
           if (a.order !== b.order) return a.order - b.order;
           return a.id.localeCompare(b.id);
@@ -138,7 +97,6 @@ export function PhotoGallery({
     ? classifyLoadError(photosQ.error)
     : "ok";
 
-  // Mutations
   const setPrimaryMut = useMutation({
     mutationFn: ({ photoId }: { photoId: string }) =>
       authedFetch<{ ok: true }>(
@@ -172,32 +130,23 @@ export function PhotoGallery({
     onError: writeFailed,
   });
 
-  // Pending uploads (in-flight, kept locally so the UI shows progress tiles
-  // BEFORE the photos query refetches).
   const [pending, setPending] = useState<PendingUpload[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  // Drag-and-drop
   const [dragActive, setDragActive] = useState(false);
   const dragEnterCount = useRef(0);
 
-  // Setup-notes disclosure
   const [showSetup, setShowSetup] = useState(false);
 
-  // Upload pipeline
   const startUpload = async (file: File, rid: string) => {
     setPending((prev) =>
       prev.map((p) =>
         p.rid === rid ? { ...p, state: { phase: "uploading", progress: 0 } } : p,
       ),
     );
-    // WO-7 — downscale/re-encode + generate the thumbnail client-side.
-    // Falls back to the original file (no thumb part) when unavailable.
     const prepared = await prepareImageForUpload(file);
     if (prepared.file.size > MAX_BYTES) {
-      // Compression could not bring it under the server's 5 MB gate —
-      // fail here with a clear message instead of burning the upload.
       setPending((prev) =>
         prev.map((p) =>
           p.rid === rid
@@ -215,7 +164,6 @@ export function PhotoGallery({
         `/product-models/${modelId}/photos`,
         { method: "POST", body: fd },
       );
-      // Success — remove pending tile and refetch the gallery.
       setPending((prev) => prev.filter((p) => p.rid !== rid));
       qc.invalidateQueries({ queryKey: ["product-model-photos", modelId] });
     } catch (e) {
@@ -239,9 +187,6 @@ export function PhotoGallery({
         });
         continue;
       }
-      // WO-7 — startUpload compresses before sending, so a raw phone photo
-      // over the server's 5 MB gate is fine now. Keep only a decode-sanity
-      // ceiling; the post-compression size is enforced in startUpload.
       if (f.size > 25 * 1024 * 1024) {
         accepted.push({
           rid: newRid(),
@@ -298,7 +243,6 @@ export function PhotoGallery({
     if (e.dataTransfer?.files?.length) queueFiles(e.dataTransfer.files);
   };
 
-  // Local preview URLs for pending uploads
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   useEffect(() => {
     const next: Record<string, string> = {};
@@ -313,8 +257,6 @@ export function PhotoGallery({
   const hasAnyError = pending.some((p) => p.state.phase === "error");
   const reorderableCount = photos.length;
 
-  // Move helpers (uses PATCH `order` — the backend is expected to insert/swap
-  // with adjacent neighbour and renumber consistently).
   const moveUp = (photo: PhotoRow, idx: number) => {
     if (idx === 0) return;
     reorderMut.mutate({ photoId: photo.id, order: Math.max(0, photo.order - 1) });
@@ -329,7 +271,6 @@ export function PhotoGallery({
       aria-label="Model photos"
       className="space-y-3 rounded-xl border border-border bg-surface p-4 shadow-stone sm:p-5"
     >
-      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-brand text-accent">
@@ -381,7 +322,6 @@ export function PhotoGallery({
         </div>
       )}
 
-      {/* Loading */}
       {photosQ.isLoading && (
         <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -390,7 +330,6 @@ export function PhotoGallery({
         </div>
       )}
 
-      {/* Not configured */}
       {loadStatus === "not-configured" && !photosQ.isLoading && (
         <NotConfiguredPanel
           onRetry={() => photosQ.refetch()}
@@ -398,7 +337,6 @@ export function PhotoGallery({
         />
       )}
 
-      {/* Generic load error */}
       {loadStatus === "error" && !photosQ.isLoading && (
         <div className="rounded-lg border border-err/40 bg-err/5 p-3 text-[12px] text-err">
           <div className="flex items-start gap-2">
@@ -418,10 +356,8 @@ export function PhotoGallery({
         </div>
       )}
 
-      {/* Drop zone + grid (only when load succeeded) */}
       {loadStatus === "ok" && !photosQ.isLoading && (
         <>
-          {/* Pending-uploads error banner */}
           {hasAnyError && (
             <div className="flex items-center justify-between rounded-md border border-err/40 bg-err/5 p-2.5 text-[12px] text-err">
               <span>
@@ -437,7 +373,6 @@ export function PhotoGallery({
             </div>
           )}
 
-          {/* Drop zone */}
           <div
             onDragEnter={onDragEnter}
             onDragLeave={onDragLeave}
@@ -511,7 +446,6 @@ export function PhotoGallery({
             />
           </div>
 
-          {/* Grid */}
           {photos.length === 0 && pending.length === 0 ? (
             <div className="rounded-md border border-border bg-surface-2 px-3 py-6 text-center text-[12px] text-ink-muted">
               No photos yet — drop one above to start.
@@ -552,7 +486,6 @@ export function PhotoGallery({
   );
 }
 
-// ── Tile components ─────────────────────────────────────────────────────────
 
 function PhotoTile({
   photo,
@@ -573,9 +506,6 @@ function PhotoTile({
   onMoveUp: () => void;
   onMoveDown: () => void;
 }) {
-  /* WO-7 — render the light `.thumb` sibling in the grid and fall back to
-     the full image when it errors (photos uploaded before thumbnails
-     shipped have no thumb object; the proxy 404s and onError fires). */
   const [useFull, setUseFull] = useState(!photo.thumbUrl);
   const src = !useFull && photo.thumbUrl ? photo.thumbUrl : photo.url;
   return (
@@ -756,7 +686,6 @@ function PendingTile({
   );
 }
 
-// ── Not-configured panel ────────────────────────────────────────────────────
 
 function NotConfiguredPanel({
   onRetry,
@@ -793,7 +722,4 @@ function NotConfiguredPanel({
   );
 }
 
-/* Re-export the helper so HeroImageEditor (sibling file) can share the same
-   classification + error-format conventions without re-defining them. Keeps
-   the "what counts as not-configured" rule in one place. */
 export { classifyLoadError, errMsg };

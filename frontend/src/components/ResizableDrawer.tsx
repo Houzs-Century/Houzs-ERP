@@ -1,25 +1,9 @@
-// ----------------------------------------------------------------------------
-// ResizableDrawer — a right-side slide-over whose width the user can DRAG (a
-// left-edge handle), clamped to a min/max and persisted per `storageKey` to
-// localStorage. The existing DetailDrawer pattern (fixed right-0 max-w-[520px])
-// is a FIXED-width slide-over; this is its resizable sibling.
-//
-// Generic + reusable on purpose (chrome only — no domain knowledge): a caller
-// supplies the title, optional subtitle, header actions, body and footer. First
-// consumer is the Delivery Planning scheduling drawer (ScheduleTripDrawer), but
-// nothing here is delivery-specific.
-//
-// Desktop surface. Mounted only while shown (the caller conditionally renders
-// it); Escape and a scrim click both close.
-// ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useEscapeLayer } from "../lib/escapeStack";
 
-/* Clamp a width to [min, max], and never wider than the viewport minus a gutter
-   so the close/scrim edge stays reachable. Null-safe for SSR (no window). */
 function clampWidth(w: number, min: number, max: number): number {
   const viewportCap = typeof window !== "undefined" ? window.innerWidth - 80 : max;
   return Math.min(Math.max(w, min), Math.min(max, viewportCap));
@@ -44,7 +28,6 @@ export function ResizableDrawer({
   headerActions?: ReactNode;
   footer?: ReactNode;
   children: ReactNode;
-  /** localStorage key the chosen width persists under (personal pref). */
   storageKey: string;
   defaultWidth?: number;
   minWidth?: number;
@@ -58,8 +41,6 @@ export function ResizableDrawer({
   });
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
-  /* Dragging the LEFT edge: moving the pointer left (smaller clientX) makes the
-     drawer WIDER, so width grows by (startX − currentX). */
   const onPointerMove = useCallback(
     (e: PointerEvent) => {
       const d = dragRef.current;
@@ -77,7 +58,7 @@ export function ResizableDrawer({
     window.removeEventListener("pointermove", onPointerMove);
     window.removeEventListener("pointerup", endDrag);
     setWidth((w) => {
-      try { window.localStorage.setItem(storageKey, String(Math.round(w))); } catch { /* private mode */ }
+      try { window.localStorage.setItem(storageKey, String(Math.round(w))); } catch { }
       return w;
     });
   }, [onPointerMove, storageKey]);
@@ -91,10 +72,8 @@ export function ResizableDrawer({
     window.addEventListener("pointerup", endDrag);
   };
 
-  /* Esc closes. */
   useEscapeLayer(onClose, true);
 
-  /* Belt-and-braces: drop any in-flight drag listeners on unmount. */
   useEffect(
     () => () => {
       window.removeEventListener("pointermove", onPointerMove);
@@ -119,7 +98,6 @@ export function ResizableDrawer({
         style={{ width }}
         className="fixed right-0 top-0 z-[91] flex h-full max-w-full flex-col border-l border-border bg-surface shadow-slab"
       >
-        {/* left-edge drag handle */}
         <div
           onPointerDown={startDrag}
           role="separator"
@@ -131,7 +109,6 @@ export function ResizableDrawer({
           <div className="h-8 w-[3px] rounded-full bg-border-strong transition-colors group-hover:bg-primary" />
         </div>
 
-        {/* dark header */}
         <div className="flex h-[60px] shrink-0 items-center gap-3 bg-sidebar px-5 text-sidebar-ink">
           <button
             type="button"
@@ -148,7 +125,6 @@ export function ResizableDrawer({
           {headerActions}
         </div>
 
-        {/* scroll body */}
         <div className="flex-1 overflow-y-auto">{children}</div>
 
         {footer && <div className="shrink-0 border-t border-border bg-surface px-5 py-3">{footer}</div>}

@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// photoThumbs — shared thumbnail-key vocabulary + optional-thumb storage for
-// the WO-7 image pipeline (client-side compression + thumbnails).
-//
-// CONTRACT (mirrored by frontend/src/lib/imagePipeline.ts):
-//   - A thumbnail for R2 object `a/b/c.jpg` always lives at `a/b/c.jpg.thumb`
-//     in the SAME bucket. Deterministic sibling key — no DB column required
-//     (product_model_photos.thumb_key exists and is stamped where available,
-//     but readers must never depend on it).
-//   - Thumbs are OPTIONAL everywhere: every photo uploaded before this
-//     shipped has no thumb, and old clients keep uploading without one.
-//     Readers 404 on a missing thumb and the frontend falls back to the
-//     original object.
-//   - Thumbs are best-effort on write too: an invalid/oversized thumb part is
-//     IGNORED (warn-logged), never a reason to fail the main photo upload.
-// ----------------------------------------------------------------------------
 
 import type { R2Bucket } from '@cloudflare/workers-types';
 

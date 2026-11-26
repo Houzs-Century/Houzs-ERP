@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// bank-regroup — the upload's gross-and-fee join, applied to a statement that
-// is already in.
-//
-// Since 2026-10-15 a Maybank statement PDF's pair (a card payout's gross and
-// the fee taken back the same day, with no reference printed) is joined at
-// upload into ONE movement: the credit row carries the net and the charge, and
-// the fee row is never written (acc/bank-match.ts groupBankMovements). A
-// statement uploaded before that holds the two as separate rows. 2990's MBB
-// September has line 11 +RM 4,048.00 and line 13 −RM 18.22, and neither
-// matches report 027032649949_DVS04E_1_20260906 (owed RM 4,029.78) on its own.
-//
-// This rewrites such a pair into the shape the upload now writes, so the
-// credit is decided and booked like any other. Only OPEN rows that were never
-// joined are touched, and a closed month is refused.
-// ----------------------------------------------------------------------------
 
 import {
   groupBankMovements, matchBankMovements,
@@ -42,22 +26,15 @@ export type RegroupPair = {
   grossSen: number;
   chargeSen: number;
   netSen: number;
-  /** What the upload would have written for the joined movement, decided now. */
   decision: StoredDecision;
 };
 
-/** YYYY-MM-DD, whether the client hands a date column back as text (PostgREST)
-    or as a Date (postgres.js, which the repair script reads through). The first
-    plan run on production printed "Mon Sep 07" — String(Date) cut to ten
-    characters — and a receipt dated that is refused as no date at all. */
 const isoDay = (v: unknown): string => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '').slice(0, 10));
 
 /** The pairs a statement's rows hold that the upload would now join. Reads only. */
 export function planRegroup(
   rows: StoredLine[], rules: BankRecognitionRule[], batches: PayableBatch[], payouts: PayoutAdviceForMatch[],
 ): RegroupPair[] {
-  /* A row with a charge already IS a joined movement; a decided or ignored row
-     is somebody's answer; a repeat is a copy. None of them is joined again. */
   const open = rows.filter((r) => String(r.state) === 'OPEN' && Number(r.charge_sen ?? 0) === 0 && String(r.kind) !== 'DUPLICATE');
   const byNo = new Map<number, StoredLine>();
   const clash = new Set<number>();
@@ -66,8 +43,6 @@ export function planRegroup(
     if (byNo.has(n)) clash.add(n);
     byNo.set(n, r);
   }
-  /* Rows are joined by their place in the file; two rows claiming one place
-     cannot be told apart, so neither is touched. */
   const lines = open
     .filter((r) => !clash.has(Number(r.line_no ?? 0)))
     .map((r) => ({
@@ -118,14 +93,10 @@ export async function applyRegroup(
 
     const { error: dErr } = await sb.from('acc_bank_statement_lines')
       .delete().eq('company_id', companyId).eq('statement_id', statement.id).eq('state', 'OPEN').in('id', p.feeIds);
-    /* Asked again rather than trusted: whether the rows are gone is what
-       matters, and a read answers it the same way on every client. */
     const { data: left, error: lErr } = await sb.from('acc_bank_statement_lines')
       .select('id').eq('company_id', companyId).in('id', p.feeIds);
     const remaining = Array.isArray(left) ? left.length : 0;
     if (dErr || lErr || remaining > 0) {
-      /* Half a join is worse than none: the fee would count twice. The credit
-         goes back to what the file printed. */
       await sb.from('acc_bank_statement_lines')
         .update({ amount_sen: p.grossSen, charge_sen: 0, updated_at: new Date().toISOString() })
         .eq('id', p.creditId).eq('company_id', companyId);

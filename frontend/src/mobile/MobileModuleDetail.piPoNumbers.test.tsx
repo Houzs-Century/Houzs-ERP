@@ -1,5 +1,3 @@
-/* The phone's purchase invoice header lists every PO its lines bill (owner
-   2026-11-10), not only the header's stored first PO. */
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

@@ -59,8 +59,6 @@ export type ReceiptPaymentInput = {
 
 async function digitsOf(sb: any, companyId: number): Promise<number> {
   const { data, error } = await sb.from('acc_numbering').select('doc_digits').eq('company_id', companyId).maybeSingle();
-  /* Width is cosmetic (the parser reads any length) — a blip here must not
-     block a money confirmation, so the default width answers, out loud. */
   if (error) {
     // eslint-disable-next-line no-console
     console.error('[receipts] width read failed, defaulting to 3:', error.message);
@@ -211,11 +209,9 @@ export async function createReceiptForPayment(
         const f = await formaliseReceipt(sb, {
           companyId: p.companyId, companyCode: p.companyCode, receiptId: id,
           accountCode: roles.CASH, actor: p.createdBy ?? null,
-          rebankTx: null, // cash: never a transfer, never moves
+          rebankTx: null,
         });
         if (f.ok) return { ok: true, id, orNumber: f.orNumber, status: 'FORMAL' };
-        /* The cash formalisation failing must not lose the receipt — it stays
-           a draft the manual button can finish. */
         return { ok: true, id, orNumber: draftNo, status: 'DRAFT' };
       }
       return { ok: true, id, orNumber: draftNo, status: 'DRAFT' };
@@ -243,8 +239,6 @@ export async function createReceiptForPayment(
  */
 export async function formaliseReceipt(
   sb: any,
-  /* `rebankTx`: the transaction a transfer's bank move runs in (acc/rebank-transaction.ts);
-     null = the old two-step move. Only a transfer confirmed into another bank moves. */
   input: { companyId: number; companyCode: string; receiptId: number; accountCode: string; actor: string | null; rebankTx: RebankTx | null },
 ): Promise<{ ok: true; orNumber: string; already?: boolean } | { ok: false; status: string; reason: string }> {
   const { data: rRaw, error: rErr } = await sb.from('acc_official_receipts')
@@ -268,12 +262,6 @@ export async function formaliseReceipt(
     };
   }
 
-  /* THE MONEY GOES WHERE THE RECEIPT SAYS (Conts #476). A transfer was booked
-     on the default bank when it was recorded; confirmed into another bank, its
-     entry moves there first — reversed on its own date, booked again on the
-     chosen bank — or that bank's reconciliation never shows the money. A move
-     the bank side forbids (matched on a statement, a closed month) refuses the
-     confirm, so the receipt never names a bank the books disagree with. */
   if (r.method === 'transfer' && (r.payment_source === 'SOPAY' || r.payment_source === 'SIPAY') && r.payment_id) {
     const item = { source: r.payment_source, paymentId: r.payment_id } as const;
     const plan = await transferMoveFor(sb, input.companyId, item, input.accountCode);
@@ -324,9 +312,6 @@ export async function ensureReceiptForPayment(
   sb: any,
   source: 'SOPAY' | 'SIPAY',
   paymentId: string,
-  /* The caller's active company: a payment id from another company's books is
-     refused before anything is written. null only for a caller that has
-     already scoped the payment itself. */
   activeCompanyId: number | null,
 ): Promise<{ ok: true; id: number; orNumber: string; status: string } | { ok: false; reason: string }> {
   let existingQuery = sb.from('acc_official_receipts')
@@ -422,15 +407,11 @@ export function receiptChange(was: { amount_sen: number; paid_at: string | null;
   return parts.join(', ');
 }
 
-/** The one receipt row `r` names, by its id AND its payment — a write that
-    must never reach another payment's paper. */
 const theReceipt = (q: any, r: LiveReceipt, companyId: number | null): any => {
   const out = q.eq('id', r.id).eq('payment_source', r.payment_source).eq('payment_id', r.payment_id);
   return companyId !== null ? out.eq('company_id', companyId) : out;
 };
 
-/** Cancel one FORMAL receipt — only while it is still formal, so two callers
-    cannot both cancel it and both issue a replacement. */
 async function cancelFormal(
   sb: any, companyId: number | null, r: LiveReceipt, reason: string, actor: string | null,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
@@ -493,7 +474,7 @@ export async function followPaymentEdit(
   if (made.status !== 'FORMAL' && (r.method ?? '') === (p.next.method ?? '') && r.channel_account_code) {
     const f = await formaliseReceipt(sb, {
       companyId: p.companyId, companyCode, receiptId: made.id, accountCode: r.channel_account_code, actor: p.actor,
-      rebankTx: null, // no env on the payment-edit path yet: a move here is still two-step (tasks/TODO.md)
+      rebankTx: null,
     });
     if (f.ok) to = f.orNumber;
     // eslint-disable-next-line no-console
@@ -596,13 +577,11 @@ export async function formaliseReceiptsForSettlement(
     const { data, error } = await sb.from('acc_official_receipts')
       .select('id, status')
       .eq('payment_source', p.source).eq('payment_id', p.id).neq('status', CANCELLED).maybeSingle();
-    /* A blip is NOT "no receipt" — reported as its own outcome so the sweep's
-       answer never lies about what it saw. */
     if (error) { out.push({ paymentId: p.id, outcome: 'read_failed' }); continue; }
     const r = data as { id: number; status: string } | null;
     if (!r) { out.push({ paymentId: p.id, outcome: 'no_receipt' }); continue; }
     if (r.status === 'FORMAL') { out.push({ paymentId: p.id, outcome: 'already_formal' }); continue; }
-    const f = await formaliseReceipt(sb, { companyId, companyCode, receiptId: r.id, accountCode: bankAccountCode, actor, rebankTx: null }); // card money: never a transfer, never moves
+    const f = await formaliseReceipt(sb, { companyId, companyCode, receiptId: r.id, accountCode: bankAccountCode, actor, rebankTx: null });
     out.push({ paymentId: p.id, outcome: f.ok ? 'formalised' : f.status });
   }
   return out;

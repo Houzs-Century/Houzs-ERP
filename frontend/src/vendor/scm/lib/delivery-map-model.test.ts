@@ -58,7 +58,6 @@ describe('pinsFromGeoPoints + geoTotals — the geo point model', () => {
       soDocNo: 'SO-1', customer: 'Ali', sets: 2, revenueSen: 100_000,
       address: '1 Jalan A', zone: 'KL', approximate: false,
     });
-    // Unzoned pin colours by region, not by a phantom zone.
     expect(pins[1].color).toBe(zoneColorFor(null, 'SOUTHERN'));
   });
   it('totals fold orders / sets / revenue', () => {
@@ -94,7 +93,7 @@ describe('routesFromRuns — the proposal polylines', () => {
     ], '2026-08-12', pts, { lat: 3.0, lng: 101.5 });
     expect(routes).toHaveLength(1);
     expect(routes[0].stops.map((s) => s.ref)).toEqual(['SO-1', 'SO-2']);
-    expect(routes[0].stops[0].windowLabel).toBe('09:40–10:25'); // finish + 15-min unload buffer
+    expect(routes[0].stops[0].windowLabel).toBe('09:40–10:25');
     expect(routes[0].depot).toEqual({ lat: 3.0, lng: 101.5 });
   });
 
@@ -109,8 +108,6 @@ describe('routesFromRuns — the proposal polylines', () => {
   });
 });
 
-/* Minimal SO row — only the fields stagedRoutesFromRows reads; cast because a
-   full PlanningOrder is 50+ fields of noise for this fold. */
 const soRow = (): PlanningOrder => ({
   row_type: 'so', so_doc_no: 'SO-1', debtor_name: 'Ali',
   trip_id: null, trip_no: null, trip_date: null, trip_stop_no: null, trip_eta_offset_s: null,
@@ -135,7 +132,6 @@ describe('stagedRoutesFromRows — the staged-trip polylines', () => {
     expect(routes[0].id).toBe('t0');
     expect(routes[1].stops.map((s) => s.ref)).toEqual(['SO-1', 'SO-2']);
     expect(routes[1].stops[0].windowLabel).toBe('+30m');
-    // Never-routed stop shows no fabricated clock.
     expect(routes[0].stops[0].windowLabel).toBeNull();
   });
 
@@ -174,7 +170,6 @@ const mapPin = (ref: string, lat: number, lng: number, color = '#2563eb'): MapPi
 });
 
 describe('clusterPins — the low-zoom count bubbles', () => {
-  /* zoom 6 → grid cells ~1.4 degrees: KL-area pins share a cell, Penang not. */
   const kl1 = mapPin('SO-1', 3.1, 101.6, '#dc2626');
   const kl2 = mapPin('SO-2', 3.2, 101.7, '#dc2626');
   const kl3 = mapPin('SO-3', 3.15, 101.65, '#2563eb');
@@ -185,7 +180,6 @@ describe('clusterPins — the low-zoom count bubbles', () => {
     expect(clusters).toHaveLength(1);
     expect(clusters[0].count).toBe(2);
     expect(clusters[0].refs.sort()).toEqual(['SO-1', 'SO-2']);
-    // Centroid — the bubble sits amid its members, not on any single one.
     expect(clusters[0].lat).toBeCloseTo(3.15, 5);
     expect(clusters[0].lng).toBeCloseTo(101.65, 5);
     expect(singles.map((p) => p.ref)).toEqual(['SO-9']);
@@ -267,7 +261,7 @@ describe('zoneSummary — the per-zone count strip', () => {
       { key: 'KL', label: 'KL/SEL', count: 2 },
       { key: 'SOUTHERN', label: 'Southern', count: 1 },
     ]);
-    expect(s.zeroCount).toBe(3); // Northern, East Coast, East Malaysia
+    expect(s.zeroCount).toBe(3);
   });
 
   it('a region the master list lacks still shows (appended), never silently dropped', () => {

@@ -3,9 +3,6 @@ import { loadOpenTallies, openTallySql, type OpenTallyRow } from './bank-stateme
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import { readFailure } from '../scm/lib/read-failure';
 
-/* 1,200 lines of company 1 across three statements, plus company 2's lines that
-   must never be counted. Every third line is decided (POSTED / IGNORED), every
-   fifth is a card payout. */
 const OURS = 1;
 const OTHER = 2;
 
@@ -25,7 +22,6 @@ function lines(): Row[] {
   return rows;
 }
 
-/* The answer from a full read, computed straight off the data. */
 function expected(rows: Row[]): Map<number, { count: number; sen: number; payouts: number }> {
   const out = new Map<number, { count: number; sen: number; payouts: number }>();
   for (const l of rows) {
@@ -57,7 +53,7 @@ describe('loadOpenTallies — the statements list "still to decide" figures', ()
     if (!read.ok) return;
     expect(read.byStatement).toEqual(expected(rows));
     const total = [...read.byStatement.values()].reduce((s, t) => s + t.count, 0);
-    expect(total).toBe(800); // 1,200 lines, a third decided
+    expect(total).toBe(800);
   });
 
   it('the grouped SQL answer is used as is and agrees with the full read', async () => {

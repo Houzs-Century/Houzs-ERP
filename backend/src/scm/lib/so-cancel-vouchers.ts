@@ -50,7 +50,6 @@
  * spent a voucher they never spent.
  */
 
-/** Status written to a voucher whose issuing order was cancelled. */
 import { pgrestIn } from './pgrest-in-list';
 
 export const PWP_VOID_STATUS = 'VOID';
@@ -73,11 +72,8 @@ export type SoCancelVoucherBlock = {
 };
 
 export type SoCancelVoucherPlan = {
-  /** Vouchers this SO issued — voided by the cancel. */
   toVoid: PwpVoucherRow[];
-  /** Vouchers earned elsewhere and spent here — handed back to the customer. */
   toRestore: PwpVoucherRow[];
-  /** Non-null = the cancel must be refused with this 409 body. */
   blocked: SoCancelVoucherBlock | null;
 };
 
@@ -101,10 +97,6 @@ export async function planSoCancelVouchers(
   const issued = ((issuedRows ?? []) as PwpVoucherRow[]);
   const redeemedHere = ((redeemedRows ?? []) as PwpVoucherRow[]);
 
-  /* A voucher minted AND spent on this same order is wholly internal to it —
-     its reward line dies with the cancel, so it is voided, not blocked. Only a
-     redemption on a DIFFERENT, still-live order is a reward already given out.
-     (Same test as the TBC swap's pwp_trigger_cross_order branch.) */
   const spentElsewhere = issued.filter((r) => upper(r.status) === 'USED'
     && !!r.redeemed_doc_no && r.redeemed_doc_no !== docNo);
   if (spentElsewhere.length > 0) {
@@ -124,9 +116,7 @@ export async function planSoCancelVouchers(
 
   const issuedCodes = new Set(issued.map((r) => r.code));
   return {
-    // Already-void codes are skipped so a re-run is a no-op.
     toVoid: issued.filter((r) => upper(r.status) !== PWP_VOID_STATUS),
-    // Earned elsewhere only — a code this SO issued is voided, not restored.
     toRestore: redeemedHere.filter((r) => !issuedCodes.has(r.code)),
     blocked: null,
   };
@@ -149,7 +139,6 @@ export async function applySoCancelVouchers(
 ): Promise<void> {
   const now = new Date().toISOString();
 
-  // Hand back first: these are the customer's, earned on an order that stays live.
   if (plan.toRestore.length > 0) {
     const byStatus = groupByStatus(plan.toRestore);
     for (const [status, codes] of byStatus) {
@@ -166,10 +155,6 @@ export async function applySoCancelVouchers(
     }
   }
 
-  /* Voided, never deleted — the cancelled order still exists and the voucher
-     row is the only record of what it issued. redeemed_doc_no is deliberately
-     left standing on a code that was spent on THIS order: that is provenance,
-     and VOID already stops redemption. */
   if (plan.toVoid.length > 0) {
     const byStatus = groupByStatus(plan.toVoid);
     for (const [status, codes] of byStatus) {
@@ -181,9 +166,6 @@ export async function applySoCancelVouchers(
     }
   }
 
-  /* Prove it landed. Anything still pointing at this doc_no in a live state
-     means a concurrent claim won the race — throw, so the transaction rolls the
-     whole cancel back instead of committing a half-settled order. */
   const { data: leftover } = await sb.from('pwp_codes')
     .select('code, status')
     .eq('source_doc_no', docNo);
@@ -198,8 +180,6 @@ export async function applySoCancelVouchers(
   const { data: stillSpent } = await sb.from('pwp_codes')
     .select('code, status')
     .eq('redeemed_doc_no', docNo);
-  /* A VOID row still pointing here is settled by definition — this order issued
-     it and it died with the order; redeemed_doc_no is kept as provenance. */
   const notHandedBack = ((stillSpent ?? []) as PwpVoucherRow[])
     .filter((r) => upper(r.status) !== PWP_VOID_STATUS);
   if (notHandedBack.length > 0) {

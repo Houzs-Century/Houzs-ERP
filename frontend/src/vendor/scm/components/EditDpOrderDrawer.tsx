@@ -45,8 +45,6 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
     contactPhone: row.contact_phone ?? '',
     address1: row.address1 ?? '',
     address2: row.address2 ?? '',
-    // Kept so an existing line 3/4 passes through unchanged; Address line 2
-    // shows it and editing line 2 clears it (shared/address-two-lines).
     address3: row.address3 ?? '',
     address4: row.address4 ?? '',
     city: row.city ?? '',
@@ -64,7 +62,6 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
     remark: row.remark ?? '',
     salesAmount: row.sales_amount_sen != null ? (Number(row.sales_amount_sen) / 100).toFixed(2) : '',
   });
-  /* "Delivery (no SO)" keeps its sales amount editable - Trip Pay's commission reads it. */
   const isManualDelivery = row.job_type === 'DELIVERY' && !row.so_doc_no;
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((s) => ({ ...s, [k]: v }));
@@ -75,14 +72,11 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
 
   const isTransfer = row.job_type === 'TRANSFER';
   const isPending = row.status === 'PENDING_SCHEDULE';
-  // Compulsory only for the job types routed by region (the server's rule too).
   const postcodeMissing = DP_POSTCODE_REQUIRED_JOB_TYPES.has(row.job_type) && !form.postcode.trim();
-  // The Postcode caption stacks like the drawer's own captions, so the input lines up with City beside it.
   const postcodeClasses = { field: styles.stackField, label: `${styles.eyebrow} ${styles.stackLabel}`, select: styles.searchInput };
 
   const fieldRow: CSSProperties = { display: 'block', marginBottom: 'var(--space-3)' };
   const inputStyle: CSSProperties = { width: '100%' };
-  // minmax(0, 1fr): a wide control (the date field) must not squeeze its neighbour on a phone.
   const row2: CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--space-3)' };
 
   const remarkField = (
@@ -95,10 +89,6 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
   const hasAddress = [form.address1, form.address2, form.address3, form.address4].some((v) => v.trim() !== '');
 
   const submit = () => {
-    /* Every field goes up as its own value — unlike create's "non-empty only"
-       overrides — because editing must be able to CLEAR a field (a line typed in
-       error), and a cleared field reaches the server as null, not as "unchanged".
-       The backend refuses a change that leaves the job with no address. */
     const toNull = (v: string): string | null => (v.trim() === '' ? null : v.trim());
     update.mutate(
       {
@@ -113,7 +103,6 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
         city: toNull(form.city),
         postcode: toNull(form.postcode),
         state: toNull(form.state),
-        // Origin fields only for a transfer, so a non-transfer edit never writes them.
         ...(isTransfer ? {
           fromName: toNull(form.fromName),
           fromAddress1: toNull(form.fromAddress1),
@@ -122,15 +111,12 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
           fromPostcode: toNull(form.fromPostcode),
           fromState: toNull(form.fromState),
         } : {}),
-        // The date only while pending: the server refuses a scheduled job's date.
         ...(isPending ? { requestedDate: form.requestedDate ? form.requestedDate : null } : {}),
         remark: toNull(form.remark),
         ...(isManualDelivery ? { salesAmountSen: salesAmountSenOf(form.salesAmount) ?? null } : {}),
       },
       {
         onSuccess: (res) => {
-          /* The job is saved; a failed manifest-line update is still told, so the
-             driver's stop is not silently left on the old address. */
           void notify(res.tripStop?.failed
             ? { title: "DP Order updated, the driver's stop was not", body: res.tripStop.reason ?? 'The trip stop could not be updated.', tone: 'error' }
             : { title: 'DP Order updated' });
@@ -248,8 +234,6 @@ export const EditDpOrderDrawer = ({ row, onClose }: { row: DpOrderRow; onClose: 
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>State</div>
               <input className={styles.searchInput} style={inputStyle} value={form.state} onChange={(e) => set('state', e.target.value)} />
             </label>
-            {/* A scheduled job's date is set by planning, not here: Remark takes the
-                cell instead of leaving State's row half empty. */}
             {isPending ? (
               <label style={fieldRow}>
                 <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Requested date</div>

@@ -29,8 +29,6 @@ export const PR_HEADER_COLS =
   'reason, status, posted_at, completed_at, credit_note_ref, refund_sen, ' +
   'notes, created_at, created_by, updated_at, kind, repair_warehouse_id, supplier_replaces';
 
-/* The GRN embed carries the receipt's currency and warehouse: a return has
-   neither of its own, and AutoCount's Curr. Code / Location read them. */
 export const PR_LIST_SELECT =
   `${PR_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), ` +
   'purchase_order:purchase_orders(id, po_number), grn:grns(id, grn_number, currency, warehouse_id)';
@@ -95,7 +93,6 @@ export type PrLineHeader = {
   purchase_order?: { po_number?: string | null } | null;
 };
 
-/* The detail page's line order: creation, then id. */
 const byCreation = (a: LineRow, b: LineRow): number => {
   const ac = a.created_at ?? '';
   const bc = b.created_at ?? '';

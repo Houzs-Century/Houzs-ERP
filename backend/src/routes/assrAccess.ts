@@ -30,8 +30,6 @@ export async function grantCaseAccess(c: Ctx, caseInCallerScope: CaseInScope) {
   if (!Number.isInteger(grantee) || grantee <= 0) {
     return c.json({ error: "user_id required" }, 400);
   }
-  // Must be a case the caller can already see (company + row scope). Out-of-scope
-  // -> 404, so a grant can never target a case across the visibility boundary.
   if (!(await caseInCallerScope(c, id))) return c.json({ error: "Not found" }, 404);
   const granteeRow = await c.env.DB.prepare(
     `SELECT name FROM users WHERE id = ? LIMIT 1`,
@@ -39,8 +37,6 @@ export async function grantCaseAccess(c: Ctx, caseInCallerScope: CaseInScope) {
     .bind(grantee)
     .first<{ name: string | null }>();
   if (!granteeRow) return c.json({ error: "User not found" }, 404);
-  // Idempotent: a repeat grant is a no-op and must not re-notify. Check-then-
-  // insert (internal ERP, no meaningful race) keeps the notify path single-fire.
   const already = await c.env.DB.prepare(
     `SELECT 1 FROM assr_case_access WHERE assr_id = ? AND user_id = ? LIMIT 1`,
   )
@@ -65,8 +61,6 @@ export async function grantCaseAccess(c: Ctx, caseInCallerScope: CaseInScope) {
   )
     .bind(id, String(grantee), (granteeRow.name ?? "").trim() || null, userId)
     .run();
-  // Same responsible-change notice as Assign (best-effort - never throws): tell
-  // the granted user + their upline they can now reach this case.
   await notifyServiceCaseResponsible(c.env, {
     reason: "reassigned",
     assrNo: caseRow?.assr_no ?? null,
@@ -87,8 +81,6 @@ export async function revokeCaseAccess(c: Ctx, caseInCallerScope: CaseInScope) {
   )
     .bind(id, uid)
     .run();
-  // Only log a revoke that actually removed a grant, so replaying a stale delete
-  // doesn't post a phantom timeline entry.
   if (Number(res.meta?.changes ?? res.meta?.rows_written ?? 0) > 0) {
     await c.env.DB.prepare(
       `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id)

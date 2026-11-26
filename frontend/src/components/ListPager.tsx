@@ -19,22 +19,13 @@ import { cn } from "../lib/utils";
 const DEFAULT_PER_PAGE = [25, 50, 100];
 
 interface Props {
-  /** 0-based page index. */
   page: number;
   pageSize: number;
   total: number;
-  /** Called with the new 0-based page. */
   onPageChange: (page: number) => void;
-  /** When provided, the per-page selector shows. Callers reset to page 0. */
   onPageSizeChange?: (size: number) => void;
-  /** Page-size options. Default 25 / 50 / 100 (the SCM list routes cap at 100). */
   perPageOptions?: number[];
-  /** Accepted for call-site compatibility only — NOT rendered. The pager
-   *  matches Pagination exactly, which shows no noun ("1–50 of 795", not
-   *  "Showing 1–50 of 795 orders"). Kept so the ten call sites need no edit. */
   noun?: string;
-  /** A short honesty line beside the count, e.g. that a column filter narrows
-   *  only the loaded page. null renders nothing. */
   note?: string | null;
 }
 
@@ -53,7 +44,6 @@ export function ListPager({
   const current = Math.min(page + 1, totalPages);
 
   return (
-    // Mirrors components/Pagination's markup exactly (bar the 0-based math).
     <div className="mt-4 flex flex-wrap items-center gap-3 text-[11px] font-medium text-ink-secondary">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5">

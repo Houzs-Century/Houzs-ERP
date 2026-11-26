@@ -7,8 +7,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DO_SPEC_LOCKED_MESSAGE } from '../../shared/do-spec-lock';
 
-/* The active company decides the mode (lib/binding-mode.ts): company 1 binds by
-   PO and keeps today's behaviour; company 2 tracks stock by variant. */
 const world = vi.hoisted(() => ({ companyId: 2 as number | null, category: 'BEDFRAME', maint: {} as Record<string, unknown> }));
 vi.mock('../../../lib/activeCompany', async (orig) => ({
   ...(await orig<typeof import('../../../lib/activeCompany')>()),
@@ -112,7 +110,6 @@ describe('SoLineCard — spec locked on a shipped DO line', () => {
   });
 });
 
-/* Company 1 (Houzs Century, PO hard binding) keeps today's behaviour exactly. */
 describe('SoLineCard - company 1 is unchanged', () => {
   it('opening a saved bedframe line still fills in Total Height (8 + 4 + 12 = 24)', () => {
     world.companyId = 1; world.category = 'BEDFRAME'; world.maint = {};

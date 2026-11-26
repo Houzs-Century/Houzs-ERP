@@ -1,5 +1,3 @@
-// Verification step: who inspects the reported issue (own team or supplier).
-// Kept out of ServiceCases.tsx, which is at its size ceiling.
 import type { ReactElement } from "react";
 import { Building2, Info, Users } from "lucide-react";
 import { cn } from "../../lib/utils";

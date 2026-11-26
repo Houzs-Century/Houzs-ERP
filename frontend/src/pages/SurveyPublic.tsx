@@ -6,9 +6,6 @@ import {
   shortCompanyName,
 } from "../lib/branding";
 
-/** Public page — no auth, no branding fetch. Survey links are minted on the
- *  case company's hostname (publicUrl(companyCode)), so the hostname default
- *  IS the case's company. HOUZS keeps its historic literal. */
 function surveyCompanyName(): string {
   return hostDefaultCompanyCode() === HOUZS_COMPANY_CODE
     ? "Houzs Century Sdn. Bhd."
@@ -24,10 +21,6 @@ import {
   requestIdFromResponse,
 } from "../lib/requestCorrelation";
 
-// Public (unauthenticated) customer satisfaction survey. Loaded via
-// /survey/:token — dispatcher shares this URL with the customer by
-// WhatsApp/SMS/email after the case closes. Customer submits a
-// 1-5 rating + optional notes, which lands back on the case.
 
 interface SurveyPayload {
   already_submitted: boolean;

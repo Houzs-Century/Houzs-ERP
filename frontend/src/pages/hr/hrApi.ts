@@ -44,8 +44,6 @@ export const useEmployees = (): QueryState<{ employees: Employee[]; canManage: b
 export const useEmployeeOptions = (enabled: boolean): QueryState<EmployeeOptions> =>
   useQuery(`${HR}/employees/options`, () => api.get<EmployeeOptions>(`${HR}/employees/options`), [], { enabled });
 
-// Bulk add: from the existing ERP accounts, or from a spreadsheet. Both report
-// exactly what went in and what was left out and why.
 export type BulkLinkResult = {
   created: { id: number; empNo: string; name: string }[];
   skipped: { userId: number; name: string; reason: string }[];
@@ -227,7 +225,6 @@ export type Payslip = {
     advanceDates: string[];
     pcbNote: string;
     allowances?: { kind: AllowanceKind; label: string; amountSen: number; note: string | null }[];
-    /** As stored on the payslip; one approved before 2026-11-17 has no category / items. */
     trip?: { commission: TripCommission; lines: Omit<TripPayLine, "category" | "items">[] } | null;
   };
   approvedAt: string | null;
@@ -251,11 +248,8 @@ export type Advance = {
   name: string;
   date: string;
   amountSen: number;
-  /** Per-month deduction in sen, or null for a lump sum (whole amount in its month). */
   installmentSen: number | null;
-  /** What comes off the slip of the period being viewed. */
   thisMonthSen: number;
-  /** Still owed after that period's deduction. */
   remainingSen: number;
   note: string | null;
   status: "UNSETTLED" | "SETTLED";
@@ -287,8 +281,6 @@ export const ALLOWANCE_KINDS = [
   { value: "TRANSPORT", label: "Transport allowance" },
   { value: "OVERNIGHT", label: "Overnight allowance" },
   { value: "KPI", label: "KPI allowance" },
-  // Amount is a PER-DAY rate; payroll pays it per attended day and drops the
-  // whole month if the worker is late on more than 3 days or takes unpaid leave.
   { value: "ATTENDANCE", label: "Attendance allowance (per day)" },
   { value: "OTHER", label: "Allowance" },
   { value: "BACKPAY", label: "Backpay (company advance)" },
@@ -374,17 +366,13 @@ export type TripRowOut = {
   state: string;
   postcode: string;
   lorryPlate: string;
-  /** HR changed it by hand: no read from Delivery Planning overwrites it. */
   hrEdited: boolean;
-  /** Its Delivery Planning stop was cancelled or deleted: HR decides. */
   sourceMissing: boolean;
-  /** What the row earned, the crew together. */
   pay: TripRowPay;
   driver1: TripPerson;
   driver2: TripPerson;
   helper1: TripPerson;
   helper2: TripPerson;
-  /** Who each named person resolved to; null = nobody, absent = no one in that seat. */
   matched: { driver1?: number | null; driver2?: number | null; helper1?: number | null; helper2?: number | null };
 };
 export type TripPersonPay = TripPay & {

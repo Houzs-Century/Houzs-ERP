@@ -1,6 +1,3 @@
-// MobileNewSO's half of "one sofa piece = one line" (vendor/scm/lib/
-// sofa-piece-lines.ts). Kept out of MobileNewSO.tsx, which sits at its
-// file-size ceiling.
 import { newIdempotencyKey } from "../lib/idempotency";
 import { isSofaGroup, splitSofaPieceLines } from "../vendor/scm/lib/sofa-piece-lines";
 

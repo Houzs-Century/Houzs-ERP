@@ -158,10 +158,8 @@ const inSections = (rows: Sectioned[], sections: string[]): Sectioned[] => rows.
 const credit = (r: SumRow): number => r.crSen - r.drSen;
 const debit = (r: SumRow): number => r.drSen - r.crSen;
 
-/* ── Where a statement reads from ───────────────────────────────────────── */
 
 type Fail = { ok: false; reason: string };
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 
 /** The reads a statement makes, behind one door. */
@@ -169,12 +167,9 @@ export type ReportSources = {
   sums: (from: string | null, to: string | null) => Promise<{ ok: true; sums: SumRow[] } | Fail>;
   accounts: () => Promise<{ ok: true; accounts: AccountRow[] } | Fail>;
   roles: () => Promise<Record<AccountRole, string>>;
-  /** The stock engine as of END OF a date, per bucket. */
   stockByBucket: (date: string) => Promise<{ ok: true; buckets: Record<StockBucket, number>; totalSen: number } | Fail>;
-  /** Whether the ledger carries an active STOCKADJ closing entry for the month ending on `monthEnd`. */
   closingBooked: (monthEnd: string) => Promise<{ ok: true; booked: boolean } | Fail>;
   layout: (report: ReportKey) => Promise<({ ok: true } & ResolvedLayout) | Fail>;
-  /** The day the company's books start and the stock they opened with; null = no start day. */
   booksOpening: () => Promise<{ ok: true; opening: BooksOpening | null } | Fail>;
 };
 
@@ -195,14 +190,11 @@ export const dbSources = (sb: Sb, companyId: number, layoutIds: number[]): Repor
   booksOpening: () => loadBooksOpening(sb, companyId),
 });
 
-/* ── The stock lines, from the engine ─────────────────────────────────────── */
 
-/** The last day of a date's month, YYYY-MM-DD. */
 const monthEndOf = (iso: string): string => {
   const [y, m] = iso.split('-').map(Number) as [number, number];
   return `${iso.slice(0, 7)}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
 };
-/** The name a stock line prints when the chart has no row for its code yet (the seed not run). */
 const STOCK_ROLE_NAMES: Partial<Record<AccountRole, string>> = {
   INVENTORY_CUSTOMER: 'STOCK - CUSTOMER', INVENTORY_DISPLAY: 'STOCK - DISPLAY', INVENTORY_SERVICE: 'STOCK - SERVICE',
   INVENTORY_SHOWROOM: 'STOCK - SHOWROOM', INVENTORY_OTHERS: 'STOCK - OTHERS',
@@ -211,29 +203,20 @@ const STOCK_ROLE_NAMES: Partial<Record<AccountRole, string>> = {
   CLOSING_STOCK_CUSTOMER: 'STOCKS AT THE END OF YEAR - CUSTOMER', CLOSING_STOCK_DISPLAY: 'STOCKS AT THE END OF YEAR - DISPLAY', CLOSING_STOCK_SERVICE: 'STOCKS AT THE END OF YEAR - SERVICE',
   CLOSING_STOCK_SHOWROOM: 'STOCKS AT THE END OF YEAR - SHOWROOM', CLOSING_STOCK_OTHERS: 'STOCKS AT THE END OF YEAR - OTHERS',
 };
-/** Every code the ledger books stock on — the legacy one-account pair and each bucket's three accounts. */
 const stockCodesOf = (roles: Record<AccountRole, string>): Set<string> => new Set([
   roles.INVENTORY, roles.CLOSING_STOCK,
   ...STOCK_BUCKETS.flatMap((b) => [roles[STOCK_BUCKET_ROLES[b].inventory], roles[STOCK_BUCKET_ROLES[b].opening], roles[STOCK_BUCKET_ROLES[b].closing]]),
 ]);
 
 type StockLines = {
-  /** What the range OPENED on (the engine the day before it) and CLOSED on (the engine on its last day), per bucket. */
   opening: Record<StockBucket, number>; closing: Record<StockBucket, number>;
-  /** The engine's total on the last day — what the balance sheet's stock reads. */
   closingTotalSen: number;
-  /** What the range opened on, in total: the balance sheet's earnings start from it (0 since always; the
-      books' opening stock for a company whose books start on a day). */
   openingTotalSen: number;
-  /** True unless the ledger has booked a closing for that very month-end. */
   closingProvisional: boolean;
   roles: Record<AccountRole, string>;
   codes: Set<string>;
 };
 
-/** The opening and closing per bucket for [from, to] — the engine's, or the
-    books' opening stock where the books start (acc/books-opening.ts); a null
-    from = since always (the balance sheet). */
 async function loadStockLines(src: ReportSources, from: string | null, to: string): Promise<{ ok: true; stock: StockLines } | Fail> {
   const [roles, books] = await Promise.all([src.roles(), src.booksOpening()]);
   if (!books.ok) return { ok: false, reason: books.reason };
@@ -242,8 +225,6 @@ async function loadStockLines(src: ReportSources, from: string | null, to: strin
   const [openingR, closingR] = await Promise.all([read(plan.opening), read(plan.closing)]);
   if (!openingR.ok) return { ok: false, reason: `opening stock: ${openingR.reason}` };
   if (!closingR.ok) return { ok: false, reason: `closing stock: ${closingR.reason}` };
-  /* Booked = an active STOCKADJ closing entry for the month AND the date is
-     that month's end. A figure the books fix is never provisional. */
   let booked = false;
   if (plan.closing.from === 'engine' && to === monthEndOf(to)) {
     const b = await src.closingBooked(to);
@@ -259,13 +240,10 @@ async function loadStockLines(src: ReportSources, from: string | null, to: strin
   };
 }
 
-/** A stock line on the statement: the role's account, its chart name (or the role's own when the chart lacks the row). */
 const stockLine = (stock: StockLines, names: Map<string, string>, role: AccountRole, section: string, amountSen: number): ReportLine => {
   const code = stock.roles[role];
   return { code, name: names.get(code) ?? STOCK_ROLE_NAMES[role] ?? code, section, amountSen };
 };
-/** The P&L's stock lines, in bucket order: the openings (debits), then the closings (credits),
-    each saying which it is. */
 const taggedStockLines = (stock: StockLines, names: Map<string, string>): Array<ReportLine & { stock: 'opening' | 'closing' }> => [
   ...STOCK_BUCKETS.filter((b) => stock.opening[b] !== 0).map((b) => ({ ...stockLine(stock, names, STOCK_BUCKET_ROLES[b].opening, 'COST OF GOODS SOLD', stock.opening[b]), stock: 'opening' as const })),
   ...STOCK_BUCKETS.filter((b) => stock.closing[b] !== 0).map((b) => ({ ...stockLine(stock, names, STOCK_BUCKET_ROLES[b].closing, 'COST OF GOODS SOLD', -stock.closing[b]), stock: 'closing' as const })),
@@ -286,7 +264,6 @@ export async function pnlStockLines(src: ReportSources, from: string, to: string
   return { ok: true, lines: taggedStockLines(stockR.stock, names), codes: stockR.stock.codes, closingProvisional: stockR.stock.closingProvisional };
 }
 
-/* ── The P&L ─────────────────────────────────────────────────────────────── */
 
 export type PnlTotals = {
   tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number;
@@ -295,7 +272,6 @@ export type PnlTotals = {
 export type PnlReport = {
   from: string; to: string;
   tradingIncome: ReportLine[]; costOfSales: ReportLine[]; otherIncome: ReportLine[]; expenses: ReportLine[]; taxation: ReportLine[];
-  /** The closing stock is the engine's as of `to`; provisional until the close books that month-end. */
   stock: { closingProvisional: boolean; asOf: string };
   layout: { stored: boolean; baseSen: number | null; tradingIncome: LaidNode[]; costOfSales: LaidNode[]; otherIncome: LaidNode[]; expenses: LaidNode[]; taxation: LaidNode[] };
   totals: PnlTotals;
@@ -315,7 +291,6 @@ export async function buildPnl(src: ReportSources, companyId: number, from: stri
   if (!stockR.ok) return { ok: false, reason: stockR.reason };
   const stock = stockR.stock;
   const secOf = sectionResolver(accs.accounts);
-  /* The GL's own stock lines are set aside: the engine's take their place. */
   const rows: Sectioned[] = sums.sums.filter((r) => !stock.codes.has(r.code)).map((r) => ({ r, section: secOf(r) }));
   const names = new Map(accs.accounts.map((a) => [a.account_code, a.account_name ?? a.account_code]));
 
@@ -329,7 +304,6 @@ export async function buildPnl(src: ReportSources, companyId: number, from: stri
   const profitBeforeTaxSen = grossProfitSen + total(otherIncome) - total(expenses);
   const netProfitSen = profitBeforeTaxSen - total(taxation);
 
-  /* Every % on the P&L is of sales — nothing to divide by means no %. */
   const baseSen = total(tradingIncome) !== 0 ? total(tradingIncome) : null;
   const onTree = (block: string, ls: ReportLine[]): LaidNode[] =>
     layOutBlock(laid.layout.blocks[block] ?? [], ls, companyId, baseSen);
@@ -363,7 +337,6 @@ export async function buildPnl(src: ReportSources, companyId: number, from: stri
   };
 }
 
-/* ── GET /accounting/reports/pnl?from=YYYY-MM-DD&to=YYYY-MM-DD ────────────── */
 export const pnlReport = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -379,7 +352,6 @@ export const pnlReport = async (c: any): Promise<Response> => {
   return c.json(r.report);
 };
 
-/* ── The balance sheet ───────────────────────────────────────────────────── */
 
 export type BalanceSheetReport = {
   asOf: string;
@@ -406,9 +378,6 @@ export async function buildBalanceSheet(src: ReportSources, companyId: number, a
   const stock = stockR.stock;
   const secOf = sectionResolver(accs.accounts);
   const names = new Map(accs.accounts.map((a) => [a.account_code, a.account_name ?? a.account_code]));
-  /* The GL's own stock lines are set aside — on the asset side AND inside
-     earnings, where the close's pair moves the same money — and the engine's
-     stand in their place on both, so the sheet still balances. */
   const rows: Sectioned[] = sums.sums.filter((r) => !stock.codes.has(r.code)).map((r) => ({ r, section: secOf(r) }));
   const stockAssetLines = STOCK_BUCKETS.filter((b) => stock.closing[b] !== 0)
     .map((b) => stockLine(stock, names, STOCK_BUCKET_ROLES[b].inventory, 'CURRENT ASSETS', stock.closing[b]));
@@ -416,15 +385,8 @@ export async function buildBalanceSheet(src: ReportSources, companyId: number, a
   const assets = [...lines(inSections(rows, sectionsOfType('ASSET')), debit), ...stockAssetLines];
   const liabilities = lines(inSections(rows, sectionsOfType('LIABILITY')), credit);
   const equity = lines(inSections(rows, sectionsOfType('EQUITY')), credit);
-  /* Every ringgit the P&L has recognised to this date lives in equity as the
-     period's earnings — that is what makes the sheet balance under double
-     entry, and splitting it out is how the standard statement reads. */
   const earningsSen = inSections(rows, sectionsOfType('INCOME')).reduce((s, x) => s + credit(x.r), 0)
     - inSections(rows, sectionsOfType('EXPENSE')).reduce((s, x) => s + debit(x.r), 0)
-    /* The closing stock less the stock the books opened with is the stock
-       effect on earnings to this date — the GL's own stock lines (the close
-       pairs, the opening journal's STOCKS AT THE BEGINNING) were taken out of
-       `rows` above. */
     + stock.closingTotalSen - stock.openingTotalSen;
 
   const assetsSen = total(assets);
@@ -451,14 +413,12 @@ export async function buildBalanceSheet(src: ReportSources, companyId: number, a
       },
       totals: {
         assetsSen, liabilitiesSen, equitySen, earningsSen,
-        /* 0 or the ledger is broken — shown, never absorbed. */
         checkSen: assetsSen - liabilitiesSen - equitySen - earningsSen,
       },
     },
   };
 }
 
-/* ── GET /accounting/reports/balance-sheet?asOf=YYYY-MM-DD ────────────────── */
 export const balanceSheetReport = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);

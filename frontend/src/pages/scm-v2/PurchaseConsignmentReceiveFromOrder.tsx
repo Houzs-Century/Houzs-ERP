@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseConsignmentReceiveFromOrder — LINE-LEVEL, QUANTITY-BASED Purchase
-// Consignment Order → Receive picker. Mirrors GrnFromPo on the consignment side:
-// the operator picks individual PC Order LINES, each with a receive qty
-// 1..outstanding (outstanding = ordered − received, derived LIVE by the server).
-// A line can be received across several receives until outstanding reaches 0.
-//
-// A supplier-lock keeps the merge clean: once one line is ticked, lines of a
-// DIFFERENT supplier grey out — a receive is for ONE supplier.
-//
-// Continue stashes the picked lines in the scoped SCM handoff store and
-// opens the normal New Purchase Consignment Receive form prefilled for review
-// (?fromPicks=1). No inventory moves until Create.
-//
-// Routing: /purchase-consignment-receive/from-pc-order.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';

@@ -43,9 +43,6 @@ export { LIST_MRP_ENRICHMENT_KEYS } from '../lib/list-mrp-enrichment-keys';
 export const mfgPurchaseOrdersListEnrichment = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgPurchaseOrdersListEnrichment.use('*', supabaseAuth);
 
-/* One list page is capped at 100 rows, so a well-behaved client asks for at most
-   that many. Bound it defensively — the endpoint is read-only, but computeMrp
-   downstream is company-wide work. */
 const MAX_IDS = 200;
 
 mfgPurchaseOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
@@ -56,9 +53,6 @@ mfgPurchaseOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   if (poIds.length === 0) return c.json({ enrichment: {} });
   const listMrp = resolveListMrp(sb, c, wantsListMrpRefresh(c));
 
-  /* Re-read the ids under the company predicate — the tenant boundary. The ids
-     come from a page the client already received, so this is also defence in
-     depth: an id from another company simply does not come back. */
   const { data, error } = await scopeToCompany(
     sb.from('purchase_orders').select('id'), c,
   ).in('id', poIds);
@@ -67,8 +61,6 @@ mfgPurchaseOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
   if (ids.length === 0) return c.json({ enrichment: {}, mrp: (await listMrp).meta });
 
-  /* The SAME two resolvers the list used to run inline (assigned + delivered).
-     Neither consumes the other's result, so both go out as one wave. */
   const [assignedByPo, deliveredByPo] = await Promise.all([
     resolvePoSoCoverageForPos(sb, c, ids, listMrp),
     resolveDeliveredDosForPos(sb, c, ids),

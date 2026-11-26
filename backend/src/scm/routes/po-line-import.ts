@@ -62,7 +62,6 @@ const PO_COLS =
   'id, po_number, linked_ac_docno, revision, status, company_id, '
   + 'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 
-/* PostgREST puts an `in` list in the URL; 150 uuids stay well under its limit. */
 const CHUNK = 150;
 const chunks = <T,>(xs: T[]): T[][] => {
   const out: T[][] = [];
@@ -72,13 +71,8 @@ const chunks = <T,>(xs: T[]): T[][] => {
 
 class ReadFailed extends Error {}
 
-/** The LINE fields whose change queues a write-back (the PO-level estimate dates
-    always do). description2 is carried by the write-back too, but the owner ruled
-    an imported one is not pushed. */
 const AUTOCOUNT_CARRIED: ReadonlySet<PoLineImportField> = new Set(['deliveryDate']);
 
-/* The audit field names the PO's History drawer already labels (the line PATCH's
-   PO_LINE_AUDIT_FIELDS spelling; description2 gets its own label). */
 const AUDIT_FIELD: Record<PoLineImportField, string> = {
   deliveryDate: 'deliveryDate',
   description2: 'description2',
@@ -96,9 +90,6 @@ async function loadWorld(sb: any, companyId: number, lineIds: string[], extraPoI
     for (const r of (data ?? []) as ImportLineRow[]) lines.set(String(r.id).toLowerCase(), r);
   }
 
-  /* Deliberately NOT company-scoped: it reads only the ids of lines the file named
-     that the scoped read did not find, so the operator is told "switch company"
-     instead of "no such line". No column of the other company's row is read. */
   const otherCompanyLineIds = new Set<string>();
   const missing = lineIds.filter((id) => !lines.has(id));
   for (const ids of chunks(missing)) {
@@ -115,9 +106,6 @@ async function loadWorld(sb: any, companyId: number, lineIds: string[], extraPoI
     for (const r of (data ?? []) as ImportPoRow[]) pos.set(String(r.id).toLowerCase(), r);
   }
 
-  /* The downstream lock (lib/downstream-lock.ts poHasDownstream), read for a page
-     of POs at once: any non-cancelled Goods Receipt locks the lines. A failed read
-     locks, never unlocks. */
   const poLocks = new Map<string, string | null>();
   for (const id of pos.keys()) poLocks.set(id, null);
   for (const ids of chunks([...pos.keys()])) {
@@ -190,7 +178,6 @@ export async function applyPoLineImport(
     }, 409);
   }
 
-  /* The change log must be writable BEFORE anything moves (entity-audit.ts). */
   const firstPo = lineChanges.length > 0 ? world.lines.get(lineChanges[0]!.lineId)?.purchase_order_id : poChanges[0]?.poId;
   const pre = await assertAuditWritable(sb, { entityType: 'PURCHASE_ORDER', entityId: firstPo ?? null, action: 'UPDATE', companyId });
   if (!pre.ok) return c.json(auditUnavailableBody(), 409);
@@ -235,7 +222,6 @@ export async function applyPoLineImport(
 
   for (const poId of touchedPos) await recomputePoExpectedAt(sb, poId);
 
-  /* ONE write-back per purchase order, after all of its writes. */
   let queued = 0;
   for (const poId of autocountPos) {
     if (await enqueueEdit(sb, { companyId, docType: 'PO', docId: poId, createdBy: actor?.id ?? null })) queued += 1;

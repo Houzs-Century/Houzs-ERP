@@ -83,7 +83,6 @@ const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee
 const NO_PERM = { error: "You don't have permission to do that." };
 
 const mayRequest = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY);
-/** Raises a request here — the key, or Finance's own. */
 const mayOpen = (c: any): boolean => mayRequest(c) || isRequestFinance(c);
 /** Reads and withdraws their OWN requests: anyone signed in (a salesperson's
     refund request, owner 2026-10-14 option A); Finance reads all. */
@@ -95,8 +94,6 @@ const text = (v: unknown): string | null => {
   return s ? s : null;
 };
 
-/** The request under the active company that the caller may see — the
-    requester's own, or any for Finance — else a 404 that names nothing. */
 async function loadVisible(c: any, id: string): Promise<{ req: Row } | { resp: Response }> {
   const sb = c.get('supabase');
   const { data, error } = await scopeToCompany(sb.from('acc_payment_requests').select(COLS).eq('id', id), c).maybeSingle();
@@ -113,8 +110,6 @@ async function loadVisible(c: any, id: string): Promise<{ req: Row } | { resp: R
 const officialOf = (doc: Row): { state: string; note: string | null } | null =>
   doc.official_doc ? { state: String(doc.official_doc), note: doc.official_doc_note ?? null } : null;
 
-/** Each request with its answering document's facts — the voucher's, or the
-    AP invoice's and the AP Payments' that paid it — and the stage they say. */
 async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const sb = c.get('supabase');
   const pvIds = [...new Set(rows.map((r) => r.pv_id).filter(Boolean))] as string[];
@@ -127,7 +122,6 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
   }
   const invoiceIds = [...new Set(rows.map((r) => r.ap_invoice_id).filter(Boolean))] as string[];
   let invoices = new Map<string, InvoiceFacts>();
-  /* An invoice's payers: the posted AP Payments with an allocation on it. */
   const payersOf = new Map<string, string[]>();
   if (invoiceIds.length > 0) {
     const { data, error } = await sb.from('ap_invoices').select('id, invoice_number, status, total_sen, paid_sen, supplier_id, official_doc, official_doc_note')
@@ -163,7 +157,6 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
       const inv = r.ap_invoice_id ? invoices.get(String(r.ap_invoice_id)) ?? null : null;
       if (inv) {
         const payers = payersOf.get(inv.id) ?? [];
-        /* Bank-confirmed once EVERY AP Payment that paid it is on a statement. */
         const confirmed = payers.length > 0 && payers.every((no) => bank.confirmed.has(no));
         return {
           ...r,
@@ -190,11 +183,6 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
   };
 }
 
-/** Each request with its bill's instalments (item 2): the first request and
-    every balance raised from it, each with its stage, and the figures the
-    requester reads — total, paid, pending, left to ask (lib/payment-request.ts
-    familyFigures). The first request's answer rides along: a balance of a bill
-    booked as an AP invoice is paid ON that invoice. */
 async function withFamilies(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const roots = [...new Set(rows.map(familyRootId))];
   if (roots.length === 0) return { rows };
@@ -231,10 +219,6 @@ async function withFamilies(c: any, companyId: number, rows: Row[]): Promise<{ r
   };
 }
 
-/** Each request with the OTHER live documents carrying its bill's number and
-    date (lib/bill-matches.ts) — said out loud on the list and on the request,
-    never refused. A request is never a match of its own answer, nor of the
-    other instalments of its own bill (item 2). */
 async function withBillMatches(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const found = await findBillMatches(c.get('supabase'), companyId, rows.map((r) => ({
     key: String(r.id), billNo: r.bill_no, billDate: r.bill_date,
@@ -247,14 +231,10 @@ async function withBillMatches(c: any, companyId: number, rows: Row[]): Promise<
   return { rows: rows.map((r) => ({ ...r, billMatches: found.matches.get(String(r.id)) ?? ([] as BillMatch[]) })) };
 }
 
-/** Whether the company runs events (2990 does not): the form hides the Event
-    field without them. Unreadable reads as "yes" — a field shown in vain beats
-    one hidden from a company that needs it. */
 async function hasEventsOf(c: any): Promise<boolean> {
   try { return await companyHasEvents(c.env.DB, activeCompanySql(c, 'p.company_id')); } catch { return true; }
 }
 
-/* ── GET / ─────────────────────────────────────────────────────────────────── */
 export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
   if (!mayRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -273,7 +253,6 @@ export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
   if ('resp' in families) return families.resp;
   const matched = await withBillMatches(c, co.companyId, families.rows);
   if ('resp' in matched) return matched.resp;
-  /* mayRaise: whether this caller may raise a request here (New request). */
   return c.json({ requests: matched.rows, finance, mayRaise: mayOpen(c), hasEvents: await hasEventsOf(c) });
 };
 paymentRequests.get('/', listPaymentRequestsHandler);
@@ -332,19 +311,16 @@ export const waitingCountHandler = async (c: any): Promise<Response> => {
 };
 paymentRequests.get('/waiting-count', waitingCountHandler);
 
-/* ── GET /event-options — the picker for a requester, who has no Finance area ── */
 paymentRequests.get('/event-options', async (c) => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   return eventOptionsHandler(c);
 });
 
-/* ── The bill read as it is attached, and its matches (before GET /:id) ────── */
 paymentRequests.post('/read-bill', readRequestBillHandler);
 paymentRequests.post('/read-bill/enqueue', enqueueRequestBillReadHandler);
 paymentRequests.get('/read-bill/jobs', pollRequestBillReadHandler);
 paymentRequests.get('/bill-matches', billMatchesHandler);
 
-/* ── The bill — the factory's four handlers, fed this document's rules ────── */
 export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
   table: 'acc_payment_request_files',
   fkColumn: 'request_id',
@@ -355,7 +331,6 @@ export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
     const found = await loadVisible(c, c.req.param('id'));
     if ('resp' in found) return found;
     const r = found.req;
-    /* The bill stays once Finance has answered: its voucher carries a copy. */
     return { doc: { id: String(r.id), closed: r.status === 'WITHDRAWN', locked: r.status === 'VOUCHERED' } };
   },
   closedRefusal: { error: 'request_withdrawn', message: 'A withdrawn request takes no more files.' },
@@ -374,7 +349,6 @@ paymentRequests.get('/:id/files', listPaymentRequestFilesHandler);
 paymentRequests.get('/:id/files/:fileId', streamPaymentRequestFileHandler);
 paymentRequests.delete('/:id/files/:fileId', deletePaymentRequestFileHandler);
 
-/* ── GET /:id ──────────────────────────────────────────────────────────────── */
 export const getPaymentRequestHandler = async (c: any): Promise<Response> => {
   if (!mayRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -391,20 +365,16 @@ export const getPaymentRequestHandler = async (c: any): Promise<Response> => {
 };
 paymentRequests.get('/:id', getPaymentRequestHandler);
 
-/* ── The requester's fields, as the body sends them ───────────────────────── */
 type Fields = {
   payee_name: string; amount_sen: number; due_date: string | null; purpose: string;
   project_id: number | null; bank_name: string | null; bank_account_no: string | null; bank_account_name: string | null;
-  /** The percent of the bill this instalment is, as the requester typed it (item 2). */
   pay_pct: number | null;
-  /** The requester's note to Finance (2026-10-02) — optional. */
   note: string | null;
 } & RequestBillFacts;
 
 /** A note is a few lines to Finance, not a document. */
 export const REQUEST_NOTE_MAX = 2000;
 
-/** A percent as typed: more than 0, at most 100, two decimals — or none. */
 function readPayPct(v: unknown): number | null | 'invalid' {
   if (v === undefined || v === null || v === '') return null;
   const n = Number(v);
@@ -431,22 +401,17 @@ function readFields(body: Row): { fields: Fields } | { error: string; message: s
       payee_name: payee, amount_sen: amount, due_date: dateOrNull(body.dueDate), purpose, project_id: project, pay_pct: pct, note,
       bank_name: text(body.bankName), bank_account_no: text(body.bankAccountNo), bank_account_name: text(body.bankAccountName),
       ...bill.facts,
-      /* With its Event picked, the reason why there is none is moot. */
       ...(project != null ? { no_event_reason: null } : {}),
     },
   };
 }
 
-/** An event bill goes to Finance with its Event, or with the requester's reason
-    why there is none (lib/bill-matches.ts) — asked only of a company that runs
-    events; anywhere else the flag is dropped. */
 async function eventBillCheck(c: any, f: Fields): Promise<{ error: string; message: string } | null> {
   if (!f.event_bill) return null;
   if (!(await hasEventsOf(c))) { f.event_bill = false; return null; }
   return eventBillRefusal(f);
 }
 
-/* ── POST / ────────────────────────────────────────────────────────────────── */
 export const createPaymentRequestHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -503,7 +468,6 @@ export const createPaymentRequestHandler = async (c: any): Promise<Response> => 
 };
 paymentRequests.post('/', createPaymentRequestHandler);
 
-/* ── PATCH /:id — the requester's change; a returned request goes back in ─── */
 export const updatePaymentRequestHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -631,8 +595,6 @@ export const requestBalanceHandler = async (c: any): Promise<Response> => {
     bank_account_no: root.bank_account_no ?? null,
     bank_account_name: root.bank_account_name ?? null,
     status: 'SUBMITTED',
-    /* The same bill: its number, date and total, for reading and for the
-       same-bill check (which leaves a bill's own instalments out). */
     bill_no: root.bill_no ?? null,
     bill_date: dateOrNull(root.bill_date),
     bill_total_sen: root.bill_total_sen ?? null,
@@ -657,7 +619,6 @@ export const requestBalanceHandler = async (c: any): Promise<Response> => {
   return c.json({
     ok: true,
     request: { ...row, stage: 'SUBMITTED', voucher: null },
-    /* Said, not refused: more asked on the bill than it totals. */
     overTotal: total != null && asked + amount > total,
   }, 201);
 };
@@ -665,7 +626,6 @@ paymentRequests.post('/:id/balance', requestBalanceHandler);
 /* 补正式单 (item 3): the official invoice, after a proforma was paid (routes/payment-request-bill.ts). */
 paymentRequests.post('/:id/official-doc', uploadOfficialDocHandler);
 
-/* ── POST /:id/withdraw ────────────────────────────────────────────────────── */
 export const withdrawPaymentRequestHandler = async (c: any): Promise<Response> => {
   if (!mayRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -693,7 +653,6 @@ export const withdrawPaymentRequestHandler = async (c: any): Promise<Response> =
 };
 paymentRequests.post('/:id/withdraw', withdrawPaymentRequestHandler);
 
-/* ── POST /:id/return — Finance sends it back, with the why ────────────────── */
 export const returnPaymentRequestHandler = async (c: any): Promise<Response> => {
   if (!isRequestFinance(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);

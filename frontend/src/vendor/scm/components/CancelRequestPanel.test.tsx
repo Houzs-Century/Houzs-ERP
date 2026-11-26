@@ -1,6 +1,3 @@
-/* The card an open cancellation request shows on the document (owner
- * 2026-09-08): what it says, who sees which button, and that the second
- * signature runs the page's OWN cancel rather than one of its own. */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,7 +9,6 @@ const approveAsync = vi.fn(async (_v: unknown) => ({ request: {}, execute: false
 const rejectAsync = vi.fn(async (_v: unknown) => ({ request: {} }));
 const withdrawAsync = vi.fn(async (_v: unknown) => ({ request: {} }));
 const confirm = vi.fn(async (_o: unknown) => true);
-/* The approve dialog: the approver's optional remark, '' when left blank. */
 const approveDialog = vi.fn(async (_o: unknown): Promise<string | null> => '');
 const prompt = vi.fn(async (_o: unknown): Promise<string | null> => 'Production has already started');
 const notify = vi.fn(async (_o: unknown) => undefined);
@@ -68,7 +64,6 @@ describe('CancelRequestPanel', () => {
     expect(screen.getByText(/Raised by Amy/)).toBeTruthy();
     expect(screen.getByText(/Level 1: Ben/)).toBeTruthy();
     expect(screen.getByText(/Level 2: pending/)).toBeTruthy();
-    /* A bystander gets no buttons at all. */
     expect(screen.queryByRole('button')).toBeNull();
   });
 

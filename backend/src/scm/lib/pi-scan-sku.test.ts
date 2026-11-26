@@ -1,6 +1,3 @@
-/* HOOKKA prints its own numeric codes for our model-named SKUs (production, company 1,
- * 2026-11-09): 1013-(Q) is JAGER-(Q), 1007-(Q) CODY-(Q), 2038(A)-(Q) CELENE (A)-(Q),
- * 2008(A)-(K) TRION (A) (HB STR)-(K), 5540-* 8030-*, 5536-* 9058-*, 5530-* 9028-*. */
 import { describe, expect, test } from 'vitest';
 import { buildPiReview, mergeRebuiltLines, suggestBills, type BillableLine, type PiReviewLine } from './pi-scan-check';
 import type { PiScanExtract } from './pi-scan-extract';

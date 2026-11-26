@@ -26,7 +26,6 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Quoted literals and JSX text that are exactly one of the old captions. */
 function offenders(source: string): string[] {
   const hits: string[] = [];
   const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

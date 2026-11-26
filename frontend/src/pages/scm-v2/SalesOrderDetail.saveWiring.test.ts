@@ -1,6 +1,3 @@
-/* SO edit save wiring, read from the source because the page needs the whole app to mount.
-   - Save is held from the click until that save settles: savingOrder was only set after the validate dry-run, so a
-     double click sent the whole save twice and the button stayed live while validate ran. */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";

@@ -27,9 +27,6 @@ import { amendmentLinePriceOnly, lineIsAddRemove, splitPriceFromSpec, type NoopC
  *  against the stored line that no-op detection does. */
 export type LaneResolvableLine = NoopCheckLine;
 
-/** The stored SO line, read once: its identity (item_code / item_group) answers
- *  service-vs-product, and its money/spec fields let amendmentLinePriceOnly tell
- *  a price-only change from a spec one. */
 type StoredLineRow = StoredLine & { item_group: string | null };
 
 export async function resolveAmendmentLaneSplit<L extends LaneResolvableLine>(
@@ -39,12 +36,7 @@ export async function resolveAmendmentLaneSplit<L extends LaneResolvableLine>(
   companyId: number | null | undefined,
   headerChanges: Record<string, string | null>,
   lines: L[],
-  /** True only on a PRICE_LANE_COMPANY_CODES company. Required so the
-   *  price carve-out is never a silent default — the caller reads the ACTIVE
-   *  company code and decides. */
   priceLaneEnabled: boolean,
-  /** True only on an ADD_REMOVE_LANE_COMPANY_CODES company. Required for the same
-   *  reason: the add/cancel carve-out is never a silent default. */
   addRemoveLaneEnabled: boolean,
 ): Promise<LaneSplit<L> | null> {
   const referencedIds = [...new Set(lines
@@ -73,9 +65,6 @@ export async function resolveAmendmentLaneSplit<L extends LaneResolvableLine>(
       return { itemCode: l.newItemCode, category: addedCategory.get((l.newItemCode ?? '').trim()) ?? null };
     },
     (l) => {
-      // Price-only is a property of a CHANGE to an EXISTING line: an ADD has no
-      // stored line to compare against, so it is never price-only (it is a whole
-      // new LINE that a service/product classification already placed).
       const stored = l.salesOrderItemId ? storedById.get(l.salesOrderItemId) : undefined;
       return stored ? amendmentLinePriceOnly(l, stored) : false;
     },

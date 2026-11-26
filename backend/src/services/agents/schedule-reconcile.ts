@@ -1,24 +1,9 @@
-// ----------------------------------------------------------------------------
-// schedule-reconcile.ts — PMS Roadshow Agent (Job A): compare an organizer's
-// latest schedule (OCR'd from a photo) against the org's projects and diff them.
-//
-// The owner forwards an organizer's newest itinerary photo; some venues are
-// postponed / date-changed / cancelled. This PURE core takes the extracted
-// schedule + the organizer's projects and classifies each row so the owner can
-// correct project dates/status. It writes NOTHING — the caller (route) OCRs the
-// photo (Claude vision, scan-payment.ts pattern) and applies approved changes via
-// the existing project PATCH. Pure => unit-tested with no DB.
-//
-// Dates: projects store DD/MM/YYYY (TEXT); the OCR is asked for YYYY-MM-DD. Both
-// are normalised to YYYY-MM-DD before comparison so a format difference never
-// reads as a change.
-// ----------------------------------------------------------------------------
 
 export interface SchedEvent {
   venue: string;
-  startDate: string | null; // any of YYYY-MM-DD / DD/MM/YYYY
+  startDate: string | null;
   endDate: string | null;
-  status?: string | null;   // e.g. "cancelled" / "postponed" if the sheet says so
+  status?: string | null;
 }
 export interface SchedExtract {
   organizer: string;
@@ -77,7 +62,6 @@ export function reconcileSchedule(extract: SchedExtract, projects: readonly Proj
   const used = new Set<number>();
   const rows: ReconcileRow[] = [];
 
-  // 1) Each schedule event -> matching project by venue.
   for (const ev of extract.events) {
     const sStart = normDate(ev.startDate);
     const sEnd = normDate(ev.endDate);
@@ -96,8 +80,6 @@ export function reconcileSchedule(extract: SchedExtract, projects: readonly Proj
     });
   }
 
-  // 2) Live organizer projects the latest schedule does NOT list -> MISSING
-  //    (a candidate for postponed/cancelled). Already-done/cancelled are skipped.
   for (const p of projects) {
     if (used.has(p.id)) continue;
     if (DONE_STAGES.has(String(p.stage).toLowerCase())) continue;

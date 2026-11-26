@@ -161,9 +161,6 @@ function Body({ row, onClose }: { row: BackdateRequestRow; onClose: () => void }
   );
 }
 
-/* The slip as a blob object URL through the Worker proxy — the same fetch shape
-   as a recorded payment's slip (PaymentsTable), keyed by request so a reopened
-   drawer does not re-download it. */
 function Slip({ requestId }: { requestId: string }) {
   const q = useQuery({
     queryKey: ['payment-backdate-request-slip', requestId],

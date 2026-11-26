@@ -1,17 +1,8 @@
-// "Has this SKU / Model been used yet?" — the guard whose whole job is to say
-// NO, which used to say YES when it could not look.
-//
-// findSkuUsage bound the PostgREST error and discarded it (`if (error) continue`)
-// and findModelUsage never bound one, so a blip on mfg_sales_order_items came
-// back as "never sold" — the exact absence that authorises the delete this guard
-// exists to refuse, and on ?force=true the delete that also wipes
-// inventory_movements and the supplier bindings for that code.
 import { describe, expect, test } from 'vitest';
 import { findSkuUsage, findModelUsage, isMissingTable } from './sku-usage';
 
 type Row = Record<string, unknown>;
 
-/** PostgREST stand-in. `fail` maps a table to the error it answers with. */
 function fakeSb(tables: Record<string, Row[]>, fail: Record<string, { code?: string; message: string }> = {}) {
   return {
     from(table: string) {
@@ -68,8 +59,6 @@ describe('isMissingTable — "absent" told apart from "failed"', () => {
     expect(isMissingTable({ message: 'relation "scm.x" does not exist' })).toBe(true);
   });
 
-  /* This is the whole reason the predicate is spelled out instead of a bare
-     `if (error) continue` — the errors below are NOT absences. */
   test('a timeout, a reset and an RLS denial are failures, not absences', () => {
     expect(isMissingTable({ code: '57014', message: 'canceling statement due to statement timeout' })).toBe(false);
     expect(isMissingTable({ message: 'connection reset by peer' })).toBe(false);
@@ -78,14 +67,6 @@ describe('isMissingTable — "absent" told apart from "failed"', () => {
   });
 });
 
-/* ── THE REGRESSION ────────────────────────────────────────────────────────
-   Make the probe's read REJECT and assert the verdict is a refusal, not
-   "unused". If the error binding is dropped again these fail: `data` is null,
-   the loop finds nothing, and the function reports a SKU that is sold on a live
-   order as free to delete.
-
-   A failed read must never read as an absence when the absence is what
-   authorises the write. */
 describe('a probe that failed is not "unused"', () => {
   test('a SKU whose usage could not be read is NOT reported unused', async () => {
     const sb = fakeSb(
@@ -105,9 +86,6 @@ describe('a probe that failed is not "unused"', () => {
     }
   });
 
-  /* The one tolerance the original comment was reaching for, kept exactly and
-     no wider: a table that does not exist on a fresh deployment records nothing,
-     so it really is "no usage here". */
   test('a table that does not exist yet is still tolerated', async () => {
     const sb = fakeSb(
       { purchase_order_items: [], inventory_movements: [] },
@@ -117,7 +95,6 @@ describe('a probe that failed is not "unused"', () => {
   });
 
   test("a model whose SKU LIST could not be read is NOT reported unused", async () => {
-    // Zero iterations used to mean "no SKU under this model is used".
     const sb = fakeSb({ mfg_products: [{ model_id: 'm1', code: 'A-1' }] }, { mfg_products: { message: 'timeout' } });
     expect(await findModelUsage(sb, 'm1')).toMatchObject({ ok: false });
   });

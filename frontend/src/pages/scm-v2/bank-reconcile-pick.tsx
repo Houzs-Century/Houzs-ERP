@@ -20,13 +20,11 @@ import { dropReturnPicks, peekReturnPicks, rememberReturnPicks } from '../../lib
 export type ReconcilePick = {
   pickedLines: number[];
   pickedEntries: string[];
-  /** Card payments no report carries, ticked for the movement to take in (cardPaymentKey). */
   pickedCards: string[];
   toggleLine: (id: number) => void;
   toggleEntry: (jeNo: string) => void;
   toggleCard: (key: string) => void;
   clear: () => void;
-  /** Note the ticks as a document opens from this page, for the way back. */
   keepForReturn: () => void;
 };
 
@@ -52,7 +50,6 @@ export type CardSetup = Pick<BankCardPayments, 'feeAccount' | 'feeProblem' | 'ma
 
 export const ReconcilePickProvider = ({ lines, entries, cards = [], cardSetup = null, ready = true, children }: {
   lines: BankLine[]; entries: LedgerEntry[];
-  /** The card payments no report carries (the month view lists them in its own tab); none elsewhere. */
   cards?: BankCardPayment[]; cardSetup?: CardSetup | null;
   ready?: boolean; children: React.ReactNode;
 }) => {
@@ -98,14 +95,11 @@ export const ReconcilePickProvider = ({ lines, entries, cards = [], cardSetup = 
   );
 };
 
-/* ── The bar at the foot of the window ────────────────────────────────────── */
 
 const MatchBar = ({ lines, entries, cards, cardSetup }: { lines: BankLine[]; entries: LedgerEntry[]; cards: BankCardPayment[]; cardSetup: CardSetup | null }) => {
   const pick = useReconcilePick();
   const group = useMatchBankGroup();
   const withCards = useMatchWithCards();
-  /* A refusal answers the ticks it was sent with; once they change it is old news
-     (the owner's next pair still carried the first one's red line, 2026-11-10). */
   const ticks = `${pick.pickedLines.join(',')}|${pick.pickedEntries.join(',')}|${pick.pickedCards.join(',')}`;
   const [sentWith, setSentWith] = useState<string | null>(null);
   if (pick.pickedLines.length === 0 && pick.pickedEntries.length === 0 && pick.pickedCards.length === 0) return null;

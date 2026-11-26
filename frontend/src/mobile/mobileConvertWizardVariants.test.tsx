@@ -28,7 +28,6 @@ vi.mock("../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => vi.fn
 import { MobileConvertWizard } from "./MobileConvertWizard";
 
 afterEach(cleanup);
-/* Braces, not a concise arrow — a returned mock becomes vitest's teardown. */
 beforeEach(() => { authedFetch.mockReset(); });
 
 const wrap = (ui: React.ReactNode) => {
@@ -36,17 +35,11 @@ const wrap = (ui: React.ReactNode) => {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 };
 
-/* The variant bag a sofa module carries. buildVariantSummary renders it as
-   `PC151-01 Pearl / SEAT 24" / LEG 6"`. */
 const SOFA = { fabricCode: "PC151-01", colourLabel: "Pearl", seatHeight: '24"', legHeight: '6"' };
 const SOFA_SUMMARY = 'PC151-01 Pearl / SEAT 24" / LEG 6"';
-/* A bedframe takes the OTHER branch of buildVariantSummary (divan/leg/gap), so
-   asserting on it proves the wizard passes the real item_group through rather
-   than a hardcoded one — a wrong group silently renders the wrong summary. */
 const BEDFRAME = { fabricCode: "BF-01", colourLabel: "Sand", divanHeight: '10"', legHeight: '1"', gap: '2"' };
 const BEDFRAME_SUMMARY = 'BF-01 Sand / DIVAN 10" + LEG 1" / GAP 2"';
 
-/** Answer the wizard's two GETs: the source list, then the convertible lines. */
 const serve = (sourceKey: string, sources: unknown[], linesKey: string, lines: unknown) => {
   authedFetch.mockImplementation(async (url: string) => {
     if (url.startsWith(sourceKey)) return { [sourceKey === "/mfg-sales-orders?limit=200" ? "salesOrders" : "deliveryOrders"]: sources };
@@ -87,7 +80,6 @@ describe("MobileConvertWizard — SO → DO", () => {
     );
 
     expect(await screen.findByText(SOFA_SUMMARY)).toBeTruthy();
-    // The bedframe branch, from the SAME row's real item_group.
     expect(screen.getByText(BEDFRAME_SUMMARY)).toBeTruthy();
   });
 });
@@ -149,10 +141,6 @@ describe("MobileConvertWizard — DO → SI", () => {
 });
 
 describe("MobileConvertWizard — PO → GRN", () => {
-  /* Receiving is where getting the module wrong costs the most: stock lands
-     against a code whose variants nobody checked, and the GRN is what the
-     Purchase Invoice is then billed from. The GRN row already CARRIED
-     itemGroup + variants (the create needs them); only the render dropped them. */
   it("prints the variant summary on the line being received", async () => {
     authedFetch.mockImplementation(async (url: string) => {
       if (url.startsWith("/mfg-purchase-orders?limit=200")) {
@@ -182,7 +170,6 @@ describe("MobileConvertWizard — PO → GRN", () => {
       <MobileConvertWizard target="grn" onBack={() => {}} onCreated={() => {}} />,
     );
 
-    // Step 1 → tick the PO, which unlocks the per-line received-qty step.
     await userEvent.click(await screen.findByText("HC-PO-2608-001"));
 
     expect(await screen.findByText(SOFA_SUMMARY)).toBeTruthy();

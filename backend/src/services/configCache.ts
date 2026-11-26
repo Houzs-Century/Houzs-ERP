@@ -1,36 +1,3 @@
-// Scope-keyed read cache for hot, read-mostly CONFIG endpoints.
-//
-// Two storage tiers, ONE invalidation mechanism:
-//
-//   - Cache API (caches.default) for responses shared by everyone in the SAME
-//     scope — today that scope is a COMPANY (/api/branding per companyCode,
-//     /api/scm/maintenance-config/resolved per active companyId). The scope
-//     value is a REQUIRED parameter embedded in the synthetic cache-key URL:
-//     there is no keyless overload and no default, because a cache key that
-//     silently omits its scope dimension is a cross-company data leak — the
-//     exact class the multi-company hardening is fighting. A caller whose
-//     scope is UNRESOLVED (pre-migration / cold-start / restricted-to-nothing)
-//     must BYPASS the cache entirely, never guess a scope.
-//
-//   - SESSION_CACHE KV for PER-USER payloads (the announcements banner),
-//     keyed by user id — the inbox snapshot pattern (routes/inbox.ts).
-//     Per-user data must never enter the shared Cache API.
-//
-// Invalidation = a monotonic VERSION SEGMENT in KV, one per family. Every
-// cache key embeds the family's current version; a write path bumps the
-// version, which orphans every existing entry at once (they then expire by
-// their own TTL). Chosen over cache.delete() because caches.default is
-// PER-COLO: a delete only purges the datacenter that ran the mutation, while
-// a KV bump propagates to every colo within KV's ~60s global window — and
-// immediately in the writing colo, so the editor sees their own change on the
-// very next read. Worst-case staleness after a write is bounded by
-// max(KV propagation, entry TTL); there is no stale-forever state.
-//
-// Pure optimization layer (sessionCache.ts's philosophy): every operation is
-// wrapped, so KV unbound (local dev without the binding) or any KV / Cache
-// API error just BYPASSES caching and serves today's DB path unchanged. On
-// *.workers.dev hosts the Cache API is a documented no-op — match always
-// misses, put is ignored — which degrades to the same bypass.
 
 /** Minimal env the cache needs — structural, so both the public tree
  *  (types.ts Env) and the scm tree (scm/env.ts) can pass their own env. */
@@ -42,40 +9,9 @@ export type ConfigCacheEnv = { SESSION_CACHE?: KVNamespace };
 export type ConfigCacheFamily = "branding" | "maintcfg" | "banner" | "presence";
 
 export const CONFIG_CACHE_TTL_SECONDS: Record<ConfigCacheFamily, number> = {
-  // Company identity for letterheads + shell chrome. Edited rarely, read on
-  // every app load by every signed-in user.
   branding: 300,
-  // Variant/pricing config feeding the SO form picklists. Kept SHORT because
-  // it is pricing-adjacent — note the money itself is safe regardless: SO save
-  // recomputes prices server-side from the live DB (mfg-pricing-recompute
-  // reads the table directly, never this HTTP cache).
   maintcfg: 120,
-  // Per-user banner snapshot. TTL MUST stay COMFORTABLY ABOVE the frontend
-  // poll — do NOT lower it back to 60.
-  //
-  // CORRECTED 2026-09-02: this said the poll was 60s and reasoned "300s
-  // (5 polls)" from it. useAnnouncementBanner.ts carries POLL_MS = 180_000, so
-  // the real margin is 1.67 polls, not 5 — still above the poll, which is the
-  // property that matters, but not the headroom the sentence claimed. The
-  // number is no longer re-typed here to be re-checked by hand: it is mirrored
-  // in services/auth-fastpath-probe.ts and PINNED against the hook's source by
-  // backend/tests/authFastPathProbe.test.ts, which fails when either moves.
-  // A TTL == poll means the entry expires exactly as the next poll arrives, so
-  // every poll MISSES and rebuilds the full feed: measured live 2026-08-18 at
-  // ~874-984ms on EVERY 60s human poll despite the "cache" being configured
-  // (the neighbouring presence note records the same KV-consistency failure at
-  // 15s). 300s leaves every poll landing inside a valid entry even
-  // with KV propagation lag, matching `branding`. The catch this buys: the
-  // banner filters by department_id/position_id/company grants (userCanSee /
-  // companyCanSee), so a longer TTL would serve STALE TARGETING unless those
-  // edits bust the entry — they do now, via bustBannerForUser wired into the
-  // user PATCH (dept/position/role/company/status) and DELETE paths.
   banner: 300,
-  // Shared who's-online row list. Short by design: presence must stay live, and
-  // this rides the EDGE-cache tier (caches.default, read-your-write in the same
-  // colo) NOT the KV tier — a 15s KV entry never survives KV's up-to-60s
-  // negative-cache to be read back, so a shared payload this fresh only works on
-  // the edge cache. Verified live: KV at 15s stayed 100% miss.
   presence: 15,
 };
 
@@ -119,7 +55,6 @@ export async function bumpConfigVersion(
     const next = Math.max(Number.isFinite(prev) ? prev + 1 : 1, Date.now());
     await env.SESSION_CACHE.put(VERSION_KEY_PREFIX + family, String(next));
   } catch {
-    /* non-fatal: TTL expiry still bounds staleness */
   }
 }
 
@@ -180,7 +115,6 @@ export async function configCachePut(
       }),
     );
   } catch {
-    /* non-fatal: next request just rebuilds from the DB */
   }
 }
 
@@ -203,7 +137,6 @@ export function toClientResponse(hit: Response): Response {
   });
 }
 
-// ── Per-user KV tier (announcements banner) ───────────────────────────────
 
 /**
  * The banner endpoint serves TWO per-user payloads that must never share a
@@ -247,7 +180,7 @@ export async function bustBannerForUser(
   if (!env.SESSION_CACHE || !userId) return;
   try {
     const version = await configCacheVersion(env, "banner");
-    if (version == null) return; // nothing reachable was cached
+    if (version == null) return;
     const kv = env.SESSION_CACHE;
     await Promise.all(
       BANNER_SCOPES.map((scope) =>
@@ -255,6 +188,5 @@ export async function bustBannerForUser(
       ),
     );
   } catch {
-    /* non-fatal */
   }
 }

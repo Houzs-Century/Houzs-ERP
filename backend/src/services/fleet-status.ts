@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// Fleet Maintenance & Compliance — Phase 1 pure logic.
-//
-// Two pure, env-free concerns live here so they can be unit-tested without a DB
-// and reused identically by the API and (via the wire payload) the frontend:
-//
-//   1. reminderLevel()      — the escalating compliance expiry bucketing.
-//   2. deriveVehicleStatus() — the vehicle status STATE MACHINE. Status is
-//      DERIVED, never a manual dropdown (the one exception is the manual
-//      out-of-service flag, which is an INPUT to the machine, not the status).
-//
-// Phase 1 derives status from three real inputs only: compliance (expired or a
-// failed PUSPAKOM => blocked), the manual out-of-service flag, and a
-// mileage/date-vs-next-service field. The richer inputs — open work orders,
-// active breakdown cases — arrive in later phases; deriveVehicleStatus already
-// ACCEPTS them (optional) so the seam is real code, not a future rewrite. In
-// Phase 1 they are simply never supplied, so only AVAILABLE / SERVICE_DUE /
-// COMPLIANCE_BLOCKED / OUT_OF_SERVICE are reachable.
-// ----------------------------------------------------------------------------
 
 /** The derived status state machine. NOT a manual dropdown. */
 export type VehicleStatus =
@@ -79,7 +60,6 @@ export type ReminderLevel =
   | "OK";
 
 export const REMINDER_THRESHOLDS = {
-  /** <= this many days out and not yet expired => ESCALATE (covers 7/3/1). */
   ESCALATE: 7,
   RED: 14,
   NOTIFY: 30,
@@ -143,7 +123,6 @@ export function reminderTone(level: ReminderLevel): "crit" | "warn" | "ok" {
 export interface ComplianceDocInput {
   docType: ComplianceDocType;
   expiryDate: string | null;
-  /** Only meaningful for PUSPAKOM. */
   result?: PuspakomResult | null;
 }
 
@@ -181,8 +160,6 @@ export function currentDocsByType<T extends { docType: ComplianceDocType; expiry
 }
 
 function rank(doc: { expiryDate: string | null; issueDate?: string | null }): number {
-  // Prefer the later expiry; fall back to issue date. Missing dates rank lowest
-  // so a real dated renewal always beats a blank placeholder row.
   const e = doc.expiryDate && ISO_DATE.test(doc.expiryDate.slice(0, 10)) ? Date.parse(`${doc.expiryDate.slice(0, 10)}T00:00:00Z`) : -Infinity;
   const i = doc.issueDate && ISO_DATE.test(doc.issueDate.slice(0, 10)) ? Date.parse(`${doc.issueDate.slice(0, 10)}T00:00:00Z`) : -Infinity;
   return Math.max(e, i);
@@ -192,21 +169,13 @@ function rank(doc: { expiryDate: string | null; issueDate?: string | null }): nu
  *  later-phase seams (openWorkOrder / breakdownActive) are optional and unset. */
 export interface StatusInput {
   today: string;
-  /** Manual "this vehicle is parked / sold / off the road" flag. */
   outOfService?: boolean;
-  /** The CURRENT compliance documents (one per type — see currentDocsByType). */
   currentDocs?: readonly ComplianceDocInput[];
   currentMileageKm?: number | null;
   nextServiceKm?: number | null;
   nextServiceDate?: string | null;
-  /** Phase 2: the vehicle's preventive-maintenance plans. Any active plan inside
-   *  its due-soon window makes the vehicle SERVICE_DUE — the same status the
-   *  legacy next-service target already produced (both paths are honoured). */
   plans?: readonly MaintenancePlanInput[];
-  // ── later-phase seams (Phase 3+ inputs; unset until those modules land) ────
-  /** An open work order's kind, once the work-order module lands. */
   openWorkOrder?: "PLANNED" | "WAITING_PARTS" | null;
-  /** An active, unresolved breakdown case, once that module lands. */
   breakdownActive?: boolean;
 }
 
@@ -273,20 +242,6 @@ export const VEHICLE_STATUS_LABELS: Record<VehicleStatus, string> = {
   OUT_OF_SERVICE: "Out of Service",
 };
 
-// ============================================================================
-// Phase 2 — Preventive maintenance plans (per component) + mileage capture.
-//
-// Two more pure, env-free, unit-tested concerns, reused identically by the API
-// and (via the wire payload) the frontend:
-//
-//   3. derivePlanDue()  — a plan is due on WHICHEVER comes first, km OR months.
-//   4. assessMileageReading() — the daily-odometer guards (no rollback; an
-//      abnormal jump is FLAGGED for review, never silently accepted).
-//
-// deriveVehicleStatus() now also consumes the plan set: any active plan inside
-// its due-soon window makes the vehicle SERVICE_DUE, exactly as the legacy
-// service-record next-service target already did (both paths still work).
-// ============================================================================
 
 /** The components a preventive-maintenance plan covers. CHECK in the migration
  *  mirrors this list; adding a component is an app change, not a schema one. */
@@ -369,7 +324,7 @@ export function addMonths(date: string | null | undefined, months: number | null
   const [y, m, d] = date.slice(0, 10).split("-").map((n) => Number(n));
   const zeroBased = m - 1 + Math.trunc(months);
   const targetY = y + Math.floor(zeroBased / 12);
-  const targetM = zeroBased % 12; // 0..11
+  const targetM = zeroBased % 12;
   const lastDay = new Date(Date.UTC(targetY, targetM + 1, 0)).getUTCDate();
   const day = Math.min(d, lastDay);
   return `${String(targetY).padStart(4, "0")}-${String(targetM + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -396,9 +351,7 @@ export interface PlanDue {
   component: string;
   nextDueKm: number | null;
   nextDueDate: string | null;
-  /** nextDueKm - currentKm; negative once past due. Null without both inputs. */
   kmRemaining: number | null;
-  /** Whole days to nextDueDate; negative once past due. Null without a date. */
   daysRemaining: number | null;
   dueSoon: boolean;
   overdue: boolean;
@@ -444,30 +397,22 @@ export function anyPlanDue(
   return (plans ?? []).some((p) => (p.active ?? true) && derivePlanDue(p, currentKm ?? null, today).dueSoon);
 }
 
-// ── Mileage capture guards ──────────────────────────────────────────────────
 
 export type MileageVerdict = "OK" | "ROLLBACK" | "ABNORMAL_JUMP";
 
 export interface MileageGuardInput {
-  /** The odometer of the latest existing reading (null = first reading ever). */
   previousKm: number | null;
-  /** Its date, so the abnormal-jump allowance can scale with the gap. */
   previousDate?: string | null;
   newKm: number;
   newDate: string;
-  /** Override the per-day abnormal-jump allowance (defaults to the constant). */
   abnormalJumpKmPerDay?: number;
 }
 
 export interface MileageAssessment {
   verdict: MileageVerdict;
-  /** ROLLBACK is rejected; OK and ABNORMAL_JUMP are accepted (the latter flagged). */
   accepted: boolean;
-  /** Whether a human should review this reading (rollback or abnormal jump). */
   flagged: boolean;
-  /** newKm - previousKm; null on a first-ever reading. */
   deltaKm: number | null;
-  /** Whole days since the previous reading, floored at 1; null on first reading. */
   days: number | null;
 }
 
@@ -486,8 +431,6 @@ export function assessMileageReading(input: MileageGuardInput): MileageAssessmen
     return { verdict: "OK", accepted: true, flagged: false, deltaKm: null, days: null };
   }
   const deltaKm = newKm - previousKm;
-  // Gap = newDate - previousDate. daysUntil(date, today) returns date - today,
-  // so the new date is the `date` and the previous date is the `today` anchor.
   const gap = daysUntil(input.newDate, input.previousDate ?? "");
   const days = gap === null ? 1 : Math.max(1, gap);
   if (deltaKm < 0) {
@@ -500,25 +443,7 @@ export function assessMileageReading(input: MileageGuardInput): MileageAssessmen
   return { verdict: "OK", accepted: true, flagged: false, deltaKm, days };
 }
 
-// ============================================================================
-// Phase 3 — Breakdown cases, maintenance work orders, tyre/component lifecycle.
-//
-// Three more pure, env-free, unit-tested concerns. Two of them finally FEED the
-// status seams deriveVehicleStatus() has carried since Phase 1:
-//
-//   5. isBreakdownActive()      — an unresolved case on a lorry that cannot be driven, or a CRITICAL one,
-//      grounds the lorry (feeds breakdownActive → BREAKDOWN status).
-//   6. work-order state machine — canTransitionWorkOrder() + workOrderSeam():
-//      an OPEN work order in IN_REPAIR feeds PLANNED_MAINTENANCE; one in
-//      WAITING_PARTS feeds WAITING_PARTS. workOrderTotalSen() sums the legs.
-//   7. deriveComponentLife()    — km_used + cost_per_km for a fitted/removed
-//      tyre/battery/etc., plus warranty state.
-//
-// The status machine INPUTS (openWorkOrder + breakdownActive) are unchanged —
-// Phase 3 supplies them for real, it does not add a branch to the machine.
-// ============================================================================
 
-// ── 5. Breakdown cases ──────────────────────────────────────────────────────
 
 export type BreakdownSeverity = "MINOR" | "MAJOR" | "CRITICAL";
 export const BREAKDOWN_SEVERITIES: readonly BreakdownSeverity[] = ["MINOR", "MAJOR", "CRITICAL"] as const;
@@ -571,7 +496,6 @@ export function breakdownDowntimeHours(
   return Math.max(0, (end - s) / 3_600_000);
 }
 
-// ── 6. Maintenance work-order state machine ─────────────────────────────────
 
 export type WorkOrderState =
   | "REPORTED"
@@ -673,13 +597,7 @@ export interface WorkOrderTotalInput {
 export interface WorkOrderLineInput {
   qty?: number | null;
   unitPriceSen?: number | null;
-  /** Per-line discount PERCENT. Workshop invoices discount per line, not per
-   *  document — WJO00403 carries 15% on 14 of its 19 lines and none on the
-   *  other 5. Absent / invalid means no discount, never a silent 100%. */
   discountPct?: number | null;
-  /** The amount PRINTED on the document. When present it WINS: the vendor's
-   *  own rounding is theirs, and a stored record that quietly disagrees with
-   *  the paper is worse than one that repeats it. Null means not printed. */
   amountSen?: number | null;
 }
 
@@ -718,7 +636,6 @@ export function workOrderTotalSen(wo: WorkOrderTotalInput): number {
   );
 }
 
-// ── 7. Tyre / component lifecycle ───────────────────────────────────────────
 
 export type ComponentType =
   | "TYRE"
@@ -777,14 +694,8 @@ export interface ComponentLifeInput {
 }
 
 export interface ComponentLife {
-  /** Km run on this component: removed_km − fitted_km once removed, else the
-   *  current odometer − fitted_km while still fitted. Null without the inputs. */
   kmUsed: number | null;
-  /** purchase_price_sen / km_used, rounded to whole cents. Null when km_used is
-   *  0/absent or there is no purchase price (cannot divide). */
   costPerKmSen: number | null;
-  /** Whether the component is under warranty as of `today` (warranty_until in the
-   *  future). Null when no warranty date is on file. */
   underWarranty: boolean | null;
 }
 

@@ -9,7 +9,6 @@ import {
   type SalesPlaceFilterable,
 } from './pos-sales-place';
 
-/** Records every builder call, in order, so a test can read the filter it built. */
 class FakeBuilder implements SalesPlaceFilterable<FakeBuilder> {
   calls: string[] = [];
   eq(column: string, value: number) { this.calls.push(`eq ${column} ${value}`); return this; }

@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// PoLineAllocationsModal — split ONE Purchase Order line across the customers
-// (and stock) a consolidated purchase serves (mig 0235).
-//
-// The owner's live case: 2990-PO-2606-023's single qty-5 MAKOTO line covers
-// SO-036 x1 + SO-029 x1 + 3 for stock — a shape the single-valued so_item_id
-// cannot express. Each slice here is a sub-numbered allocation
-// (PO-2606-023-01, -02, ...) of (qty, SO line | STOCK). When any exist they are
-// the authoritative fine-grained answer: the Assigned SO column reads THEM for
-// this line instead of the single so_item_id.
-//
-// Immediate-mode editor: every row action is its own backend write (the CRUD
-// endpoints), so a half-finished split is still a valid split — there is no
-// client-side staging to lose. The server enforces the qty cap
-// (sum <= line qty) and the same-SKU/same-company SO gate; refusals arrive as
-// plain sentences via authedFetch's humanApiError and are shown verbatim.
-//
-// Deliberately available on RECEIVED POs (no downstream lock): attributing
-// historical consolidated purchases by hand is the reason this exists.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from "react";
 import { Split, Trash2, Plus } from "lucide-react";
@@ -35,8 +15,6 @@ import {
   type PoLineAllocation,
 } from "../../vendor/scm/lib/suppliers-queries";
 
-/* The printable sub-number: PO-2606-001 + seq 2 -> "PO-2606-001-02". Mirrors
-   backend allocationSubNumber (scm/lib/po-allocations.ts). */
 const subNumberOf = (poNumber: string | null | undefined, seq: number): string =>
   `${poNumber ?? ""}-${String(seq).padStart(2, "0")}`;
 
@@ -58,8 +36,6 @@ export function PoLineAllocationsModal({
 }) {
   const notify = useNotify();
   const detail = usePurchaseOrderDetail(poId);
-  // Re-derive the line from the LIVE detail (each write invalidates it), so the
-  // slices, the allocated sum and the remaining figure can never go stale.
   const line = useMemo<PoItemRow | null>(
     () => (detail.data?.items ?? []).find((l) => l.id === lineId) ?? null,
     [detail.data, lineId],
@@ -83,10 +59,8 @@ export function PoLineAllocationsModal({
   const deleteAlloc = useDeletePoLineAllocation();
   const busy = addAlloc.isPending || updateAlloc.isPending || deleteAlloc.isPending;
 
-  // New-slice draft (the only client-side state; existing rows edit in place).
   const [newQty, setNewQty] = useState("1");
   const [newTarget, setNewTarget] = useState<string>(STOCK);
-  // Per-row dirty drafts for existing slices: allocationId -> { qty, target }.
   const [rowDrafts, setRowDrafts] = useState<Record<string, { qty: string; target: string }>>({});
 
   const draftOf = (a: PoLineAllocation) =>
@@ -191,7 +165,6 @@ export function PoLineAllocationsModal({
             exist they are the authoritative answer for this line's Assigned SO.
           </p>
 
-          {/* The cap, stated up front: ordered / allocated / room left. */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12px]">
             <span className="min-w-0">
               <span className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Line</span>{" "}
@@ -213,7 +186,6 @@ export function PoLineAllocationsModal({
             </span>
           </div>
 
-          {/* Existing slices — each row edits in place (qty, target), deletes. */}
           <div className="space-y-2">
             {allocations.map((a) => {
               const d = draftOf(a);
@@ -244,8 +216,6 @@ export function PoLineAllocationsModal({
                         aria-label={`Sales Order for ${subNumberOf(poNumber, a.seq)}`}
                         onChange={(e) => setRowDraft(a, { target: e.target.value })}
                       >
-                        {/* A historical target that fell out of the candidate list
-                            (e.g. its SO was cancelled later) still renders. */}
                         {a.so_item_id && !(candidates.data ?? []).some((cand) => cand.soItemId === a.so_item_id) && (
                           <option value={a.so_item_id}>{a.so_doc_no ?? a.so_item_id}</option>
                         )}
@@ -277,9 +247,6 @@ export function PoLineAllocationsModal({
                     it, and "no allocations" beside a visible Assigned SO read as a
                     contradiction (owner, 2026-08-06). */}
                 <div className="flex items-center gap-2">
-                  {/* Same dress as the list column's implicit chip (one answer,
-                      two surfaces): a stored Source-SO link is PROVENANCE —
-                      muted solid; only the no-link STOCK case is dashed. */}
                   <span
                     className={
                       line?.so_doc_no
@@ -300,7 +267,6 @@ export function PoLineAllocationsModal({
             )}
           </div>
 
-          {/* Add a slice */}
           <div className="rounded-md border border-border bg-surface-2 px-3 py-2.5">
             <div className="mb-1.5 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
               Add allocation {allocations.length > 0 ? subNumberOf(poNumber, allocations.length + 1) : subNumberOf(poNumber, 1)}

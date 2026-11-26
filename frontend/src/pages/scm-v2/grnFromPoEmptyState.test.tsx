@@ -44,14 +44,6 @@ afterEach(() => {
 const at = (url: string) =>
   render(<MemoryRouter initialEntries={[url]}><GrnFromPo /></MemoryRouter>);
 
-/** The three states the page's own query hook can be in.
- *
- * `useOutstandingPoItems` returns the WHOLE endpoint payload — `{ items, scope }`
- * — not a bare array. `scope` is the block that lets an empty grid name its
- * cause, and it is optional on the wire (an older cached payload has none), so
- * these helpers cover both shapes: `loaded(rows)` is the no-scope payload and
- * `loadedWithScope(rows, scope)` is what the server sends today.
- */
 const payload = (items: unknown[], scope?: unknown) => ({
   data: { items, ...(scope === undefined ? {} : { scope }) },
   isLoading: false,
@@ -61,7 +53,6 @@ const loaded = (items: unknown[]) => payload(items);
 const loadedWithScope = (items: unknown[], scope: unknown) => payload(items, scope);
 const failed = { data: undefined, isLoading: false, isError: true };
 
-/** A `scope` block as `GET /grns/outstanding-po-items` returns it. */
 const scopeFor = (pos: Array<Record<string, unknown>>, over: Record<string, unknown> = {}) => ({
   requestedPoIds: pos.map((p) => p.poId),
   pos,
@@ -83,8 +74,6 @@ const poLine = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/* The page reads useGrnDetail only in append mode; every test here is the
-   ordinary picker, so it stays idle. */
 const noAppendTarget = () => {
   grnDetail.mockReturnValue({ data: undefined, isLoading: false, isError: false });
   addGrnItem.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
@@ -96,8 +85,6 @@ describe("GRN-from-PO picker: an empty list never claims the work is done", () =
     outstandingPoItems.mockReturnValue(loaded([]));
     at(convertToLink("poToGrn", "po-1"));
 
-    /* The exact sentence the owner was shown. Its problem is not tone: it
-       asserts a state of the world from an absence of rows. */
     expect(screen.queryByText(/every line has been received/i)).toBeNull();
     expect(
       screen.getByText(/not the same as everything having been received/i),
@@ -109,10 +96,6 @@ describe("GRN-from-PO picker: an empty list never claims the work is done", () =
     outstandingPoItems.mockReturnValue(loaded([]));
     at(convertToLink("poToGrn", "po-1"));
 
-    /* The read is scoped to the active company and fails closed, so "nothing
-       here" and "nothing visible from here" are indistinguishable on screen.
-       The copy has to hand the operator that possibility, because it is the
-       one they can act on. */
     expect(
       screen.getByText(/only covers the company you are working in/i),
     ).toBeTruthy();
@@ -129,10 +112,6 @@ describe("GRN-from-PO picker: an empty list never claims the work is done", () =
 
   it("blames the FILTERS, not the warehouse, when rows loaded but none are on this PO", () => {
     noAppendTarget();
-    /* One line came back, and it belongs to a different purchase order than the
-       one in the URL — so the page's own scope filter emptied the grid. That is
-       the only empty state that knows anything, and it must say which of the
-       two things happened rather than borrowing the all-done sentence. */
     outstandingPoItems.mockReturnValue(loaded([poLine({ poId: "po-2", poDocNo: "HC-PO-2608-002" })]));
     at(convertToLink("poToGrn", "po-1"));
 
@@ -151,10 +130,6 @@ describe("GRN-from-PO picker: an empty list never claims the work is done", () =
   });
 });
 
-/* The payload the server actually sends now carries `scope`, so the page can name
-   the ONE thing the copy above could only hedge about. These pin the two verdicts
-   that matter — the status of a purchase order the picker will not open, and the
-   only shape entitled to say the work is finished. */
 describe("GRN-from-PO picker: the server's scope block names the cause", () => {
   it("names a DRAFT purchase order as a draft instead of hedging about the company", () => {
     noAppendTarget();
@@ -171,9 +146,6 @@ describe("GRN-from-PO picker: the server's scope block names the cause", () => {
 
   it("does NOT tell the operator to reopen a purchase order that is already fully received", () => {
     noAppendTarget();
-    /* A RECEIVED purchase order reaches this screen with candidate rows counted
-       and none outstanding — the read SAW its lines. "Reopen it" on a finished
-       order invites a second receipt against lines already received in full. */
     outstandingPoItems.mockReturnValue(loadedWithScope([], scopeFor([{
       poId: "po-1", poDocNo: "HC-PO-2608-001", status: "RECEIVED",
       receivable: false, candidateLines: 2, outstandingLines: 0,
@@ -194,9 +166,6 @@ describe("GRN-from-PO picker: the server's scope block names the cause", () => {
   });
 });
 
-/* Symptom: retrying "GRN from PO" after a partial failure added the landed lines again.
-   Cause: each line is its own request and the landed ones stayed ticked.
-   Fix: landed lines are unticked and the dialog says how many went in. Fails before the fix. */
 describe("GRN-from-PO append: a partial failure is not added twice", () => {
   it("unticks the lines that landed, so pressing again appends only the rest", async () => {
     const { fireEvent, waitFor } = await import("@testing-library/react");
@@ -212,7 +181,6 @@ describe("GRN-from-PO append: a partial failure is not added twice", () => {
     ]));
     at(`${convertToLink("poToGrn", "po-1")}&appendToGrn=grn-9`);
 
-    /* Scoped to one PO, the picker ticks every outstanding line itself. */
     fireEvent.click(screen.getByRole("button", { name: /Add 2 lines to GRN/ }));
     await waitFor(() => expect(screen.getByText(/1 of 2 lines were added/)).toBeTruthy());
 

@@ -39,18 +39,13 @@ export type ProductProfitRow = {
   model: string;
   brand: string | null;
   category: ProductCategory;
-  /** Sets for a sofa (the orders that bought it), pieces for everything else. */
   units: number;
   orders: number;
   salesSen: number;
-  /** The product's own cost, its sets' unpriced modules included. */
   costSen: number;
-  /** Its share of the gifts on the orders that bought it. */
   giftSen: number;
-  /** Its share of the free bedframes among those gifts (pieces, one decimal) and their cost. */
   freeBedframes: number;
   freeBedframeSen: number;
-  /** Priced lines with no cost written on them — the margin reads high. */
   noCostLines: number;
   items: ProductProfitItem[];
 };
@@ -58,9 +53,7 @@ export type ProductProfitReport = {
   month: string; from: string; to: string;
   orders: number;
   rows: ProductProfitRow[];
-  /** Gifts on orders that paid for no product (only service, or nothing). */
   unallocatedGift: { orders: number; sen: number };
-  /** Every bedframe given free in the month. */
   freeBedframes: { pieces: number; sen: number; orders: number };
   noCost: { lines: number; salesSen: number };
 };
@@ -154,7 +147,6 @@ export function buildProductProfit(p: {
     const bfSen = bf.reduce((a, e) => a + e.cost, 0);
     if (bf.length > 0) { freeBf.pieces += bfPieces; freeBf.sen += bfSen; freeBf.orders += 1; }
 
-    /* The products this order paid for, each once, with its sales. */
     const keys: string[] = [];
     const salesByKey = new Map<string, number>();
     for (const e of paid) {
@@ -173,7 +165,6 @@ export function buildProductProfit(p: {
     }
     for (const k of keys) rows.get(k)!.orders += 1;
 
-    /* A zero-price line of a product the order also sells is that product's own. */
     for (const e of entries) {
       if (e.sales > 0 || !paidKeys.has(e.id.key)) continue;
       const r = rows.get(e.id.key)!;

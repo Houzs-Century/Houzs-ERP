@@ -31,8 +31,6 @@ vi.mock('../../db/supabase', () => ({ getSupabaseService: () => sb }));
 
 const { soAmendments } = await import('./so-amendments');
 
-/* Four open rows across both lanes plus a legacy one, and two terminal rows
-   that must never be counted. */
 const ROWS = (): Row[] => [
   { id: 'a1', lane: 'LINES',    status: 'REQUESTED',   company_id: 1 },
   { id: 'a2', lane: 'LINES',    status: 'REQUESTED',   company_id: 1 },
@@ -42,13 +40,6 @@ const ROWS = (): Row[] => [
   { id: 'a6', lane: 'DELIVERY', status: 'REJECTED',    company_id: 1 },
 ];
 
-/** Build an app whose caller holds exactly `permissions`.
- *
- *  The keys go on `user`, not on a pre-set `houzsUser`: the router's own
- *  supabaseAuth middleware DERIVES houzsUser from `user` and overwrites whatever
- *  was there, so seeding houzsUser directly is silently discarded — every gate
- *  then reads an empty permission set and every count comes back 0, which looks
- *  exactly like a broken query. */
 function appFor(permissions: string[]) {
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => {
@@ -72,9 +63,7 @@ beforeEach(() => { sb.tables.so_amendments = ROWS(); });
 
 describe('GET /so-amendments/pending-count', () => {
   it('counts only the lane the caller can actually sign', async () => {
-    // Purchasing signs LINES: two open rows, and not logistics' one.
     expect(await countFor(['scm.amendment.approve_lines'])).toBe(2);
-    // Logistics signs DELIVERY: one, and not purchasing's two.
     expect(await countFor(['scm.amendment.approve_delivery'])).toBe(1);
   });
 
@@ -92,28 +81,20 @@ describe('GET /so-amendments/pending-count', () => {
        wildcard holder can still approve anything and still sees every row
        inside the module; they are simply not told it is theirs. */
     expect(await countFor(['*'])).toBe(0);
-    // …and a literal key alongside the wildcard still counts, because that
-    // person IS on the rota.
     expect(await countFor(['*', 'scm.amendment.approve_lines'])).toBe(2);
   });
 
   it('answers 0 for someone who cannot approve — the badge never renders', async () => {
-    // Raising an amendment is not signing one. A salesperson who can create
-    // must not carry a number they can do nothing about.
     expect(await countFor(['scm.amendment.create'])).toBe(0);
     expect(await countFor([])).toBe(0);
   });
 
   it('counts the legacy lane-NULL backlog for the legacy key holder', async () => {
-    // mig 0225: legacy rows are a CLOSED set that still needs clearing, and
-    // their gate is the old key. `lane IS NULL` needs its own predicate — an
-    // .in() over lane names would never match NULL.
     expect(await countFor(['scm.amendment.approve_so'])).toBe(1);
     expect(await countFor(['scm.amendment.approve_lines', 'scm.amendment.approve_so'])).toBe(3);
   });
 
   it('never counts a resolved amendment', async () => {
-    // a5 is applied and a6 refused; neither is anybody's outstanding work.
     sb.tables.so_amendments = ROWS().filter((r) => r.status !== 'REQUESTED');
     expect(await countFor(['scm.amendment.approve_lines', 'scm.amendment.approve_delivery'])).toBe(0);
   });

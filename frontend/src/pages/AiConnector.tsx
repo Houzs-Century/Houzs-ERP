@@ -1,11 +1,3 @@
-// ---------------------------------------------------------------------------
-// /ai-connector — System > AI Connector. Everyone: connect your own Claude /
-// ChatGPT (your own permissions), request access, see and stop your
-// connections. Admin (ai_connector.manage, the Owner via "*"): approve people,
-// see who is connected and what was looked up, disconnect anyone, run the leak
-// check, and switch AI actions (meetings, email; confirm first) on or off. Every rule is the server's (routes/mcpAdmin.ts); this lays it out.
-// Desktop and phone (AuthGate renders it standalone on the phone shell).
-// ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
 import { Bot, Copy, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
@@ -18,6 +10,7 @@ type Person = { userId: number; name: string; position: string };
 type Overview = {
   connectorUrl: string;
   actionsEnabled: boolean;
+  limits?: { perMinute: number; perDay: number };
   stats: { connectedPeople: number; callsToday: number; refusedToday: number; waiting: number };
   requests: (Person & { id: string; reason: string; createdAt: string | null })[];
   connected: (Person & { tokenId: string; app: string; connectedAt: string | null; lastUsedAt: string | null })[];
@@ -67,6 +60,7 @@ function ConnectorUrl({ url }: { url: string }) {
         onClick={() => {
           void navigator.clipboard.writeText(url).then(() => {
             setCopied(true);
+            // eslint-disable-next-line houzs/no-imperative-timers -- a UI delay: the Copied label reverts after 1.5s
             setTimeout(() => setCopied(false), 1500);
           });
         }}
@@ -373,6 +367,14 @@ function AdminView({ ov, reload }: { ov: Overview; reload: () => void }) {
       >
         <Empty>{ov.actionsEnabled ? "On: connected AIs may propose meetings and emails; nothing happens until the person confirms." : "Off: connected AIs can only read."}</Empty>
       </Section>
+
+      {ov.limits && (
+        <Section title="Limits" sub="Fixed for every person; the admin leak check is not counted.">
+          <Empty>
+            Each person may make up to {ov.limits.perMinute} AI lookups a minute and {ov.limits.perDay} a day. Over the limit the AI is told to wait a minute (or that the daily limit is reached); nothing breaks.
+          </Empty>
+        </Section>
+      )}
 
       <LeakCheck people={ov.allowed} />
 

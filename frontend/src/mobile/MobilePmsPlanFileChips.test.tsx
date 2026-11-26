@@ -40,8 +40,6 @@ beforeEach(() => {
   tileTap.mockReset();
 });
 
-/** The chips as they are actually mounted: inside the tile that opens the
- *  lightbox on tap. */
 function mount(confirm?: (o: { title: string }) => Promise<boolean>) {
   return render(
     <div role="button" tabIndex={0} onClick={tileTap}>
@@ -98,7 +96,6 @@ describe("PlanFileChips", () => {
     await waitFor(() => expect(notify).toHaveBeenCalled());
     expect(notify.mock.calls[0][0]).toMatchObject({ title: "Remove failed", tone: "error" });
     expect(reload).not.toHaveBeenCalled();
-    // Busy must be released, or the whole card stays disabled after one failure.
     expect(setBusy).toHaveBeenLastCalledWith(false);
   });
 });

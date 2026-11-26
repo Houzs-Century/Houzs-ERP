@@ -77,7 +77,6 @@ export function ledgerFieldChange(touch: LedgerTouch): FieldChange[] {
   return out;
 }
 
-/* ── The report ──────────────────────────────────────────────────────────── */
 
 /** An `mfg_so_audit_log` row, as the route reads it. */
 export type CorrectionAuditRow = {
@@ -92,9 +91,6 @@ export type CorrectionAuditRow = {
       tagged (docs/bugs/0888) — the report then reads the order's own
       ADD_PAYMENT rows for the recorder. */
   payment_id?: string | null;
-  /** 'amend' when the row carries a reason given on the right. Any other
-      source is a row from BEFORE the rule: a role that holds the right today
-      acted when nothing asked it why. */
   source?: string | null;
 };
 
@@ -106,18 +102,12 @@ export type CorrectionKind = 'added' | 'edited' | 'deleted' | 'proof';
 
 export type CorrectionRow = {
   id: string;
-  /** When the action was made (ISO, as stored). */
   at: string;
   by: string;
   docNo: string;
-  /** The order's customer, when the order could be read. */
   customer: string | null;
   kind: CorrectionKind;
-  /** What moved, from → to, the ledger pair excluded — it has its own fields.
-      On an 'added' row: what the payment was recorded as. */
   changes: CorrectionChange[];
-  /** The money before and after. For a delete, `to` is null; for an add,
-      `from` is null. Null on an edit that did not touch the amount. */
   amountFromSen: number | null;
   amountToSen: number | null;
   reason: string;
@@ -125,19 +115,10 @@ export type CorrectionRow = {
       2026-09-14: 规则之前) — the role holds the right today, the action was
       made when nothing asked it why. */
   beforeRule: boolean;
-  /** Who FIRST recorded the payment this row concerns, and when (ISO): the
-      actor of its ADD_PAYMENT row, else the collector named on the payment
-      row. Null when neither can be read. An 'added' row names itself. */
   recordedBy: string | null;
   recordedOn: string | null;
-  /** The entry that was voided. Null on a first booking — and on the one row
-      written before the contra had its own change, where `ledger.from` was
-      the contra and the original was not recorded. */
   originalJeNo: string | null;
-  /** The contra that voided it. */
   contraJeNo: string | null;
-  /** The entry booked in its place, or booked for an added payment. Null on a
-      delete. */
   jeNo: string | null;
 };
 
@@ -147,9 +128,6 @@ export type CorrectionsSummary = {
   edited: number;
   deleted: number;
   proof: number;
-  /** Σ added amounts + Σ (after − before) over edits that moved the amount −
-      every deleted amount: what the month's actions did to money received,
-      net. */
   netMovedSen: number;
   addedSen: number;
   deletedSen: number;
@@ -167,16 +145,8 @@ export type PaymentRecorder = { by: string | null; on: string };
     order the report tries them. All empty (`NO_RECORDERS`) is a valid answer
     — every row then reads as recorder unknown, never as a guess. */
 export type RecorderLookup = {
-  /** ADD_PAYMENT audit rows by payment id — rows written since payments were
-      tagged with the payment they concern. */
   addsByPayment: ReadonlyMap<string, PaymentRecorder>;
-  /** Payment rows still on file, by id: the collector named on the row and the
-      day it was keyed. Covers a payment whose ADD row predates the tagging,
-      and an automation ADD row that snapshotted no actor. */
   paymentsById: ReadonlyMap<string, PaymentRecorder>;
-  /** ADD_PAYMENT rows per order, oldest first, for a correction written
-      BEFORE payments were tagged: with no id to follow, the order's own adds
-      are read and the recorder is named only when exactly one fits. */
   addsByDoc: ReadonlyMap<string, ReadonlyArray<PaymentRecorder & { amountSen: number | null }>>;
 };
 
@@ -214,15 +184,6 @@ const kindOf = (action: string, changes: CorrectionChange[]): CorrectionKind => 
   return changes.length > 0 && changes.every((c) => c.field === SLIP_FIELD) ? 'proof' : 'edited';
 };
 
-/**
- * Who first recorded the payment a row concerns. Tagged rows follow the
- * payment id: the ADD row's actor, else the payment row's collector (an
- * automation ADD row names no actor — the scan job's receipt — so the
- * collector on the row is the person). An untagged row reads the order's own
- * ADD rows written before it, narrowed to the amount the correction started
- * from when it knows one, and names the recorder ONLY when exactly one fits —
- * a guess between two salespeople would be worse than a blank.
- */
 function recorderOf(
   a: CorrectionAuditRow, kind: CorrectionKind, amountFromSen: number | null, lookup: RecorderLookup,
 ): PaymentRecorder | null {
@@ -265,9 +226,6 @@ export function paymentCorrectionsReport(
     const changes = all.filter((c) => c.field !== LEDGER_FIELD && c.field !== LEDGER_REVERSAL_FIELD);
     const kind = kindOf(a.action, changes);
     const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
-    /* LEGACY: the first row ever written (2026-09-10, 2990-SO-2606-043) carried
-       the CONTRA in `ledger.from` and had no `ledgerReversal`. Read it as what
-       it is — a reversal with the original unknown — never as an original. */
     const legacy = reversal === undefined && ledger !== undefined && str(ledger.from) !== null;
     const amount = changes.find((c) => c.field === 'amountSen');
     const amountFromSen = amount ? senOf(amount.from) : null;
@@ -283,8 +241,6 @@ export function paymentCorrectionsReport(
       changes,
       amountFromSen,
       amountToSen: amount ? senOf(amount.to) : null,
-      /* A row from before the rule carries a note of its own ("Payment proof
-         attached") — that is not a reason, and must not read as one. */
       reason: onRight ? String(a.note ?? '').trim() : '',
       beforeRule: !onRight,
       recordedBy: recorder?.by ?? null,

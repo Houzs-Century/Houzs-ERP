@@ -3,9 +3,6 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { rackSplitError, rackSplitPostError } from './rack-split';
 
-/* The referee for this vendored pair. The phone and desktop split editors
-   refuse from this copy; the server refuses (and the post checks) from the
-   other. Drift would let an editor offer a split the server rejects. */
 describe('the two copies of this module are the same file', () => {
   test('backend/src/scm/shared/rack-split.ts is byte-identical to this one', () => {
     const here = resolve(process.cwd(), 'src/vendor/shared/rack-split.ts');

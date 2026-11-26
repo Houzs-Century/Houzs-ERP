@@ -41,7 +41,6 @@ export function useCalendarSearch(filters: CalendarSearchFilters, enabled: boole
   const settled = settledPath === path;
   return {
     active,
-    // A result for an older search term is never shown as this term's answer.
     result: active && settled && !q.loading ? q.data : null,
     loading: active && (!settled || q.loading),
     error: active ? q.error : null,
@@ -65,7 +64,6 @@ export function CalendarSearchStrip({
   focusedId,
   onJump,
 }: {
-  /** What was searched, already quoted: "'sccc'" or "the filters". */
   label: string;
   result: CalendarSearchResult | null;
   loading: boolean;

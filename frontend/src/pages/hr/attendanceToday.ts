@@ -1,14 +1,8 @@
-/* One place to read "where is this employee right now" from the attendance
- * day read, shared by Employee Master and Overview so the mapping lives once.
- * There is no LATE status (lateness is a per-day lateMin), so a present punch
- * past the shift start reads as "late". */
 import { APPROVED_LEAVE_STATUSES } from "../../vendor/shared/hr-attendance";
 import type { AttendanceDay, AttendanceResponse } from "./hrApi";
 
 export type PunchState = "on" | "late" | "out" | "leave";
 
-// The statuses that mean "on approved leave today" — one home, in the shared
-// attendance module (medical / annual / rest / unpaid).
 const LEAVE_STATUSES = new Set<string>(APPROVED_LEAVE_STATUSES);
 
 export function punchOf(day: AttendanceDay | null): { state: PunchState; time: string | null; lateMin: number } {

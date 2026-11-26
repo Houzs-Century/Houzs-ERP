@@ -1,5 +1,3 @@
-/* "Report a problem" on a non-DO run-sheet job (a Service Case leg here): the
- * job stays completed and the report goes to the job's own issue route. */
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { fireEvent } from "@testing-library/dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -11,7 +9,6 @@ vi.mock("../vendor/scm/lib/slip", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../vendor/scm/lib/slip")>()),
   uploadSlipFull: vi.fn(async ({ file }: { file: File }) => ({ r2Key: `slips/2026/11/${file.name}` })),
 }));
-// No photos uploaded earlier for this stop by anyone on the crew.
 vi.mock("../vendor/scm/lib/crew-stop-photos", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../vendor/scm/lib/crew-stop-photos")>()),
   listCrewStopPhotos: vi.fn(async () => []),
@@ -46,7 +43,6 @@ describe("MobileJobStop — report a problem on a completed job", () => {
     const [url, init] = authedFetch.mock.calls.find(([u]) => String(u).endsWith("/issue")) as [string, Init];
     expect(url).toBe("/delivery-jobs/assr/12/delivery/issue");
     expect(JSON.parse(init.body!)).toEqual({ kinds: ["customer_refused"], note: null, photoKeys: [] });
-    // The job was not completed again.
     expect(authedFetch.mock.calls.some(([u]) => String(u).endsWith("/complete"))).toBe(false);
   });
 });

@@ -17,38 +17,26 @@ export const pwpRules = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 pwpRules.use('*', supabaseAuth);
 
-// Houzs-flavoured: gate via canWriteScmConfig (flat `scm.config.write` OR the position policy canWriteConfig flag, see houzs-perms.ts) against
-// the REAL caller (the 2990 staff_role lookup is dead in Houzs — the SCM
-// bridge pins every caller to one super_admin row).
 
 const CATEGORY = z.enum(['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE']);
 
 const createSchema = z.object({
   triggerCategory:         CATEGORY,
   triggerEligibleModelIds: z.array(z.string()).default([]),
-  triggerComboIds:         z.array(z.string()).default([]),  // SOFA trigger (Phase 2)
+  triggerComboIds:         z.array(z.string()).default([]),
   rewardCategory:          CATEGORY,
   eligibleRewardModelIds:  z.array(z.string()).default([]),
-  rewardComboIds:          z.array(z.string()).default([]),  // SOFA reward (Phase 2)
-  // Variant/compartment refinement (migration 0182). ADDITIVE: narrows the
-  // model/combo match by size (mattress/bedframe) or contained compartment
-  // (any-build sofa trigger). [] = no refinement.
+  rewardComboIds:          z.array(z.string()).default([]),
   triggerSizeCodes:        z.array(z.string()).default([]),
   triggerCompartments:     z.array(z.string()).default([]),
   rewardSizeCodes:         z.array(z.string()).default([]),
   rewardCompartments:      z.array(z.string()).default([]),
   qtyPerTrigger:           z.number().int().min(1).default(1),
-  type:                    z.enum(['pwp', 'promo']).default('pwp'),  // promo lets a 0 reward redeem free (migration 0145)
+  type:                    z.enum(['pwp', 'promo']).default('pwp'),
   active:                  z.boolean().default(true),
 });
 const patchSchema = createSchema.partial();
 
-// A SOFA trigger is matched EITHER by Combo (trigger_combo_ids) OR by Model
-// (trigger_eligible_model_ids) — never both, never neither. Mirrors the POS
-// editor's per-trigger toggle so a tampered/legacy client can't store an
-// ambiguous sofa trigger (which would make the reserve/recompute mode-derivation
-// — "which array is populated" — undefined). Non-sofa triggers are always by
-// Model (an empty model list = the whole category, which is allowed).
 function sofaTriggerXorError(
   cat: string | undefined,
   comboIds: string[] | undefined,
@@ -103,7 +91,6 @@ const toApi = (r: RuleRow) => ({
 const SELECT =
   'id, trigger_category, trigger_eligible_model_ids, trigger_combo_ids, reward_category, eligible_reward_model_ids, reward_combo_ids, trigger_size_codes, trigger_compartments, reward_size_codes, reward_compartments, qty_per_trigger, type, active, created_at, updated_at';
 
-// Editors-only guard — Houzs flat-key permission.
 async function requireWrite(c: AppCtx) {
   if (!canWriteScmConfig(c)) {
     return { ok: false as const, res: c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403) };
@@ -114,7 +101,6 @@ async function requireWrite(c: AppCtx) {
   return { ok: true as const, userId };
 }
 
-// GET — every authenticated staff role can read (POS configurator needs it).
 pwpRules.get('/', async (c) => {
   const supabase = c.get('supabase');
   const { data, error } = await scopeToCompany(
@@ -125,7 +111,6 @@ pwpRules.get('/', async (c) => {
   return c.json({ rules: (data as RuleRow[]).map(toApi) });
 });
 
-// POST — create. Editors only. 23505 (one-active-per-pair) → 409.
 pwpRules.post('/', async (c) => {
   const gate = await requireWrite(c);
   if (!gate.ok) return gate.res;
@@ -168,7 +153,6 @@ pwpRules.post('/', async (c) => {
   return c.json({ rule: toApi(data as RuleRow) }, 201);
 });
 
-// PATCH /:id — update. Editors only.
 pwpRules.patch('/:id', async (c) => {
   const gate = await requireWrite(c);
   if (!gate.ok) return gate.res;
@@ -181,8 +165,6 @@ pwpRules.patch('/:id', async (c) => {
     return c.json({ error: 'validation_failed', issues: parsed.error.issues.map((i) => ({ path: i.path, message: i.message })) }, 400);
   }
 
-  // Validate the sofa-trigger XOR only when the trigger is being (re)set — the
-  // editor always sends triggerCategory + both arrays together on save.
   if (parsed.data.triggerCategory !== undefined) {
     const trigErr = sofaTriggerXorError(parsed.data.triggerCategory, parsed.data.triggerComboIds, parsed.data.triggerEligibleModelIds);
     if (trigErr) return c.json({ error: 'invalid_sofa_trigger', reason: trigErr }, 400);
@@ -204,8 +186,6 @@ pwpRules.patch('/:id', async (c) => {
   if (parsed.data.active                  !== undefined) patch.active                     = parsed.data.active;
 
   const supabase = c.get('supabase');
-  // Multi-company: scope the write to the active company so a blind id from
-  // another company matches nothing (reported as not-found, not mutated).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data, error } = await scopeToCompanyId(supabase.from('pwp_rules').update(patch).eq('id', id), co.companyId).select(SELECT).maybeSingle();
@@ -216,14 +196,11 @@ pwpRules.patch('/:id', async (c) => {
   return c.json({ rule: toApi(data as RuleRow) });
 });
 
-// DELETE /:id — editors only.
 pwpRules.delete('/:id', async (c) => {
   const gate = await requireWrite(c);
   if (!gate.ok) return gate.res;
   const id = c.req.param('id');
   const supabase = c.get('supabase');
-  // Multi-company: scope the delete; select reports whether a row in THIS
-  // company was actually removed.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data, error } = await scopeToCompanyId(supabase.from('pwp_rules').delete().eq('id', id), co.companyId).select('id').maybeSingle();

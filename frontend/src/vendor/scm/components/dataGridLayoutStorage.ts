@@ -10,8 +10,6 @@ export type DataGridLayout = {
 
 const VERSION = 1 as const;
 const MAX_COLUMN_KEYS = 500;
-// DataGrid's resize path accepts 40px and has no practical hard cap. Preserve
-// those valid legacy choices while bounding obviously corrupt numeric input.
 const MIN_WIDTH = 40;
 const MAX_WIDTH = 10_000;
 
@@ -92,7 +90,6 @@ export function serializeDataGridLayout(layout: DataGridLayout): string {
 
 export type DecodedDataGridLayout = {
   layout: DataGridLayout;
-  /** True only for the pre-version envelope shape, so callers can migrate it. */
   legacy: boolean;
   valid: boolean;
 };
@@ -111,8 +108,6 @@ export function decodeDataGridLayout(raw: string): DecodedDataGridLayout {
       return { layout: sanitizeDataGridLayout(parsed.layout), legacy: false, valid: true };
     }
 
-    // Pre-version DataGrid values stored the layout object directly. Accept and
-    // sanitize that one known shape; the reader rewrites it in the v1 envelope.
     const knownFields = ["order", "hidden", "widths", "groupBy", "pinned", "sort"];
     if (!knownFields.some((field) => field in parsed)) {
       return { layout: { ...DEFAULT_DATA_GRID_LAYOUT }, legacy: false, valid: false };
@@ -174,7 +169,6 @@ export function writeDataGridLayout(key: string, layout: DataGridLayout): void {
   try {
     window.localStorage.setItem(key, serializeDataGridLayout(layout));
   } catch {
-    // localStorage can be disabled or full. Layout persistence is best-effort.
   }
 }
 

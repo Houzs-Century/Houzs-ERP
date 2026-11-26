@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// pi-assigned-sos — the list's "Assigned SO" / "Delivered" enrichment.
-//
-// Extracted from routes/purchase-invoices.ts VERBATIM (2026-08-17), same reason
-// and same rule as pi-money-rollups. This one is READ-ONLY and fail-soft: on any
-// error the rows still return, just without the columns populated. It writes
-// nothing, decides nothing, and no test named it.
-// ----------------------------------------------------------------------------
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the untyped supabase-js client and Hono context this tree passes around */
 import { scopeToCompany } from '../lib/companyScope';
@@ -34,10 +26,6 @@ export async function attachPiAssignedSos(
     for (let k = 0; k < grnIds.length; k += 300) {
       const chunk = grnIds.slice(k, k + 300);
       if (chunk.length === 0) continue;
-      /* BIND THE ERROR. Fail-soft is the contract here (the rows still return,
-         just without the columns) and it stays — but an empty chunk from a failed
-         read is indistinguishable from a GRN with no parent PO, and the column
-         then reads as "no Assigned SO" rather than "we could not tell". */
       const { data: grnRows, error: grnErr } = await scopeToCompany(
         sb.from('grns').select('id, purchase_order_id'), c,
       ).in('id', chunk);
@@ -50,10 +38,6 @@ export async function attachPiAssignedSos(
       }
     }
     const poIds = [...poByGrn.values()];
-    /* Each PI's OWN line codes (header ≡ ∪(drill lines), 2026-08-02): the drill
-       matches assignments into the PI's lines by item_code, so the header
-       cells roll up ONLY those SKUs — a partial-billing PI must not inherit
-       its parent PO's whole assignment history. */
     const piIds = rows.map((r) => r.id).filter(Boolean);
     const codesByPi = new Map<string, Set<string>>();
     for (let k = 0; k < piIds.length; k += 300) {
@@ -103,8 +87,6 @@ export async function attachPiAssignedSos(
         ...r,
         assigned_sos: summary.assignedSos,
         assigned_so_linked: summary.sourceLinked,
-        /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s) —
-           rolled up over the SAME code-filtered origins (header ≡ ∪(lines)). */
         assigned_so_provenance: summary.provenanceSos,
         delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
       };
@@ -114,14 +96,6 @@ export async function attachPiAssignedSos(
   }
 }
 
-/* The MRP-DERIVED PI-list row fields. attachPiAssignedSos runs a company-wide
-   computeMrp (via resolvePoSoCoveragePerSkuForPos) to fill exactly these, which
-   is why the PI list used to pay the full MRP cost on its critical path. The
-   list no longer computes them inline; the deferred endpoint
-   (routes/purchase-invoices-list-enrichment.ts) heals them a beat after render.
-   C16 TWIN: frontend/src/lib/piListEnrichment.ts's PI_MRP_DERIVED_LIST_FIELDS
-   pins the SAME set, and a parity test fails if a new MRP-derived list field is
-   added on only one side. */
 export const PI_LIST_MRP_ENRICHMENT_KEYS = [
   'assigned_sos',
   'assigned_so_linked',

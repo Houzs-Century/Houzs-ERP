@@ -1,6 +1,3 @@
-/* The DO page must show what the crew recorded on the phone (owner,
- * 2026-10-08). Before this card a delivered DO read "Delivered: Pending" and
- * carried its POD photo, signature and times invisibly. */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";

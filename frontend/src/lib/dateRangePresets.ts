@@ -1,15 +1,3 @@
-// dateRangePresets — the presets a Finance date-range picker offers
-// (components/DateRangeButton) and the day arithmetic behind them.
-//
-// ONE home for them (the owner's redesign, batch 5 and batch 6): Money in ›
-// Outstanding uses the presets below, and the reports add theirs here rather
-// than in a second list. A preset is a key, a label and a rule that turns
-// "today" into a range.
-//
-// Dates are ISO `YYYY-MM-DD` strings — the shape the API takes — and '' is an
-// open end. The arithmetic runs on UTC midnights, so a calendar day never moves
-// with the browser's time zone. Nothing here formats a date for a reader: that
-// is fmtDate's job.
 
 export type RangePresetKey =
   | 'today'
@@ -93,17 +81,12 @@ export function presetRange(key: RangePresetKey, today: string): DateRange {
     case 'thisMonth': return { from: monthStart(today), to: today };
     case 'lastMonth': return { from: monthStart(today, -1), to: monthEnd(today, -1) };
     case 'last3Months': return { from: monthStart(today, -2), to: today };
-    /* A year back to the day — the window Outstanding has always opened on
-       (it read todayMyt(-365) before the redesign), so an invoice unpaid for
-       eleven months still shows without anyone touching the dates. */
     case 'last12Months': return { from: addDays(today, -365), to: today };
     case 'thisYear': return { from: isoOfMs(Date.UTC(Number(today.slice(0, 4)), 0, 1)), to: today };
     case 'thisQuarter': return { from: quarterStart(today), to: today };
     case 'lastQuarter': return { from: quarterStart(today, -1), to: addDays(quarterStart(today), -1) };
-    /* The reports' own name for this year so far (the design's list). */
     case 'yearToDate': return { from: isoOfMs(Date.UTC(Number(today.slice(0, 4)), 0, 1)), to: today };
     case 'lastYear': return { from: isoOfMs(Date.UTC(Number(today.slice(0, 4)) - 1, 0, 1)), to: isoOfMs(Date.UTC(Number(today.slice(0, 4)) - 1, 11, 31)) };
-    /* Ahead of today — for reports that carry forecasts (Project Overview). */
     case 'nextMonth': return { from: monthStart(today, 1), to: monthEnd(today, 1) };
     case 'nextQuarter': return { from: quarterStart(today, 1), to: addDays(quarterStart(today, 2), -1) };
     case 'next12Months': return { from: today, to: addDays(today, 365) };
@@ -112,7 +95,6 @@ export function presetRange(key: RangePresetKey, today: string): DateRange {
     case 'wholeMonth': return { from: monthStart(today), to: monthEnd(today) };
     case 'wholeQuarter': return { from: quarterStart(today), to: addDays(quarterStart(today, 1), -1) };
     case 'wholeYear': return { from: isoOfMs(Date.UTC(Number(today.slice(0, 4)), 0, 1)), to: isoOfMs(Date.UTC(Number(today.slice(0, 4)), 11, 31)) };
-    /* No from, no to: the page sends neither and the server reads every date. */
     case 'all': return { from: '', to: '' };
   }
 }

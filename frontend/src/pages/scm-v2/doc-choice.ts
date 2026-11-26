@@ -18,10 +18,8 @@ import type { DocChoice, DocChoicePrompt } from '../../components/scm-v2/Documen
 
 export type DocChoiceApi = {
   choice: DocChoicePrompt | null;
-  /** Raise the chooser. Callers pass every candidate document + its route. */
   openChoice: (prompt: DocChoicePrompt) => void;
   closeChoice: () => void;
-  /** Close and navigate — bound to each row in the dialog. */
   pickChoice: (doc: DocChoice) => void;
 };
 

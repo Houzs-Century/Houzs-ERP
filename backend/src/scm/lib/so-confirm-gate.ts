@@ -74,27 +74,17 @@ const checkFailedProblem = (reason: string): SaveProblem => ({
 
 export type SoConfirmLineFacts = {
   itemCode: string | null | undefined;
-  /** item_group / itemGroup, any case. Kept because a confirm problem names
-   *  the category, not because any rule here reads the line's variants — those
-   *  belong to the PROCEED gate (so-variant-check.ts). */
   group: string | null | undefined;
-  /** For naming a product-less line in the message. */
   lineNo?: number | null;
   description?: string | null;
 };
 
 export type SoConfirmFacts = {
   salespersonId: string | number | null | undefined;
-  /** Legacy free-text salesperson name — either identifier satisfies the gate
-   *  (the detail page reads both; imported history carries only `agent`). */
   agent: string | null | undefined;
   venue: string | null | undefined;
   venueId: string | null | undefined;
-  /** Non-cancelled lines only. */
   lines: readonly SoConfirmLineFacts[];
-  /** Non-blank item codes the company's catalog does NOT hold — resolved by
-   *  the caller (route: one validateItemCodes read; create: [] because the
-   *  create path already refused unknown codes before this gate). */
   nonCatalogCodes?: readonly string[];
 };
 
@@ -154,9 +144,6 @@ export function collectSoConfirmProblems(facts: SoConfirmFacts): SaveProblem[] {
     }
   });
 
-  /* NO VARIANT CHECK HERE — see rule 4 in the header. Variant completeness is
-     the PROCEED rule (so-variant-check.ts, gated on the Processing Date), not
-     the confirm rule. */
 
   return out;
 }
@@ -182,14 +169,6 @@ export async function soConfirmProblemsForDoc(sb: any, docNo: string, companyCod
     .from('mfg_sales_order_items')
     .select('item_code, item_group, description, line_no, cancelled, total_sen')
     .eq('doc_no', docNo);
-  /* THE ONE THAT LET THE ORDER THROUGH. `items ?? []` folded a failed read into
-     an order with NO lines, every per-line rule then had nothing to object to,
-     the gate returned zero problems, and the DRAFT was confirmed — and enqueued
-     to AutoCount — carrying the placeholder and free-text lines this gate exists
-     to stop. The header and catalog reads below already refused by accident
-     (an empty header reads as "no salesperson", an empty catalog reads as "every
-     code is non-catalog"), but they refused with a sentence that named the wrong
-     problem. All three now say what actually happened. */
   if (itemsErr) return [checkFailedProblem(`lines: ${itemsErr.message}`)];
   const lines = ((items ?? []) as Array<{
     item_code: string | null; item_group: string | null;

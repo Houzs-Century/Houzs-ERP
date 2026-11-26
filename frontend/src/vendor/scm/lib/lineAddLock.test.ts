@@ -1,10 +1,3 @@
-/* ONE answer to "may a line be added to this document", read by desktop AND phone.
- *
- * The truth tables pin each rule. The source scan pins the part that actually
- * failed in this repo before: a rule that lives in a shared module on paper,
- * while a page quietly keeps its own inline copy. Each desktop editor must call
- * the shared function, and none may still compute its own `isLocked` from status.
- */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -75,7 +68,7 @@ describe('every surface reads these rules, none keeps its own copy', () => {
   const read = (rel: string): string => {
     for (const r of ['frontend/src/', 'src/']) {
       for (const base of [process.cwd(), resolve(process.cwd(), '..')]) {
-        try { return readFileSync(resolve(base, r + rel), 'utf8'); } catch { /* next */ }
+        try { return readFileSync(resolve(base, r + rel), 'utf8'); } catch { }
       }
     }
     throw new Error(`${rel} not found from ${process.cwd()} — this scan must never pass on an empty read`);

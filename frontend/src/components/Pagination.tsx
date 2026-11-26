@@ -6,9 +6,7 @@ interface Props {
   perPage: number;
   total: number;
   onPageChange: (p: number) => void;
-  /** When provided, renders a per-page selector. */
   onPerPageChange?: (n: number) => void;
-  /** Page-size options shown in the selector. Default: 10, 25, 50, 100, 200. */
   perPageOptions?: number[];
 }
 
@@ -27,9 +25,6 @@ export function Pagination({
   const end = Math.min(page * perPage, total);
 
   return (
-    // One left-aligned row (Nick 2026-07-23): the pager used to sit at the
-    // far right (justify-between), where the floating action buttons cover
-    // it — range, per-page selector and prev/next now flow together.
     <div className="mt-4 flex flex-wrap items-center gap-3 text-[11px] font-medium text-ink-secondary">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5">

@@ -1,12 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { retryUnlessClientError } from "./retryPolicy";
 
-/* This predicate now governs 96 query hooks across every SCM document module,
-   so the cases below are the contract, not a smoke test. The two error shapes
-   are modelled verbatim:
-     - api/client.ts HttpError            → Error with a numeric `status`
-     - vendor/scm/lib/authed-fetch        → Error with a numeric `status`
-     - a network-layer failure            → Error with NO `status`            */
 
 function httpError(status: number): Error {
   const e = new Error(`HTTP ${status}`) as Error & { status: number };
@@ -16,8 +10,6 @@ function httpError(status: number): Error {
 
 describe("retryUnlessClientError", () => {
   it("does not retry a 403 — the decision the whole change exists for", () => {
-    // The observed production symptom: /inventory/warehouses 403'd TWICE on one
-    // SO Maintenance load. The second call cannot succeed.
     expect(retryUnlessClientError(0, httpError(403))).toBe(false);
   });
 
@@ -45,8 +37,6 @@ describe("retryUnlessClientError", () => {
   });
 
   it("treats a non-numeric status as 'no status' rather than trusting it", () => {
-    // A malformed error must not accidentally read as a 4xx and suppress a
-    // retry that a real network blip needs.
     const e = new Error("weird") as Error & { status: unknown };
     e.status = "403";
     expect(retryUnlessClientError(0, e)).toBe(true);

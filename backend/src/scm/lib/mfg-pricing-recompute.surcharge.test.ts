@@ -29,7 +29,7 @@ import {
 } from './mfg-pricing-recompute';
 import type { MaintenanceConfig, SpecialAddonDef } from '../shared/mfg-pricing';
 
-const ADDON_SEN = 5000; // RM 50
+const ADDON_SEN = 5000;
 
 /* ONE price, per the owner's 2026-06-22 ruling: the Specials editor writes the
    same number to selling_price_sen and cost_price_sen. Costing the add-on at a
@@ -40,9 +40,6 @@ const HYDRAULIC: SpecialAddonDef = {
   costPriceSen: ADDON_SEN,
 };
 
-/* The pool builder only fires when a config object exists — `effectiveConfig`
-   falls back to a null `config` unchanged. A null config here would make every
-   surcharge 0 and every test below pass for the wrong reason. */
 const EMPTY_CONFIG: MaintenanceConfig = {
   divanHeights: [], legHeights: [], totalHeights: [], gaps: [],
   specials: [], sofaLegHeights: [], sofaSpecials: [], sofaSizes: [],
@@ -60,18 +57,13 @@ const sofa: ProductRowLite = {
   seat_height_prices: null, base_model: 'MODEL-A', sell_price_sen: null,
 };
 
-/** A configurator sofa arrives as ONE line carrying variants.cells. */
 const SOFA_CELLS = [{ id: 'c1', moduleId: 'A1', x: 0, y: 0, rot: 0 }];
-const SOFA_MODULE_PRICES = { A1: 200000 }; // RM 2000 for the single module
+const SOFA_MODULE_PRICES = { A1: 200000 };
 
 const line = (
   itemCode: string, itemGroup: string, variants: Record<string, unknown>, clientSen = 0,
 ): MfgItemForRecompute => ({ itemCode, itemGroup, qty: 1, unitPriceSen: clientSen, variants });
 
-/* recomputeFromSnapshot(item, product, fabric, config, sofaCombos,
-     sofaModulePrices, sellingFabricTiers, fabricAddonConfig, pwpBaseSen,
-     pwpSofaComboIds, specialAddons, sofaModuleCostRows, modelFabricOverrides,
-     compartmentFabricOverrides, trustOperatorSelling) */
 const runSofa = (specials: string[], trust: boolean | 'including-zero' = false, clientSen = 0) =>
   recomputeFromSnapshot(
     line('SF-1', 'sofa', { cells: SOFA_CELLS, depth: '24', specials }, clientSen),
@@ -98,7 +90,6 @@ describe('SOFA: a priced add-on is now CHARGED, not only costed', () => {
 
   it('THE DEFECT, stated as a number: the sofa surcharge is no longer 0 in the price', () => {
     const r = runSofa(['Hydraulic']);
-    // The breakdown always knew the figure; before this fix nothing spent it.
     expect(r.special_order_sen).toBe(ADDON_SEN);
     expect(r.unit_price_sen).toBe(200000 + ADDON_SEN);
   });
@@ -108,7 +99,7 @@ describe('SOFA: a priced add-on is now CHARGED, not only costed', () => {
     const withS = runSofa(['Hydraulic']);
     const sellingDelta = withS.unit_price_sen - withoutS.unit_price_sen;
     const costDelta = withS.unit_cost_sen - withoutS.unit_cost_sen;
-    expect(costDelta).toBe(ADDON_SEN); // the cost path always did this
+    expect(costDelta).toBe(ADDON_SEN);
     expect(sellingDelta).toBe(costDelta);
   });
 
@@ -170,7 +161,6 @@ describe('custom_specials is composed in a canonical, per-line-independent order
       sofa, null, EMPTY_CONFIG, [], SOFA_MODULE_PRICES, null, null, null, null,
       CANON, null, null, null, false,
     );
-    // "AAA…" sorts first alphabetically, but must stay LAST as the free-text note.
     expect(labels(r)).toEqual(['Backcushion Firmer', 'Nylon Fabric', 'AAA custom note']);
   });
 });
@@ -185,7 +175,6 @@ describe('sell_price_sen = 0 no longer exempts a line from its own surcharge', (
   });
 
   it('a normally-priced catalog line is UNCHANGED (base + surcharge, as before)', () => {
-    // This branch already folded the surcharge in; the refactor must not move it.
     expect(runBedframe(['Hydraulic'], 30000).unit_price_sen).toBe(30000 + ADDON_SEN);
     expect(runBedframe([], 30000).unit_price_sen).toBe(30000);
   });
@@ -200,12 +189,10 @@ describe('sell_price_sen = 0 no longer exempts a line from its own surcharge', (
 describe("MIGRATED ('including-zero'): the new charging cannot reach it", () => {
   it('a migrated 0-priced line with a PRICED add-on keeps its stored 0', () => {
     expect(runBedframe(['Hydraulic'], 0, 'including-zero', 0).unit_price_sen).toBe(0);
-    // ...where the same line authored natively now charges the add-on:
     expect(runBedframe(['Hydraulic'], 0, false, 0).unit_price_sen).toBe(ADDON_SEN);
   });
 
   it('a migrated SOFA line with a priced add-on keeps its AutoCount price', () => {
-    // 149900 is the negotiated figure AutoCount recorded; nothing may improve on it.
     expect(runSofa(['Hydraulic'], 'including-zero', 149900).unit_price_sen).toBe(149900);
   });
 
@@ -214,16 +201,6 @@ describe("MIGRATED ('including-zero'): the new charging cannot reach it", () => 
   });
 
   it('ticking a PRICED add-on changes NOTHING on a migrated line — price or drift', () => {
-    /* Structural inertness, not merely a final overwrite. If the new arms had
-       computed a figure and only the trust overwrite had saved the price, the
-       surcharge would still have entered `drift`, and a caller that reads drift
-       would 400 a migrated amendment for ticking a box.
-
-       Stated as an equality against the same line WITHOUT the add-on, because
-       that is the actual claim: the add-on is invisible here. (A migrated sofa
-       drifts anyway — its AutoCount price is not the Σ of our module prices —
-       so asserting `drift === false` would assert something untrue and
-       unrelated.) */
     const sofaOn = runSofa(['Hydraulic'], 'including-zero', 149900);
     const sofaOff = runSofa([], 'including-zero', 149900);
     expect(sofaOn.unit_price_sen).toBe(sofaOff.unit_price_sen);
@@ -237,8 +214,6 @@ describe("MIGRATED ('including-zero'): the new charging cannot reach it", () => 
   });
 
   it('COST still books the surcharge on a migrated line — only SELLING is frozen', () => {
-    /* The owner froze the customer's price, not the truth about what the thing
-       costs us. Margin on a migrated line stays honest. */
     const withS = runSofa(['Hydraulic'], 'including-zero', 149900);
     const withoutS = runSofa([], 'including-zero', 149900);
     expect(withS.unit_cost_sen - withoutS.unit_cost_sen).toBe(ADDON_SEN);

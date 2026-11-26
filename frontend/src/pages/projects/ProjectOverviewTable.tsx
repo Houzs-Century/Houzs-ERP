@@ -23,8 +23,6 @@ const money = (rm: number): string => (!Number.isFinite(rm) || Math.abs(rm) < 0.
 const pct = (x: number | null): string => (x == null ? "-" : x < 0 ? `(${Math.abs(x).toFixed(1)}%)` : `${x.toFixed(1)}%`);
 const sum = (rows: OverviewRow[], pick: (r: OverviewRow) => number) => rows.reduce((s, r) => s + pick(r), 0);
 
-/** A date for the sheet: ISO "2026-11-06", or empty for none. Export is the
- *  storage shape, not the year-trimmed display one (see format.isoForExport). */
 const dateForExport = (d: string | null | undefined): string => {
   const v = isoForExport(d ?? "");
   return v === "" ? "" : String(v);
@@ -35,7 +33,6 @@ const dateForExport = (d: string | null | undefined): string => {
 const SHADE = { last: "bg-warning-bg text-warning-text", typed: "bg-primary-soft text-primary-ink" } as const;
 const kindOf = (r: OverviewRow, key: string) => (r.f.estimated ? forecastKindOf(r.p, key) : null);
 
-/** One money column: right-aligned, totalled, exported as a number. */
 const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number, group: string, opts: { strong?: boolean } = {}): Column<OverviewRow> => ({
   key, label, align: "right", group,
   render: (r) => {
@@ -47,7 +44,6 @@ const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number,
           title={kind === "typed" ? "A Forecast typed on the project, until the real figure is in" : "The last same event's result, until the real figure is in"}>{money(v)}</span>
       : <span className={tone}>{money(v)}</span>;
   },
-  /* To the sen, so two rows that read the same share one line in the funnel. */
   getValue: (r) => Math.round(pick(r) * 100) / 100, filterLabel: (v) => money(Number(v)),
   filterType: "number", sortValue: pick, numberValue: pick, exportValue: (r) => pick(r),
   /* The total says how much of it is a forecast - shaded, with the forecast part on hover
@@ -66,11 +62,9 @@ const amountCol = (key: string, label: string, pick: (r: OverviewRow) => number,
   },
 });
 
-/** A % column worked out row by row, and on the Total row from the added-up figures. */
 const pctCol = (key: string, label: string, top: (r: OverviewRow) => number, base: (r: OverviewRow) => number, group: string): Column<OverviewRow> => ({
   key, label, align: "right", group,
   render: (r) => { const x = pctOf(top(r), base(r)); return <span className={x != null && x < 0 ? "text-err" : "text-ink-secondary"}>{pct(x)}</span>; },
-  /* To the one decimal the cell shows. */
   getValue: (r) => { const x = pctOf(top(r), base(r)); return x == null ? null : Math.round(x * 10) / 10; },
   filterLabel: (v) => pct(Number(v)),
   filterType: "number", sortValue: (r) => pctOf(top(r), base(r)) ?? -1e9, numberValue: (r) => pctOf(top(r), base(r)),
@@ -101,7 +95,6 @@ export const PROJECT_COLUMNS: Column<OverviewRow>[] = [
   {
     key: "dates", label: "Start", exportLabel: "Start date", group: "Project", newestFirst: true,
     render: (r) => <span className="whitespace-nowrap tabular-nums">{r.p.startDate ? fmtDayMonth(r.p.startDate) : "-"}</span>,
-    /* By the day it starts: the funnel's presets and From / To range read it, and its list shows each start day. */
     getValue: (r) => r.p.startDate ?? "", filterLabel: (v) => fmtDateOrDash(v),
     filterType: "date", sortValue: (r) => r.p.startDate ?? "", dateValue: (r) => r.p.startDate, exportValue: (r) => dateForExport(r.p.startDate),
   },

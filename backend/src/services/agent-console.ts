@@ -39,28 +39,8 @@ export const AGENT_FAMILIES: AgentFamily[] = [
   "SI",
 ];
 
-// ── MYT calendar buckets ─────────────────────────────────────────────────────
-//
-// agent_runs.started_at is UTC ISO text, but every window the owner reasons
-// about is a MALAYSIAN calendar bucket: the daily run cap, the monthly LLM
-// budget. Slicing the stored string (substr(started_at, 1, 10)) buckets by UTC,
-// which disagrees with MYT for the 8 hours from 16:00 UTC — and the fleet's own
-// first-run hours sit inside that gap (PMS 07:00, DELIVERY 07:30 MYT = 23:00 /
-// 23:30 UTC the day before). A UTC-sliced bucket compared against a MYT date
-// therefore misses those runs entirely.
-//
-// So a bucket is expressed as the UTC instant RANGE it covers, computed here
-// and bound as ISO text: `started_at >= start AND started_at < end`. That is a
-// plain lexicographic compare over fixed-width ISO-8601 UTC (what the reaper
-// cutoff relies on), needs no ::timestamptz cast, and still rides
-// idx_agent_runs_agent (agent, started_at DESC). Half-open so the rollover
-// instant belongs to exactly one bucket — never both, never neither.
-//
-// Never datetime('now', ...) for any of this: d1-compat rewrites it to
-// to_char(..., 'YYYY-MM-DD HH24:MI:SS'), whose space where the 'T' belongs
-// cannot be compared against an ISO string.
 
-export const MYT_OFFSET_MS = 8 * 60 * 60 * 1000; // MYT = UTC+8, no DST
+export const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 /** The MYT calendar date (YYYY-MM-DD) at an instant. */
 export function mytDate(now: Date = new Date()): string {
@@ -80,7 +60,6 @@ export interface UtcRange {
 /** The UTC instant range [start, end) covering one MYT day ('YYYY-MM-DD'). */
 export function mytDayRangeUtc(dateMyt: string): UtcRange {
   const [y, m, d] = dateMyt.split("-").map(Number);
-  // Date.UTC rolls day/month/year over for us, so d + 1 is safe on any date.
   const startMs = Date.UTC(y, m - 1, d) - MYT_OFFSET_MS;
   const endMs = Date.UTC(y, m - 1, d + 1) - MYT_OFFSET_MS;
   return {
@@ -93,19 +72,16 @@ export function mytDayRangeUtc(dateMyt: string): UtcRange {
 export function mytMonthRangeUtc(monthMyt: string): UtcRange {
   const [y, m] = monthMyt.split("-").map(Number);
   const startMs = Date.UTC(y, m - 1, 1) - MYT_OFFSET_MS;
-  const endMs = Date.UTC(y, m, 1) - MYT_OFFSET_MS; // month index m = the next month
+  const endMs = Date.UTC(y, m, 1) - MYT_OFFSET_MS;
   return {
     startIso: new Date(startMs).toISOString(),
     endIso: new Date(endMs).toISOString(),
   };
 }
 
-// ── Run logging ──────────────────────────────────────────────────────────────
 
 export interface AgentRunHandle {
-  /** Accumulate Anthropic token usage (call once per API response). */
   addTokens(tokensIn: number, tokensOut: number): void;
-  /** Human-readable one-liner shown on the console ("sent 2 · failed 0"). */
   setSummary(summary: string): void;
 }
 
@@ -143,7 +119,6 @@ export async function recordAgentRun<T>(
       .bind(id, agent, startedAt)
       .run();
   } catch (e) {
-    // Logging must never block the actual work — run the fn unlogged.
     console.warn(`[agent-runs] failed to open run for ${agent}:`, e);
     return fn(handle);
   }
@@ -151,8 +126,6 @@ export async function recordAgentRun<T>(
     const result = await fn(handle);
     await db
       .prepare(
-        // error = NULL: a run the reaper called stale can still finish (see
-        // reapStaleAgentRuns) — its own verdict wins, message and all.
         `UPDATE agent_runs
             SET finished_at = ?, status = 'ok', summary = ?, tokens_in = ?, tokens_out = ?,
                 error = NULL
@@ -181,28 +154,7 @@ export async function recordAgentRun<T>(
   }
 }
 
-// ── Stale-run reaper ─────────────────────────────────────────────────────────
-//
-// recordAgentRun closes its row from a catch — so anything that kills the
-// isolate outright (the platform's CPU/subrequest ceiling, an eviction, a
-// deploy landing mid-beat) never reaches it and strands the row at 'running'.
-// That row then lies twice: the console shows a run that never ends, and
-// taskStats counts every non-'error' row toward runsToday, so ONE killed run
-// silently burns a daily slot until MYT midnight rolls the date. PMS runs
-// once a day — one killed run means PMS does not run again that day.
 
-/**
- * How long a run may sit 'running' before it is presumed killed.
- *
- * 15 min, and the margin is deliberate. Nothing in the fleet bounds a run in
- * code — there is no AbortSignal anywhere in the agents or in agent-brain, so
- * the real ceiling is the platform's own scheduled-invocation limit, far below
- * this. A live run is DB reads plus at most three brain calls capped at 700
- * tokens: seconds, not minutes. The window also sits under both scheduling
- * clocks that matter — HARD_MIN_GAP_HOURS (1h), so a freed slot is usable on
- * the very next beat, and the 30-min heartbeat, so any row a later beat still
- * finds 'running' belongs to an invocation that ended long ago.
- */
 const STALE_RUN_MINUTES = 15;
 
 const STALE_RUN_ERROR =
@@ -257,7 +209,6 @@ export async function reapStaleAgentRuns(
   }
 }
 
-// ── Pause / kill-switch checks ───────────────────────────────────────────────
 
 interface ControlRow {
   agent: string;
@@ -266,16 +217,11 @@ interface ControlRow {
   stage?: number | string | null;
   max_stage?: number | string | null;
   updated_at?: string | null;
-  // Defensive dual-key (HOOKKA read-gotcha; harmless when the driver returns
-  // snake_case as-is, which Houzs's pg.ts does).
   autoApprove?: number | string | null;
   maxStage?: number | string | null;
   updatedAt?: string | null;
 }
 
-/** The stored autonomy dial position (mig 0199): 1 propose-only / 2 auto-tune +
- *  self-approve reversible actions within policy / 3 full-auto. Same values as
- *  governance's AutonomyStage. */
 type Stage = 1 | 2 | 3;
 const clampStage = (n: number, dflt: Stage): Stage =>
   Number.isFinite(n) && n >= 1 && n <= 3 ? (Math.round(n) as Stage) : dflt;
@@ -313,8 +259,6 @@ export async function isAutoApproveOn(
   db: D1Database,
   family: AgentFamily,
 ): Promise<boolean> {
-  // Back-compat shim over the stored stage: auto-approve == stage >= 2, after the
-  // pause short-circuit. Callers (agent-scheduler, agents/index) are unchanged.
   if (await isAgentPaused(db, family)) return false;
   return (await effectiveStage(db, family)) >= 2;
 }
@@ -356,9 +300,7 @@ export interface AgentControlState {
   agent: string;
   paused: boolean;
   autoApprove: boolean;
-  /** Stored autonomy dial 1/2/3 (mig 0199). */
   stage: number;
-  /** Per-family ceiling — the dial cannot exceed it (migration-set only). */
   maxStage: number;
   updatedAt: string | null;
 }
@@ -394,8 +336,6 @@ export async function setAgentControl(
   const paused =
     patch.paused ?? (existing ? Number(existing.paused) === 1 : false);
   const ceil = clampStage(Number(existing?.max_stage ?? existing?.maxStage), 2);
-  // Resolve the target stage: an explicit stage wins; else legacy autoApprove
-  // maps (on->2, off->1); else keep the stored stage. Then clamp to the ceiling.
   const prevStage = existing ? clampStage(Number(existing.stage), 1) : 1;
   let stage: number;
   if (patch.stage != null) stage = patch.stage;
@@ -417,21 +357,13 @@ export async function setAgentControl(
     .run();
 }
 
-// ── LLM spend monitor + per-agent monthly budget limit ───────────────────────
-//
-// Each agent FAMILY gets a hard monthly LLM budget of RM 150
-// (app_settings['agents.schedule'].llmMonthlyBudgetMyr, bounded 10..10000)
-// and talks freely until it's spent. At the limit only that family's AI
-// paragraphs stop; every deterministic engine keeps running untouched.
-// Token usage comes from agent_runs (recordAgentRun writes it on every run).
 
-/** Claude Sonnet list prices — for the console's ESTIMATE only. */
 const USD_PER_MTOK_IN = 3;
 const USD_PER_MTOK_OUT = 15;
 /** Also the IT AI Usage page's rate (services/aiUsage.ts), so both agree. */
 export const USD_TO_MYR_EST = 4.7;
 
-const DEFAULT_LLM_MONTHLY_BUDGET_MYR = 150; // per agent family, per month
+const DEFAULT_LLM_MONTHLY_BUDGET_MYR = 150;
 const MIN_LLM_BUDGET_MYR = 10;
 const MAX_LLM_BUDGET_MYR = 10_000;
 
@@ -483,7 +415,6 @@ export interface LlmFamilyUsage {
   estCostMyr: number;
   budgetMyr: number;
   pctOfBudget: number;
-  /** False once this family has spent its month budget. */
   allowed: boolean;
 }
 
@@ -493,17 +424,11 @@ export interface LlmMonthUsage {
   tokensOut: number;
   estCostUsd: number;
   estCostMyr: number;
-  /** The per-agent monthly limit (RM). */
   budgetMyrPerAgent: number;
   byFamily: LlmFamilyUsage[];
 }
 
 export async function monthLlmUsage(db: D1Database): Promise<LlmMonthUsage> {
-  // MYT month, not UTC. Both sides of the old comparison were UTC, so it never
-  // misfired — but a UTC month ends at 08:00 MYT on the 1st, and the only runs
-  // that spend tokens (firstOfDay) fire at 07:00-07:30 MYT. That charged the
-  // 1st's briefs to the month just gone: if it was spent, the family opened the
-  // new month with no AI at all.
   const month = mytMonth();
   const { startIso, endIso } = mytMonthRangeUtc(month);
 
@@ -554,7 +479,6 @@ export async function monthLlmUsage(db: D1Database): Promise<LlmMonthUsage> {
       famMap.set(fam, agg);
     }
   } catch {
-    /* table empty — zeros */
   }
 
   const byFamily: LlmFamilyUsage[] = [...famMap.entries()].map(([family, a]) => {
@@ -612,23 +536,12 @@ export async function llmKeyIfBudgetAllows(
   }
 }
 
-// ── Config proposals framework ───────────────────────────────────────────────
-//
-// Learners emit ONE PENDING config_proposals row per parameter; the owner
-// approves/rejects on the console, or a family with the auto-approve gate ON
-// applies its own (decided_by='AGENT_AUTO'). applyConfigProposalValue is the
-// SINGLE gateway for BOTH paths — identical whitelist and bounds, so
-// autonomy can never write a value a human approve couldn't.
 
 export interface ConfigParamRule {
-  /** param_key matcher, e.g. /^delivery\.transitDays\.([A-Z]{2,3})$/ */
   pattern: RegExp;
-  /** Numeric bounds (inclusive). Out-of-bounds values are REJECTED, never clamped. */
   min: number;
   max: number;
-  /** app_settings key the approved value lands in (JSON object). */
   settingKey: string;
-  /** JSON path inside that setting's object; regex capture groups available. */
   path: (m: RegExpExecArray) => string[];
 }
 
@@ -641,7 +554,6 @@ export interface ConfigParamRule {
  *     settingKey: "agents.delivery", path: (m) => ["transitDaysByState", m[1]] },
  */
 export const CONFIG_PROPOSAL_RULES: ConfigParamRule[] = [
-  // Empty until the Delivery / Document engines register their tunables.
 ];
 
 function matchConfigRule(
@@ -854,16 +766,6 @@ export async function autoApplyConfigProposals(
   return applied;
 }
 
-// ── Agent feedback (owner teachings notebook) ────────────────────────────────
-//
-// One row per standing instruction the owner gave an agent. ACTIVE rows are
-// injected into that agent's LLM brain calls as owner instructions the model
-// must respect, and surfaced on the console. Retiring an instruction stops
-// the injection — nothing is hard-deleted.
-//
-// Scope note: this teaches the agent's JUDGMENT layer (what to emphasise,
-// what to avoid, house rules). Corrections to the MATH go through config
-// proposals so the deterministic engines stay deterministic.
 
 export interface AgentFeedbackRow {
   id: string;

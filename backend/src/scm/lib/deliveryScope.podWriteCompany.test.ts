@@ -1,11 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { podWriteScopeCompany } from "./deliveryScope";
 
-/* The company a DO status WRITE scopes to. A bypassed driver completing their
- * OWN POD acts on the DO's own company (one lorry carries both companies' goods,
- * no switcher on the phone); everyone else stays on the active company. The
- * caller's company grant is the outer boundary — a DO in no granted company
- * (null) is "not your job", never a cross-company confirmation. */
 describe("podWriteScopeCompany", () => {
   it("a non-driver (real-access) caller always uses the ACTIVE company", () => {
     expect(podWriteScopeCompany(false, null)).toEqual({ kind: "active" });

@@ -1,26 +1,3 @@
-/* DocumentHistoryDrawer — one line per document detail page.
-
-   EntityHistoryPanel already takes the five props a drawer needs, and the four
-   existing call sites each spell all five out. That was fine at four; at nine it
-   is nine places to keep a label dictionary, an entity name and a StatusPill
-   vocabulary agreed with each other, and the whole reason this change exists is
-   that TWO such lists had silently disagreed for months.
-
-   So the per-document constants live here, in one registry keyed by the same
-   entity type the backend records under, and a page mounts its history with:
-
-     {historyOpen && (
-       <DocumentHistoryDrawer doc="SALES_INVOICE" id={inv.id} label={inv.doc_no}
-                              onClose={closeHistory} />
-     )}
-
-   Adding a document is one row in DOCS, not a fifth copy of the same six lines.
-
-   Not every AuditEntityType is in DOCS. PURCHASE_RETURN and
-   INVENTORY_ADJUSTMENT are recorded write-only today and have no detail screen
-   asking for them, so the registry's key type is a SUBSET rather than the full
-   union — an entry appears when a page needs it, and the compiler refuses a
-   `doc` this file cannot render. */
 
 import { memo } from 'react';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
@@ -41,8 +18,6 @@ import {
 } from './entity-audit-labels';
 
 type DocSpec = {
-  /* Shown in the drawer's accessible dialog label, in the words staff use for
-     the document rather than the backend's SCREAMING_CASE. */
   entityName: string;
   labels: AuditLabelDictionary;
   statusDocType: StatusDocType;
@@ -67,10 +42,7 @@ export const DOCS: Record<HistoryDocType, DocSpec> = {
 
 export type DocumentHistoryDrawerProps = {
   doc: HistoryDocType;
-  /* The header row's UUID. The log is keyed on the id, NOT the doc number —
-     passing the doc number here returns an empty history that looks real. */
   id: string;
-  /* Human document number, shown in the drawer title. */
   label: string;
   onClose: () => void;
 };

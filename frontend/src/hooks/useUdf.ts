@@ -14,7 +14,6 @@ export interface UdfField {
 
 export interface UdfPayload {
   fields: UdfField[];
-  /** row_key → field_key → value */
   values: Record<string, Record<string, string | null>>;
 }
 
@@ -24,18 +23,14 @@ export interface UseUdfResult {
   loading: boolean;
   error: string | null;
   reload: () => void;
-  /** Add a new field to this table. */
   addField: (input: {
     key: string;
     label: string;
     type: UdfFieldType;
     options?: string[];
   }) => Promise<void>;
-  /** Remove a field and all its stored values. */
   deleteField: (key: string) => Promise<void>;
-  /** Save (or clear, if value is null/empty) a single cell value. */
   setValue: (rowKey: string, fieldKey: string, value: string | null) => Promise<void>;
-  /** Read a value without triggering re-renders. */
   getValue: (rowKey: string, fieldKey: string) => string | null;
 }
 
@@ -63,8 +58,6 @@ export function useUdf(table: string | undefined): UseUdfResult {
       const res = await api.get<UdfPayload>(`/api/udf/${table}`);
       setData(res);
     } catch (e: any) {
-      // e.message is already humanized by the API client; the fallback only
-      // fires on a non-Error throw and must be a sentence, not String(e).
       setError(e?.message || "We couldn't load the custom fields. Please try again.");
     } finally {
       setLoading(false);
@@ -99,7 +92,6 @@ export function useUdf(table: string | undefined): UseUdfResult {
       await api.put(`/api/udf/${table}/values/${encodeURIComponent(rowKey)}`, {
         [fieldKey]: value,
       });
-      // Optimistic local update so the cell doesn't snap back during reload
       setData((prev) => {
         const next = { ...prev, values: { ...prev.values } };
         const row = { ...(next.values[rowKey] || {}) };

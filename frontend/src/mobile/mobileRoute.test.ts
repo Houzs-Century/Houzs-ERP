@@ -6,15 +6,7 @@ import {
 } from "./mobileRoute";
 import { ROUTE_ALIASES } from "../lib/routeAliases";
 
-/**
- * The regression these guard is the production incident of 2026-07-19: on a
- * narrow viewport, /scm/purchase-orders rendered the SALES ORDERS page — right
- * down to the title and the /api/scm/mfg-sales-orders request — because the
- * mobile shell never read the URL. Every expectation below that is NOT
- * `{ t: "home" }` is a path that used to silently produce the Orders list.
- */
 
-// A user who can reach everything the mobile app implements.
 const ALL: MobileDestination[] = [
   { to: "/scm/sales-orders", label: "Sales Orders" },
   { to: "/scm/sales-orders/maintenance", label: "SO Maintenance" },
@@ -29,20 +21,15 @@ const ALL: MobileDestination[] = [
 
 describe("resolveMobileRoute", () => {
   it("keeps the app's landing on the default tab", () => {
-    // The PWA start_url and every post-login redirect. If this ever resolved
-    // to desktop-only the app would open on a dead end.
     expect(resolveMobileRoute("/", ALL, ALL)).toEqual({ t: "home" });
     expect(resolveMobileRoute("", ALL, ALL)).toEqual({ t: "home" });
   });
 
   it("opens the Profile tab for /profile", () => {
-    // The tab exists, so claiming it "hasn't been built for phones" would be a
-    // new small lie in place of the big one.
     expect(resolveMobileRoute("/profile", ALL, ALL)).toEqual({ t: "tab", tab: "profile" });
   });
 
   it("opens the RIGHT screen for a path the mobile app implements", () => {
-    // The incident's headline case: this used to render Sales Orders.
     expect(resolveMobileRoute("/scm/purchase-orders", ALL, ALL))
       .toEqual({ t: "menu", to: "/scm/purchase-orders", label: "Purchase Orders" });
     expect(resolveMobileRoute("/scm/purchase-invoices", ALL, ALL))
@@ -52,27 +39,17 @@ describe("resolveMobileRoute", () => {
   });
 
   it("says so plainly when there is no mobile screen at all", () => {
-    // Two desktop-only URLs from the incident report. Neither has a mobile
-    // screen; both used to render the Sales Orders list. (/scm/stock-transfers
-    // was the third such example here until it was given a mobile menu row —
-    // it is a real destination now, so asserting the opposite would make this
-    // test itself the lie it was written to catch.)
     expect(resolveMobileRoute("/scm/lorry-capacity", ALL, ALL))
       .toEqual({ t: "desktop-only", path: "/scm/lorry-capacity" });
     expect(resolveMobileRoute("/scm/hr/settings", ALL, ALL))
       .toEqual({ t: "desktop-only", path: "/scm/hr/settings" });
-    // A path that exists nowhere must also NOT fall through to a document list
-    // or claim that a desktop page exists.
     expect(resolveMobileRoute("/nonsense", ALL, ALL))
       .toEqual({ t: "not-found", path: "/nonsense" });
-    // Dynamic desktop routes are recognised from the executable manifest.
     expect(resolveMobileRoute("/scm/purchase-orders/PO-2607-001", ALL, ALL))
       .toEqual({ t: "desktop-only", path: "/scm/purchase-orders/PO-2607-001" });
   });
 
   it("locks a real destination the user's position may not open", () => {
-    // In allKnown but not in visible. Landing such a user on Orders would be
-    // the same lie in a smaller form.
     const visible = ALL.filter((d) => d.to !== "/scm/purchase-orders");
     expect(resolveMobileRoute("/scm/purchase-orders", visible, ALL))
       .toEqual({ t: "locked", label: "Purchase Orders" });
@@ -81,15 +58,12 @@ describe("resolveMobileRoute", () => {
   it("deep-links a single sales order, and never mistakes a flow for a doc", () => {
     expect(resolveMobileRoute("/scm/sales-orders/SO-2607-001", ALL, ALL))
       .toEqual({ t: "so-detail", docNo: "SO-2607-001" });
-    // Reserved segments are creation flows / their own destinations, not docNos.
     expect(resolveMobileRoute("/scm/sales-orders/new", ALL, ALL))
       .toEqual({ t: "desktop-only", path: "/scm/sales-orders/new" });
     expect(resolveMobileRoute("/scm/sales-orders/generate", ALL, ALL))
       .toEqual({ t: "desktop-only", path: "/scm/sales-orders/generate" });
-    // maintenance is an exact destination and must win before the docNo rule.
     expect(resolveMobileRoute("/scm/sales-orders/maintenance", ALL, ALL))
       .toEqual({ t: "menu", to: "/scm/sales-orders/maintenance", label: "SO Maintenance" });
-    // Deeper than one segment is a desktop wizard, not a document.
     expect(resolveMobileRoute("/scm/sales-orders/new/guided", ALL, ALL))
       .toEqual({ t: "desktop-only", path: "/scm/sales-orders/new/guided" });
   });
@@ -117,8 +91,6 @@ describe("resolveMobileRoute", () => {
     expect(resolveMobileRoute("/team?tab=departments", membersOnly, ALL))
       .toEqual({ t: "locked", label: "Departments" });
 
-    // Positions is intentionally absent from every implemented mobile
-    // destination: the owner manages it through backend/tooling only.
     expect(resolveMobileRoute("/team?tab=positions", membersOnly, ALL))
       .toEqual({ t: "desktop-only", path: "/team" });
   });
@@ -127,11 +99,8 @@ describe("resolveMobileRoute", () => {
     expect(mobileDestinationMatches("/team?tab=members", "/team?tab=members")).toBe(true);
     expect(mobileDestinationMatches("/team?tab=members", "/team?tab=departments")).toBe(false);
     expect(mobileDestinationMatches("/team?tab=departments", "/team?tab=members")).toBe(false);
-    // Query ordering does not create a second identity.
     expect(mobileDestinationMatches("/team?view=list&tab=members", "/team?tab=members&view=list")).toBe(true);
-    // Incidental URL state does not erase the declared tab identity.
     expect(mobileDestinationMatches("/team?tab=members&utm_source=bookmark", "/team?tab=members")).toBe(true);
-    // Ambiguous/repeated identity params remain fail-closed.
     expect(mobileDestinationMatches("/team?tab=members&tab=departments", "/team?tab=members")).toBe(false);
   });
 

@@ -1,7 +1,3 @@
-/* A board row riding a lorry run shows that run's crew. A DP job (setup,
-   dismantle, supplier pickup, transfer) carries no delivery_order_crew of its
-   own, so before this its Driver / Helper / Lorry cells stayed blank even when
-   Last Mile had a crew on the run. The run is the one store of who drives it. */
 import { chunkIn } from './paginate-all';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client, untyped like every route helper
@@ -86,12 +82,6 @@ export async function echoAssrCrew(sb: Sb, rows: AssrCrewRow[]): Promise<void> {
     const st = o.job_kind === 'customer_pickup' ? 'PICKUP' : o.job_kind === 'inspection' ? 'INSPECTION' : 'DELIVERY';
     const t = tripByKey.get(`${o.assr_id}#${st}`);
     if (!t || t.status === 'CANCELLED') continue;
-    // Stamp the run's trip date onto the leg (echoTripCrew does the same for DP
-    // rows). A service leg rides a trip through its trip_stop but carries no
-    // trip_id of its own, so without this a leg that is on today's run but whose
-    // own service date is another day — or that is already DELIVERED — has no
-    // trip_date, and the Last Mile board (which keys a job's day on trip_date)
-    // drops it instead of showing it as that lorry's completed stop.
     o.trip_no = t.trip_no;
     o.trip_date = t.trip_date ? String(t.trip_date).slice(0, 10) : null;
     const d = t.driver_id ? drv.get(t.driver_id) : undefined;

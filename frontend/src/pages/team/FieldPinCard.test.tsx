@@ -1,6 +1,3 @@
-// Crew PIN card: what an admin can and cannot do, and the one failure that
-// costs a real person a shift — a failed status read must never look like "no
-// PIN", or the admin overwrites a PIN the crew member is using.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

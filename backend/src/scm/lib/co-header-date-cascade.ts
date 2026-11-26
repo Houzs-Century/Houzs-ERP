@@ -2,9 +2,6 @@ import { scopeToCompanyId } from './companyScope';
 import { pgrestInList } from './pgrest-in-list';
 import { soLineFreezeFrom } from '../shared/so-line-freeze';
 
-/* Line ids the header date cascade must skip: lines a live Consignment Note
-   carries (so-line-freeze rules 1 and 3, the SO's rule). `null` = skip every line:
-   a live note line names no CO line, or the read failed — fail closed. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same untyped client as the consignment-orders route
 async function coFrozenLineFilter(sb: any, coDocNo: string, companyId: number): Promise<string[] | null> {
   const { data: notes, error: noteErr } = await scopeToCompanyId(sb.from('consignment_delivery_orders')

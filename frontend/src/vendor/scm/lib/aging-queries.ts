@@ -38,11 +38,8 @@ export type AgingReportData = {
   rows: AgingRow[];
   totals: { balanceSen: number; cells: number[]; unappliedSen: number };
   controls: Array<{ code: string; balanceSen: number }>;
-  /** What the rows miss of the control accounts — zero by construction. */
   differenceSen: number;
-  /** Open invoices brought over from AutoCount: never booked here, not aged. */
   outside: { count: number; sen: number };
-  /** AR: orders owing here although AutoCount took their deposit before the ERP. */
   paidBeforeErp?: { orders: number; sen: number };
 };
 

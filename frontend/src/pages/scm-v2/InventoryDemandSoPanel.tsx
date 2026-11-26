@@ -24,8 +24,6 @@ export const DemandSoPanel = ({ sos }: { sos: InventoryDemandSo[] | null | undef
                 </Link>
               </span>
             </td>
-            {/* Qty sits beside the SO, not at the far right: the expansion is as
-                wide as all 14 columns, so a right-hand cell scrolls out of view. */}
             <td className={styles.numCell} style={{ width: 60, textAlign: 'right' }}>
               {fmtQty(s.qty)}
             </td>

@@ -1,26 +1,18 @@
-// ----------------------------------------------------------------------------
-// fleet-colors.ts — the per-lorry route COLOUR assignment for the A4 day map.
-//
-// Each trip on the day map draws its own route in a distinct colour, and the
-// side panel + run-sheet swatch must match. PURE + deterministic: the same set
-// of trip ids always yields the same colours, so a reload never reshuffles them
-// and the map, the panel and the printed sheet always agree.
-// ----------------------------------------------------------------------------
 
 /** A hand-picked, high-contrast palette. Distinct hues that stay legible as a
  *  circle marker + a polyline on a raster map, and print acceptably. Cycles when
  *  a day has more trips than colours (rare — a depot rarely runs >10 lorries). */
 export const FLEET_ROUTE_COLORS: readonly string[] = [
-  '#2563eb', // blue
-  '#dc2626', // red
-  '#059669', // green
-  '#d97706', // amber
-  '#7c3aed', // violet
-  '#0891b2', // cyan
-  '#db2777', // pink
-  '#65a30d', // lime
-  '#ea580c', // orange
-  '#4f46e5', // indigo
+  '#2563eb',
+  '#dc2626',
+  '#059669',
+  '#d97706',
+  '#7c3aed',
+  '#0891b2',
+  '#db2777',
+  '#65a30d',
+  '#ea580c',
+  '#4f46e5',
 ];
 
 /**
@@ -32,7 +24,7 @@ export function assignRouteColors(tripIds: string[]): Map<string, string> {
   const out = new Map<string, string>();
   let i = 0;
   for (const id of tripIds) {
-    if (out.has(id)) continue; // a duplicate id keeps its first colour
+    if (out.has(id)) continue;
     out.set(id, FLEET_ROUTE_COLORS[i % FLEET_ROUTE_COLORS.length]);
     i += 1;
   }

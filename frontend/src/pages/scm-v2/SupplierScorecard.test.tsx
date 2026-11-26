@@ -8,7 +8,6 @@ const g = (key: string, onTimePct: number | null, avgDaysLate: number | null, re
 
 describe("scoreSupplier", () => {
   it("weighs on time 40, how late 20, overdue share 30, quality 10", () => {
-    // 80% on time, 5 days late (50), 25% overdue (75), 2 cases per 100 (90)
     const s = scoreSupplier(g("A", 80, 5, 20, 100_00, 25_00), [], 2);
     expect(s.score).toBe(Math.round((40 * 80 + 20 * 50 + 30 * 75 + 10 * 90) / 100));
   });

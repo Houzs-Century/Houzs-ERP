@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// FleetRunSheet — Fleet Module A4, the PRINTABLE driver run-sheet. One clean
-// sheet PER LORRY: a trip summary (date, driver, helper, plate, drops, revenue),
-// the route map for that lorry, and the ordered stop list (no., customer, full
-// address, phone, house type, time window, ETA, access note). This is the paper
-// the driver takes on the road.
-//
-// A READ / RENDER layer over GET /trips/day — same data as the Fleet Map page,
-// laid out for print (@media print, one lorry per page). ?trip=<id> prints just
-// that lorry; otherwise every lorry on the day prints.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -43,19 +32,12 @@ export function FleetRunSheet() {
     [allTrips, onlyTrip],
   );
 
-  // Give the map tiles a moment to paint before a print is triggered manually;
-  // the button opens the Print preview, never auto-prints on load.
   useEffect(() => { document.title = `Run-sheet ${date}`; }, [date]);
 
   const print = usePrintPreview(() => window.print());
 
   return (
-    /* `print-area` is the app's print opt-in (index.css). Without it the global
-       `body * { visibility: hidden }` swallowed this page whole and the Print
-       button produced a blank sheet — the local @media print block below only
-       ever governed layout, never visibility. */
     <div className="fleet-runsheet print-area mx-auto max-w-[900px] px-4 py-4">
-      {/* Screen-only toolbar — hidden when printing. */}
       <div className="no-print mb-4 flex flex-wrap items-center gap-2">
         <Button variant="ghost" icon={<ArrowLeft size={14} />} onClick={() => navigate(-1)}>Back</Button>
         <span className="flex-1" />
@@ -66,9 +48,6 @@ export function FleetRunSheet() {
           Print
         </Button>
       </div>
-      {/* Same Print preview every document in the app opens. The run sheet is
-          printed from the page itself, not a jspdf file, so there is nothing to
-          download or open in a tab — Print is the only exit. */}
       <PrintPreviewModal
         open={print.open}
         onClose={print.close}
@@ -95,7 +74,6 @@ export function FleetRunSheet() {
         const color = routeColorFor(colors, t.id);
         return (
           <section key={t.id} className="runsheet-page mb-8 rounded-md border border-border bg-surface p-5">
-            {/* header */}
             <div className="mb-3 flex items-start justify-between gap-4 border-b border-border pb-3">
               <div>
                 <h1 className="text-[18px] font-bold text-ink">Driver Run-Sheet</h1>
@@ -107,7 +85,6 @@ export function FleetRunSheet() {
               </div>
             </div>
 
-            {/* summary grid */}
             <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-1.5 text-[12.5px] sm:grid-cols-4">
               <div><span className="block text-[10.5px] uppercase tracking-wider text-ink-muted">Driver</span><span className="text-ink">{t.driver?.name ?? '—'}</span></div>
               <div><span className="block text-[10.5px] uppercase tracking-wider text-ink-muted">Helper(s)</span><span className="text-ink">{crewLine(t)}</span></div>
@@ -118,14 +95,12 @@ export function FleetRunSheet() {
               <div><span className="block text-[10.5px] uppercase tracking-wider text-ink-muted">Status</span><span className="text-ink">{String(t.status).replace('_', ' ').toLowerCase()}</span></div>
             </div>
 
-            {/* map for this lorry */}
             {MAPS_KEY && query.data?.configured && routes.length > 0 && (
               <div className="runsheet-map mb-4">
                 <FleetDayMap apiKey={MAPS_KEY} routes={routes} height={300} />
               </div>
             )}
 
-            {/* ordered stops table */}
             {t.stops.length === 0 ? (
               <p className="text-[12.5px] text-ink-muted">No stops on this trip.</p>
             ) : (
@@ -179,7 +154,6 @@ export function FleetRunSheet() {
         );
       })}
 
-      {/* Print rules: one lorry per page, hide app chrome, keep tables intact. */}
       <style>{`
         @media print {
           .no-print { display: none !important; }

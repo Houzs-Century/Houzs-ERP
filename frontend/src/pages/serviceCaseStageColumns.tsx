@@ -14,7 +14,6 @@ const daysSince = (iso: string | null | undefined) => {
 };
 const open = (r: AssrCase) => r.stage !== "completed" && r.stage !== "voided";
 const inStage = (r: AssrCase) => (open(r) ? r.days_in_stage ?? daysSince(r.stage_entered_at ?? r.stage_since) : null);
-/** Days past the stage's target; null when there is no target or the case is closed. */
 const overdue = (r: AssrCase) => {
   const d = inStage(r); const t = r.stage_target_days;
   return d == null || t == null || !(t > 0) ? null : Math.max(0, Math.floor(d - t));

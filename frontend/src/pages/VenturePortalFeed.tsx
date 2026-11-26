@@ -1,24 +1,3 @@
-// ---------------------------------------------------------------------------
-// Venture Portal Feed — the live sales-order feed to the Venture Portal, and
-// everything needed to run it, on one screen.
-//
-// THE ORDER OF THE PAGE IS THE ORDER OF THE QUESTION somebody arrives with:
-// is it working (the verdict), is it on and for whom (the switch), is it wired
-// up (the connection), and then the queue itself with the reason on the row.
-// AutoCount Sync is built the same way and for the same reason.
-//
-// EVERY DECISION IS IN lib/venturePortalFeed.ts, not here. This file renders.
-// The mobile screen renders the same verdicts and calls the same actions, so a
-// rule cannot be fixed on one surface and missed on the other — the owner's
-// standing rule, and a bug class this repo keeps paying for.
-//
-// WHAT IS DELIBERATELY NOT ON THIS PAGE: a box to type the key into. It is
-// minted by the server, revealed once, and afterwards the API answers with its
-// length, its last four characters and when it was set — so outside that one
-// reveal there is no code path here that could render it. Also no payload viewer
-// — a delivery carries a customer's name and every line's cost, and this screen
-// is about whether the feed works, not a window onto the orders themselves.
-// ---------------------------------------------------------------------------
 
 import { useCallback, useMemo, useState } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
@@ -168,17 +147,11 @@ export function VenturePortalFeed() {
   const canManage = s?.canManage ?? false;
   const verdict = useMemo(() => vpVerdict(s), [s]);
 
-  /* Draft state, seeded from the server on first load and then owned by the
-     form. Deliberately NOT re-synced on every poll: overwriting a half-typed
-     address every fifteen seconds is the classic version of this bug. */
   const [urlDraft, setUrlDraft] = useState<string | null>(null);
   const [sinceDraft, setSinceDraft] = useState<string | null>(null);
   const [companiesDraft, setCompaniesDraft] = useState<string | null>(null);
   const [everyCompany, setEveryCompany] = useState<boolean | null>(null);
 
-  /* The receiver address arrives PRE-FILLED with the portal's own when nothing
-     is stored, so the owner never types a URL. vpReceiverHint says plainly that
-     it is only an offer until Save address is pressed. */
   const url = urlDraft ?? vpReceiverDraft(s);
   const since = sinceDraft ?? s?.connection.since ?? "";
   const scope = s?.feed.scope;
@@ -208,9 +181,6 @@ export function VenturePortalFeed() {
         }
       />
 
-      {/* THE VERDICT. First, and in words rather than counts — a large waiting
-          number is a busy queue and one order waiting since Tuesday is a feed
-          that stopped, and those are the same number. */}
       <div className={cn("rounded-lg border p-4", BANNER_TONE[verdict.tone])}>
         <div className="flex items-start gap-2">
           {verdict.tone === "bad" ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> : null}
@@ -337,9 +307,6 @@ export function VenturePortalFeed() {
                 </div>
               </Field>
 
-              {/* THE ONE-TIME REVEAL. Shown only while the shared layer is
-                  holding a freshly minted key; after Done it is gone from the
-                  browser and the server will not answer it again. */}
               {actions.revealedKey ? (
                 <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
                   <p className="text-xs font-semibold text-warning-text">Copy this now</p>
@@ -409,10 +376,6 @@ export function VenturePortalFeed() {
               </div>
             ) : null}
 
-            {/* Counts come from the SERVER's aggregate, not from the loaded
-                page — the list is server-filtered and capped at 100, so
-                counting what is on screen would understate a real backlog.
-                FilterPills' own comment asks for exactly this. */}
             <FilterPills
               options={TABS.map((t) => ({
                 value: t.id,

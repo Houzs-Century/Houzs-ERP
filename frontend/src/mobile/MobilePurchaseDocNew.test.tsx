@@ -1,13 +1,3 @@
-/* Creating a PO / GRN / PI directly on the phone must actually WRITE — and
- * must refuse exactly what the desktop refuses.
- *
- * FAILS ON THE PRE-FIX CODE — the screen did not exist.
- *
- * Drives the REAL screen: real vendored create/post hooks, real NotifyProvider,
- * real MoneyInput. Only `authedFetch` is faked (so the requests themselves are
- * the assertions) and the SKU picker sheet is stubbed to hand back one catalog
- * row, since the catalog query is not what is under test.
- */
 import { cleanup, render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -18,8 +8,6 @@ vi.mock("../vendor/scm/lib/authed-fetch", () => ({ authedFetch }));
 const auth = vi.hoisted(() => ({ user: { permissions: ["*"], position_capabilities: [] as string[] } }));
 vi.mock("../auth/AuthContext", () => ({ useAuth: () => ({ user: auth.user }) }));
 
-/* The picker hands back the catalog row it would have: note the SELLING price
-   (99,900 sen) — the screen must NOT carry it onto a purchase line. */
 const picked = { current: { itemCode: "PILLOW-STD", itemGroup: "accessory", name: "Standard Pillow", unitPriceSen: 99_900, category: "ACCESSORY" } };
 vi.mock("./MobileSkuPicker", () => ({
   MobileSkuPicker: ({ onPick }: { onPick: (s: unknown) => void }) => (
@@ -71,7 +59,6 @@ const mount = (kind: PurchaseDocKind, over: { onConvertInstead?: { label: string
   return { onCreated, invalidate };
 };
 
-/** Fill the header and one line: supplier, (warehouse), item, price 12.50. */
 const fill = async (kind: PurchaseDocKind, price: string | null = "12.50") => {
   const supplier = await screen.findByLabelText("Supplier");
   await screen.findByRole("option", { name: "OHANA — Ohana Furniture" });
@@ -135,14 +122,12 @@ describe("MobilePurchaseDocNew — what it sends", () => {
     expect(await screen.findByText("Goods receipt GRN-2609-100 created")).toBeTruthy();
     await okDialog();
     await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
-    // The app opens the new receipt from this: its racks are set on the card.
     expect(onCreated).toHaveBeenCalledWith({ id: "grn-1", number: "GRN-2609-100" });
 
     const [create, post] = writes();
     expect(create.url).toBe("/grns");
     expect(create.init?.headers?.["Idempotency-Key"]).toBeTruthy();
     expect(bodyOf(create)).toMatchObject({ purchaseOrderId: null, supplierId: "sup-1", warehouseId: "wh-1", asDraft: false });
-    /* 12.50 typed = 1250 sen. NOT the picker's 99,900 selling price. */
     expect(bodyOf(create).items).toEqual([expect.objectContaining({ itemCode: "PILLOW-STD", qtyReceived: 1, qtyAccepted: 1, unitPriceSen: 1250 })]);
     expect(post).toMatchObject({ url: "/grns/grn-1/post", init: { method: "PATCH" } });
 
@@ -196,10 +181,6 @@ describe("MobilePurchaseDocNew — what it sends", () => {
   });
 
   it("takes the buyer's price when they type straight into the new line's box (no clearing first)", async () => {
-    /* A "0.00" box drops every keystroke that lands before its select-on-focus
-       fires ("0.00" + "1" is refused as 3 decimals) — reproduced in a real
-       375px render, where "12.50" typed that way saved RM 0. A blank box has
-       nothing to collide with. */
     const { onCreated } = mount("grn");
     await fill("grn", null);
     const box = screen.getByLabelText("Unit price PILLOW-STD") as HTMLInputElement;

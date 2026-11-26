@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// Houzs permission gate helpers for SCM routes.
-//
-// Replaces the 2990-style `scm.staff.role` lookups (which are useless in Houzs
-// because the bridge pins every SCM caller to one super_admin row — see
-// scm/middleware/auth.ts). These read the REAL Houzs user's permissions stashed
-// on `houzsUser` and gate on the flat permission keys defined in
-// services/permissions.ts.
-//
-// Use `requireHouzsPerm(perm)` as Hono middleware, or `hasHouzsPerm(c, perm)`
-// inline inside a handler body when the gate decision branches with the
-// request payload (e.g. price-override flag, salesperson stamping).
-// ----------------------------------------------------------------------------
 
 import type { MiddlewareHandler } from 'hono';
 import { hasPermission, hasPermissionLiterally } from '../../services/permissions';
@@ -26,23 +13,10 @@ import { isCostingDisplayEnabled, type CostingDisplayEnv } from './costing-enabl
 import type { AuthUser } from '../../services/auth';
 import type { Env, Variables } from '../env';
 
-/* Structural source of the stashed houzsUser — satisfied by the real Hono
-   context AND by mfg-sales-orders' SoCreateContext (the factored SO-create
-   core runs headless for the background scan job with a synthetic context).
-   Only `get('houzsUser')` is required; nothing else on the context is read. */
 type HouzsUserSource = { get(key: 'houzsUser'): Variables['houzsUser'] };
 
-/* canViewScmFinance ALSO reads the cost/margin DISPLAY switch off the worker
-   env, so its source is HouzsUserSource PLUS `env`. Kept as its own type rather
-   than widening HouzsUserSource — the headless SoCreateContext satisfies that
-   base type and reads nothing but get('houzsUser'), and only this one gate takes
-   on the env dependency. Every canViewScmFinance call site passes the real Hono
-   context, which carries both `get` and `env`. */
 type FinanceViewSource = HouzsUserSource & { env: CostingDisplayEnv };
 
-/** Read the REAL Houzs caller's granted permissions (Set fast path, array
- *  fallback). Returns an empty array when the bridge has not stashed them
- *  (defence-in-depth — every authed request should populate houzsUser). */
 function grantedFor(c: HouzsUserSource): ReadonlyArray<string> | ReadonlySet<string> {
   const hu = c.get('houzsUser');
   return hu?.permissions_set ?? hu?.permissions ?? [];
@@ -97,9 +71,6 @@ export function canViewAllSales(c: HouzsUserSource): boolean {
   if (hasHouzsPerm(c, 'scm.so.view_all')) return true;
   const hu = c.get('houzsUser');
   if (!hu) return false;
-  // isDirectorUser reads the Title's policy row first, then position_name +
-  // permissions_set; feed it the stashed real caller (policy row included, as
-  // isSalesCaller below).
   return isDirectorUser({
     position_name: hu.position_name ?? null,
     position_policy: hu.position_policy ?? null,
@@ -124,12 +95,6 @@ export function canViewAllSales(c: HouzsUserSource): boolean {
 export function isSalesCaller(c: HouzsUserSource): boolean {
   const hu = c.get('houzsUser');
   if (!hu) return false;
-  // isSalesUser reads the Title's policy row FIRST (cohort === 'sales'), then
-  // position_name + department_name; feed it the stashed real caller. The
-  // policy row was left out until 2026-10-07, so a Sales title whose name does
-  // not start with "Sales" (the product-request owner report: only the Sales
-  // Director could raise one) read as not-Sales here while the login umbrella,
-  // which passes the full user, let the same person in.
   return isSalesUser({
     position_name: hu.position_name ?? null,
     department_name: hu.department_name ?? null,

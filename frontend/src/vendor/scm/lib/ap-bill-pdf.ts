@@ -1,20 +1,3 @@
-// ----------------------------------------------------------------------------
-// ap-bill-pdf — the AP BILL print (Money out › Supplier bills in the owner's
-// Claude Design, batch 4 step 8). One A4 page per bill, on the payment
-// voucher's letterhead and dress (payment-voucher-pdf.ts): the number and the
-// date on the right, the supplier with the control it sits on, the supplier's
-// invoice no., the due date, what is still outstanding and the journal, the
-// lines (account code with its name below, description, amount), the TOTAL in
-// figures and in words, and who raised and posted it. A Draft carries a band
-// saying it is not on the books yet, a Cancelled one a band saying so — the
-// design's two bands. A supplier's debit note is the same paper under its own
-// heading, SUPPLIER DEBIT NOTE.
-//
-// apBillSheet is the page as data — pure, so a test reads every word without
-// drawing; renderApBillInto draws it into a shared doc (the voucher's
-// contract), so Supplier bills can print several documents, and each one's
-// files, as ONE file.
-// ----------------------------------------------------------------------------
 
 import { fmtDateTime } from '@2990s/shared';
 import { docPageLabel,
@@ -35,7 +18,6 @@ export type ApBillPdfData = {
   };
   lines: Array<{ description: string | null; debit_account_code: string; amount_sen: number }>;
   supplier: { code: string | null; name: string | null } | null;
-  /** The control the bill credits — 400-0000 or 405-0000 by the supplier's code. */
   controlCode?: string | null;
 };
 
@@ -45,7 +27,6 @@ export type AccountNamer = (code: string) => string | null;
 export type ApBillSheet = {
   title: string;
   meta: Array<{ label: string; value: string }>;
-  /** Draft or Cancelled: the band under the letterhead; null on a posted bill. */
   band: { text: string; tone: 'draft' | 'cancelled' } | null;
   supplier: { name: string; lines: string[] };
   factsTitle: string;
@@ -53,7 +34,6 @@ export type ApBillSheet = {
   head: string[];
   body: string[][];
   total: string;
-  /** RINGGIT MALAYSIA … ONLY — MYR only; spelling another currency as ringgit would be false. */
   words: string | null;
   stamp: string;
   footerDate: string;
@@ -71,9 +51,6 @@ export function apBillSheet(d: ApBillPdfData, accountName: AccountNamer): ApBill
   const supplierName = d.supplier?.name?.trim() || '—';
   const controlName = d.controlCode ? accountName(d.controlCode) : null;
 
-  /* Who raised it, who posted it, who cancelled it — the stamps the bill keeps.
-     The raise stamp keeps the signed-in account's id, not a name: an id never
-     prints as a person, so that stamp says when only. */
   const personOf = (who: string | null | undefined): string | null => {
     const w = who?.trim() ?? '';
     return w === '' || /^\d+$/.test(w) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(w) ? null : w;
@@ -109,7 +86,6 @@ export function apBillSheet(d: ApBillPdfData, accountName: AccountNamer): ApBill
       ...(inv.notes?.trim() ? [['Description', inv.notes.trim()] as [string, string]] : []),
     ],
     head: ['Account', 'Description', 'Amount (RM)'],
-    /* The account as the owner reads it: the code on one line, its name below. */
     body: d.lines.map((l) => {
       const name = accountName(l.debit_account_code);
       return [name ? `${l.debit_account_code}\n${name}` : l.debit_account_code, l.description?.trim() || '—', fmtRm(Number(l.amount_sen), currency)];
@@ -122,7 +98,6 @@ export function apBillSheet(d: ApBillPdfData, accountName: AccountNamer): ApBill
   };
 }
 
-/* The design's bands: warn for a draft, late for a cancelled bill. */
 const BAND_TONE: Record<'draft' | 'cancelled', { fill: [number, number, number]; line: [number, number, number]; ink: [number, number, number] }> = {
   draft: { fill: [247, 241, 227], line: [229, 214, 179], ink: [122, 90, 30] },
   cancelled: { fill: [251, 238, 238], line: [229, 196, 196], ink: [168, 52, 52] },
@@ -130,9 +105,6 @@ const BAND_TONE: Record<'draft' | 'cancelled', { fill: [number, number, number];
 
 type JsPdf = import('jspdf').jsPDF;
 
-/** SUPPLIER on the left, the bill's facts on the right — the voucher's info
-    block in its type sizes, with the facts' labels measured so a long label
-    never runs into its value, and every value wrapped to its column. */
 function drawSupplierAndFacts(doc: JsPdf, startY: number, s: ApBillSheet): number {
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
@@ -172,10 +144,6 @@ function drawSupplierAndFacts(doc: JsPdf, startY: number, s: ApBillSheet): numbe
   return Math.max(ly, ry) + 3;
 }
 
-/* Draw ONE bill into `doc`. Does NOT make the doc or deliver it — the caller
-   finalises once, so Supplier bills can put several documents (and each
-   one's files) into one file. Footer pages run from `startPage` for the same
-   reason the voucher's do. */
 export async function renderApBillInto(
   doc: JsPdf,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- autotable fn loosely typed (matches the voucher generator)
@@ -202,7 +170,6 @@ export async function renderApBillInto(
     y += 11;
   }
 
-  /* The design's heavy rule over the supplier and the facts. */
   doc.setDrawColor(0); doc.setLineWidth(0.4);
   doc.line(margin, y, pageW - margin, y);
   doc.setLineWidth(0.2);

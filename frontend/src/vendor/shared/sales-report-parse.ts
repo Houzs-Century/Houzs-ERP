@@ -50,13 +50,10 @@
 // ----------------------------------------------------------------------------
 
 export type ParsedBill = {
-  /** 1-based line number in the pasted text. */
   line: number;
   ref_raw: string;
   ref_token: string;
   amount_sen: number;
-  /** A "+ 710(T)" tail after the amount: kept apart from the bill, not counted
-   *  in amount_sen, only shown. The tag is what sat in the parentheses. */
   extra_sen: number | null;
   extra_tag: string | null;
   salesperson_name: string | null;
@@ -72,17 +69,11 @@ export type ParsedDay = {
 };
 
 export type ParsedSalesReport = {
-  /** The report's day/month: a line that is a date, else a date inside the
-   *  header line (not a range of days). */
   date: { day: number; month: number } | null;
   bills: ParsedBill[];
-  /** A summary's per-day totals. */
   days: ParsedDay[];
-  /** The message's own "Total" line, in sen, without its "+" extra. */
   total_sen: number | null;
-  /** Lines that were neither a bill, a day, the header, the total nor blank. */
   skipped: Array<{ line: number; text: string }>;
-  /** Human warnings: extras kept apart, a total that does not add up. */
   warnings: string[];
 };
 
@@ -104,14 +95,6 @@ export function extractRefTokens(text: string | null | undefined): string[] {
   return Array.from(new Set(out));
 }
 
-/* Spelled as alternations, not character classes, and no bracket-colon form
-   anywhere in this file, comments included: Tailwind scans every source file
-   for class candidates and turned the dash/colon class into an invalid CSS
-   rule that failed the production build. */
-/* Amount accepts BOTH comma and space as thousands separators (owner
-   2026-11-24): "RM10,200" and "RM10 200" are both ten thousand two hundred.
-   The floor's preferred format drops the comma and uses a single space, so
-   the parser must read that too. amountToSen strips both before parseFloat. */
 const AMOUNT = String.raw`([\d][\d, ]*(?:\.\d{1,2})?)`;
 const EXTRA = String.raw`((?:\s*\+\s*(?:RM|rm|Rm)?\s*[\d][\d, ]*(?:\.\d{1,2})?(?:\s*\(\s*[A-Za-z]{1,3}\s*\)?|[A-Za-z](?![A-Za-z]))?)*)`;
 const EXTRA_PART_RE = /\+\s*(?:RM|rm|Rm)?\s*([\d][\d, ]*(?:\.\d{1,2})?)(?:\s*\(\s*([A-Za-z]{1,3})|([A-Za-z])(?![A-Za-z]))?/g;
@@ -131,8 +114,6 @@ const DATE_RE = /^\s*(\d{1,2})\s*\/\s*(\d{1,2})\b/;
 const RANGE_RE = /\d{1,2}\s*-\s*\d{1,2}\s*\/\s*\d{1,2}/g;
 const EMBEDDED_DATE_RE = /(?:^|\D)(\d{1,2})\s*\/\s*(\d{1,2})(?!\d)/;
 
-/** sen → "1,234.00" for the sentences this module writes; the shared
- *  formatter lives outside the mirrored pair, so this stays dependency-free. */
 const ringgit = (sen: number): string =>
   (sen / 100).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -173,9 +154,6 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
   const days: ParsedDay[] = [];
   const skipped: Array<{ line: number; text: string }> = [];
   const warnings: string[] = [];
-  /* A line that IS a date ("10/10") wins over a date inside a header
-     ("AKEMI@Setia Spice Convention Centre 3/10"); a range ("9-11/10") is the
-     fair's days, never the report's. */
   let lineDate: ParsedSalesReport["date"] = null;
   let headerDate: ParsedSalesReport["date"] = null;
   /* Collect every Total line the message carries, not just the last. A
@@ -187,11 +165,6 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
 
   for (let i = 0; i < lines.length; i++) {
     const line = i + 1;
-    /* WhatsApp and iOS copy a numbered list with invisible joiners (U+2060,
-       zero-width spaces, a BOM) and non-breaking spaces. The eye cannot see
-       them and neither could this reader: three of seven bills were dropped
-       on the first live paste (2026-10-14). Strip the former and fold the
-       latter to a space before anything is matched. */
     const t = lines[i]!
       .replace(/[​-‍⁠﻿]/g, "")
       .replace(/ /g, " ")
@@ -253,9 +226,6 @@ export function parseSalesReport(text: string | null | undefined): ParsedSalesRe
         headerDate = { day: Number(inside[1]), month: Number(inside[2]) };
       }
     }
-    /* Section header ("8/11 dunlop spice") — a date followed by a brand or
-       event tag with no amount. Silently ignored so the "unknown format"
-       hint doesn't light up for a well-formed multi-day paste. */
     if (SECTION_HEADER_RE.test(t)) continue;
     skipped.push({ line, text: t });
   }

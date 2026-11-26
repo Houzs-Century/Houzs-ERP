@@ -9,9 +9,6 @@ type ToRemove = Array<{ id: string; address: string; name: string; personLeft: b
 
 const KEY = "/api/mail-center/mail-host/to-remove";
 
-/* The reverse of MailHostPending: an address turned off in the ERP (by hand, or
- * because its person was disabled) still holds one of hello@'s Google aliases
- * until someone deletes it in Google Admin. Each row leaves once marked. */
 export function MailHostRemove() {
   const toast = useToast();
   const [busy, setBusy] = useState<string | null>(null);

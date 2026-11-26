@@ -1,6 +1,3 @@
-/* The open run-sheet stop follows the other crew member's taps: it asks the
-   light POD read again while the stop is open, lays the live status and times
-   over the board row, and stops asking once the delivery is finished. */
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';

@@ -1,12 +1,3 @@
-// ── Accepting a TOTP code: once, and only once ────────────────
-//
-// A code is valid for its own 30-second step and, for clock drift, the step on
-// either side — about 90 seconds in all. Before 2026-11-10 nothing remembered a
-// code once accepted, so a code read over a shoulder or out of a log could be
-// used again inside that window. users.totp_last_step now holds the step of the
-// last code accepted, and a code is accepted only if its step is LATER. The
-// write is a compare-and-set on that column, so two requests racing with the
-// same code cannot both win.
 
 import type { Env } from "../types";
 import { matchTotpStep } from "./totp";
@@ -51,7 +42,6 @@ export async function acceptTotpCode(
           .run();
       }
     } catch (e) {
-      // The code was right and is now spent; sealing is retried on the next sign-in.
       // eslint-disable-next-line no-console
       console.error("[totp] could not seal a plain secret for user", userId, e);
     }

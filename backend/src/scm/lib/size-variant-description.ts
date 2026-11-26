@@ -38,9 +38,6 @@ export type SizeSkuRow = {
   size_code: string | null;
 };
 
-/** Group key for "SKUs that are the same product in another size". Mirrors the
- *  POS resolver's two paths: model_id first, base_model+category for rows minted
- *  before the product_models layer. Null = this row can't be sibling-matched. */
 const siblingKey = (r: SizeSkuRow): string | null => {
   if (r.model_id) return `m:${r.model_id}`;
   if (r.base_model && r.category) return `b:${r.base_model}\0${r.category}`;
@@ -61,7 +58,6 @@ export const correctedSizeDescription = (
 ): string | null => {
   const own = byCode.get(itemCode.trim());
   const correct = (own?.name ?? '').trim();
-  // Only sized SKUs with a real master name can be adjudicated.
   if (!own || !(own.size_code ?? '').trim() || !correct) return null;
 
   const given = (description ?? '').trim();
@@ -70,7 +66,6 @@ export const correctedSizeDescription = (
   const key = siblingKey(own);
   if (!key) return null;
 
-  // Wrong ONLY if the description is verbatim another size's official name.
   for (const row of byCode.values()) {
     if (row.code === own.code || siblingKey(row) !== key) continue;
     if ((row.name ?? '').trim() === given) return correct;
@@ -105,8 +100,6 @@ export const loadSizeSkuMap = async (
     const ownRows = (own ?? []) as SizeSkuRow[];
     for (const r of ownRows) byCode.set(r.code, r);
 
-    // Siblings only matter for the sized rows — an accessory can't be confused
-    // with another size of itself.
     const sized = ownRows.filter((r) => (r.size_code ?? '').trim());
     const modelIds = [...new Set(sized.map((r) => r.model_id).filter((m): m is string => Boolean(m)))];
     const baseModels = [...new Set(
@@ -126,7 +119,7 @@ export const loadSizeSkuMap = async (
       }
     }
   } catch {
-    return byCode; // never block a create over a description
+    return byCode;
   }
   return byCode;
 };

@@ -26,7 +26,6 @@ const upsertSchema = z.object({
   notes:       z.string().nullable().optional(),
 });
 
-// GET — every authenticated staff can read.
 stateWarehouseMappings.get('/', async (c) => {
   const sb = c.get('supabase');
   const { data, error } = await scopeToCompany(
@@ -51,13 +50,7 @@ stateWarehouseMappings.get('/', async (c) => {
   });
 });
 
-// PUT /:state — upsert. Body: { warehouseId, notes }.
 stateWarehouseMappings.put('/:state', async (c) => {
-  /* GATED. Both writes had NO permission check - only supabaseAuth - and the
-     router is mounted bare, so no area guard runs. Any caller who passes
-     requireScmAccess could repoint which warehouse an ENTIRE STATE ships from,
-     or clear the mapping. Same class as the localities writes fixed alongside
-     this; every other config writer in the SCM tree gates on canWriteScmConfig. */
   if (!canWriteScmConfig(c)) {
     return c.json({ error: "You don't have permission to change state routing." }, 403);
   }
@@ -78,7 +71,6 @@ stateWarehouseMappings.put('/:state', async (c) => {
         warehouse_id: parsed.data.warehouseId ?? null,
         notes:        parsed.data.notes ?? null,
         updated_at:   new Date().toISOString(),
-        // 0092: state is unique PER COMPANY now
         company_id:   activeCompanyId(c),
       },
       { onConflict: 'company_id,state' },
@@ -89,7 +81,6 @@ stateWarehouseMappings.put('/:state', async (c) => {
   return c.json({ mapping: data });
 });
 
-// DELETE /:state — clear mapping.
 stateWarehouseMappings.delete('/:state', async (c) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: "You don't have permission to change state routing." }, 403);

@@ -30,10 +30,6 @@ export function isMfgProductCategory(list: readonly ProductCategory[], c: string
   return list.some((r) => r.code === code);
 }
 
-/* A category with no size or compartment axis: each Model is exactly ONE SKU,
-   coded as the model code. Every category but SOFA / BEDFRAME / MATTRESS — a
-   new category lands here, so a Model of it is never born with no SKU (BUG-85:
-   2990's Sofa Accessory models AR01 / BC06 / BC06-MF / SB01 were). */
 export function isSingleSkuCategory(c: string | null | undefined): boolean {
   const up = String(c ?? '').trim().toUpperCase();
   return up !== '' && up !== 'SOFA' && up !== 'BEDFRAME' && up !== 'MATTRESS';
@@ -48,11 +44,6 @@ export function mfgCategoryLabel(list: readonly ProductCategory[], c: string | n
   return raw.toLowerCase().split('_').filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
 }
 
-/* Read a category the way a person types it into a sheet: the stored code in
-   any case ("fabric_accessory" -> FABRIC_ACCESSORY) or its name ("Sofa
-   accessory"). null for a blank cell or a value that is not a category, so an
-   import can tell "left blank" from "typed something unrecognisable" instead of
-   silently ignoring both. */
 export function parseMfgCategory(list: readonly ProductCategory[], input: string | null | undefined): MfgProductCategory | null {
   const raw = String(input ?? '').trim();
   if (!raw) return null;

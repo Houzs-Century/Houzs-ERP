@@ -45,7 +45,6 @@ const json = (body: unknown, status = 200) =>
     status, headers: { "content-type": "application/json" },
   }));
 
-/** Serve the summary the server would build for a delivery order in `status`. */
 function serve(summary: Record<string, unknown>, advanceBody?: Record<string, unknown>) {
   fetchMock.mockImplementation((url: string, init?: RequestInit) =>
     init?.method === "POST"
@@ -80,8 +79,6 @@ describe("the page a driver opens with no account", () => {
     expect(screen.getByText("A Customer")).toBeTruthy();
     expect(screen.getByText(/Klang, Selangor/)).toBeTruthy();
     expect(screen.getByText(/2 lines/)).toBeTruthy();
-    /* DISPATCHED reads "Loaded" everywhere in this system (status-pill.ts), and
-       the page renders the label, never the enum key. */
     expect(screen.getByText(/Confirmed/)).toBeTruthy();
     expect(screen.getAllByRole("button")).toHaveLength(1);
     expect(screen.getByRole("button").textContent).toContain("Confirm Loaded");
@@ -130,7 +127,6 @@ describe("what it refuses to say", () => {
   });
 
   it("a 503 reads as \"could not reach\", not as a dead code", async () => {
-    /* A driver must not be sent back to the office over a database hiccup. */
     fetchMock.mockImplementation(() =>
       json({ error: "scan_unavailable", message: "We could not reach this delivery order just now. Wait a moment and scan again." }, 503));
     await mount();
@@ -155,8 +151,6 @@ describe("what it refuses to say", () => {
     expect(body).toContain("Proof of Delivery");
   });
 
-  /* An unanswered count must not render as an empty lorry. "0 lines" is a claim
-     about the load; a dash is a report of what we know. */
   it("says the line count is unavailable rather than printing 0", async () => {
     serve({ ...LOADED, itemCount: null });
     await mount();
@@ -181,16 +175,10 @@ describe("what it refuses to say", () => {
     const body = document.body.textContent;
     expect(body).not.toMatch(/RM\s?\d/);
     expect(body).not.toMatch(/\+?60\d{6,}/);
-    expect(body).not.toMatch(/\b\d{5}\b/); // a Malaysian postcode
+    expect(body).not.toMatch(/\b\d{5}\b/);
   });
 });
 
-/* THE PACKING LIST — one sheet, the whole run.
- *
- * The page must show the driver, BEFORE he presses, what the scan is about to
- * touch and what it cannot; and AFTER he presses, what happened to each drop.
- * "3 of 5 recorded" without naming the two is worse than saying nothing,
- * because he has to re-scan the run to find out which. */
 const RUN = {
   kind: "trip",
   tripNo: "TRIP-2608-001",
@@ -219,11 +207,7 @@ describe("the packing-list sheet", () => {
     await mount();
     expect(screen.getByText("#2")).toBeTruthy();
     expect(screen.getByText("Not on this run's account")).toBeTruthy();
-    /* getAllBy, not getBy: the sentence under the button also names the
-       other-company case, and that is deliberate — the driver is told both
-       before he presses and beside the drop itself. */
     expect(screen.getAllByText(/another company's books/).length).toBeGreaterThan(0);
-    /* The other company's document number must not be anywhere on the page. */
     expect(document.body.textContent).not.toContain("HC-DO-2608-102");
   });
 

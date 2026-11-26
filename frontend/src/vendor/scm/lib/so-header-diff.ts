@@ -1,52 +1,9 @@
-// ----------------------------------------------------------------------------
-// so-header-diff — PURE dirty-field diff for the SO HEADER patch.
-// NO React, no I/O. Desktop SalesOrderDetail and mobile MobileNewSO both feed
-// their own outgoing payload + the payload AS SEEDED into diffHeaderPayload, so
-// "what did the operator actually change" is decided ONCE.
-//
-// WHY THIS EXISTS — the backend PATCH has ALWAYS been sparse:
-//   scm/routes/mfg-sales-orders.ts — `if (body[from] === undefined) continue;`
-// A key the client omits is a column the server does not touch. Both clients
-// defeated that by rebuilding all ~21 header fields on every save, so every
-// save wrote every column. Two consequences, and the second needs no second
-// user:
-//   1. CONCURRENT — the last save clobbered 21 columns, reverting fields the
-//      saver never looked at.
-//   2. SINGLE-USER — the header PATCH's master-follower cascade is keyed on
-//      PRESENCE, not change (`if (body['customerDeliveryDate'] !== undefined)`),
-//      and it rewrites EVERY line's line_delivery_date and clears
-//      line_delivery_date_overridden. An always-sent customerDeliveryDate fired
-//      it on every save, so editing only the note wiped every per-line delivery
-//      date override. Sending only the dirty fields restores the guard's intent:
-//      the cascade fires when the header date CHANGED, and only then.
-//
-// The line path already worked this way (originalDraftsRef + lineCommitSig in
-// SalesOrderDetail) — its comment states this same argument in the mirror
-// direction ("an edit to the header / customer / demographics alone must NOT
-// touch the lines"). This is the inverse, which was never applied.
-// ----------------------------------------------------------------------------
 
 /** The header patch shape both surfaces build: camelCase API keys -> values. */
 export type SoHeaderPayload = Record<string, unknown>;
 
-/** Loose equality, byte-for-byte the server's own `norm()`
-    (scm/routes/mfg-sales-orders.ts, and the same shape inline in
-    scm/lib/so-audit.ts diffFields): null / undefined / '' all collapse.
-
-    Deliberately does NOT trim. The server does not trim either, so a value this
-    drops is a value the server would also have read as unchanged — the diff can
-    never change a server-side decision it could not already predict. Trimming
-    here would silently discard a whitespace-only edit the server would have
-    stored. */
 const norm = (v: unknown): string => (v === null || v === undefined ? '' : String(v));
 
-/** Only a primitive can be compared through `norm`. `String({})` is
-    "[object Object]" for EVERY object, so two DIFFERENT objects would norm
-    equal and a real edit would be dropped — a silent write loss. Anything
-    non-primitive is therefore treated as "cannot prove unchanged" and sent.
-    Both header payloads are string|null|undefined today; this keeps the helper
-    honest if that ever stops being true, rather than confidently wrong
-    (`reference_houzs_nullish_hides_ignorance`). */
 const comparable = (v: unknown): boolean =>
   v === null ||
   v === undefined ||
@@ -97,8 +54,6 @@ export function diffHeaderPayload(
   const out: SoHeaderPayload = {};
   for (const [key, value] of Object.entries(next)) {
     if (value === undefined) continue;
-    /* A key absent from the seeded original is one we cannot prove unchanged.
-       Send it — "unknown" must not silently become "not dirty". */
     if (!(key in original)) {
       out[key] = value;
       continue;

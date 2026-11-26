@@ -19,7 +19,7 @@ import { fakeSb, type Row } from '../lib/fake-postgrest';
 import type { Env, Variables } from '../env';
 
 const SOFA_COMPLETE = { seatHeight: '20', fabricCode: 'F-101' };
-const SOFA_INCOMPLETE = { fabricCode: 'F-101' }; // no seat height
+const SOFA_INCOMPLETE = { fabricCode: 'F-101' };
 
 const sb = fakeSb({
   purchase_orders: [
@@ -31,7 +31,6 @@ const sb = fakeSb({
     { id: 'i1', purchase_order_id: 'po-bad', item_code: 'SOFA-A', item_group: 'sofa', variants: SOFA_INCOMPLETE, warehouse_id: 'loc-1' },
     { id: 'i2', purchase_order_id: 'po-bad', item_code: 'SOFA-B', item_group: 'sofa', variants: {}, warehouse_id: 'loc-1' },
     { id: 'i3', purchase_order_id: 'po-ok', item_code: 'SOFA-A', item_group: 'sofa', variants: SOFA_COMPLETE, warehouse_id: 'loc-1' },
-    // A plain accessory with only a special order — no required axes, must pass.
     { id: 'i4', purchase_order_id: 'po-spec', item_code: 'ACC-1', item_group: 'accessory', variants: { specials: ['CUSTOM-LOGO'] }, warehouse_id: 'loc-1' },
   ],
   grns: [],
@@ -68,11 +67,10 @@ describe('PATCH mfg purchase order /confirm — variant gate', () => {
     expect(res.status).toBe(422);
     const body = await res.json() as { error: string; message: string };
     expect(body.error).toBe('variants_required');
-    // both incomplete lines named in one message — not one-at-a-time
     expect(body.message).toContain('SOFA-A');
     expect(body.message).toContain('SOFA-B');
-    expect(body.message).toContain('Seat Size'); // the missing axis label
-    expect(poRow('po-bad').status).toBe('DRAFT'); // not confirmed
+    expect(body.message).toContain('Seat Size');
+    expect(poRow('po-bad').status).toBe('DRAFT');
   });
 
   it('confirms a PO whose lines carry the required variants', async () => {

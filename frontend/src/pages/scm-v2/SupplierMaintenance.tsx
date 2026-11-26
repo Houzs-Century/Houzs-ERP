@@ -97,8 +97,6 @@ export const SupplierMaintenance = () => {
   const columns = useMemo<Column<SupplierMaintenanceRow>[]>(() => [
     { key: 'code', label: 'Code', render: (r) => <span className={css.code}>{r.code}</span>, getValue: (r) => r.code },
     {
-      /* The name reads as the link (the design's Debtor maintenance); a click
-         on it, as anywhere on the row, opens the supplier. */
       key: 'name', label: 'Name',
       render: (r) => (
         <span className={css.tags}>
@@ -205,7 +203,6 @@ export const SupplierMaintenance = () => {
   );
 };
 
-/* ── The supplier, popped out over the list ──────────────────────────────── */
 const SupplierPopOut = ({ id, finance, onClose, onEdit }: {
   id: string; finance: boolean; onClose: () => void; onEdit: (s: SupplierRow) => void;
 }) => {
@@ -347,13 +344,8 @@ const SupplierDetailBody = ({ d, s, finance }: { d: SupplierMaintenanceDetail; s
   );
 };
 
-/* ── New / Edit — Finance's form: the Finance part, the bank, and the purchasing
-   essentials. The currency and the full address stay on purchasing's supplier
-   page (a PO is priced in the supplier's currency); a supplier opened here is
-   MYR, which is all an AP invoice takes. ──────────────────────────────────── */
 type FormState = {
   code: string; name: string; status: string; forPurchasing: boolean;
-  /** 400 = trade supplier (goods), 405 = other creditor — what a new code is numbered under. */
   kind: SupplierCodeKind;
   state: string; city: string; postcode: string; country: string;
   tinNumber: string; businessRegNo: string; registrationNo: string; exemptionNo: string;
@@ -361,7 +353,6 @@ type FormState = {
   bankName: string; bankAccountNo: string; bankAccountName: string;
   paymentTerms: string; contactPerson: string; phone: string; email: string; email2: string; email3: string; address: string; notes: string;
 };
-/** The form's plain text fields — what the one-line field helper edits. */
 type TextKey = { [K in keyof FormState]: FormState[K] extends string ? K : never }[keyof FormState];
 /* The supplier's name and bank are kept in upper case (owner 2026-11-09; the database upper-cases them too);
    the bank is picked, and only a bank typed under Other is marked (PickListField's `upper`). */
@@ -370,7 +361,6 @@ const PICK: PickListClasses = { field: styles.field, label: styles.fieldLabel, s
 
 const fromSupplier = (s: SupplierRow | null): FormState => ({
   code: s?.code ?? '', name: s?.name ?? '', status: s?.status ?? 'ACTIVE',
-  /* A supplier Finance opens here is Finance's alone until ticked (A2a). */
   forPurchasing: s ? s.for_purchasing !== false : false,
   /* A new one starts as an other creditor (405), the kind Finance opens most;
      the form follows the choice (owner 2026-11-20). */
@@ -440,8 +430,6 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
     const pcErr = supplier ? null : masterPostcodeError(f.country, f.postcode);
     if (pcErr) { setProblem(pcErr); return; }
     setProblem(null);
-    /* The address goes on create, and on edit only when it changed: sending an
-       untouched blank postcode back would be refused as clearing it. */
     const addressChanged = !supplier || f.postcode !== (supplier.postcode ?? '') || f.state !== (supplier.state ?? '') || f.city !== (supplier.city ?? '');
     const body: SupplierMaintenanceBody = {
       ...(addressChanged ? { postcode: f.postcode.trim() || null, state: f.state.trim() || null, city: f.city.trim() || null, ...(f.country ? { country: f.country } : {}) } : {}),
@@ -455,19 +443,15 @@ const SupplierForm = ({ supplier, onDone, onCancel }: {
     };
     try {
       if (supplier) {
-        /* The code goes only when it changed — the server refuses a change once
-           documents or the ledger carry the old one. */
         const code = f.code.trim();
         const res = await update.mutateAsync({ id: supplier.id, ...body, ...(code !== supplier.code ? { code } : {}) });
         onDone(res.supplier.id);
       } else {
-        /* A blank code is numbered by the server under the chosen kind. */
         const code = f.code.trim();
         const res = await create.mutateAsync({ ...body, codeKind: f.kind, ...(code ? { code } : {}) });
         onDone(res.supplier.id);
       }
     } catch {
-      /* The mutation's own dialog says why; the form stays open. */
     }
   };
 

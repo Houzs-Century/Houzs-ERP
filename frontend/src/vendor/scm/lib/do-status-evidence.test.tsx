@@ -1,34 +1,3 @@
-/* PROOF OF DELIVERY MUST SURVIVE THE ROUTE IT TRAVELLED.
- *
- * A delivery order can be closed from four screens. Until this test existed,
- * exactly ONE of them attached the customer's signature and the GPS fix:
- *
- *   · frontend/src/mobile/MobilePOD.tsx            evidence — via a RAW fetch
- *   · frontend/src/mobile/MobileDeliveryPlanning.tsx   none  — raw fetch
- *   · frontend/src/pages/scm-v2/DeliveryOrderDetailV2.tsx   none — shared hook
- *   · frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2.tsx none — shared hook
- *
- * The cause was a TYPE, not four careless call sites.
- * `useUpdateMfgDeliveryOrderStatus` was declared `{ id, status }` and posted
- * `JSON.stringify({ status })`, so evidence could not travel through it even if
- * a caller held some. MobilePOD's bypass was therefore not sloppiness — it was
- * the only way to send a signature at all, and every screen that used the
- * shared hook silently filed a delivery with no customer-side proof.
- *
- * So the fix widens the hook and the tests below pin BOTH halves:
- *
- *   1. evidence travels when given          (the capability that did not exist)
- *   2. absent evidence sends NO evidence keys (a plain status change must never
- *      blank a POD that is already on the row — the backend only writes these
- *      columns when present, and the client must not send empty strings that
- *      would defeat that)
- *   3. ONE writer                           (the root-cause guard)
- *
- * (3) is the one that keeps this fixed. Two raw fetches to the same endpoint is
- * how the divergence arose; a third would rebuild it. The scan strips comments
- * first, because this file and MobilePOD's header both NAME the endpoint in
- * prose and a naive grep would match its own documentation.
- */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,7 +20,6 @@ const wrapper = ({ children }: { children: React.ReactNode }) => {
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
 };
 
-/** The body the hook actually PATCHed, parsed. */
 function sentBody(): Record<string, unknown> {
   const [, init] = authedFetch.mock.calls.at(-1) as [string, RequestInit];
   return JSON.parse(String(init.body));
@@ -95,10 +63,6 @@ describe("useUpdateMfgDeliveryOrderStatus carries proof of delivery", () => {
   });
 
   test("a partial capture sends only what was captured", async () => {
-    /* A denied location permission, or a customer who signs but declines a
-       photo, must still close the delivery — the backend deliberately DROPS an
-       out-of-range fix rather than refusing (delivery-orders-mfg.ts), so the
-       client must never turn a missing reading into a sent one. */
     const { result } = renderHook(() => useUpdateMfgDeliveryOrderStatus(), { wrapper });
 
     await result.current.mutateAsync({
@@ -141,7 +105,6 @@ describe("useCancelMfgDeliveryOrder carries the reason", () => {
   });
 });
 
-// ── The root-cause guard ────────────────────────────────────────────────────
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -179,8 +142,6 @@ function productionSources(dir = SRC): string[] {
 
 describe("the delivery-order status endpoint has ONE writer", () => {
   test("only the shared hook and the declared exception PATCH /delivery-orders-mfg/:id/status", () => {
-    /* Comments are stripped first: MobilePOD's header and this file's own
-       explain the endpoint in prose, and documentation is not a call site. */
     const writers = productionSources()
       .filter((path) => {
         const source = readFileSync(path, "utf8")

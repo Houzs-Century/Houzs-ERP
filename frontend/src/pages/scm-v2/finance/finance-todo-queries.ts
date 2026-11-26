@@ -49,19 +49,15 @@ export type TodoJob = {
   key: string;
   rule: TodoRule;
   group: TodoGroup;
-  /** Inside "Merchant reports & bank statements": which sub-head it sits under. */
   sub: 'merchant' | 'bank' | null;
   tone: TodoTone;
   icon: TodoIcon;
   title: string;
   detail: string;
   amountSen: number | null;
-  /** The day the oldest thing in it began waiting (YYYY-MM-DD). */
   since: string | null;
   action: { label: string; to: string; primary: boolean };
-  /** Waiting on others only: who it waits for. */
   who: string | null;
-  /** A task or routine: which one, and the occurrence waiting. */
   task: TodoTaskRef | null;
 };
 
@@ -77,10 +73,8 @@ export type FinanceTodo = {
   mine: TodoJob[];
   others: TodoJob[];
   done: TodoDone[];
-  /** Null when the bank balances could not be read. */
   money: { bankCashSen: number; awaitingSen: number; onTheWaySen: number } | null;
   checklist: { month: string; daysLeft: number; items: TodoCheck[] };
-  /** Reads that failed, by what they were for — said on the page, never shown as zero. */
   problems: string[];
   groups: TodoGroupDef[];
   viewer: { id: number | null; name: string };
@@ -100,7 +94,6 @@ export function useFinanceTodo() {
   });
 }
 
-/* ── Tasks ─────────────────────────────────────────────────────────────── */
 
 export type TodoTask = {
   id: string;
@@ -146,7 +139,6 @@ export type TaskDetail = {
   occurrences: Array<{ occursOn: string; movedTo: string | null; doneAt: string | null; doneBy: string | null }>;
   remarks: TaskRemark[];
   me: { id: number | null; name: string };
-  /** Whether the viewer may change or delete it: whoever asked for it, or an Owner. */
   mayEdit?: boolean;
 };
 
@@ -170,7 +162,6 @@ export type NewTask = {
 const taskKey = (id: string) => ['finance-todo', 'task', id] as const;
 const SETTINGS_KEY = ['finance-todo', 'settings'] as const;
 
-/** After any write the page, its count and the open task read again. */
 function useRefresh() {
   const qc = useQueryClient();
   return (taskId?: string) => {
@@ -244,7 +235,6 @@ export function useUpdateTask() {
   const refresh = useRefresh();
   const qc = useQueryClient();
   return useMutation({
-    /* A routine's switch, amount, payee or title (Setup › To do rules); a task's whole edit (Edit task). */
     mutationFn: ({ id, ...body }: { id: string; isOff?: boolean; amountSen?: number | null; payee?: string | null; title?: string } | ({ id: string } & TaskEdit)) =>
       authedFetch<{ task: TodoTask }>(`/accounting/todo/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: (_r, v) => { refresh(v.id); void qc.invalidateQueries({ queryKey: SETTINGS_KEY }); },
@@ -273,7 +263,6 @@ export function useLinkSearch(q: string) {
   });
 }
 
-/* ── Setup › To do rules ───────────────────────────────────────────────── */
 
 /** A rule Finance added from a template (Setup › To do rules › New rule). */
 export type CustomRule = { id: string; tpl: 'bills' | 'drafts' | 'big'; param: number; group: string };
@@ -318,7 +307,6 @@ export function useAddGroup() {
   });
 }
 
-/* ── Calendar ──────────────────────────────────────────────────────────── */
 
 export type CalKind = 'pay' | 'in' | 'routine' | 'task' | 'late';
 
@@ -333,7 +321,6 @@ export type CalEvent = {
   done: boolean;
   to: string | null;
   task: { id: string; occursOn: string; kind: 'task' | 'routine'; action: TaskAction; link: TaskLink | null; mine: boolean } | null;
-  /** A supplier bill: dragged to another day, its planned payment date moves (step 7); its due date stays. */
   bill?: { kind: 'API' | 'PI'; id: string; no: string; due: string | null; planned: string | null };
 };
 
@@ -347,7 +334,6 @@ export type TodoCalendarPage = {
 
 export function useTodoCalendar(month: string) {
   return useQuery({
-    /* Under the page's own key, so a done / moved task re-reads the calendar too. */
     queryKey: [...FINANCE_TODO_KEY, 'calendar', month] as const,
     queryFn: () => authedFetch<TodoCalendarPage>(`/accounting/todo/calendar?month=${encodeURIComponent(month)}`),
     staleTime: 30_000,

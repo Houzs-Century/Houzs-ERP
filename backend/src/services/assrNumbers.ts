@@ -33,7 +33,6 @@ export async function nextManualCreditorCode(env: Env): Promise<string> {
   return `MAN-${String(next).padStart(4, "0")}`;
 }
 
-// Numeric max, not text max: text order puts -999 above -1000.
 function maxSuffix(codes: string[], prefix: string): number {
   let max = 0;
   for (const code of codes) {

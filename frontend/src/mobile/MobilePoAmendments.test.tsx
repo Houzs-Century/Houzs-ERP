@@ -54,9 +54,6 @@ const cardFor = (poLabel: string) => {
   return card;
 };
 
-/* One order of each kind the desktop rule has to sort: a direct PO amendment, a
-   product-line SO amendment and a legacy one (both revise a bound PO), a
-   delivery-lane one (never revises a PO) and one with no purchase leg. */
 const seed = () => {
   poRows = [row('p', 14)];
   soRows = [

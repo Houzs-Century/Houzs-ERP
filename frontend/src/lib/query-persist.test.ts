@@ -81,8 +81,6 @@ describe("query snapshot scheduling", () => {
       install(qc);
       qc.setQueryData(["mfg-sales-orders", "all"], [{ id: "OLD-COMPANY-SO" }]);
 
-      // TopNavbar writes the next company immediately before reload. This old
-      // page's flush must not relabel its cache as company 8 data.
       setActiveCompanyId(8);
       if (eventName === "visibilitychange") {
         Object.defineProperty(document, "visibilityState", {
@@ -156,8 +154,6 @@ describe("query snapshot scheduling", () => {
     vi.useFakeTimers();
     localStorage.setItem(AUTH_TOKEN_KEY, "cold-open-session");
 
-    // Step 1: this same session, with NO company selected, writes a snapshot
-    // into the hostname-default bucket.
     const seed = new QueryClient();
     const disposeSeed = installQueryPersist(seed);
     seed.setQueryData(["mfg-sales-orders", "all"], [{ id: "DEFAULT-COMPANY-SO" }]);
@@ -166,9 +162,6 @@ describe("query snapshot scheduling", () => {
     const defaultKey = snapshotKeys().find((key) => key.endsWith(":0"));
     expect(defaultKey).toBeTruthy();
 
-    // Step 2: a cold open in a NEW tab. Somebody on this browser has picked a
-    // company, so a null active company means "not resolved yet", not
-    // "single-company install" — the default bucket must not be painted in.
     localStorage.setItem(ACTIVE_COMPANY_BY_USER_KEY, JSON.stringify({ u42: 7 }));
     sessionStorage.clear();
     releaseActiveCompanyBinding();
@@ -177,8 +170,6 @@ describe("query snapshot scheduling", () => {
     install(qc);
     expect(qc.getQueryData(["mfg-sales-orders", "all"])).toBeUndefined();
 
-    // Step 3: /auth/me lands, the tab adopts user 42's company, and everything
-    // it now writes belongs to company 7.
     adoptActiveCompanyForUser(42);
     expect(getActiveCompanyId()).toBe(7);
     expect(qc.getQueryData(["mfg-sales-orders", "all"])).toBeUndefined();

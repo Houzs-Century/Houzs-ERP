@@ -56,7 +56,6 @@ const SoldByConfirm = ({ row, company, onCancel }: { row: SettlementRow; company
     );
   };
   return (
-    /* Its own row under the buttons it opened from. */
     <div style={{ flexBasis: '100%' }} className="space-y-1" data-testid="sold-by-confirm">
       {done ? (
         <div style={{ fontSize: 'var(--fs-13)', color: good }}>

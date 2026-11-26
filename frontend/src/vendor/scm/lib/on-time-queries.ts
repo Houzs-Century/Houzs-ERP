@@ -1,6 +1,3 @@
-// On-time delivery for a period (GET /api/scm/logistic-overview/on-time). Every figure
-// is worked out on the server (backend/src/scm/lib/on-time-delivery.ts); the Logistic
-// Overview and Lorry Capacity only read it.
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
@@ -25,13 +22,11 @@ export interface OnTimeData {
   byLorry: OnTimeGroup[]; byDriver: OnTimeGroup[]; byRegion: OnTimeGroup[];
   excluded: { offPeninsula: number; noPromise: number; noDeliveryTime: number };
   orders: OnTimeOrder[];
-  /** When the server computed these figures (its kept copy can be up to 2 h old). */
   cachedAt?: string;
 }
 
 export const ON_TIME_LABEL: Record<OnTimeResult, string> = { ON_TIME: 'On time', EARLY: 'Early', LATE: 'Late', LATE_OPEN: 'Late, not delivered' };
 
-/* Exported so the page's Refresh can re-ask this exact question with ?fresh=1. */
 export const onTimeKey = (from: string, to: string, warehouse: string | null) => ['logistic-on-time', from, to, warehouse ?? ''];
 export const onTimeUrl = (from: string, to: string, warehouse: string | null) =>
   `/logistic-overview/on-time?from=${from}&to=${to}${warehouse ? `&warehouse=${warehouse}` : ''}`;

@@ -1,7 +1,3 @@
-/* The rule is "which company's masters does a posting read", and it was written
- * THREE times as three hand-copied ternaries. Two things are pinned here: the
- * decision itself, and that there is still only one copy of it.
- */
 import { describe, expect, it, vi } from 'vitest';
 import { accMastersCompanyId, ACC_MASTERS_FALLBACK_COMPANY_ID } from './masters-company';
 
@@ -22,9 +18,6 @@ describe('accMastersCompanyId', () => {
     spy.mockRestore();
   });
 
-  /* THE SUBSTITUTION MUST NEVER BE SILENT AGAIN. It was silent for the whole of
-     its life, which is why an entry validated against another company's chart
-     was indistinguishable from one validated against its own. */
   it('logs at error level, naming the call site, on every substitution', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     accMastersCompanyId(null, 'checkAccounts');

@@ -27,8 +27,6 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useToast } from '../../vendor/scm/components/Toast';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-/* Venues are maintained centrally in Project Maintenance; this section is a
-   read-only view sourced from /api/projects/venues. */
 import { useVenues, type VenueRow } from '../../vendor/scm/lib/venues-queries';
 import { DataTable } from '../../components/DataTable';
 import {
@@ -36,14 +34,7 @@ import {
   useUpsertStateWarehouseMapping,
   useDeleteStateWarehouseMapping,
 } from '../../vendor/scm/lib/state-warehouse-queries';
-/* useCreateWarehouse / useUpdateWarehouse / useDeleteWarehouse dropped —
-   warehouse master CRUD belongs at Inventory → Warehouses. The L2 view
-   only READS the warehouse list. */
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
-/* Per-state → delivery-region(s) mapping. The region MASTER buckets are edited
-   in Delivery Regions; here each state row picks which bucket(s) it falls under
-   (a state can map to MANY regions). Both hooks were vendored-in but unused —
-   the queries comment flags this as "drives the SO Maintenance multi-select". */
 import {
   useDeliveryPlanningRegions,
   useStateDeliveryRegions,
@@ -82,21 +73,6 @@ const ALL_SECTION_KEYS = SECTIONS.map((s) => s.key);
 
 export const SalesOrderMaintenance = () => {
   const open = useOpenSections(ALL_SECTION_KEYS as unknown as string[]);
-  /* The write gate. `scm_config_writer` is the BACKEND's own answer to
-     "may you write SCM master data" (services/positionPolicy.userCanWriteScmConfig),
-     which scm/lib/houzs-perms.canWriteScmConfig — the gate every write on this
-     page actually passes through — delegates to. It is the flat permission key
-     `scm.config.write` OR the position policy's canWriteConfig flag.
-
-     This page used to ask `can('scm.config.write')`, the FLAT HALF ONLY, so a
-     Procurement / Operation / Logistic Admin / Super Admin position whose ROLE
-     lacks the flat key was shown "Read-only view" over a page whose edits the API
-     would have accepted — the FE and BE disagreeing by exactly one rule, which is
-     the drift salesJdAccess.ts's header warns about.
-
-     The explicit `undefined` check (not `??` on a boolean) is deliberate: it
-     distinguishes "an older backend did not send the field" — fall back to the
-     flat key, i.e. exactly the old behaviour — from a real `false`. */
   const allOpen = ALL_SECTION_KEYS.every((k) => open.isOpen(k));
   const { can, user } = useHouzsAuth();
   const canEdit = user?.scm_config_writer === undefined
@@ -165,23 +141,6 @@ export const SalesOrderMaintenance = () => {
   );
 };
 
-/* ──────────────────────────────────────────────────────────────────────────
-   LoadError — a reference list that FAILED to load must say so.
-
-   This page reads seven lists and renders every one through `?? []`. That
-   fallback is fine for the render path (the mapper needs an array) but it is
-   NOT an answer to "did the load fail": a 403 on the warehouse list rendered as
-   an empty Warehouse dropdown, which reads as "there are no warehouses" — the
-   operator has no way to tell a refusal from an empty table, and the owner spent
-   a session believing the reference data was gone. So every section pairs its
-   `?? []` render with an explicit isError banner.
-
-   `err.message` is ALREADY plain language: authedFetch runs every non-ok
-   response through humanApiError (the house helper) before throwing, so a 403
-   arrives here as "You don't have permission to do that." and a 500 as "The
-   system hit a problem…". Nothing is re-mapped here — re-mapping it would be the
-   second copy of that rule.
-   ────────────────────────────────────────────────────────────────────────── */
 
 const LoadError = ({ what, error }: { what: string; error: unknown }) => (
   <div
@@ -193,16 +152,8 @@ const LoadError = ({ what, error }: { what: string; error: unknown }) => (
   </div>
 );
 
-/* ──────────────────────────────────────────────────────────────────────────
-   Maintenance body — formerly LocalitiesTab in Settings.tsx.
-   - Top: State → Warehouse mapping CRUD (state_warehouse_mappings table)
-   - Bottom: Geo registry — Country L1 → State L2 → City L3 drill-down
-     (replaces the old flat 2933-row States/Cities/Postcodes table). */
 
 const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType<typeof useOpenSections> }) => {
-  /* Separate from `canEdit` on purpose: re-attributing an order is a sales
-     permission, not a reference-data one, and the two are held by different
-     people (a coordinator maintains localities; a director moves orders). */
   const canAttributeOther = useHouzsAuth().can('scm.so.attribute_other');
   const mappings = useStateWarehouseMappings();
   const warehouses = useWarehouses();
@@ -236,7 +187,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
      row so notes saves don't reset other rows' visible selections. */
   const [pendingByState, setPendingByState] = useState<Map<string, string | null>>(new Map());
   useEffect(() => {
-    // Once the persisted mapping matches our optimistic value, drop the override.
     if (pendingByState.size === 0) return;
     const next = new Map(pendingByState);
     let changed = false;
@@ -250,11 +200,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
     if (changed) setPendingByState(next);
   }, [mappedByState, pendingByState]);
 
-  /* Per-state → delivery-region(s) mapping (the REGION column beside Warehouse).
-     regionMasters = the bucket list the multi-select offers; stateRegions = the
-     current per-state region-code set (keyed by state NAME). Same optimistic
-     mirror pattern as the warehouse select: apply the chosen set immediately,
-     drop the override once the persisted map catches up. */
   const regionMasters = useDeliveryPlanningRegions();
   const stateRegions = useStateDeliveryRegions();
   const setStateRegions = useSetStateDeliveryRegions();
@@ -272,7 +217,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
     let changed = false;
     for (const [state, optimistic] of pendingRegionsByState) {
       const persisted = regionCodesByState.get(state) ?? [];
-      // Order-independent set compare — persisted matches our optimistic pick.
       const same = persisted.length === optimistic.length
         && [...persisted].sort().join('\0') === [...optimistic].sort().join('\0');
       if (same) { next.delete(state); changed = true; }
@@ -280,10 +224,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
     if (changed) setPendingRegionsByState(next);
   }, [regionCodesByState, pendingRegionsByState]);
 
-  /* Commander 2026-05-27: 4-level drill-down — Country L1 → State L2 →
-     City L3 → Postcode L4. State L2 also exposes an inline Country edit
-     cell so a state can be moved to a different country in one shot
-     (bulk PATCH on every locality under that state). */
   const [geoView, setGeoView]                 = useState<'country' | 'state' | 'city' | 'postcode'>('country');
   const [selectedCountry, setSelectedCountry] = useState<string>('');
   const [selectedState,   setSelectedState]   = useState<string>('');
@@ -294,8 +234,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
   const [newPostcode, setNewPostcode] = useState('');
   const [newCountry, setNewCountry] = useState('Malaysia');
 
-  /* Group localities by (country) → (country, state) for the L1 + L2 stat
-     tiles, computed once per data refresh. */
   const localityGroups = useMemo(() => {
     const rows = localities.data ?? [];
     const byCountry = new Map<string, {
@@ -335,19 +273,13 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
     };
   }, [localities.data]);
 
-  /* All localities matching (selectedCountry, selectedState). */
   const stateLocalities: LocalityRow[] = useMemo(() => {
     if (!selectedCountry || !selectedState) return [];
     return (localities.data ?? [])
       .filter((r) => (r.country || 'Malaysia') === selectedCountry && r.state === selectedState);
   }, [localities.data, selectedCountry, selectedState]);
 
-  /* L3 = distinct cities under selectedState, with postcode count badge. */
   const citiesInState = useMemo(() => {
-    /* Per-city aggregate: postcode count + the single warehouseId that
-       all postcodes under the city share. If postcodes diverge (mixed),
-       the city's warehouseId is null and the UI shows a "(mixed)"
-       indicator — commander's bulk-stamp edit normalises them. */
     const byCity = new Map<string, {
       city: string;
       postcodeCount: number;
@@ -370,7 +302,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
     return Array.from(byCity.values()).sort((a, b) => (a.city ?? '').localeCompare(b.city ?? ''));
   }, [stateLocalities]);
 
-  /* L4 = postcodes under (selectedState, selectedCity) — the actual leaf rows. */
   const postcodeRows: LocalityRow[] = useMemo(() => {
     if (!selectedCity) return [];
     return stateLocalities
@@ -379,11 +310,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
   }, [stateLocalities, selectedCity]);
 
   const addLocality = () => {
-    /* L4 (postcode view) locks country + state + city; only Postcode
-       input is shown. L3 (city view) locks country + state; user enters
-       City + Postcode. Lower levels currently can't add (commander adds
-       a new state by opening a new state row at L2 — out of scope for
-       this PR; for now Malaysia's 16 states are seeded). */
     const lockedCountry   = geoView !== 'country' && selectedCountry ? selectedCountry : '';
     const lockedState     = (geoView === 'city' || geoView === 'postcode') && selectedState ? selectedState : '';
     const lockedCity      = geoView === 'postcode' && selectedCity ? selectedCity : '';
@@ -453,7 +379,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
     }
   };
 
-  /* Navigation helpers — keep view state self-consistent. */
   const goToCountry      = () => { setGeoView('country'); setSelectedCountry(''); setSelectedState(''); setSelectedCity(''); };
   const goToState        = () => { setGeoView('state');   setSelectedState(''); setSelectedCity(''); };
   const goToCity         = () => { setGeoView('city');    setSelectedCity(''); };
@@ -463,10 +388,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
 
   return (
     <div className="space-y-4">
-      {/* ── Venues CRUD (Migration 0086) ───────────────────────────────
-          Parallel-to-warehouses master list. Sales-side staff get a
-          venue_id; every POS-created SO is stamped with the salesperson's
-          venue for venue-level reporting. */}
       <CollapsibleSection id="venues" title="Venues" open={open.isOpen('venues')} onToggle={() => open.toggle('venues')}>
         <VenuesSection canEdit={canEdit} />
       </CollapsibleSection>
@@ -504,9 +425,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
         deactivate a warehouse there.
       </div>
 
-      {/* A refused / failed reference read must not render as an empty picker —
-          see LoadError above. These three back the Warehouse and Region columns
-          of the state table. */}
       {localities.isError  && <LoadError what="the geo list"        error={localities.error} />}
       {warehouses.isError  && <LoadError what="the warehouse list"  error={warehouses.error} />}
       {regionMasters.isError && <LoadError what="the delivery regions" error={regionMasters.error} />}
@@ -525,7 +443,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
         {geoView === 'postcode' && 'Leaf level — edit / delete + add new postcodes here.'}
       </div>
 
-      {/* Breadcrumb */}
       {geoView !== 'country' && (
         <div className={styles.filterBar} style={{ marginBottom: 'var(--space-2)' }}>
           <button type="button" className={styles.editBtn} onClick={goToCountry}>
@@ -551,7 +468,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
         </div>
       )}
 
-      {/* L1 — Country list */}
       {geoView === 'country' && (
         <div className={styles.tableCard}>
           {localities.isLoading ? (
@@ -577,11 +493,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
         </div>
       )}
 
-      {/* L1 — Add Country form. Commander 2026-05-27: "add a country
-          should be only country dont need state and code and city". One
-          input. Backend seeds a placeholder locality (state/city/postcode
-          all '—') so the country shows up in L1; commander drills into
-          L2 to add real states. */}
       {geoView === 'country' && canEdit && (
         <div className={styles.addRowCard}>
           <div className={styles.addRowEyebrow}>Add a country</div>
@@ -613,7 +524,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
         </div>
       )}
 
-      {/* L2 — States in selected country, integrated with warehouse + notes */}
       {geoView === 'state' && (
         <div className={styles.tableCard}>
           {(() => {
@@ -667,11 +577,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
                         </td>
                         <td onDoubleClick={(e) => e.stopPropagation()}>
                           {(() => {
-                            /* Multi-select: a state can fall under several region
-                               buckets. Native <select multiple> keeps the same
-                               styles.input look as the Warehouse select while
-                               allowing a multi-pick. Optimistic mirror via
-                               pendingRegionsByState (mirrors displayWarehouseId). */
                             const displayRegionCodes = pendingRegionsByState.has(s.state)
                               ? pendingRegionsByState.get(s.state) ?? []
                               : regionCodesByState.get(s.state) ?? [];
@@ -701,7 +606,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
                                         `${s.state} → ${regionCodes.length ? regionCodes.join(', ') : 'no region'}`,
                                       ),
                                       onError: (err) => {
-                                        // Roll back the optimistic pick on failure.
                                         setPendingRegionsByState((m) => {
                                           const next = new Map(m);
                                           next.set(s.state, prev);
@@ -816,12 +720,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
         </div>
       )}
 
-      {/* L2 — Add State form. Commander 2026-05-27: "add state is to choose
-          under which country and under which warehouse no more cities and
-          postcode". Only inputs the user provides are State name, Code,
-          Warehouse. We seed a placeholder my_localities row with city
-          '—' / postcode '—' so the state appears in L2's localityGroups
-          aggregation; commander drills in via L3 to add real cities. */}
       {geoView === 'state' && canEdit && (
         <div className={styles.addRowCard}>
           <div className={styles.addRowEyebrow}>Add a state in {selectedCountry} — pick its default warehouse</div>
@@ -833,7 +731,7 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
               value={newStateCode} onChange={(e) => setNewStateCode(e.target.value)} />
             <select
               className={styles.input}
-              value={newCountry /* repurposed as the new-state warehouseId picker */}
+              value={newCountry}
               onChange={(e) => setNewCountry(e.target.value)}
               aria-label="Default warehouse for this state"
             >
@@ -848,14 +746,12 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
               onClick={async () => {
                 const state = newState.trim();
                 const stateCode = newStateCode.trim().toUpperCase();
-                const whId = newCountry.trim();  // repurposed; '' = no default
+                const whId = newCountry.trim();
                 if (!state || !stateCode) {
                   notify({ title: 'State name and code are required.', tone: 'error' });
                   return;
                 }
                 try {
-                  /* Seed placeholder locality so L2 picks up the new state.
-                     Commander adds real cities/postcodes by drilling into L3. */
                   await createLoc.mutateAsync({
                     state, stateCode, city: '—', postcode: '—',
                     country: selectedCountry || 'Malaysia',
@@ -881,9 +777,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
         </div>
       )}
 
-      {/* L3 — Cities. Warehouse column lets commander override the state-
-          level default per city. Bulk-stamps all postcodes under the city
-          when changed. Empty value means "follow state". */}
       {geoView === 'city' && (
         <div className={styles.tableCard}>
           {citiesInState.length === 0 ? (
@@ -920,14 +813,11 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
                                 disabled={updateLoc.isPending}
                                 onChange={(e) => {
                                   const v = e.target.value;
-                                  if (v === '__mixed__') return; // sentinel
+                                  if (v === '__mixed__') return;
                                   setCityWarehouse(selectedState, c.city, v || null);
                                 }}
                               >
                                 {c.mixed && <option value="__mixed__">(mixed)</option>}
-                                {/* Empty value = inherit state. Display the
-                                    inherited warehouse name directly, no
-                                    "— follow state (...)" decoration. */}
                                 <option value="">{stateWhLabel}</option>
                                 {sortByText((warehouses.data ?? []).filter((w) => w.is_active)).map((w) => (
                                   <option key={w.id} value={w.id}>{w.code}</option>
@@ -957,7 +847,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
         </div>
       )}
 
-      {/* L3 — Add City form */}
       {geoView === 'city' && canEdit && (
         <div className={styles.addRowCard}>
           <div className={styles.addRowEyebrow}>Add a city in {selectedState}, {selectedCountry} (seeds first postcode)</div>
@@ -974,7 +863,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
         </div>
       )}
 
-      {/* L4 — Postcodes leaf */}
       {geoView === 'postcode' && (
         <div className={styles.tableCard}>
           {postcodeRows.length === 0 ? (
@@ -1022,7 +910,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
         </div>
       )}
 
-      {/* L4 — Add Postcode */}
       {geoView === 'postcode' && canEdit && (
         <div className={styles.addRowCard}>
           <div className={styles.addRowEyebrow}>
@@ -1044,11 +931,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
           above reads the live warehouse list via useWarehouses() so any
           add/edit done in Inventory shows up here automatically. */}
 
-      {/* ── Dropdowns CRUD (Task #118) ─────────────────────────────────
-          One mini-table per category. Backed by so_dropdown_options
-          (migration 0081) — replaces the four hardcoded TS consts that
-          used to drive customer type / building type / relationship /
-          payment method dropdowns. */}
       </CollapsibleSection>
 
       <CollapsibleSection id="dropdowns" title="Dropdowns" open={open.isOpen('dropdowns')} onToggle={() => open.toggle('dropdowns')}>
@@ -1073,11 +955,6 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
   );
 };
 
-/* ──────────────────────────────────────────────────────────────────────────
-   Dropdowns section — 4 collapsible sub-cards (one per category) backed
-   by so_dropdown_options. Each card renders a mini-table with edit-in-
-   place rows + an "+ Add option" affordance inline at the bottom.
-   ────────────────────────────────────────────────────────────────────── */
 
 const DROPDOWN_CARDS: Array<{ category: SoDropdownCategory; title: string; help: string }> = [
   {
@@ -1104,8 +981,6 @@ const DROPDOWN_CARDS: Array<{ category: SoDropdownCategory; title: string; help:
           'wired to order logic, so they can\'t be removed, turned off, or ' +
           'added to; the Value column is the fixed key each app maps on.',
   },
-  /* Task #122 (cascade) — three L2 buckets that show up under Merchant
-     and Online, edited the same way as the L1 list above. */
   {
     category: 'payment_merchant',
     title:    'Payment Merchant (Bank)',
@@ -1127,13 +1002,6 @@ const DROPDOWN_CARDS: Array<{ category: SoDropdownCategory; title: string; help:
               'Method=Installment. One-off (no installment) / 3 / 6 / 12 / 24 / ' +
               '36 months. Stored as the term in months on the payment row.',
   },
-  /* Venues are NOT in this editable so_dropdown_options list. Houzs sources
-     venues centrally from Project Maintenance (PMS, /api/projects/venues) and
-     the SO venue picker is locked to the salesperson's staff.venue_id — the
-     so_dropdown_options category='venue' was never read by any picker. The
-     read-only PMS venue list is rendered above by <VenuesSection>; the
-     duplicate editable "VENUE" card was removed so venues have a single
-     source of truth. */
 ];
 
 const DropdownsSection = ({ canEdit }: { canEdit: boolean }) => {
@@ -1194,11 +1062,9 @@ const DropdownCategoryCard = ({
   const updateOpt = useUpdateSoDropdownOption();
   const deleteOpt = useDeleteSoDropdownOption();
 
-  // Add-row state (sort_order is auto-appended to end — no input field)
   const [newValue, setNewValue]    = useState('');
   const [newLabel, setNewLabel]    = useState('');
 
-  // Per-row edit buffers (uncommitted edits) — keyed by id.
   const [edits, setEdits] = useState<Record<string, Partial<{ value: string; label: string; sortOrder: number }>>>({});
 
   const commitRow = (row: SoDropdownOption) => {
@@ -1209,7 +1075,6 @@ const DropdownCategoryCard = ({
     if (buf.label     !== undefined && buf.label     !== row.label)     patch.label     = buf.label;
     if (buf.sortOrder !== undefined && buf.sortOrder !== row.sortOrder) patch.sortOrder = buf.sortOrder;
     if (Object.keys(patch).length === 1) {
-      // no real change — just clear the buffer
       setEdits((e) => { const next = { ...e }; delete next[row.id]; return next; });
       return;
     }
@@ -1247,9 +1112,6 @@ const DropdownCategoryCard = ({
       notify({ title: 'Both Value and Label are required.', tone: 'error' });
       return;
     }
-    /* Auto-append: new row gets sort_order = max(existing) + 1 so it
-       lands at the bottom. Commander hid the Sort field — order is
-       managed by add sequence, not by manual numbers. */
     const maxSort = rows.reduce((m, r) => Math.max(m, r.sortOrder), 0);
     const sortOrder = maxSort + 1;
     createOpt.mutate(
@@ -1263,8 +1125,6 @@ const DropdownCategoryCard = ({
 
   return (
     <div className={styles.tableCard}>
-      {/* Collapsible category header — mono uppercase eyebrow on a surface-2
-          strip, matching the .table thead / add-row eyebrow rhythm. */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -1303,11 +1163,6 @@ const DropdownCategoryCard = ({
               </thead>
               <tbody>
                 {rows.map((row) => {
-                  /* 2026-06-06 payment-method unify — the four core method
-                     rows are a locked set: label + order editable, value /
-                     active / delete blocked (the API mirrors this with a
-                     409). Controls stay visible so the reason is
-                     discoverable, not hidden. */
                   const lockedRow = isCorePaymentMethodRow(category, row.value);
                   const lockHint =
                     'Core payment method — wired to order logic. Rename or reorder it; it can\'t be removed or turned off.';
@@ -1401,8 +1256,6 @@ const DropdownCategoryCard = ({
             </table>
           )}
 
-          {/* 2026-06-06 payment-method unify — no Add for the locked
-              category; a hint explains why instead of hiding silently. */}
           {category === 'payment_method' && (
             <div
               className={`flex items-center gap-2 bg-surface-2 px-4 py-3 text-[11.5px] text-ink-muted${
@@ -1419,8 +1272,6 @@ const DropdownCategoryCard = ({
             </div>
           )}
           {canEdit && category !== 'payment_method' && (
-            /* Sort input removed — commander 2026-05-27. New rows auto-append
-               to the end (sort_order = rows.length + 1). */
             <div
               className={`grid grid-cols-[1fr_1.5fr_auto] gap-2 bg-surface-2 px-4 py-3${
                 rows.length > 0 ? ' border-t border-border-subtle' : ''
@@ -1454,30 +1305,12 @@ const DropdownCategoryCard = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   VenuesSection — Migration 0086 venues CRUD, lives above the Geo drill.
-   Code/Name/Address/Active pattern (commander spec). Soft-delete only;
-   historical SO.venue_id keeps resolving when the venue is reactivated.
-   ════════════════════════════════════════════════════════════════════════ */
 
-// Venues are now maintained CENTRALLY in Houzs's Project Maintenance / PMS
-// (sourced via /api/projects/venues). This SCM section is READ-ONLY — it shows
-// the venues the SO/CO pickers resolve against, and points editors at Project
-// Maintenance for any add / rename / deactivate. `canEdit` is unused now (kept
-// in the prop signature so the call site doesn't change).
 const VenuesSection = (_props: { canEdit: boolean }) => {
   const venues = useVenues();
 
   return (
     <section className={styles.anchor}>
-      {/* Venue mastering genuinely lives in Project Maintenance
-          (routes/projects.ts /venues; VenueManager in ProjectMaintenance.tsx) —
-          ONE source of truth, deliberately not duplicated here. But "maintained
-          in Project Maintenance" with no way to get there is a dead end: the
-          operator is told the control exists and not where. The link makes the
-          notice actionable. Project Maintenance is its own page-access gate
-          (projects.maintenance = full), so this may land a user on Forbidden —
-          that is the honest answer, and better than silence. */}
       <div className={styles.banner} style={{ marginBottom: 10 }}>
         Venues come from two places. Exhibition venues are maintained in{' '}
         <Link
@@ -1501,9 +1334,6 @@ const VenuesSection = (_props: { canEdit: boolean }) => {
           { key: 'name', label: 'Name', getValue: (v) => v.name, render: (v) => <strong className="font-semibold text-ink">{v.name}</strong> },
           {
             key: 'origin', label: 'Origin', getValue: (v) => (v.origin === 'SHOWROOM' ? 'Showroom' : 'Exhibition'),
-            /* Its own column, not folded into the name, so the owner can tell a
-               showroom from an exhibition venue at a glance: they are maintained
-               in different places and mean different things in the fair P&L. */
             render: (v) => (
               <span
                 className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider ${
@@ -1538,8 +1368,4 @@ const VenuesSection = (_props: { canEdit: boolean }) => {
   );
 };
 
-/* thStyle / tdStyle / emptyStyle / inputStyle constants — removed with the
-   Ink & Petrol restyle. VenuesSection now composes with .table + .empty
-   from SalesOrderMaintenance.module.css (see the sectionHead + venuesCard
-   pattern in that file). */
 

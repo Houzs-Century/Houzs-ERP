@@ -14,7 +14,6 @@ const slip = (over: Record<string, unknown> = {}) => ({
 
 describe("fieldScore", () => {
   it("counts filled fields once per label and nothing blank on both sides", () => {
-    // Customer name, Phone, Address (two keys, one label) + 2 lines x (code, qty).
     expect(fieldScore(slip(), slip())).toEqual({ total: 7, changed: 0 });
   });
 

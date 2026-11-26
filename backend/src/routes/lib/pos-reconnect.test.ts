@@ -14,7 +14,6 @@ describe("reconnectPhase", () => {
   });
   test("an approval counts only for the request it answered", () => {
     expect(reconnectPhase({ reconnect_requested_at: "2026-11-12 02:50:00+00", reconnect_approved_at: "2026-11-12 02:55:00+00" }, now)).toBe("approved");
-    /* approved yesterday, asked again today: the old approval does not carry over */
     expect(reconnectPhase({ reconnect_requested_at: "2026-11-12 02:50:00+00", reconnect_approved_at: "2026-11-11 09:00:00+00" }, now)).toBe("waiting");
   });
   test("an approval nobody claimed for a day lapses with its request", () => {

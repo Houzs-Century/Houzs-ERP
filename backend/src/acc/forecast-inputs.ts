@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// forecast-inputs — the Cash Flow's Capex & financing table (step 3 of the
-// Hookka forecast port, docs/forecast-port-spec.md part 2; Hookka
-// `keyableAccounts`, `cleanKeyedInputs`, `keyedInputGroups`).
-//
-// Finance keys money it plans to move outside the trading cycle — capex, loans
-// and hire purchase, related-party and director loans, deposits, fixed
-// deposits, shareholder funds — per account and month: + money in, − money
-// out, whole sen. The accounts offered are the ones the Cash Flow layout places
-// under FUNDING IN / (OUT) (`cf:funding`), trade finance aside (its plan is
-// step 5), each active leaf once, an accumulated depreciation or amortisation
-// account never. A keyed amount becomes forecast money on its own account in
-// its own month — the Cash Flow's forecast column, wherever that month shows.
-// Pure: no reads.
-// ----------------------------------------------------------------------------
 
 import type { LayoutItem } from './report-layout';
 import type { CashLeg } from './cashflow-pnl-forecast';

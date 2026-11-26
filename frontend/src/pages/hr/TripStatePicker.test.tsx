@@ -1,5 +1,3 @@
-/* The outstation state picker offers only the states no group holds, adds the
-   ticked ones in one go, and removes a state by its x. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { TripStatePicker } from "./TripStatePicker";

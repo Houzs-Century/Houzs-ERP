@@ -64,7 +64,6 @@ export const asLock = (r: Row) => ({
   releaseNote: textOf(r.release_note),
 });
 
-/* ── GET /bank/locks — every month ever closed on this company ────────────── */
 
 export const bankLocks = bankGuard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -77,13 +76,9 @@ export const bankLocks = bankGuard(async (c) => {
     .order('period_month', { ascending: false });
   if (res.error) return c.json({ error: 'load_failed', reason: res.error.message }, 500);
 
-  /* Released locks come back too. A month that was closed and reopened is a
-     thing somebody will ask about, and a list that only shows live locks
-     cannot answer it. */
   return c.json({ locks: rowsOf(res.data).map(asLock) });
 });
 
-/* ── POST /bank/months/:accountCode/:month/lock ───────────────────────────── */
 
 export const bankMonthLock = bankGuard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -100,8 +95,6 @@ export const bankMonthLock = bankGuard(async (c) => {
 
   const sb = c.get('supabase');
 
-  /* Already closed? Say so rather than writing a second lock and letting the
-     unique index produce a database error nobody can read. */
   const existing = await sb.from('acc_bank_month_locks')
     .select(LOCK_FIELDS)
     .eq('company_id', co.companyId).eq('account_code', accountCode)
@@ -118,8 +111,6 @@ export const bankMonthLock = bankGuard(async (c) => {
     }, 409);
   }
 
-  /* THE MONTH AS IT STANDS RIGHT NOW — assembled by exactly the code the month
-     screen reads, so what is being closed is what he was looking at. */
   const state = await loadMonthForLock(sb, co.companyId, accountCode, month);
   if (!state.ok) return c.json({ error: 'load_failed', reason: state.reason }, 500);
 
@@ -141,7 +132,6 @@ export const bankMonthLock = bankGuard(async (c) => {
     company_id: co.companyId,
     account_code: accountCode,
     period_month: monthAsDate(month),
-    /* Snapshotted, never recomputed — see the header. */
     closing_statement_sen: state.reconciliation.closingStatementSen,
     closing_ledger_sen: state.reconciliation.closingLedgerSen,
     difference_sen: state.reconciliation.differenceSen,
@@ -154,8 +144,6 @@ export const bankMonthLock = bankGuard(async (c) => {
     lock_note: null,
   }).select(LOCK_FIELDS).single();
   if (insert.error) {
-    /* The unique index is the last word, and a race loses to it rather than to
-       the read above. */
     const twice = String((insert.error as { code?: string }).code ?? '') === '23505';
     return c.json({
       error: twice ? 'already_locked' : 'save_failed',
@@ -168,16 +156,11 @@ export const bankMonthLock = bankGuard(async (c) => {
   return c.json({ ok: true, lock: asLock(insert.data as unknown as Row) });
 });
 
-/* ── POST /bank/months/:accountCode/:month/unlock ─────────────────────────── */
 
 export const bankMonthUnlock = bankGuard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  /* A SECOND KEY, deliberately. Closing a month is the ordinary end of its
-     work; reopening one undoes a document somebody filed and an auditor may
-     already have seen. That is the shape of decision scm.payment_voucher.approve
-     already stands for in this system. */
   if (!hasHouzsPerm(c, 'scm.payment_voucher.approve')) {
     return c.json({
       error: 'forbidden',
@@ -196,8 +179,6 @@ export const bankMonthUnlock = bankGuard(async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { body = {}; }
   const note = textOf(body.note)?.trim() ?? null;
 
-  /* REQUIRED. A month that was closed and is open again with no explanation is
-     the one state this table exists to make impossible. */
   if (note === null) {
     return c.json({
       error: 'reason_required',
@@ -217,7 +198,6 @@ export const bankMonthUnlock = bankGuard(async (c) => {
     return c.json({ error: 'not_locked', message: `${accountCode} ${month} is not closed.` }, 409);
   }
 
-  /* Released, never deleted: the row is the record that this happened. */
   const released = await sb.from('acc_bank_month_locks').update({
     released_by: userName(c),
     released_at: new Date().toISOString(),

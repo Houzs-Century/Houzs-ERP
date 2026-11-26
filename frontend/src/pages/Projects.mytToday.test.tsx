@@ -1,8 +1,3 @@
-/* Two "today" reads on the project page, both now the Malaysian day:
-   - the stage tracker's "Nd late" under an overdue step;
-   - a task section's "Nd left / due today / Nd overdue" chip.
-   At 01:30 on 10 Nov (Malaysia), on a machine whose clock zone is UTC, both
-   counted from the 9th. Run with TZ=UTC. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -22,7 +17,7 @@ import { DialogProvider } from "../hooks/useDialog";
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-11-09T17:30:00Z")); // 01:30 on 10 Nov in Malaysia
+  vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));
 });
 afterEach(() => {
   cleanup();

@@ -107,79 +107,11 @@ import { variantTrackedCompany } from '../lib/binding-mode';
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrp.use('*', supabaseAuth);
 
-/* SO statuses that no longer create demand (already shipped / closed).
-   SHIPPED is included (MRP pairing audit D4, 2026-08-01): rank 4 on the SO
-   ladder means the goods have left the building, and so-stock-allocation.ts
-   already excluded it from allocation while MRP was still planning purchases
-   for it. The audit measured ZERO live SHIPPED-status lines still demanding, so
-   aligning changed no figure.
-
-   THE SET IS shared/so-terminal-states.ts, not a literal. This line and the
-   allocator's `not.in` filter were two of FOURTEEN hand-typed copies of it
-   across ten files (four names, eight of them .mjs audits, four of those also
-   holding an inline SQL copy of their own); the whole reason SHIPPED had to be
-   "added" in the first place is that a set kept in fourteen places gets updated
-   in thirteen.
-
-   ONE CLAIM IN THIS COMMENT WAS FALSE AND IS CORRECTED (2026-08-13): it used to
-   say "the /inventory/ reservations SO_DONE drops its claims" as if that
-   consumer agreed. It does not. routes/inventory.ts holds TWO sets of its own —
-   GET /reservations has FIVE (no DRAFT), GET /products has FOUR (no DRAFT, no
-   SHIPPED) — so a DRAFT order is open demand on both Inventory surfaces and done
-   here, and a SHIPPED order is open demand on one of them. Neither is collapsed
-   into the shared file: resolving the disagreement moves numbers staff read, so
-   it is the owner's call. */
 const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
-/* PO statuses that no longer supply goods. DRAFT is included: a draft PO is
-   not yet committed, so it must NOT count as incoming supply — otherwise a
-   draft PO would make an SO line look "covered" and hide a real shortage from
-   MRP + the From-SO shortage cap (leak guard, Draft/Confirmed rollout). */
 const PO_DEAD = new Set(['CANCELLED', 'DRAFT']);
 
-/* How many of this engine's independent reads may be in flight at once.
-   6 is a BOUND, not a target: the reads it governs are I/O-bound round trips
-   through Hyperdrive's pooled connections, so the win is in overlapping latency
-   and the risk is exhausting the pool — past ~6 the curve flattens while the
-   pool pressure does not. Raising it is not free and is not a tuning knob to
-   turn without re-running backend/scripts/probe-mrp-roundtrip-cost.mjs, which
-   measures both arms against production and prints the round-trip count. */
 const MRP_READ_CONCURRENCY = 6;
 
-/* EVERY MULTI-ROW READ ON THIS PAGE IS PAGED (2026-08-16). It used to carry a
-   `.limit(5000)` plus a `rows.length >= 5000` throw named `mrp_load_truncated`,
-   and BOTH halves of that were wrong in the same way — they assumed the number
-   the code asked for is the number PostgREST returns.
-
-   It is not. PostgREST caps a response at `max-rows` (1000 on this project) and
-   `.limit(5000)` does not lift it: the server hands back ≤1000 rows and drops
-   the rest with NO error and no signal in the payload. So the ceiling was 1000,
-   not 5000, and the guard that was supposed to catch truncation compared
-   1000 >= 5000 — it could never fire, and never did. Measured against prod on
-   2026-08-16: the demand read matches 13,920 rows, so the plan was computed over
-   the first ~1000 by `id` ASC (a uuid order, i.e. arbitrary) and ~93% of open
-   demand was invisible. The owner's symptom was the direct consequence — a
-   brand-new sales order ranked 10,687th and simply did not appear in MRP, so it
-   could not be converted to a PO.
-
-   The remedy is lib/paginate-all.ts (`paginateAll` / `chunkIn`), which is this
-   codebase's established answer to the same trap — it pages with `.range()`
-   until a short page arrives. The cap and the guard are both GONE rather than
-   re-tuned: a bigger `.limit()` would have been the same bug with a bigger
-   wrong number, and a guard that cannot detect the thing it is named after is
-   worse than no guard, because it reads as protection. paginateAll's own
-   MAX_PAGES (50 pages = 50k rows) is the surviving runaway stop, and it is a
-   real one — it counts pages actually fetched.
-
-   PostgREST filter notes, because the syntax is the trap: the status columns
-   live on the EMBEDDED (aliased, !inner-joined) parent, so the filter path is
-   the alias ('so.status' / 'po.status') and the not-in list uses the quoted
-   form so-delivery-sync.ts already proved in production. A NULL-status header
-   is dropped by `not.in` (NULL never passes a NOT IN) — for demand that is
-   exactly so-stock-allocation.ts's own SQL behaviour, so the two engines now
-   agree on that edge too; the JS-side SO_DONE/PO_DEAD filters below remain the
-   authoritative gate for everything the SQL cannot express. Pushing the status
-   filter into SQL still matters: it keeps the paged read from walking every
-   closed order in history. */
 const sqlNotInList = (statuses: Iterable<string>): string =>
   `(${[...statuses].map((s) => `"${s}"`).join(',')})`;
 const SO_DONE_SQL = sqlNotInList(SO_DONE);
@@ -193,40 +125,27 @@ type DemandRow = {
   item_group: string | null;
   variants: Record<string, unknown> | null;
   qty: number;
-  /* SO line's ship-from warehouse (migration 0118). NULL on lines written by a
-     path that never set it (amendment ADD lines, auto free gifts) and on old
-     imported data — resolved from the SO header before bucketing, see the
-     "warehouse follows the SO" block below. */
   warehouse_id: string | null;
   line_delivery_date: string | null;
-  /* TRUE only when a human typed a date on THIS line. FALSE means
-     `line_delivery_date` is a MIRROR of the header date (mig 0172's
-     apply_so_header_followers writes the pair), and a mirror goes stale the
-     moment the order is rescheduled — see effectiveSoDelivery. */
   line_delivery_date_overridden: boolean | null;
   line_no: number | null;
   created_at: string | null;
   cancelled: boolean;
-  /* The sofa-set allocator's batch lock (so-stock-allocation.ts 7b): non-null
-     means ONE received batch was found covering this line's WHOLE set and the
-     DO ship-gate will only release these units to THIS order. Section 4c
-     carves those units out of the free pool so the date-greedy walk cannot
-     promise them to an earlier-delivery SO the ship-gate would then refuse. */
   allocated_batch_no: string | null;
   so: {
     debtor_name: string | null;
     status: string;
     on_hold?: boolean | null;
     so_date: string | null;
-    customer_delivery_date: string | null;   // the customer's ORIGINAL promise — never overwritten
-    amended_delivery_date: string | null;    // the reschedule Logistics confirmed; wins over the original
+    customer_delivery_date: string | null;
+    amended_delivery_date: string | null;
     processing_date: string | null; /* Release-for-purchasing signal (owner 2026-08-18: "Processing Date
        就代表这张单可以安排订货了"). GATES entry: a line whose order has none is
        not demand (see isReleased). Once in, "when to order" is orderByDate below,
        derived from the delivery date and the category lead time. NOT a
        production date: there is no production. */
-    customer_state: string | null;       // staff #8 — show the customer's state (info-only)
-    sales_location: string | null;       // the SO's OWN warehouse of record (lib/so-warehouse.ts)
+    customer_state: string | null;
+    sales_location: string | null;
   } | null;
 };
 
@@ -237,17 +156,13 @@ type PoLineRow = {
   qty: number;
   received_qty: number | null;
   delivery_date: string | null;
-  // Migration 0180 — per-line supplier-revised delivery dates. The effective
-  // line ETA = MAX over non-null of [delivery_date, _2, _3, _4].
   supplier_delivery_date_2: string | null;
   supplier_delivery_date_3: string | null;
   supplier_delivery_date_4: string | null;
-  warehouse_id: string | null;        // per-line ship-to warehouse (overrides header)
-  so_item_id: string | null;          // SO line this PO line was raised from (informational only now)
+  warehouse_id: string | null;
+  so_item_id: string | null;
   po: {
     po_number: string; status: string; expected_at: string | null;
-    // Migration 0180 — header revised dates, used as the fallback ETA when the
-    // line carries no delivery date of its own.
     supplier_delivery_date_2: string | null;
     supplier_delivery_date_3: string | null;
     supplier_delivery_date_4: string | null;
@@ -258,28 +173,16 @@ type PoLineRow = {
 type ProductRow = { code: string; name: string | null; category: string | null };
 type BalanceRow = { item_code: string; warehouse_id: string; variant_key: string | null; qty: number };
 
-/* The type is the shared module's — imported above. A local copy is how the
-   three rules that produce it drifted apart in the first place. */
 
-/* Commander 2026-05-29 — bedframe/sofa MRP must follow the variant: two lines
-   of the same SKU but a different fabric/colour/divan/leg are DIFFERENT goods
-   to stock + order. We key every bucket by (item_code + variant key), where the
-   variant key is the shared inventory identity (computeVariantKey — same one
-   inventory_balances.variant_key is built from, so stock matches byte-for-byte).
-   Mattress/accessory have no soft attrs → key '' → behaves exactly as before. */
 const variantKeyOf = (itemGroup: string | null | undefined, variants: unknown): string =>
   computeVariantKey(itemGroup, (variants ?? null) as VariantAttrs | null);
-/* WH_NONE / composite / loadCommittedShipments moved VERBATIM to
-   lib/committed-shipments.ts (2026-08-07, PR-4) so the DO-time live allocator
-   folds outstanding commitments through the SAME read this engine uses — one
-   definition of "still committed", not two. Behaviour here is unchanged. */
 
 
 export type MrpLine = {
-  soItemId: string;    // mfg_sales_order_items.id — lets the UI one-click PO this line
+  soItemId: string;
   soDocNo: string;
   debtorName: string | null;
-  customerState: string | null;  // staff #8 — info-only, from the SO's customer_state
+  customerState: string | null;
   soDate: string | null;
   deliveryDate: string | null;
   processingDate: string | null;
@@ -290,7 +193,7 @@ export type MrpLine = {
   source: AllocSource;
   poNumber: string | null;
   poEta: string | null;
-  shortageQty: number; // units still uncovered on this line (orange highlight)
+  shortageQty: number;
   /* Owner 2026-07-25 (dead-stock view) — units of THIS line filled from ON-HAND
      stock by the greedy allocation (fromStock). This is the "assigned stock"
      signal: a lot is ASSIGNED to an SO iff MRP allocated on-hand stock to that
@@ -298,9 +201,6 @@ export type MrpLine = {
      tag, but stockQty carries the exact on-hand slice so the drawer's
      assigned-vs-free split reads off the SAME engine (not hard reservations). */
   stockQty: number;
-  /* Commander 2026-05-31 — when this line is covered by a PO (source==='po'),
-     the covering PO's supplier so the UI can show it READ-ONLY (a raised PO's
-     supplier can't change). NULL for stock / shortage lines. */
   poSupplierId: string | null;
   poSupplierName: string | null;
   /* HC-0128 — the supplier this line's content routes to (Hydraulic / NB
@@ -310,9 +210,6 @@ export type MrpLine = {
 };
 
 export type MrpSku = {
-  /* Commander 2026-05-31 — each row is scoped to ONE warehouse (per-WH MRP). The
-     same SKU+variant in two warehouses produces two rows; the UI groups by
-     warehouse. NULL when the demand line has no warehouse bound yet. */
   warehouseId: string | null;
   warehouseCode: string | null;
   warehouseName: string | null;
@@ -327,8 +224,6 @@ export type MrpSku = {
   shortage: number;
   mainSupplierCode: string | null;
   mainSupplierName: string | null;
-  /* All suppliers bound to this SKU (main first) — lets the UI switch supplier
-     in-place before posting the PO. */
   suppliers: Array<{ supplierId: string; code: string; name: string; isMain: boolean }>;
   lines: MrpLine[];
 };
@@ -349,36 +244,27 @@ type SofaSet = {
   lineNo: number | null;
   createdAt: string | null;
   debtorName: string | null;
-  customerState: string | null;  // staff #8 — info-only, from the SO's customer_state
+  customerState: string | null;
   soDate: string | null;
   deliveryDate: string | null;
   processingDate: string | null;
-  orderByDate: string | null; // delivery date − category lead days
+  orderByDate: string | null;
   itemCode: string;
-  variantKey: string;  // shared inventory identity (computeVariantKey) — the bucket key
+  variantKey: string;
   description: string | null;
-  variantLabel: string | null; // spec line e.g. "BF-15 / SEAT 24 / LEG 6\""
-  modules: string[];   // e.g. ['2A','LL','2A'] from variants.cells
-  colour: string | null; // fabricCode + colorCode
+  variantLabel: string | null;
+  modules: string[];
+  colour: string | null;
   qty: number;
-  orderedQty: number;  // units covered by pooled stock+PO supply
+  orderedQty: number;
   /* Owner 2026-07-25 (dead-stock view) — the on-hand-stock slice of orderedQty
      (fromStock), mirroring MrpLine.stockQty for the sofa path. */
   stockQty: number;
-  shortageQty: number; // qty - orderedQty (still to order)
-  poNumber: string | null; // pooled PO that covers this set (earliest ETA), if any
-  poEta: string | null;    // earliest PO-line delivery date (when goods arrive)
-  /* Commander 2026-05-31 — covering PO's supplier so a PO-covered sofa set can
-     show it read-only (mirrors MrpLine.poSupplierId on the general path). The
-     sofa Convert grid previously showed "—" because this wasn't carried. NULL
-     for stock / shortage sets. */
+  shortageQty: number;
+  poNumber: string | null;
+  poEta: string | null;
   poSupplierId: string | null;
   poSupplierName: string | null;
-  /* The batch (= purchase order number) the WHOLE set is planned from — the
-     received dye lot for a `stock` set, the covering PO for a `po` set, the
-     partly-covering PO for a short set that already has units on order. NULL
-     when nothing covers it (order the whole set, on one PO). Company-1 bound
-     lines carry their own PO here. */
   batchNo: string | null;
   suppliers: Array<{ supplierId: string; code: string; name: string; isMain: boolean }>;
 };
@@ -399,7 +285,6 @@ const deliveryOf = (r: DemandRow): string | null => effectiveSoDelivery({
   customer_delivery_date: r.so?.customer_delivery_date,
 });
 
-/* Earliest-first comparator that pushes NULL dates to the end. */
 function byDateAsc(a: string | null, b: string | null): number {
   if (a === b) return 0;
   if (a == null) return 1;
@@ -407,31 +292,22 @@ function byDateAsc(a: string | null, b: string | null): number {
   return a < b ? -1 : 1;
 }
 
-/* A shipment that already took the goods, against a PO that has nothing left to
-   hand over: fully received, dead (CANCELLED / DRAFT), or ordered into a
-   different warehouse / variant bucket than the one it shipped from.
-   `applyCommittedSupply` can deduct nothing for these, so they change no figure
-   on this page — which is exactly why they have to be REPORTED rather than
-   dropped. Each row is a real OUT the receipt-time reconcile will never net. */
 export type UnmatchedCommitment = {
   warehouseId: string | null;
   warehouseCode: string | null;
   itemCode: string;
   variantKey: string;
-  /** = the batch the OUT was stamped with = the PO that owes the units. */
   poNumber: string;
   qty: number;
 };
 
 export type MrpResult = {
   asOf: string;
-  /** Only with `opts.nettingCheck`: batched vs embedded delivered, per demand line. */
   nettingCheck?: NettingCheck;
   categories: string[];
   warehouses: unknown[];
   skus: MrpSku[];
   sofaSets: SofaSet[];
-  /** Commitments with no open PO supply left to deduct from — see the type. */
   unmatchedCommitments: UnmatchedCommitment[];
   /* How much of the demand this run walked has NO delivery date, counted
      ALWAYS — whether or not `includeUndated` let it into `skus[]`/`sofaSets[]`
@@ -454,18 +330,10 @@ export type MrpResult = {
      blended total would overstate every non-sofa tab by the whole sofa book.
      Read `lines` on the general views and `sofaSets` on the sofa view. */
   undated: {
-    /** Undated rows in the general (non-sofa) path — category + warehouse filtered. */
     lines: number;
-    /** Units of `lines` the allocation could not cover. */
     shortageUnits: number;
-    /** Undated sofa SETS (section 8 counts sets, not component lines).
-        NOT category-filtered — see above. */
     sofaSets: number;
-    /** Units of `sofaSets` the allocation could not cover. */
     sofaShortageUnits: number;
-    /** TRUE when this run OMITTED them from `skus[]` / `sofaSets[]`. The
-        response states what it DID, so a caller whose flag was not honoured
-        (see parseIncludeUndated) can see that from the answer alone. */
     hidden: boolean;
   };
   totals: {
@@ -474,74 +342,25 @@ export type MrpResult = {
     shortageUnits: number;
     sofaSetCount: number;
     sofaSetShortageCount: number;
-    /** Units on unmatchedCommitments — 0 is the healthy reading. */
     unmatchedCommitmentUnits: number;
   };
 };
 
-/* Per-SO-line coverage the drill-down needs: is this line covered by stock, by
-   an outstanding PO (then which + when), or still short (shows as Pending). */
 export type SoLineCoverage = { source: AllocSource; po: string | null; eta: string | null };
 
-/* Shared MRP allocation engine. The /mrp route is a thin wrapper around this;
-   the Sales-Order drill-down reads the SAME allocation (via mrpLineCoverage) so
-   the Stock column and the MRP page can never disagree. */
 export async function computeMrp(
   sb: any,
   opts: {
     catFilter: string | null;
     whFilter: string | null;
-    /* VISIBILITY of undated demand lines in the returned rows — NOT a demand
-       filter. The allocation always runs over the full active set (undated
-       sorts last), so two callers with different flags still read the SAME
-       allocation; false merely omits the undated rows/sets from the output
-       (audit D6, 2026-08-01 — this is what makes po-so-coverage's "SO->PO and
-       PO->SO can never disagree" claim hold across pages). */
     includeUndated: boolean;
-    /* WHICH COMPANY'S BOOKS. REQUIRED — `null` is the explicit "no company
-       scoping" (single-company Houzs / pre-migration / cold-start), and it must
-       be TYPED OUT rather than achieved by silence.
-
-       It was optional until 2026-07-17 and the comment below already argued why
-       that is wrong; it just was not applied to this line. The cost, twice, in
-       one day: both HEADLESS callers omitted it — an agent has no request and
-       therefore no company, so the parameter's default answered for them.
-       procurement-agent pooled Houzs + 2990 demand and would have filed one
-       company's SO lines under the other's PO (#710); cs-agent promised
-       customers delivery dates backed by the other company's stock (#712). Both
-       looked exactly like working code, and this signature is what let them.
-
-       An optional scoping parameter is a trap whose default is "wrong": it
-       offers a correct answer and accepts no answer, and no-answer is
-       indistinguishable from not-knowing-to-answer. Required means a new caller
-       must decide; `null`/`undefined` says they did.
-
-       `undefined` is in the type but the KEY IS NOT OPTIONAL — that is the whole
-       mechanism. `companyId?:` lets a caller omit it and say nothing;
-       `companyId: number | null | undefined` makes them type the word. Same
-       runtime behaviour for the honest callers (activeCompanyId(c) returns
-       `number | undefined` and still passes unchanged), but silence is no longer
-       spellable. */
     companyId: number | null | undefined;
-    /* The Procurement Agent's approved lead-time buffers (per-supplier
-       punctuality, per-season). REQUIRED, not optional, on purpose: the PO
-       convert applies these to the date it commits, so an order-by hint
-       computed without them would tell you to order LATER than the PO asks the
-       supplier to deliver — the two would disagree by exactly the buffer, which
-       is the drift this codebase keeps paying for. Making it required means a
-       new caller cannot forget; pass NO_BUFFERS explicitly to opt out. */
     leadBuffers: LeadBuffers;
-    /** Diagnostic: also run the batched delivered reading and report lines that differ. */
     nettingCheck?: boolean;
   },
 ): Promise<MrpResult> {
   const { catFilter, whFilter, includeUndated, companyId, leadBuffers } = opts;
 
-  /* Multi-company isolation: every per-company read (demand SO lines, PO supply,
-     inventory balances, warehouses, suppliers, bindings, product master) is
-     filtered to the ACTIVE company. Mirrors scopeToCompany's semantics — a NO-OP
-     when companyId is null/undefined (unresolved / agent callers / single-company
-     Houzs), so existing behaviour is unchanged where no company is passed. */
   const scoped = <Q>(q: Q): Q =>
     companyId != null ? (q as unknown as { eq(c: string, v: unknown): Q }).eq('company_id', companyId) : q;
   /* A variant-tracked company (binding-mode.ts) compares bucket keys canonically,
@@ -552,37 +371,6 @@ export async function computeMrp(
   const bucketOf = (whId: string | null, code: string, vkey: string): string =>
     composite(whId, code, variantTrackedCompany(companyId) ? canonicalVariantKey(vkey) : vkey);
 
-  /* ── ONE WAVE FOR THE READS THAT NEED NOTHING FROM EACH OTHER (2026-08-17) ──
-     Four of this engine's reads depend on no earlier result — they key off the
-     function's own arguments and nothing else — yet they ran strictly one after
-     another, each paying a full round trip of latency before the next was even
-     issued. They are STARTED here and AWAITED at their original sites below, so
-     every line of arithmetic still runs in exactly the order it did; only the
-     waiting overlaps. Same idiom, and the same reason, as the SO list's
-     enrichment wave in mfg-sales-orders.ts.
-
-     `eager` rather than a bare promise: an un-awaited rejection is an unhandled
-     rejection, which in a Worker is a killed request instead of the 500 this
-     route returns today. eager holds the error and re-throws it at the point of
-     use, so BOTH the error and the order in which errors surface are unchanged —
-     leadBase still throws before the demand read is inspected, exactly as when
-     the two were sequential. That precedence is why this is not a Promise.all.
-
-     Deliberately NOT in this wave: mfg_products by code, the fabric enrichment,
-     suppliers and the bindings all read keys derived from the demand rows, and
-     loadCommittedShipments reads the PO rows. Those dependencies are real.
-
-     Also deliberately NOT in this wave: the `warehouses` and
-     `state_warehouse_mappings` masters, which are independent and would have
-     fitted. Both DISCARD their read error today, and check-swallowed-reads.mjs
-     finds that by matching `const { data … } = await …` at the use site — a
-     shape `eager` cannot preserve. Hoisting them took mrp.ts from 1 swallowed
-     read to 0 in that report while the read stayed exactly as swallowed as
-     before, which is the "a checker that cannot match reports a clean run"
-     trap in CLAUDE.md. They are two round trips out of ~105; the finding
-     staying visible is worth more than the two. Fixing the discarded error is
-     a behaviour change (today a failed read blanks the names and the plan
-     continues) and belongs in its own PR. */
   const leadBaseProm = eager(loadLeadTimeBase(
     scoped(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT)),
   ));
@@ -593,9 +381,6 @@ export async function computeMrp(
   const leadOverridesProm = eager(loadSupplierCategoryOverrides(
     scoped(sb.from('mrp_supplier_category_lead_times').select(LEAD_OVERRIDE_SELECT)),
   ));
-  /* The category walk (section 2), the two warehouse masters (section 2) and the
-     stock + PO-supply reads (sections 3 and 4). Each is byte-identical to the
-     query that stood at its own site; only the moment it is ISSUED moved. */
   /* HC-0128 — the NB-series fabric codes (NB FURNITURE routing). Keyed off
      nothing but the company, so it rides this wave instead of adding a round
      trip after the bindings. */
@@ -622,31 +407,8 @@ export async function computeMrp(
     .order('id')
     .range(from, to)));
 
-  // ── 0. Per-category lead times (Commander 2026-05-29), now per-WAREHOUSE
-  //       (Commander 2026-06-22, migration 0184 / SCM mig 0036) ────────────
-  // order-by date = delivery date − lead_days[warehouse, category].
-  //
-  // The rule lives in scm/lib/lead-time.ts, shared with the PO-from-SO convert
-  // that WRITES this date onto a real purchase order. It used to be a copy in
-  // each, and the copies had drifted on error handling — this one surfaced the
-  // query error (see below), the convert swallowed it. One module now, so the
-  // hint on this page and the date on the PO cannot disagree.
-  //
-  // loadLeadTimeBase THROWS on a query error, which is the behaviour this route
-  // already had and the reason for it is unchanged: a swallowed error silently
-  // zeroed EVERY lead time -> order-by date = production date = delivery date
-  // for the whole plan. Fail loudly rather than emit a wrong-but-plausible
-  // schedule.
   const leadBase = (await leadBaseProm)();
   const leadOverrides = (await leadOverridesProm)();
-  /* supplier (id + code) is the SKU's MAIN supplier — an approximation, and a
-     stated one: the convert may end up on a different supplier via a per-pick or
-     per-SKU override, in which case THAT supplier's override/buffer applies and
-     the real PO date can differ from this hint. The main supplier is what this
-     page shows and what the convert picks absent an override, so it is the
-     honest default; the alternative (no supplier at all) would disagree with
-     EVERY overridden/buffered PO rather than just the ones that moved. The id
-     drives the manual per-supplier override, the code the learned buffer. */
   const orderByOf = (
     deliveryDate: string | null,
     category: string | null,
@@ -665,12 +427,6 @@ export async function computeMrp(
       }).total,
     );
 
-  // ── 1. Demand — outstanding SO lines ──────────────────────────────────
-  // Status filter pushed into SQL (see the paging note above) so done SOs never
-  // spend read budget; ORDER BY id so the page boundaries are stable across
-  // requests (paginateAll's `.range()` windows are only coherent under a total
-  // order); PAGED so the plan sees every open line, not the first 1000.
-  // Each line's DO lines ride along (lib/mrp-delivered.ts); without them, the batched reading below.
   const readDemand = (embedDelivered: boolean) => paginateAll<DemandRow>((from, to) => scoped(sb
     .from('mfg_sales_order_items')
     .select(`
@@ -711,17 +467,11 @@ export async function computeMrp(
      take supply from a dated line and every dated line's coverage is IDENTICAL
      under both flag values. `includeUndated` only controls whether undated
      rows appear in the RESULT (visibility, not math). */
-  /* A held order is not demand: hold blocks raising its PO (firstUnorderableSo)
-     and never writes status, so SO_DONE cannot see it. */
   const demandActive = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
     (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && !isDocumentHeld(r.so) && isReleased(r) && r.qty > 0,
   );
   const isDatedLine = (r: DemandRow): boolean => deliveryOf(r) !== null;
 
-  // A partially-delivered SO keeps its header status active (the header only
-  // flips to DELIVERED once EVERY line is fully covered), so already-delivered
-  // lines would otherwise phantom back in as demand and over-order. Subtract
-  // delivered per line and drop any line with nothing left to fulfil.
   /* Delivered from the DO lines embedded in the demand read (lib/mrp-delivered.ts,
      HC-0002): the number soDeliverableRemaining gives, without re-reading every
      open order in 200-doc batches (~70 of the engine's ~90 round trips). The
@@ -743,11 +493,6 @@ export async function computeMrp(
   const delivered = deliveredEmbedded
     ? deliveredBySoItemFrom(demandRaw as unknown as MrpDemandLine[], demandDocSet, await readUnlinkedDoLines(sb, scoped, demandDocSet))
     : await deliveredBatched();
-  /* Delivered GROSS of returns (Sim, 2026-10-20, 2990-0011): a returned unit
-     is not demand again. The rejected goods go back to stock for the next
-     matching order; a customer who still wants the item gets a new SO, and
-     that SO is what purchasing orders against. The stock allocator applies
-     the same rule. */
   const deliveredOf = (soItemId: string): number => Math.max(0, delivered.get(soItemId) ?? 0);
   let nettingCheck: NettingCheck | undefined;
   if (opts.nettingCheck && deliveredEmbedded) {
@@ -757,34 +502,12 @@ export async function computeMrp(
   const effQtyOf = (r: DemandRow): number => Math.max(0, r.qty - deliveredOf(r.id));
   const demand = demandActive.filter((r) => effQtyOf(r) > 0);
 
-  // Stamp variants.fabricSupplierCode on the demand lines (ONE batched read,
-  // fail-soft) BEFORE any label is built, so every variant summary this page
-  // shows (bucket vlabel in section 6, sofa-set labels in section 8) renders
-  // the shared final fabric format "CG-001 Pearl (KN390-1)" — owner
-  // 2026-07-24, same READ enrichment as the document detail endpoints. The ctx
-  // shim mirrors `scoped()` above: eq(company_id) when a company is resolved,
-  // no filter otherwise. variantKeyOf is unaffected — fabricSupplierCode is
-  // not a key attribute (see shared/variant-key.ts ATTRS_BY_GROUP).
   await enrichLinesWithFabricSupplierCode(
     sb,
     { get: (k: unknown) => (k === 'companyId' ? companyId ?? undefined : undefined) },
     demand as unknown as Array<Record<string, unknown>>,
   );
 
-  // ── 2. Product master — category + name (bounded by the codes in demand) ─
-  // The category lookup MUST be complete for every demanded SKU. An unbounded
-  // `select()` is capped at ~1000 rows by PostgREST, so once the catalog grew
-  // past the cap, non-sofa SO lines whose product fell outside the returned
-  // slice resolved to a null category and were silently dropped by the category
-  // filter below — the "No open Sales-Order demand / nothing needs ordering"
-  // bug for Bedframe / Mattress / Accessories (sofa kept working because its
-  // module SKUs are few and stay within the cap). Fetch BY the codes actually
-  // in demand (bounded .in, chunked) so the map can never be clipped.
-  //
-  // chunkIn replaces a hand-rolled 300-at-a-time loop: it batches the IN-list
-  // the same way AND pages each batch, which the hand-rolled loop did not. That
-  // second half now matters — the demand read is paged, so `demandCodes` is no
-  // longer bounded by a 1000-row demand slice.
   const prodByCode = new Map<string, ProductRow>();
   const demandCodes = [...new Set(demand.map((d) => d.item_code).filter((c): c is string => !!c))];
   /* `.filter(… 'in', pgrestInList(batch))`, not `.in('code', batch)` — this is
@@ -798,20 +521,11 @@ export async function computeMrp(
     .from('mfg_products')
     .select('code, name, category')
     .filter('code', 'in', pgrestInList(batch)))
-    // ORDER BY id, not code: `.range()` windows are only coherent under a TOTAL
-    // order, and `code` is unique per COMPANY — with companyId null (the
-    // no-scoping case) the same code appears once per company, so a tie at a
-    // page boundary could drop or repeat a row. id is unique unconditionally.
     .order('id')
     .range(from, to));
   if (prodErr) throw new Error(`mrp_load_failed: ${prodErr.message}`);
   for (const p of prods) prodByCode.set(p.code, p);
 
-  // The category dropdown lists every catalog category (a handful of enum
-  // values), independent of current demand. The DISTINCT values are few, but
-  // the read that finds them walks the whole catalogue (2,293 rows in prod on
-  // 2026-08-16), so it must be paged — unpaged it saw the first 1000 products
-  // and a category owned only by later rows would be missing from the tab list.
   const categorySet = new Set<string>();
   const { data: catRows, error: catErr } = (await catRowsProm)();
   if (catErr) throw new Error(`mrp_load_failed: ${catErr.message}`);
@@ -854,25 +568,10 @@ export async function computeMrp(
       sb.from('state_warehouse_mappings').select('state, warehouse_id'),
     )).data ?? []) as Array<{ state: string | null; warehouse_id: string | null }>,
   };
-  /* Stamped onto the row in place — the same enrichment idiom as
-     enrichLinesWithFabricSupplierCode above — so every downstream bucket key,
-     warehouse filter and label reads one resolved value and they cannot drift. */
   for (const d of demand) {
     d.warehouse_id = resolveLineWarehouseId(d.warehouse_id, d.so, soWarehouseMasters);
   }
 
-  // ── 3. Stock on hand — inventory_balances keyed by (warehouse, code, variant) ──
-  // Commander 2026-05-31 — warehouse is part of the bucket identity (no cross-WH
-  // pooling). whFilter scopes the query to one warehouse; otherwise every
-  // warehouse's balance lands in its own bucket.
-  // PAGED: 1,065 balance rows in prod on 2026-08-16 — unpaged, the last ~65
-  // buckets read as zero stock and MRP invented a shortage for each of them.
-  // inventory_balances is a VIEW (migration 0084) grouped by
-  // (warehouse_id, item_code, variant_key, company_id) and has no id, so
-  // that four-column tuple IS its unique key — order by all four or the
-  // paging is not total. company_id matters precisely when it is NOT filtered
-  // (companyId null), which is the case that would otherwise tie. The query
-  // itself is unchanged; it is ISSUED in the wave at the top of this function.
   const { data: balances, error: balErr } = (await balancesProm)();
   if (balErr) throw new Error(`mrp_load_failed: ${balErr.message}`);
   const stockByKey = new Map<string, number>();
@@ -881,29 +580,12 @@ export async function computeMrp(
     stockByKey.set(k, (stockByKey.get(k) ?? 0) + (b.qty ?? 0));
   }
 
-  // ── 4. Outstanding PO supply — open PO lines with ETA, keyed by (warehouse, code, variant) ──
-  // Each PO line's ship-to warehouse = line warehouse_id, falling back to the PO
-  // header's purchase_location_id. No SO↔PO linkage — supply is a pure pool.
-  // Dead-PO filter pushed into SQL, deterministic ORDER BY, and PAGED (see the
-  // paging note at the top). This read matched 873 rows in prod on 2026-08-16 —
-  // under the 1000 ceiling TODAY, which is precisely why it must be paged now:
-  // it is one busy month from silently dropping supply, and the failure mode is
-  // invisible (phantom shortage on whichever buckets fall off the end).
-  // The read error is THROWN: it used to be silently discarded, and a failed
-  // supply read produced a plan with ZERO PO supply — phantom shortage
-  // everywhere, rendered as if it were true.
   const { data: poRaw, error: poErr } = (await poRawProm)();
   if (poErr) throw new Error(`mrp_load_failed: ${poErr.message}`);
-  // Commander 2026-05-31 — carry the covering PO's supplier so a covered line
-  // can display it read-only (a raised PO's supplier is fixed). Name resolved
-  // from the suppliers map below.
   type PoSupply = { poNumber: string; eta: string | null; qtyLeft: number; supplierId: string | null };
   const poByKey = new Map<string, PoSupply[]>();
   const poOutstandingByKey = new Map<string, number>();
   const poSupplierIds = new Set<string>();
-  /* Collected FLAT first so the hard-committed deduction can run over the whole
-     set before anything is bucketed — a commitment is owed to a (bucket, PO)
-     pair, and two PO lines can share one. */
   const poDrafts: PoSupplyEntry[] = [];
   /* ── DEDICATED SUPPLY (owner 2026-08-31, option 甲; company 1 only) ─────────
      A company-1 bedframe or `(SP)` mattress line is EXCLUSIVELY bound to its own
@@ -985,10 +667,6 @@ export async function computeMrp(
       ids.add(String(r.so_item_id));
       poRaisedFor.set(r.po.po_number, ids);
     }
-    /* Migration 0180 — ETA is the EFFECTIVE (latest revised) delivery date: the
-       line's own effective date (MAX over its delivery_date + revisions), else
-       the header's effective date (MAX over expected_at + revisions). camelCase
-       trap: the pg driver camelCases result cols, so dual-read snake_case. */
     const rr = r as unknown as Record<string, string | null | undefined>;
     const poh = r.po as unknown as Record<string, string | null | undefined>;
     const lineEta = effectiveDelivery(
@@ -1005,9 +683,6 @@ export async function computeMrp(
     );
     const eta = lineEta ?? headerEta ?? null;
     const left = (r.qty ?? 0) - (r.received_qty ?? 0);
-    /* The RECEIVED half is captured before the `left <= 0` exit below: a fully
-       received dedicated PO leaves nothing outstanding and is exactly the case
-       that must still cover its line. */
     if (isDedicated(r)) {
       const soItemId = String(r.so_item_id);
       const got = Number(r.received_qty ?? 0);
@@ -1018,7 +693,7 @@ export async function computeMrp(
         dedicatedOpenByLine.set(soItemId, open);
         if (r.po.supplier_id) poSupplierIds.add(r.po.supplier_id);
       }
-      continue;   // dedicated: never free supply for another line's bucket
+      continue;
     }
     if (left <= 0) continue;
     const poWh = r.warehouse_id ?? r.po.purchase_location_id ?? null;
@@ -1030,14 +705,6 @@ export async function computeMrp(
     if (r.po.supplier_id) poSupplierIds.add(r.po.supplier_id);
   }
 
-  /* ── 4b. Remove what is already spoken for (2026-07-31) ─────────────────────
-     Units a ship-before-arrival already owns are not supply: the receipt is
-     going to hand them to that shipment (fn_reconcile_dropship_batch), not to a
-     new Sales Order. Deduct them from the PO pool and ADD THE SAME UNITS BACK to
-     the bucket's on-hand figure — the OUT movement already took them off
-     inventory_balances, so deducting alone would count the commitment twice.
-     applyCommittedSupply guarantees the two are the same number in the same
-     bucket; see its contract. */
   const committed = new Map<string, OutstandingCommitment>();
   for (const c of (await loadCommittedShipments(sb, scoped, poDrafts.map((d) => d.poNumber))).values()) {
     const bucketKey = bucketOf(c.warehouseId, c.itemCode, c.variantKey);
@@ -1045,10 +712,6 @@ export async function computeMrp(
     committed.set(k, { ...c, bucketKey, qty: (committed.get(k)?.qty ?? 0) + c.qty });
   }
   const supply = applyCommittedSupply(poDrafts, committed);
-  /* Deliberately NOT silent. These are commitments the deduction could not
-     reach: the PO is fully received, went dead, or the shipment sits in a
-     different bucket from the PO line meant to cover it. They alter no figure
-     here, so if they were only "not dropped" nobody would ever see one. */
   const unmatchedCommitments: UnmatchedCommitment[] = supply.unmatched.map((u) => ({
     warehouseId: u.warehouseId,
     warehouseCode: u.warehouseId ? (whById.get(u.warehouseId)?.code ?? null) : null,
@@ -1072,35 +735,14 @@ export async function computeMrp(
     poOutstandingByKey.set(e.bucketKey, (poOutstandingByKey.get(e.bucketKey) ?? 0) + e.qtyLeft);
   }
 
-  /* ── 4c. Remove what the SOFA ALLOCATOR already locked (2026-08-24) ─────────
-     The whole-set allocator stamps allocated_batch_no on every module line of
-     a set the moment ONE received batch covers the whole set, and the DO
-     ship-gate enforces that lock. Those units are still on hand — they sit in
-     inventory_balances — but they are NOT free supply: handing them to an
-     earlier-delivery SO promises units the ship-gate will refuse to release.
-     Measured on prod 2026-08-24 (SO-2607-019 vs SO-2608-006): the earlier SO's
-     RHF module read "stock" it could never ship, the claiming SO's read SHORT,
-     and the From-SO picker — which reads this same coverage — could not offer
-     the line that actually needed ordering, steering the operator into a
-     single-side PO that could never complete the earlier SO's set.
-     The carve happens per bucket in the two walks below (sections 7 and 8):
-     openBucketStock splits on-hand into the claim reserve and the free pool,
-     drawBucketStock serves each claiming line from its own reserve first. No
-     add-back leg, unlike section 4b — the demand line and its units coexist in
-     the bucket, so the fix is pairing them, not re-attributing a deduction.
-     See lib/batch-claimed-stock.ts for the rule and its edges. */
   const batchClaims = collectBatchClaims(demand.map((d) => ({
     soItemId: d.id,
     bucketKey: bucketOf(d.warehouse_id ?? null, d.item_code, variantKeyOf(d.item_group, d.variants)),
-    /* camelCase trap, same as the PO-line read above: a repair script driving
-       this through the postgres shim gets allocatedBatchNo — dual-read so the
-       carve does not silently vanish on that path. */
     allocatedBatchNo: d.allocated_batch_no
       ?? (d as unknown as Record<string, string | null>).allocatedBatchNo ?? null,
     remainingQty: effQtyOf(d),
   })));
 
-  // Resolve PO supplier ids → names for the read-only covered-line display.
   const supplierNameById = new Map<string, string>();
   if (poSupplierIds.size > 0) {
     const { data: poSups, error: supErr } = await chunkIn<{ id: string; name: string }>(
@@ -1112,25 +754,10 @@ export async function computeMrp(
   }
   for (const arr of poByKey.values()) arr.sort((a, b) => byDateAsc(a.eta, b.eta));
 
-  // ── 5. Suppliers per SKU — main + alternates (so the UI can switch supplier
-  //       in-place before posting the PO, AutoCount-style). ────────────────
   type SupplierOpt = { supplierId: string; code: string; name: string; isMain: boolean };
   const codes = [...new Set(demand.map((d) => d.item_code))];
   const mainByCode = new Map<string, { id: string; code: string; name: string }>();
   const suppliersByCode = new Map<string, SupplierOpt[]>();
-  /* CHUNKED + PAGED, and since 2026-08-19 through the SHARED reader
-     (lib/supplier-bindings.ts) rather than a copy of the rule that lived only
-     here. Two separate ceilings were being crossed at this call site: the
-     IN-list was the FULL demand code list in one URL (unbounded now that demand
-     is paged), and the result was 2,660 rows in prod on 2026-08-16 against a
-     1000-row response cap — so ~⅔ of the bindings never arrived and the SKUs
-     they belonged to showed no supplier at all, which is the difference between
-     a row you can convert to a PO and a row you cannot.
-     The fix was then applied HERE ONLY. Five other places ask the same question
-     the same way, two of them on the path the operator takes next from this
-     page; the reader is where the rule now lives so a sixth caller inherits it
-     instead of re-deriving it. ORDER (is_main_supplier DESC first, then
-     item_code + id to make it total) is stated once, in that file. */
   if (codes.length > 0) {
     type BindRow = { item_code: string; is_main_supplier: boolean; supplier_id: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null };
     const { data: binds, error: bindErr } = await readMfgProductBindings<BindRow>(sb, {
@@ -1141,11 +768,10 @@ export async function computeMrp(
     if (bindErr) throw new Error(`mrp_load_failed: ${bindErr.message}`);
     for (const b of binds) {
       const s = Array.isArray(b.supplier) ? b.supplier[0] : b.supplier;
-      if (!s) continue; // orphaned binding (supplier deleted) — skip
+      if (!s) continue;
       const arr = suppliersByCode.get(b.item_code) ?? [];
       arr.push({ supplierId: b.supplier_id, code: s.code, name: s.name, isMain: b.is_main_supplier });
       suppliersByCode.set(b.item_code, arr);
-      // First (is_main_supplier first via ORDER BY) wins as the default main.
       if (!mainByCode.has(b.item_code)) mainByCode.set(b.item_code, { id: b.supplier_id, code: s.code, name: s.name });
     }
   }
@@ -1164,18 +790,7 @@ export async function computeMrp(
   const nbSupplierIdOf = (code: string): string | null =>
     suppliersByCode.get(code)?.find((s) => s.code === NB_SUPPLIER_CODE)?.supplierId ?? null;
 
-  // ── 6. Group demand by (warehouse + SKU + variant), apply category filter ─
-  // Commander 2026-05-31 — warehouse is part of the bucket: the same SKU+variant
-  // in two warehouses is two rows (no cross-WH pooling). When whFilter is set,
-  // only that warehouse's demand lines are grouped. Sofa is handled separately
-  // as colour-matched SETS (section 8) so it isn't double-counted here.
   type Bucket = { whId: string | null; code: string; vkey: string; vlabel: string; rows: DemandRow[] };
-  /* Category from the catalog (authoritative); when the SO line's item_code is
-     NOT in mfg_products yet (an item ordered before it was added to the SKU
-     Master), fall back to the line's own item_group so the demand still SHOWS
-     under its category tab instead of silently vanishing. Wei Siang 2026-06-16:
-     the Bedframe/Mattress tabs were dropping every line whose code wasn't
-     catalogued — only the catalogued ones (e.g. BARON-(K)) survived. */
   const catFromGroup = (g: string | null | undefined): string | null => {
     const s = (g ?? '').trim().toUpperCase();
     if (s.includes('BEDFRAME')) return 'BEDFRAME';
@@ -1207,10 +822,6 @@ export async function computeMrp(
   for (const d of demand) {
     const prod = prodByCode.get(d.item_code);
     const cat = prod?.category ?? catFromGroup(d.item_group);
-    /* P1 SO-SKU spec §4.6 — SERVICE lines (delivery fee / dispose / lift) are
-       services, not goods: they never create purchase demand. Skip BEFORE the
-       category filter so even ?category=SERVICE can't surface them. (Section 8
-       below is SOFA-only by construction — SERVICE can't enter it.) */
     if (isServiceLine({ itemGroup: d.item_group, itemCode: d.item_code, category: cat })) continue;
     if (catFilter && cat !== catFilter) continue;
     if (cat === 'SOFA') continue;
@@ -1224,15 +835,6 @@ export async function computeMrp(
     demandByKey.set(k, bucket);
   }
 
-  // ── 7. Allocate (greedy by SO delivery date) per (warehouse + SKU + variant) ─
-  // Commander 2026-05-31 — pure date-priority pooling, NO po_qty_picked lock.
-  // Supply = this bucket's stock + open PO lines (same warehouse+variant). The
-  // earliest-delivery SO line claims stock first, then the earliest-ETA PO; what
-  // remains is shortage. A line already on a PO is covered naturally because that
-  // PO is in the supply pool — no special "own pick" handling needed.
-  /* Undated demand tally — incremented on the SAME rows the flag would drop, so
-     it cannot drift from what is (not) rendered. Written next to the `continue`
-     it explains; read into `undated` at the bottom. */
   let undatedLines = 0;
   let undatedShortageUnits = 0;
   let undatedSofaSets = 0;
@@ -1242,18 +844,12 @@ export async function computeMrp(
   for (const [k, bucket] of demandByKey.entries()) {
     const { whId, code, vlabel, rows } = bucket;
     const prod = prodByCode.get(code);
-    // Commander 2026-05-31 — deterministic same-day allocation: when two SO
-    // lines share a delivery date, allocate by SO doc number ascending so the
-    // greedy walk never flips nondeterministically (SO-2605-001 before -002).
     rows.sort((a, b) => {
       const byDate = byDateAsc(deliveryOf(a), deliveryOf(b));
       if (byDate !== 0) return byDate;
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
 
-    /* On-hand split into (claim reserve, free pool) — section 4c. A line the
-       allocator batch-locked draws its own units from the reserve whatever its
-       date rank; everyone else competes for the pool minus the claims. */
     const bucketStock = openBucketStock(stockByKey.get(k) ?? 0, batchClaims.qtyByBucket.get(k) ?? 0);
     /* Clone PO supply so the greedy walk can mutate qtyLeft without touching the
        shared map. SUPPLY IS THIS BUCKET'S OWN PO LINES AND NOTHING ELSE.
@@ -1302,7 +898,7 @@ export async function computeMrp(
     const lines: MrpLine[] = [];
     let qtyNeeded = 0;
     for (const r of rows) {
-      const eff = effQtyOf(r);                              // qty still to fulfil (ordered − delivered)
+      const eff = effQtyOf(r);
       let need = eff;
       /* BOUND LINE (company 1, bedframe / `(SP)` mattress / custom pillow). Drawn at
          STOCK, and only at stock, and the distinction is the whole design:
@@ -1359,9 +955,6 @@ export async function computeMrp(
       let poNumber: string | null = null;
       let poEta: string | null = null;
       let poSupplierId: string | null = null;
-      /* An unbound line still takes its OWN linked purchase order first: that PO
-         left the pool because the PO side is bound (see `isDedicated`), and nothing
-         else can draw it. Company 2 dedicates nothing, so its own queue is empty. */
       const queues = bound
         ? [dedicatedOpenByLine.get(r.id) ?? []]
         : [dedicatedOpenByLine.get(r.id) ?? [], poQueue];
@@ -1377,13 +970,6 @@ export async function computeMrp(
         }
       }
 
-      /* Audit D6 — the allocation above ALWAYS runs (undated rows sort last, so
-         they only ever consume what dated rows left behind); visibility is the
-         only thing the flag controls. A hidden row's consumption stands so the
-         one allocation is identical for every caller.
-
-         COUNTED BEFORE THE `continue`, and unconditionally: the tally has to
-         describe the rows the flag removes, which is only knowable here. */
       if (!isDatedLine(r)) {
         undatedLines += 1;
         undatedShortageUnits += need;
@@ -1391,10 +977,6 @@ export async function computeMrp(
       }
       qtyNeeded += eff;
 
-      /* need>0 → still uncovered (SHORT). need==0 → covered by a pooled PO
-         (poNumber set) or by stock. The rule is the shared module, because the
-         frontend synthesises sofa-SET rows itself and its hand-written copy had
-         drifted to two arms — see shared/mrp-alloc-source.ts. */
       const source: AllocSource = allocSourceOf(need, poNumber);
       const lineDelivery = deliveryOf(r);
       lines.push({
@@ -1411,23 +993,16 @@ export async function computeMrp(
         poNumber,
         poEta,
         shortageQty: need,
-        stockQty: fromStock, // on-hand units this line consumed (assigned-stock signal)
-        // Only covered-by-PO lines carry a read-only supplier; stock/shortage = null.
+        stockQty: fromStock,
         poSupplierId: source === 'po' ? poSupplierId : null,
         poSupplierName: source === 'po' && poSupplierId ? (supplierNameById.get(poSupplierId) ?? null) : null,
         ruleSupplierId: ruleSupplierIdOf(r),
       });
     }
 
-    // Every row of this bucket is hidden (undated demand, caller hides undated):
-    // no visible line means no row — exactly what the old exclude-from-demand
-    // shape produced, minus the divergent allocation.
     if (lines.length === 0) continue;
 
     const stock = stockByKey.get(k) ?? 0;
-    // Mirrors the queue above: the '' bucket's outstanding qty used to be added
-    // on when the fallback fired, which is what put units on the PO Outstanding
-    // column that this row's variant was never going to receive.
     const poOutstanding = poOutstandingByKey.get(k) ?? 0;
     const shortage = lines.reduce((acc, l) => acc + l.shortageQty, 0);
     const main = mainByCode.get(code);
@@ -1494,10 +1069,6 @@ export async function computeMrp(
   type SofaBucket = { whId: string | null; code: string; vkey: string; rows: DemandRow[] };
   const sofaByKey = new Map<string, SofaBucket>();
   for (const d of demand) {
-    /* Audit 2026-06-20 — mirror section 6's catFromGroup fallback (line 468):
-       a sofa SO line whose item_code isn't in mfg_products yet (ordered before
-       it was added to the SKU Master) must still bucket as SOFA via its
-       item_group, or it shows on NO MRP tab and never gets a PO. */
     const sofaCat = prodByCode.get(d.item_code)?.category ?? catFromGroup(d.item_group);
     if (sofaCat !== 'SOFA') continue;
     if (whFilter && (d.warehouse_id ?? null) !== whFilter) continue;
@@ -1510,22 +1081,11 @@ export async function computeMrp(
   }
 
   const sofaSets: SofaSet[] = [];
-  /* What one module line is planned from (lib/sofa-set-plan.ts). Each walk
-     below writes one per demand line; the emit loop turns it into the row. */
   const sofaPlanByLine = new Map<string, SofaPlan>();
-  /* camelCase trap, same as section 4c: a repair script driving this through
-     the postgres shim gets allocatedBatchNo — dual-read so the lock is seen. */
   const lockOf = (d: DemandRow): string | null =>
     d.allocated_batch_no ?? (d as unknown as Record<string, string | null>).allocatedBatchNo ?? null;
 
   if (boundCompany) {
-    /* COMPANY 1 SOFA IS HARD-BOUND — the twin of section 7's branch, added
-       2026-09-09 for the reason section 4a records at length. A bound line
-       draws its OWN purchase order and nothing else: its receipt first
-       (`dedicatedReceivedByLine`, which is why a fully received PO still covers
-       even though it left the open queue empty), then its own outstanding
-       quantity. Planned per LINE, as the stored allocator's hard-binding arm
-       does; the pooled set walk below is company 2's model. */
     for (const bucket of sofaByKey.values()) {
       for (const d of bucket.rows) {
         let need = effQtyOf(d);
@@ -1579,25 +1139,18 @@ export async function computeMrp(
     for (const d of rows) {
       const v = (d.variants ?? {}) as Record<string, unknown>;
       const cells = Array.isArray(v.cells) ? (v.cells as Array<{ moduleId?: string }>) : [];
-      /* SO-SKU spec P3 — split module lines (and Backend hand-opened lines)
-         carry no cells[]; the line ITSELF is one module. Derive its code from
-         the SKU so the set-composition label stays filled. Display only — the
-         allocation math above pools by (warehouse, item_code, variant_key). */
       const modules = cells.length > 0
         ? cells.map((c) => sstr(c.moduleId)).filter(Boolean)
         : [sstr(splitSofaCode(d.item_code).sizeCode)].filter(Boolean);
       const colour = [sstr(v.fabricCode), sstr(v.colorCode) || sstr(v.colourCode)].filter(Boolean).join(' ');
-      const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered)
+      const eff = effQtyOf(d);
       const prod = prodByCode.get(d.item_code);
       const setDelivery = deliveryOf(d);
       const plan = sofaPlanByLine.get(d.id)
         ?? { fromStock: 0, need: eff, poNumber: null, poEta: null, poSupplierId: null, batchNo: null };
       const need = plan.need;
-      const ordered = eff - need;                     // covered by one batch's stock + PO
+      const ordered = eff - need;
 
-      /* Audit D6 — same rule as section 7: the allocation above always runs;
-         the flag only controls whether the (undated) set is rendered. Counted
-         before the `continue` for the same reason as section 7. */
       if (!isDatedLine(d)) {
         undatedSofaSets += 1;
         undatedSofaShortageUnits += need;
@@ -1626,14 +1179,10 @@ export async function computeMrp(
         colour: colour || null,
         qty: eff,
         orderedQty: ordered,
-        stockQty: plan.fromStock, // on-hand units this set consumed (assigned-stock signal)
+        stockQty: plan.fromStock,
         shortageQty: need,
         poNumber: plan.poNumber,
         poEta: plan.poEta,
-        // PO-covered sets carry the covering PO's supplier (read-only); it's
-        // only non-null when a PO was actually consumed above. Name resolved
-        // from the same map the general path uses, so sofa + general display
-        // identically (fixes the sofa "—" supplier).
         poSupplierId: plan.poSupplierId,
         poSupplierName: plan.poSupplierId ? (supplierNameById.get(plan.poSupplierId) ?? null) : null,
         batchNo: plan.batchNo,
@@ -1641,12 +1190,10 @@ export async function computeMrp(
       });
     }
   }
-  // To-order sets float to the top, then by earliest delivery date.
   sofaSets.sort((a, b) => {
     const sa = a.shortageQty > 0 ? 1 : 0;
     const sb = b.shortageQty > 0 ? 1 : 0;
     if (sa !== sb) return sb - sa;
-    // Commander 2026-05-29 — soonest order-by date first.
     return byDateAsc(a.orderByDate, b.orderByDate);
   });
 
@@ -1676,10 +1223,6 @@ export async function computeMrp(
   };
 }
 
-/* Flatten an MRP result into a per-SO-line coverage map (keyed by
-   mfg_sales_order_items.id). The Sales-Order drill-down stamps each line from
-   this so its Stock column shows the exact same Stock / PO·ETA / Pending the
-   MRP page computed — one allocation, one source of truth. */
 export function mrpLineCoverage(result: MrpResult): Map<string, SoLineCoverage> {
   const map = new Map<string, SoLineCoverage>();
   for (const sku of result.skus) {
@@ -1687,15 +1230,7 @@ export function mrpLineCoverage(result: MrpResult): Map<string, SoLineCoverage> 
       map.set(l.soItemId, { source: l.source, po: l.poNumber, eta: l.poEta });
     }
   }
-  // Sofa SETS aren't in skus[].lines — derive their source from picked vs short.
   for (const s of result.sofaSets) {
-    /* A NAMED PO WINS HERE, even when the set is still short — and that is not
-       the same rule as the general lines above. This map answers the PURCHASE
-       side's question ("is a PO covering this outstanding SO line", advisory),
-       where a partly-covering PO is the very thing being reported. The two
-       rules used to sit six hundred lines apart in this file with nothing
-       saying they differed on purpose; both now live in
-       shared/mrp-alloc-source.ts with the distinction written down. */
     const source: AllocSource = allocSourceCoveringPo(s.shortageQty, s.poNumber);
     map.set(s.soItemId, { source, po: s.poNumber, eta: s.poEta });
   }
@@ -1719,13 +1254,10 @@ export type MrpStockAssignment = {
   warehouseId: string | null;
   itemCode: string;
   variantKey: string;
-  assigned: number;            // on-hand units MRP allocated to SO demand in this bucket
-  claims: MrpStockClaim[];     // which SO(s) the assigned units belong to
+  assigned: number;
+  claims: MrpStockClaim[];
 };
 
-/* Key a stock-assignment bucket the SAME way the reservations endpoint keys a
-   lot: `${warehouse}|${item_code}|${variant_key}` (WH_NONE for a null warehouse,
-   matching composite() above). */
 export function stockAssignmentKey(
   warehouseId: string | null,
   itemCode: string,
@@ -1749,7 +1281,6 @@ export function mrpStockAssignment(result: MrpResult): Map<string, MrpStockAssig
     const bucket = map.get(key)
       ?? { warehouseId, itemCode, variantKey, assigned: 0, claims: [] as MrpStockClaim[] };
     bucket.assigned += stockQty;
-    // Collapse repeat SO docs (a split line) into one claim.
     const existing = bucket.claims.find((cl) => cl.soDocNo === soDocNo);
     if (existing) {
       existing.qty += stockQty;
@@ -1766,7 +1297,6 @@ export function mrpStockAssignment(result: MrpResult): Map<string, MrpStockAssig
       add(sku.warehouseId, sku.itemCode, sku.variantKey, l.stockQty, l.soDocNo, l.deliveryDate);
     }
   }
-  // Sofa SETS aren't in skus[].lines — their stockQty is the assigned-stock slice.
   for (const s of result.sofaSets) {
     add(s.warehouseId, s.itemCode, s.variantKey, s.stockQty, s.soDocNo, s.deliveryDate);
   }
@@ -1781,17 +1311,15 @@ export function mrpStockAssignment(result: MrpResult): Map<string, MrpStockAssig
   return map;
 }
 
-/* One floating-coverage assignment, seen from the PURCHASE side: a PO's supply
-   is currently covering this outstanding Sales-Order line. Advisory only. */
 export type PoCoverageAssignment = {
-  soItemId: string;      // mfg_sales_order_items.id (lets the UI deep-link the SO)
-  soDocNo: string;       // Sales Order document number (clickable target)
-  itemCode: string;      // the SKU the coverage matched on
+  soItemId: string;
+  soDocNo: string;
+  itemCode: string;
   variantLabel: string | null;
-  deliveryDate: string | null; // the covered SO LINE's delivery date (owner ask)
+  deliveryDate: string | null;
   debtorName: string | null;
   warehouseName: string | null;
-  qty: number;           // the SO line's still-to-fulfil qty (advisory)
+  qty: number;
 };
 
 /* Reverse of mrpLineCoverage: group the SAME floating allocation by the COVERING
@@ -1833,7 +1361,6 @@ export function mrpReverseCoverage(result: MrpResult): Map<string, PoCoverageAss
       });
     }
   }
-  // Sofa SETS aren't in skus[].lines — a set with a covering PO is an assignment.
   for (const s of result.sofaSets) {
     if (!s.poNumber) continue;
     push(s.poNumber, {
@@ -1850,17 +1377,6 @@ export function mrpReverseCoverage(result: MrpResult): Map<string, PoCoverageAss
   return map;
 }
 
-/* The accepted spellings of `?includeUndated`. Absent = the documented default
-   (TRUE since 2026-08-18 — see parseIncludeUndated). Present-and-unrecognised
-   THROWS — it is never quietly false.
-
-   `=== 'true'` was the whole parser until 2026-08-16, and `?includeUndated=1`
-   — verified against production that day — returned the default plan with no
-   error, no warning and no field saying so: 82 SO-item ids instead of 163, 8
-   short sofa sets instead of 68. That is CLAUDE.md's optional-param-noop trap
-   in its worst shape, because the caller BELIEVED it had asked. A boolean that
-   silently collapses every unrecognised value onto the safe-looking side is not
-   a default, it is a lie with a default's manners. */
 const UNDATED_TRUE = new Set(['true', '1', 'yes', 'on']);
 const UNDATED_FALSE = new Set(['false', '0', 'no', 'off']);
 
@@ -1906,7 +1422,7 @@ export class InvalidQueryFlag extends Error {
    RENDERED and cannot change who gets supply. mrp.test.ts pins both halves. */
 /** Exported for `mrp.test.ts` — the spellings are the contract, so they get a test. */
 export function parseIncludeUndated(raw: string | undefined): boolean {
-  if (raw === undefined) return false;              // omitted = documented default (hidden)
+  if (raw === undefined) return false;
   const v = raw.trim().toLowerCase();
   if (UNDATED_TRUE.has(v)) return true;
   if (UNDATED_FALSE.has(v)) return false;
@@ -1919,32 +1435,14 @@ mrp.get('/', async (c) => {
   const warehouseId = c.req.query('warehouseId');
   const catFilter = category && category !== 'all' ? category.toUpperCase() : null;
   const whFilter = warehouseId && warehouseId !== 'all' ? warehouseId : null;
-  // An SO line with NO delivery date means the customer isn't ready for goods
-  // yet, so it must not drive ordering — but it is still demand, so it is
-  // HIDDEN by default (?includeUndated=true shows it) and COUNTED either way.
-  // See parseIncludeUndated for why hiding is fine and hiding silently is not,
-  // the right observation. Since audit D6 (2026-08-01) the flag is display-only:
-  // the allocation itself always runs over the full demand set (undated last),
-  // so this page, the SO drill-down and the PO Assigned-SO column read ONE
-  // identical allocation, and this default cannot move a single unit of supply.
-  //
-  // The undated tally is REPORTED under either flag — `result.undated`, counted
-  // before the visibility `continue` — so the page can state what it is showing
-  // or withholding rather than rendering a fraction of the demand in silence.
   let includeUndated: boolean;
   try {
     includeUndated = parseIncludeUndated(c.req.query('includeUndated'));
   } catch (e) {
-    // 400, not a silent false: a caller that asked wrongly must be told, or it
-    // reads the default plan as the whole plan.
     return c.json({ error: 'bad_request', reason: e instanceof Error ? e.message : String(e) }, 400);
   }
   const companyId = activeCompanyId(c);
   try {
-    /* DEFAULT view (no filters, undated hidden) -> serve the stored planning
-       snapshot instantly if the company has one. Any filtered/undated view, or a
-       company not yet populated, computes live exactly as before. `stored` +
-       `computedAt` let the page show "as of <time>". */
     if (isDefaultMrpView(catFilter, whFilter, includeUndated)) {
       const snap = await readMrpSnapshot(sb, companyId);
       if (snap) return c.json({ ...snap.result, computedAt: snap.computedAt, stored: true });
@@ -1956,9 +1454,6 @@ mrp.get('/', async (c) => {
   }
 });
 
-/* Manual "Regenerate" — recompute the default-view MRP for the active company
-   and store it, then return it fresh. POST is gated 'edit' on scm.procurement.mrp
-   by the area guard in scm/index.ts (same as any other MRP write). */
 mrp.post('/regenerate', async (c) => {
   const sb = c.get('supabase');
   const companyId = activeCompanyId(c);

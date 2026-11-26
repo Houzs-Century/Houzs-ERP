@@ -1,12 +1,3 @@
-// MRP toolbar — the "Lead Times" config dialog gates on canWriteScmConfig (the
-// position-driven "may write SCM master data" answer), NOT on isAdmin.
-//
-// Symptom: a Purchaser (position policy canWriteConfig=true, no '*' wildcard)
-// could not see the Lead Times button, so they could not set the per-category
-// order-N-days-early values their OWN Proceed PO consumes.
-// Cause: the button was gated on isAdminLevel(staff.role), which the Houzs auth
-// bridge only ever satisfies for a '*' wildcard holder (Owner / IT Admin).
-// Fix: gate it on canWriteScmConfig, exactly as SO Maintenance gates its writes.
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -22,8 +13,6 @@ vi.mock('../../vendor/scm/lib/mrp-queries', async (importOriginal) => ({
   useUpdateCategoryLeadTime: () => ({ mutate: () => {}, isPending: false }),
   useRegenerateMrp: () => ({ mutate: () => {}, isPending: false }),
 }));
-// isAdminLevel is pinned FALSE so the tests prove the button shows on the
-// config-write answer ALONE — the old admin gate must no longer be involved.
 vi.mock('../../vendor/scm/lib/auth', () => ({
   useAuth: () => ({ staff: { role: 'sales' }, canWriteScmConfig }),
   isAdminLevel: () => false,

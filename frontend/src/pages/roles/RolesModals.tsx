@@ -6,7 +6,6 @@ import { Badge } from "../../components/Badge";
 import { cn } from "../../lib/utils";
 import type { Role } from "../../types";
 
-/** Lightweight centered modal shell (portal + scrim + Esc), matching the mock. */
 function Modal({
   open,
   onClose,
@@ -53,7 +52,6 @@ const FIELD_CLS =
 export interface NewRoleDraft {
   name: string;
   description: string;
-  /** "blank" | "readonly" | `role:{id}` */
   startFrom: string;
 }
 
@@ -82,8 +80,6 @@ export function NewRoleModal({
     }
   }, [open]);
 
-  // You can only copy from roles you could also express as a custom role —
-  // wildcard/system roles would seed a `*` grant, so keep them out of the list.
   const copyable = roles.filter((r) => !r.is_system && !r.permissions.includes("*"));
 
   return (
@@ -218,7 +214,7 @@ export function RolePickerModal({
         ) : (
           roles.map((r) => {
             const locked = r.is_system || r.permissions.includes("*");
-            const disabled = multiple && locked; // can't write into a system role
+            const disabled = multiple && locked;
             const on = sel.includes(r.id);
             return (
               <button

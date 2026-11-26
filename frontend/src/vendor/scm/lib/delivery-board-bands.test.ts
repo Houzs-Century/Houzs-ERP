@@ -61,7 +61,6 @@ describe('loadedBoardCounts (what the counts_only safety net compares with)', ()
   });
 });
 
-/* Production 2026-11-10: a board open fired five bands and counts_only at once. */
 describe('createRequestLimiter (board requests per tab)', () => {
   it('runs at most two at once, lowest priority number first', async () => {
     expect(BOARD_MAX_IN_FLIGHT).toBe(2);

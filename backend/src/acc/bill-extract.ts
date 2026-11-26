@@ -21,18 +21,14 @@
 // person; the approval cycle is untouched. This module only reads paper.
 // ----------------------------------------------------------------------------
 
-/* The image allowlist lives in vision-blocks.ts — ONE home for "what images
-   can Claude read here", shared with the assistant and the scan routes. */
 import { ASSISTANT_IMAGE_MIMES as BILL_IMAGE_MIMES } from '../services/vision-blocks';
 import { recordAiError, recordAiResponse, type AiUsageTag } from '../services/aiUsage';
 
 export { BILL_IMAGE_MIMES };
 
-/* Same pinned model as scan-so — one vision model per repo, so prompt-cache
-   behaviour and quality drift are reasoned about in one place. */
 export const BILL_MODEL = 'claude-sonnet-4-6';
 
-export const MAX_BILL_FILE_BYTES = 20 * 1024 * 1024; // scan-so's cap
+export const MAX_BILL_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_BILLS_PER_CALL = 12;
 export const MAX_FILES_PER_BILL = 8;
 
@@ -52,9 +48,9 @@ export type BillExtraction = {
       whose Shopee screenshots held two orders a page). */
   severalReceipts: boolean;
   invoiceNumber: string | null;
-  invoiceDate: string | null;   // ISO yyyy-mm-dd, null when unreadable
+  invoiceDate: string | null;
   dueDate: string | null;
-  currency: string;             // 'MYR' unless the paper clearly says otherwise
+  currency: string;
   totalSen: number | null;
   sstSen: number | null;
   lines: BillLine[];
@@ -66,9 +62,6 @@ export type BillExtraction = {
   /** What the bill is FOR, one line in its own words — a payment request's
       "What is it for" (owner 2026-10-02: upload 后很多资料都没有填). */
   summary: string | null;
-  /** The bank account PRINTED for paying this bill (a Payment / Bank details
-      block) — a payment request's payee bank. Read as printed, never looked
-      up; null when the paper prints none. */
   payTo: BillPayTo | null;
 };
 
@@ -116,8 +109,6 @@ Rules:
 - payTo.accountNo is copied character for character — never completed, re-grouped or guessed; an account you cannot read in full is null.`;
 
 export const rmToSen = (v: unknown): number | null => {
-  /* null / undefined / '' are ABSENT, not zero — Number(null) is 0, and a
-     bill whose total the model could not read must never arrive as RM 0.00. */
   if (v == null || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? Math.round(n * 100) : null;
@@ -170,7 +161,6 @@ export function isFooterLine(description: string | null, amountSen: number | nul
 export const stripFooterLines = (lines: BillLine[]): BillLine[] =>
   lines.filter((l) => !isFooterLine(l.description, l.amountSen));
 
-/** A printed word or number as trimmed text, or null. */
 const printedText = (v: unknown, max: number): string | null => {
   const s = typeof v === 'string' || typeof v === 'number' ? String(v).trim() : '';
   return s ? s.slice(0, max) : null;
@@ -237,8 +227,6 @@ export function coerceEventHint(raw: unknown): BillEventHint | null {
   return Object.values(hint).some((v) => v != null) ? hint : null;
 }
 
-/* The model sometimes wraps JSON in prose or a fence — take the outermost
-   object, the same tolerance scan-so ships. */
 export function parseModelJson(text: string): unknown {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -274,9 +262,6 @@ export async function readPaperJson(
       },
       body: JSON.stringify({
         model: BILL_MODEL,
-        /* Sized for a long itemised bill — at ~25 tokens per line entry, 1500
-           choked past ~50 lines and the cut JSON failed the parse, reading the
-           WHOLE bill as a failure. 8000 carries ~300 lines. */
         max_tokens: 8000,
         messages: [{ role: 'user', content: [...blocks, { type: 'text', text: prompt }] }],
       }),
@@ -290,8 +275,6 @@ export async function readPaperJson(
     const body = await res.text().catch(() => '');
     return { ok: false, reason: `The reader refused (${res.status}): ${body.slice(0, 200)}` };
   }
-  /* A 200 whose body is not JSON is still a refusal worth naming, not an
-     empty extraction. */
   let data: { content?: Array<{ type: string; text?: string }> };
   try {
     data = await res.json() as { content?: Array<{ type: string; text?: string }> };
@@ -315,16 +298,6 @@ export async function extractOneBill(
   return { ok: true, extraction: coerceBillJson(read.json) };
 }
 
-/* ── Supplier fuzzy match — server-side, plain code ─────────────────────────
-   Normalise both sides (case, punctuation, the SDN BHD / S/B / ENTERPRISE
-   tails every Malaysian company name drags around) and score:
-   exact normalized = 1, one contains the other = 0.8. Below that, or two
-   suppliers fitting equally, no match — a wrong supplier pre-selected is worse
-   than none.
-   The output is a STORED key (acc_vendor_memory.vendor_key, pv-extract), so it
-   must not change for any name: "SDN. BHD." at the end loses its last "." to
-   the punctuation pass (the \b fails after it, the regex backtracks to "BHD"),
-   which tests pin rather than rewrite. */
 export const normalizeVendor = (s: string): string =>
   s.toUpperCase()
     .replace(/\b(SDN\.?\s*BHD\.?|BHD\.?|S\/B|PLT|ENTERPRISE|TRADING|COMPANY|CO\.?)\b/g, ' ')

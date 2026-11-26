@@ -1,5 +1,3 @@
-/* Every caller of usePostPurchaseInvoice — the list, both detail pages, desktop
-   and phone create — hears a missing AP journal from the hook itself. */
 import { renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';

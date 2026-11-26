@@ -18,9 +18,6 @@ import type { PortalCaseDetail } from "../types";
 const ALLOWED_EXT = ["jpg", "jpeg", "png", "webp"];
 const MAX_SIZE = 10 * 1024 * 1024;
 
-// Friendly customer-facing copy per stage. Each maps to one of the 5
-// simplified tracker steps + a hero card headline / body / eyebrow.
-// Keep this warm and human — customers see it, not internal staff.
 const STAGE_COPY: Record<string, { step: 1 | 2 | 3 | 4 | 5; eyebrow: string; title: string; body: string }> = {
   pending_review:           { step: 1, eyebrow: "Request received", title: "Thanks — we've got your request", body: "A member of our team will pick this up shortly and confirm the next step." },
   under_verification:       { step: 2, eyebrow: "In progress",      title: "We're reviewing your request",     body: "Our team is assessing the reported issue. We'll message you once the next step is scheduled." },
@@ -31,7 +28,6 @@ const STAGE_COPY: Record<string, { step: 1 | 2 | 3 | 4 | 5; eyebrow: string; tit
   completed:                { step: 5, eyebrow: "Completed",        title: "All done — thank you",             body: "Your service case has been closed. We'd love to hear how we did." },
 };
 
-// Human-readable resolution card content by resolution_method.
 const RESOLUTION_COPY: Record<string, { title: string; charge: string; body: string }> = {
   replace_unit:            { title: "Replacement unit",             charge: "No charge — covered by warranty", body: "We'll replace your item with a new unit of the same model at no cost." },
   supplier_repair:         { title: "Specialist repair",             charge: "No charge — covered by warranty", body: "Our specialist will repair your item and return it to you once it clears QC." },
@@ -148,9 +144,6 @@ export function PortalCaseDetailPage() {
           setErr(`Unsupported file type: .${rawExt}`);
           continue;
         }
-        // WO-7 — customers upload straight from their phone camera roll, so
-        // compress photos before the 10 MB gate. The prepared file's name
-        // carries the re-encoded extension (webp is in ALLOWED_EXT).
         const { file: f } = await prepareImageForUpload(raw, { wantThumb: false });
         if (f.size > MAX_SIZE) { setErr("File exceeds 10 MB"); continue; }
         const ext = (f.name.split(".").pop() || "").toLowerCase();
@@ -176,10 +169,6 @@ export function PortalCaseDetailPage() {
     if (raw) await uploadFiles([raw]);
   }
 
-  // Drop / paste to upload. This page has exactly ONE upload target, so a
-  // screenshot paste anywhere lands in Photos & evidence; the dropzone's own
-  // hover-paste still wins when the pointer is over it (registry check keeps
-  // the two listeners from double-firing in either registration order).
   useStrayFileDropGuard();
   const uploadFilesRef = useRef(uploadFiles);
   useEffect(() => {
@@ -234,9 +223,6 @@ export function PortalCaseDetailPage() {
   if (!data) return <PortalFrame><div /></PortalFrame>;
 
   const { case: cs, items, attachments, timeline } = data;
-  // Sales tokens get the salesperson variant; staff-issued customer
-  // links behave exactly like customer ones. `selfSource` is the
-  // source value this viewer's own posts carry.
   const isSales = data.viewer === "sales";
   const selfSource = isSales ? "sales" : "customer";
   const stageCopy = STAGE_COPY[cs.stage] ?? STAGE_COPY.pending_review;
@@ -251,11 +237,6 @@ export function PortalCaseDetailPage() {
     <PortalFrame>
       <div className="mx-auto flex max-w-md flex-col gap-4 px-1 py-1 sm:px-0">
 
-        {/* Customer header card — the case at a glance (Nick: make the
-            item + issue the clear focal point). Item headline + ASSR no,
-            with the reported issue right underneath (clamped; the full
-            text + category stay in the Reported issue section below).
-            The sales view has its own reference card instead. */}
         {!isSales && (
           <div className="rounded-2xl border border-border bg-surface p-4">
             <div className="flex items-center gap-3">
@@ -280,9 +261,6 @@ export function PortalCaseDetailPage() {
           </div>
         )}
 
-        {/* Sales header: the case-reference card — the numbers a
-            salesperson cross-references against their own orders.
-            Customer tokens never receive doc_no / ref_no. */}
         {isSales && (
           <div className="rounded-2xl border border-border bg-surface p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
@@ -320,8 +298,6 @@ export function PortalCaseDetailPage() {
           </div>
         )}
 
-        {/* Status hero — black card. Friendly copy per stage; NO SLA
-            countdown, only a soft "expected update by" date chip. */}
         <div className="relative overflow-hidden rounded-2xl bg-[#13201c] p-6 text-white shadow-stone">
           <div className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[.14em] text-[#c79a5a]">
             {stageCopy.eyebrow}
@@ -340,9 +316,6 @@ export function PortalCaseDetailPage() {
           )}
         </div>
 
-        {/* Sales variant: the real 9-stage progress with entry dates —
-            salespeople answer customer questions, so they see the
-            internal stage names, not the softened 5-step summary. */}
         {isSales && data.stages ? (
           <div className="rounded-2xl border border-border bg-surface p-5">
             <div className="mb-4 text-[13px] font-bold text-ink">Case progress</div>
@@ -437,9 +410,6 @@ export function PortalCaseDetailPage() {
         </div>
         )}
 
-        {/* Proposed resolution — appears only after our team picks a
-            resolution method. Customer can Approve (posts a marker
-            comment) or Ask a question (focuses the message box below). */}
         {resolution && (
           <div className="rounded-2xl border border-border bg-surface p-5 shadow-stone">
             <div className="mb-2 flex items-center justify-between">
@@ -478,9 +448,6 @@ export function PortalCaseDetailPage() {
           </div>
         )}
 
-        {/* Contact row — Message scrolls & focuses the comment textarea
-            further down. (Call button removed with the phone channel,
-            Nick 2026-07-06 — email/portal messages are the channels.) */}
         <div className="flex gap-2">
           <button
             onClick={focusCommentBox}
@@ -490,12 +457,8 @@ export function PortalCaseDetailPage() {
           </button>
         </div>
 
-        {/* Divider before the detail sections — items / issue / photos
-            / updates / message box. Kept below the primary hero so the
-            page reads clean above the fold. */}
         <div className="mt-1 h-px w-full bg-border-subtle" />
 
-        {/* Items */}
         <section className="rounded-2xl border border-border bg-surface p-5">
           <h2 className="mb-3 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
             Items under service
@@ -516,7 +479,6 @@ export function PortalCaseDetailPage() {
           )}
         </section>
 
-        {/* Reported issue */}
         <section className="rounded-2xl border border-border bg-surface p-5">
           <h2 className="mb-2 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
             Reported issue
@@ -527,7 +489,6 @@ export function PortalCaseDetailPage() {
           )}
         </section>
 
-        {/* Photos */}
         <section className="rounded-2xl border border-border bg-surface p-5">
           <UploadDropZone disabled={uploading} onFiles={(files) => void uploadFiles(files)}>
           <div className="mb-3 flex items-center justify-between">
@@ -567,7 +528,6 @@ export function PortalCaseDetailPage() {
           </UploadDropZone>
         </section>
 
-        {/* Updates (timeline) */}
         <section className="rounded-2xl border border-border bg-surface p-5">
           <h2 className="mb-3 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
             Updates
@@ -610,8 +570,6 @@ export function PortalCaseDetailPage() {
           </ul>
         </section>
 
-        {/* Message / question box (the "Message" and "Ask a question"
-            buttons above scroll & focus this textarea). */}
         {cs.stage !== "completed" && (
           <section className="rounded-2xl border border-border bg-surface p-5">
             <h2 className="mb-3 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
@@ -638,7 +596,6 @@ export function PortalCaseDetailPage() {
           </section>
         )}
 
-        {/* Completed-case satisfaction summary */}
         {cs.stage === "completed" && cs.satisfaction_rating && (
           <section className="rounded-2xl border border-border bg-surface p-5 text-center">
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
@@ -662,7 +619,6 @@ export function PortalCaseDetailPage() {
           </div>
         )}
 
-        {/* Secure link footer */}
         <div className="mt-2 flex items-center justify-center gap-1.5 text-center text-[10.5px] leading-relaxed text-ink-muted">
           <ShieldCheck size={12} className="text-ink-muted" />
           <span>Secure link · no login needed · only you can see this page.</span>
@@ -696,7 +652,7 @@ function PortalPhoto({ token, attId, label, contentType, mine, onClick, onRemove
   const isVideo = (contentType || "").startsWith("video/");
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (isVideo) return; // the tile shows a play badge — no bytes needed
+    if (isVideo) return;
     let revoked = false;
     portalApi
       .fetchBlobUrl(`/api/portal/case/attachments/${attId}`, token)
@@ -750,10 +706,6 @@ function PortalPhoto({ token, attId, label, contentType, mine, onClick, onRemove
   );
 }
 
-// ── Full-screen lightbox ─────────────────────────────────────
-// Loads the currently-selected attachment at full resolution in a
-// portal-ed overlay. Supports keyboard nav (←/→/Esc), clicking the
-// backdrop to close, and swipe-like prev/next buttons on mobile.
 function Lightbox({
   attachments,
   token,
@@ -780,7 +732,6 @@ function Lightbox({
     [index, attachments.length, onChange]
   );
 
-  // Keyboard handlers
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
@@ -791,14 +742,12 @@ function Lightbox({
     return () => window.removeEventListener("keydown", onKey);
   }, [go, onClose]);
 
-  // Lock body scroll while open
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  // Load the current attachment as a blob URL
   useEffect(() => {
     setUrl(null);
     let revoked = false;
@@ -822,7 +771,6 @@ function Lightbox({
       aria-modal="true"
       onClick={onClose}
     >
-      {/* Top bar */}
       <div
         className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 px-4 py-3 text-white sm:px-6 sm:py-4"
         onClick={(e) => e.stopPropagation()}
@@ -849,7 +797,6 @@ function Lightbox({
         </button>
       </div>
 
-      {/* Prev / next (only when there's more than 1 photo) */}
       {attachments.length > 1 && (
         <>
           <button
@@ -869,7 +816,6 @@ function Lightbox({
         </>
       )}
 
-      {/* Media */}
       <div
         className="relative flex max-h-[90vh] max-w-[92vw] items-center justify-center"
         onClick={(e) => e.stopPropagation()}
@@ -898,7 +844,6 @@ function Lightbox({
         )}
       </div>
 
-      {/* Caption / filename */}
       {att.file_name && (
         <div
           className="absolute inset-x-0 bottom-0 px-4 py-3 text-center text-[11px] text-white/70 sm:py-4"

@@ -1,8 +1,3 @@
-// RoleMatrixTab — the owner sets a module to None/View/Edit/Full and saves. This drives
-// the REAL component (no prod: the page-access API is branch-only and the dev
-// build talks to prod, so an end-to-end save would write live RBAC) and asserts
-// the exact payloads: page access through PATCH /api/roles/:id/page-access, the
-// scm.access umbrella reconciled onto PATCH /api/roles/:id {permissions}.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -65,7 +60,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/** The grid row (label + level picker) that contains `label`. */
 function rowFor(label: string): HTMLElement {
   const el = screen.getByText(label).closest(".grid");
   if (!el) throw new Error(`no row for ${label}`);
@@ -98,8 +92,6 @@ describe("RoleMatrixTab", () => {
     render(<RoleMatrixTab />);
     await waitFor(() => expect(screen.getByText("SCM · Warehouse")).toBeTruthy());
 
-    // "Inventory" is a sub-page of SCM · Warehouse only — the module shows (no
-    // manual expand) with just that row, and the other modules drop out.
     fireEvent.change(screen.getByPlaceholderText("Search modules or pages…"), { target: { value: "Inventory" } });
 
     expect(screen.getByText("SCM · Warehouse")).toBeTruthy();
@@ -130,10 +122,8 @@ describe("RoleMatrixTab", () => {
     expect(lvl("scm.sales.orders")).toBe("view");
     expect(lvl("scm.warehouse")).toBe("none");
     expect(lvl("scm.warehouse.inventory")).toBe("none");
-    // The bare scm umbrella is derived as max(area levels) = view.
     expect(lvl("scm")).toBe("view");
 
-    // scm.access reconciled on (an SCM area is now >= view) and written.
     const permCall = apiPatch.mock.calls.find((c) => c[0] === "/api/roles/7");
     expect(permCall, "permissions PATCH fired for scm.access").toBeTruthy();
     expect(permCall![1].permissions).toContain("scm.access");
@@ -145,7 +135,6 @@ describe("RoleMatrixTab", () => {
     await waitFor(() => expect(screen.getByText("SCM · Sales")).toBeTruthy());
     expect(screen.getByText("Export Excel")).toBeTruthy();
     fireEvent.click(screen.getByText("Import Excel"));
-    // The modal's pick step appears (file chooser).
     expect(await screen.findByText("Choose file")).toBeTruthy();
   });
 

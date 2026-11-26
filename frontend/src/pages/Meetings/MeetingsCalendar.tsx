@@ -7,12 +7,8 @@ import {
   type Meeting, type Person, type Room,
 } from "../../lib/meetings";
 
-/* The calendar views of the Meetings page: the month picker in the rail, the day/week
-   time grid (drag to book, drag to move, drag the bottom edge to change the length),
-   the month grid, the rooms timeline and the list. All of them only draw and report;
-   the page decides what a drop or a click does. */
 
-const HH = 48; // pixels per hour in the time grid
+const HH = 48;
 const span = (GRID_TO - GRID_FROM) * 60;
 
 export type CalProps = {
@@ -86,7 +82,6 @@ export function TimeGrid(p: CalProps & {
     if (e.button !== 0 || e.target !== e.currentTarget) return;
     const col = e.currentTarget;
     if (e.pointerType === "touch") {
-      // On a phone a drag scrolls the page; a tap books an hour.
       const y0 = e.clientY;
       const m1 = snapMinutes(yToMin(col, e.clientY), 30);
       const up = (ev: PointerEvent) => {

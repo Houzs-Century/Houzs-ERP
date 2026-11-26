@@ -14,7 +14,7 @@ describe("attendanceDayFraction", () => {
 describe("attendanceAllowance", () => {
   test("rate x attended days, with a half day", () => {
     const days = [...Array(23)].map(() => day()).concat([day({ status: "HALF_DAY", fraction: 0.5 })]);
-    const r = attendanceAllowance(1000, days); // RM10/day
+    const r = attendanceAllowance(1000, days);
     expect(r.presentDays).toBe(23.5);
     expect(r.amountSen).toBe(23500);
     expect(r.forfeited).toBe(false);

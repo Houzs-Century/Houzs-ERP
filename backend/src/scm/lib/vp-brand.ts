@@ -34,7 +34,7 @@ export const NOT_A_BRAND: ReadonlySet<string> = new Set<string>([
   ...CATEGORY_SOURCES.categoryNouns,
   ...CATEGORY_SOURCES.normBuckets,
   'ACCESSORIES',
-  'FABRIC_ACCESSORY', // Sofa Accessory's stored code
+  'FABRIC_ACCESSORY',
 ]);
 
 const key = (s: string): string => s.trim().toUpperCase();

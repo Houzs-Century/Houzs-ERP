@@ -1,8 +1,3 @@
-/* The SCM caller shims read the REAL Houzs user stashed on `houzsUser`. Pinned:
-   the Title's policy row decides "is this person Sales" before the position
-   name does — a Sales title whose name does not start with "Sales" (owner
-   report 2026-10-07: only the Sales Director could raise a product request)
-   must read as Sales here exactly as it does at the login umbrella. */
 import { describe, expect, test } from 'vitest';
 import { canViewAllSales, isSalesCaller } from './houzs-perms';
 import type { PositionPolicyRow } from '../../services/positionPolicyRows';

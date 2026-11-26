@@ -1,9 +1,3 @@
-/* The desktop (ReopenCaseControl) and mobile (MobileReopenControl) reopen
- * controls are two presentations of the same action. The stage choices now live
- * in ONE shared module (vendor/scm/lib/assr/reopen), so this pins: both surfaces
- * import that list rather than defining their own, both POST /reopen, and both
- * show only on a completed/voided case. The shared values are the slugs the
- * backend REOPEN_STAGES validates (assrReopen.test.ts pins that side). */
 import { describe, expect, test } from "vitest";
 import desktopRaw from "./ReopenCaseControl.tsx?raw";
 import mobileRaw from "../../mobile/MobileReopenControl.tsx?raw";
@@ -22,7 +16,6 @@ describe("reopen controls agree across surfaces", () => {
     for (const src of [desktopRaw, mobileRaw]) {
       expect(src).toContain("REOPEN_STAGE_OPTIONS");
       expect(src).toContain("vendor/scm/lib/assr/reopen");
-      // no locally-defined stage list on either surface
       expect(src).not.toMatch(/value: "under_verification", label:/);
     }
   });

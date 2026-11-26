@@ -28,9 +28,6 @@ const OPTIONS: ComboOption[] = Array.from({ length: 12 }, (_, i) => ({
 
 afterEach(() => { vi.restoreAllMocks(); });
 
-/* Render closed (inside an overflow:hidden wrapper, like the PV line card),
-   plant the input's viewport position, THEN focus — the measurement runs at
-   open time. jsdom's window.innerHeight is 768. */
 function openAt(top: number, bottom: number) {
   render(
     <div style={{ overflow: 'hidden', height: 40 }}>
@@ -64,22 +61,20 @@ describe('SearchCombo panel placement', () => {
   });
 
   test('room below → sits under the input at the full 280', () => {
-    const listbox = openAt(100, 130); // below = 768-130-8 = 630
-    expect(listbox.style.top).toBe('132px'); // input bottom + 2
+    const listbox = openAt(100, 130);
+    expect(listbox.style.top).toBe('132px');
     expect(listbox.style.bottom).toBe('');
     expect(listbox.style.maxHeight).toBe('280px');
   });
 
   test('cramped below with room above → opens ABOVE the input', () => {
-    const listbox = openAt(600, 630); // below = 130 (< 280), above = 592
-    expect(listbox.style.bottom).toBe('170px'); // 768 - input top + 2
+    const listbox = openAt(600, 630);
+    expect(listbox.style.bottom).toBe('170px');
     expect(listbox.style.top).toBe('');
     expect(listbox.style.maxHeight).toBe('280px');
   });
 
   test('cramped on BOTH sides → stays on the larger side, shrunk to what fits', () => {
-    /* below < 280 AND above < below (top 100, bottom 620 — a tall widget):
-       below = 768-620-8 = 140, above = 92 → stays BELOW at min(280,140). */
     const listbox = openAt(100, 620);
     expect(listbox.style.top).toBe('622px');
     expect(listbox.style.maxHeight).toBe('140px');

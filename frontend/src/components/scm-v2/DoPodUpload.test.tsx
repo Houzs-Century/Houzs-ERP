@@ -16,7 +16,6 @@ vi.mock("../../vendor/scm/lib/slip", () => ({
   fieldPhotoContext: (s: { doId: string }) => `do:${s.doId}`,
   uploadFieldPhoto: vi.fn(),
 }));
-// Two photos already uploaded on pick; the upload pipeline itself is pinned in lib/fieldPhotos.test.tsx.
 vi.mock("../../lib/fieldPhotos", () => ({
   serverFieldPhotoRestore: () => null,
   useFieldPhotos: () => ({

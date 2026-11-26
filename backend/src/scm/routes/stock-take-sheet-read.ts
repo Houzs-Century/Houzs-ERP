@@ -53,7 +53,6 @@ export const readStockTakeSheetHandler = async (c: any): Promise<Response> => {
   const take = head as { take_no: string; status: string; warehouse_id: string };
   if (take.status !== 'OPEN') return c.json({ error: 'not_open', message: 'Only an OPEN stock take takes counts.' }, 409);
 
-  /* PRINT ORDER — the same order GET /:id returns and the PDF numbers. */
   const [linesRes, racksRes] = await Promise.all([
     scopeToCompanyId(sb.from('stock_take_lines').select('id, item_code, variant_label')
       .eq('stock_take_id', id), co.companyId)
@@ -72,7 +71,7 @@ export const readStockTakeSheetHandler = async (c: any): Promise<Response> => {
       body: JSON.stringify({
         model: CLAUDE_MODEL,
         max_tokens: 8192,
-        temperature: 0, // a wrong read must be reproducible, not a lottery
+        temperature: 0,
         messages: [{ role: 'user', content: [...blocks, { type: 'text', text: SHEET_READ_PROMPT }] }],
       }),
     });
@@ -94,8 +93,6 @@ export const readStockTakeSheetHandler = async (c: any): Promise<Response> => {
   );
   return c.json({
     takeNoRead,
-    /* A page of ANOTHER take must not fill this one; the page says so and
-       offers nothing to apply. null = the page did not show its number. */
     takeNoMatches: takeNoRead == null ? null : takeNoRead.toUpperCase() === take.take_no.toUpperCase(),
     proposals: takeNoRead != null && takeNoRead.toUpperCase() !== take.take_no.toUpperCase() ? [] : proposals,
     unmatched,

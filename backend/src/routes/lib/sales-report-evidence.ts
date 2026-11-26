@@ -150,9 +150,7 @@ export async function loadReportEvidence(
     });
     notesByProject.set(pid, list);
   }
-  /* Per-event attendee emails — same join as projectOverview.ts, scoped by the
-     caller's company predicate on the fair's company_id. An attendee without a
-     login row contributes nothing. Lowercased so the Set.has lookup matches. */
+  // company-scope: ${companySql} is the caller's activeCompanySql on p.company_id
   const attRes = await db
     .prepare(
       `SELECT psa.project_id AS project_id, LOWER(TRIM(u.email)) AS email

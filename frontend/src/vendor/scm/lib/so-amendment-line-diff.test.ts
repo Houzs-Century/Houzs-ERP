@@ -33,8 +33,6 @@ import {
   type DiffableAmendmentLine,
 } from './so-amendment-line-diff';
 
-/* The live line, as the builders record it: a full four-axis bedframe spec with
-   ONE field edited — the fabric/colour code PC151-14 -> PC151-01. */
 const BEDFRAME_SPEC = {
   fabricCode:   'PC151-14',
   divanHeight:  '8"',
@@ -69,12 +67,8 @@ describe('SO-2607-018/A1 — a colour-only amendment keeps the rest of the spec'
     const { from, to } = amendmentVariantSummaries(colourOnlyLine());
 
     expect(from).toBe('PC151-14 / DIVAN 8" + LEG 1" / GAP 12" / T.Heights 21"');
-    // The whole point: only the fabric code moves. Divan, leg, gap and total
-    // height are byte-identical to the Was side.
     expect(to).toBe('PC151-01 / DIVAN 8" + LEG 1" / GAP 12" / T.Heights 21"');
 
-    // Stated as the invariant rather than as a literal, so this still fails if
-    // the format changes but the data loss returns.
     const stripFabric = (s: string) => s.split(' / ').slice(1).join(' / ');
     expect(stripFabric(to)).toBe(stripFabric(from));
   });
@@ -100,10 +94,6 @@ describe('SO-2607-018/A1 — a colour-only amendment keeps the rest of the spec'
 });
 
 describe('a bedframe change confined to ONE non-fabric axis stays visible', () => {
-  /* The dangerous half of the same defect: variantsChanged compared both sides
-     under the '' group, which never reads divanHeight — so a divan-only request
-     scored as no-change and visibleAmendmentLines DROPPED the card. The approver
-     saw an amendment with no line changes and a "0 changes" count. */
   const divanOnly = colourOnlyLine({
     new_variants: { ...BEDFRAME_SPEC, divanHeight: '10"' },
   });
@@ -150,8 +140,6 @@ describe('resolveVariantGroup', () => {
   });
 
   it('recovers bedframe from the blob when the stamp predates the fix', () => {
-    // Legacy row: no itemGroup recorded. The bedframe-only axes are in the data,
-    // so this is read, not guessed.
     const legacy = colourOnlyLine({}, { itemGroup: undefined });
     expect(resolveVariantGroup(legacy)).toBe('bedframe');
     expect(amendmentVariantSummaries(legacy).to).toContain('GAP 12"');
@@ -216,7 +204,6 @@ describe('ADD and REMOVE are unaffected', () => {
       new_variants: { ...BEDFRAME_SPEC },
     };
     expect(amendmentLineIsChange(add)).toBe(true);
-    // No old_snapshot at all, so the group comes off the requested blob.
     expect(amendmentVariantSummaries(add).to)
       .toBe('PC151-14 / DIVAN 8" + LEG 1" / GAP 12" / T.Heights 21"');
   });
@@ -226,11 +213,6 @@ describe('ADD and REMOVE are unaffected', () => {
     expect(amendmentLineIsChange(remove)).toBe(true);
   });
 
-  /* HC-SO-012757/A1 (2026-09-15): an added TRANSPORTATION CHARGES line with no
-     discount read "Discount cleared" on the job card, the SO amendment modal and
-     the phone sheet — all seven lines ever added carried no discount, five no
-     remark. A remark and a discount are optional on a line: on a whole-line
-     change they count only when the line actually carries one. */
   it('an ADD with no remark and no discount does not flag either as changed', () => {
     const add: DiffableAmendmentLine = {
       change_type: 'ADD', new_item_code: 'TRANSPORTATION CHARGES', new_qty: 1, new_unit_price_sen: 15000,
@@ -268,7 +250,7 @@ describe('ADD and REMOVE are unaffected', () => {
 describe('a remark-only amendment is a request', () => {
   const remarkOnly = colourOnlyLine(
     {
-      new_variants: { ...BEDFRAME_SPEC },   // spec untouched
+      new_variants: { ...BEDFRAME_SPEC },
       new_remark: 'Please take back Cody Bedframe (King Size) 2 units',
     },
     { remark: '' },
@@ -304,7 +286,6 @@ describe('a remark the request does not touch is never a change', () => {
       { remark: 'Deliver before 5pm' },
     );
     expect(amendmentLineChangedFields(legacy).remark).toBe(false);
-    // …and with nothing else moving, the row stays the no-op it always was.
     expect(amendmentLineIsChange(legacy)).toBe(false);
   });
 
@@ -325,11 +306,6 @@ describe('a remark the request does not touch is never a change', () => {
   });
 });
 
-/* ── The discount channel (mig 0317) — the delivery fee's reduction lever ────
-   RM 250 → 125 on a locked SO books as a DISCOUNT against the derived unit
-   (the re-derive rebuilds the unit; the discount is what survives). Until 0317
-   a discount-only edit scored as "unmoved" and was dropped in silence —
-   operator report 2026-08-21, 2990-SO-2608-020. */
 describe('a discount the request does not touch is never a change', () => {
   it('ignores an absent new_discount_sen (every row raised before mig 0317)', () => {
     const legacy = colourOnlyLine(
@@ -368,10 +344,6 @@ describe('a discount the request does not touch is never a change', () => {
   });
 });
 
-/* ── amendmentLineSig — the editor's dirtiness test lives HERE now ──────────
-   Moved from SalesOrderDetail so the signature and the channels it may name
-   share a test home. The rule the module header states: a field may join the
-   signature ONLY with the full channel behind it. */
 describe('amendmentLineSig', () => {
   const draft = {
     itemCode: 'SVC-DELIVERY', qty: 1, unitPriceSen: 25000,
@@ -392,11 +364,6 @@ describe('amendmentLineSig', () => {
   });
 });
 
-/* HC-SO-013490 (2026-10-13): a SPEC swap to a SKU with no sell price seeded 0
-   into the editor (priceAuthored false), both builders sent it as
-   newUnitPriceSen, and an approval made it the billed price. The amendment road
-   now reads an UNAUTHORED 0 the way zeroPriceClaim does on the direct road: no
-   price requested, the stored price stays. */
 describe('amendmentRequestedUnitPriceSen', () => {
   it('a seeded 0 (not authored) requests NO price', () => {
     expect(amendmentRequestedUnitPriceSen({ unitPriceSen: 0, priceAuthored: false })).toBeNull();

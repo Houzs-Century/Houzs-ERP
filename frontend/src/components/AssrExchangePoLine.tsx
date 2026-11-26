@@ -1,13 +1,6 @@
 import { Fragment } from "react";
 import { assrOrderPoHref, assrExchangePos } from "../vendor/scm/lib/assr/case-fields";
 
-/* Read-only "Exchange PO" line on the desktop case detail: the REAL purchase
-   orders raised FROM this case for a one-to-one exchange
-   (scm.purchase_orders.assr_case_id). Distinct from the SO-derived "Order PO"
-   (AssrOrderPoLine) and the number-only "PO No" (po_no) — these are real
-   documents, the entry into PO -> GRN -> purchase return / purchase invoice.
-   Each number opens its purchase order in a new window seeded with the CASE's
-   company (assrOrderPoHref), the same as Order PO. */
 export function AssrExchangePoLine({ row }: { row: { company_id?: number | string | null; exchange_pos?: unknown } }) {
   const pos = assrExchangePos(row);
   if (pos.length === 0) return null;

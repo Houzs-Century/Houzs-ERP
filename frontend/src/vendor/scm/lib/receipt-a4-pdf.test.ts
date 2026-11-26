@@ -1,10 +1,3 @@
-/* The A4 RECEIPT (the owner's Claude Design, batch 5 §9; no print existed
-   before) — a sundry receipt and an other debtor's receipt, captured off
-   `doc.text`. Pinned: RECEIPT with its number and date; RECEIVED FROM beside
-   RECEIPT DETAILS; the lines without our accounts; AMOUNT RECEIVED; the
-   words; Received by and the chop; VOID on a voided receipt; an other
-   debtor's `Payment for invoice <bill> · <what for>`, `Written at approval`
-   and DRAFT until it is approved. */
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
@@ -79,7 +72,6 @@ describe('a sundry receipt on paper', () => {
     expect(has(draws, ': HC-JE-2610-0912')).toBe(true);
     expect(has(draws, ': Posted')).toBe(true);
     expect(has(draws, 'Deposit returned')).toBe(true);
-    /* A line with no words reads as its account's name — never its code. */
     expect(has(draws, 'Other Income')).toBe(true);
     expect(has(draws, '700-0000')).toBe(false);
     expect(has(draws, 'AMOUNT RECEIVED')).toBe(true);

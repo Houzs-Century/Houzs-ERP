@@ -1,17 +1,3 @@
-// ---------------------------------------------------------------------------
-// kill-scopes.ts — the finer halves of the §10.6 kill switch, and the decision
-// packet recorder (§9.4 / §10.6 "immutable decision and action history").
-//
-// agent_controls already gives the GLOBAL switch and the per-FAMILY pause. With
-// two companies on one backend, "stop the agents for 2990 while we sort its data
-// out" had no expression short of stopping them for Houzs too. Scopes fix that.
-//
-// FAIL-SAFE DIRECTION: a scope read that throws is treated as KILLED, not as
-// clear. A kill switch that fails open is not a kill switch — it is a comment
-// with a database behind it. (The opposite of the family pause, which fails OPEN
-// deliberately so a blip cannot silently halt the whole fleet; a targeted scope
-// is a deliberate, narrow stop, so its failure mode is the cautious one.)
-// ---------------------------------------------------------------------------
 
 import type { DataQuality } from './governance';
 
@@ -32,7 +18,7 @@ export async function isScopeKilled(
   scopeValue: string | number | null | undefined,
 ): Promise<{ killed: boolean; reason: string | null }> {
   if (scopeValue == null || String(scopeValue).trim() === '') {
-    return { killed: false, reason: null }; // nothing to match — not a kill
+    return { killed: false, reason: null };
   }
   try {
     const row = await db
@@ -46,7 +32,6 @@ export async function isScopeKilled(
     const killed = Number(row.paused) === 1;
     return { killed, reason: killed ? (row.reason ?? `${scopeType} ${scopeValue} is stopped`) : null };
   } catch (e) {
-    // Cannot prove it is clear → treat as stopped. See the header.
     return {
       killed: true,
       reason: `could not read the kill scopes (${String((e as Error)?.message ?? e).slice(0, 80)}) — treating ${scopeType} ${scopeValue} as stopped`,
@@ -88,11 +73,10 @@ export async function setKillScope(
     .run();
 }
 
-// ── Decision packets (§9.4) ─────────────────────────────────────────────────
 
 export interface DecisionRecord {
-  agent: string;              // spec agent id, e.g. 'HZS-REP-004'
-  family?: string | null;     // code family, e.g. 'PROCUREMENT'
+  agent: string;
+  family?: string | null;
   decisionClass: string;
   statement: string;
   reason?: string | null;
@@ -105,7 +89,7 @@ export interface DecisionRecord {
   reversible?: boolean;
   rollback?: string | null;
   verification?: string | null;
-  approver?: string | null;       // user id, or 'AGENT_AUTO'
+  approver?: string | null;
   approvalRequired?: boolean;
   outcome?: string | null;
 }

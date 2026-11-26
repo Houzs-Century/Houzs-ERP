@@ -109,12 +109,12 @@ describe('GET /grns/export/rows', () => {
     expect(row.ac_doc_no).toBe('GR-005334');
     expect(row.lines[0]).toMatchObject({
       item_code: 'ZZ-TEST-1',
-      ac_item_code: 'AK-ZZ TEST', // the live binding, through resolveAcItemCode
-      description2: 'typed text', // no variants to compose from: the stored text
+      ac_item_code: 'AK-ZZ TEST',
+      description2: 'typed text',
       remarks: 'dented',
       location: 'PG',
       qty: 4,
-      invoiced_qty: 2, // the DRAFT invoice bills nothing
+      invoiced_qty: 2,
       returned_qty: 1,
       uninvoiced_qty: 1,
       po_no: 'HC-PO-009951',

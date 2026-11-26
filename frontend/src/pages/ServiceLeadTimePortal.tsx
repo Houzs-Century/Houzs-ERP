@@ -1,15 +1,3 @@
-/**
- * Lead Time Portal — per-priority stage targets.
- *
- * Sub-tab on /assr?view=settings&tab=lead_time. The legacy Normal/Peak
- * profile editor was retired now that mig 082's priority-driven lead
- * time is live. The backend profile lookup remains as a safety
- * fallback (any unset priority×stage cell falls through to the
- * currently-active profile), but the seed populates every cell, so
- * the fallback never fires in practice.
- *
- * Read access: service_cases.read. Write access: service_cases.manage.
- */
 import { useState } from "react";
 
 import { api } from "../api/client";
@@ -19,9 +7,6 @@ import { useAuth } from "../auth/AuthContext";
 import { Button } from "../components/Button";
 import { ListSkeleton } from "../components/Skeleton";
 
-// ── Stage display order — mirrors backend mig 074. `short` is used by
-// the matrix column headers so the priorities × stages grid stays
-// readable without horizontal scroll on standard screens.
 
 const STAGE_ORDER: { value: string; label: string; short: string }[] = [
   { value: "pending_review",           label: "Review",                    short: "Review" },
@@ -44,12 +29,6 @@ export function ServiceLeadTimePortal() {
   );
 }
 
-// ── Per-priority stage targets (mig 082) ────────────────────────────
-//
-// Renders a priorities × stages grid. Each cell is editable inline —
-// blur or Enter commits. Empty cells fall back to the active Lead Time
-// profile at case-transition time; the grid shows them as blank with a
-// soft outline.
 
 type PriorityRow = { id: number; slug: string; name: string; sort_order: number };
 type PriorityTarget = { id: number; priority_id: number; stage: string; target_days: number };

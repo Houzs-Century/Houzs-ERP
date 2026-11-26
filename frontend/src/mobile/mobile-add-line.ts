@@ -102,10 +102,6 @@ export type AddLineDraft = {
   name: string;
   itemGroup: string;
   qty: number;
-  /** Typed by the operator; null until they do. Never the catalog SELLING
-   *  price the SKU picker carries (on a purchase line that would be booked as
-   *  cost), and never a "0.00" box that silently drops keystrokes landing
-   *  before its select-on-focus (docs/bugs, the phone direct-create entry). */
   unitPriceSen: number | null;
 };
 
@@ -135,17 +131,12 @@ export function addLinePayload(
   const itemGroup = draft.itemGroup || undefined;
   switch (doc) {
     case "po":
-      /* PurchaseOrderDetail's new-line insert. */
       return { poId: docId, materialKind: "mfg_product", itemCode, materialName, qty: draft.qty, unitPriceSen, itemGroup, soItemId: null };
     case "grn":
-      /* GoodsReceivedDetail's manual add — `qty`, not qtyReceived, and no PO
-         item behind it. */
       return { grnId: docId, purchaseOrderItemId: null, materialKind: "mfg_product", itemCode, materialName, itemGroup, qty: draft.qty, unitPriceSen, deliveryDate: receivedOn ?? undefined };
     case "pi":
-      /* PurchaseInvoiceDetail's free-entry line (grnItemId null). */
       return { id: docId, materialKind: "mfg_product", itemCode, materialName, qty: draft.qty, unitPriceSen, discountSen: 0, itemGroup };
     case "si":
-      /* SalesInvoiceAddLine's submit. */
       return { id: docId, itemCode, description: draft.name.trim() || null, qty: draft.qty, unitPriceSen, discountSen: 0, uom: "UNIT" };
     default: {
       const unreachable: never = doc;

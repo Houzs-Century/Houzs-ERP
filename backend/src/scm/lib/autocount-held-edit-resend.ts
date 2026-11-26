@@ -1,27 +1,3 @@
-// ----------------------------------------------------------------------------
-// autocount-held-edit-resend — an edit refused only because something it needed
-// was still on its way goes out by itself once that has reached AutoCount.
-//
-// Two refusals say nothing about the document; they are about TIMING:
-//
-//   KeylessLineError             a line added a moment ago gets its AutoCount key
-//                                only when the edit that added it drains, and a
-//                                second save composed before then is refused.
-//                                HC-SO-011153, 2026-09-15: line 9 added and sent
-//                                at 06:14:34, the next save refused at 06:14:35.
-//   "edited before its AutoCount the document's own conversion was still queued.
-//    counterpart existed"        HC-SI-2609-001, 2026-09-14.
-//
-// Both rows carry an empty payload, so there is nothing to retry, and nothing
-// sent the document again: the operator had saved and moved on, and the change
-// stayed out of the account book until someone read the AutoCount Sync page.
-//
-// After a row of a document is marked sent, this looks for such a refusal of the
-// same document. When no edit of it is still queued and none has gone since the
-// refusal, it composes the document AS IT IS NOW through the ordinary
-// enqueueEdit, so every guard the save route has still applies: a line that has
-// no key yet is refused and written down again, never guessed.
-// ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { AcDocType } from '../../services/autocount-writeback';
 import { REQUEUE_NOTE_PREFIX, isRequeuedNote } from './autocount-outbox-status';
@@ -56,8 +32,6 @@ type EditRow = {
   payload: { body?: { Lines?: unknown } } | null;
 };
 
-/* The payment's header-only edit (ac-so-payment-edit.ts) is an `edit` with
-   `Lines: []`: it carries the balance and nothing a refused save was holding. */
 const carriesLines = (r: EditRow): boolean => {
   const lines = r.payload?.body?.Lines;
   return Array.isArray(lines) && lines.length > 0;
@@ -84,21 +58,15 @@ export async function resendHeldEdits(
       .order('created_at', { ascending: false })
       .limit(50);
     if (error) return 'none';
-    /* Nullable before defaulting: PostgREST answers a failed read with a null body. */
     const edits = (data as EditRow[] | null) ?? [];
 
     const held = edits.filter((r) => r.status === 'skipped' && isHeldEditRefusal(r.last_error));
     if (!held.length) return 'none';
-    /* A queued edit will compose the document itself when it goes, and this runs
-       again after it. Composing now, around it, could send a line the queued one
-       is about to add. */
     if (edits.some((r) => r.status === 'pending')) return 'none';
     const newestHeld = held.reduce((a, b) => (a.created_at >= b.created_at ? a : b));
-    /* An edit of the lines that went after the refusal carried a later state already. */
     if (edits.some((r) => r.status === 'sent' && carriesLines(r) && r.created_at > newestHeld.created_at)) return 'none';
 
     const docId = newestHeld.doc_id ?? sent.doc_id ?? null;
-    /* An SO is composed by its number; every other type only by its row id. */
     if (docType !== 'SO' && !docId) return 'not_queued';
 
     const queued = await enqueue({ companyId: sent.company_id, docType, docNo: sent.doc_no, docId, createdBy: null });
@@ -113,8 +81,6 @@ export async function resendHeldEdits(
     }
     return 'queued';
   } catch (e) {
-    /* Best effort. The row that triggered this is already marked sent, and a
-       failure here leaves the refusal on the page exactly as it was before. */
     // eslint-disable-next-line no-console
     console.error(`[autocount-outbox] held edit of ${sent.doc_type} ${sent.doc_no} not re-sent:`, e instanceof Error ? e.message : String(e));
     return 'none';

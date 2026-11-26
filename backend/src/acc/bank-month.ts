@@ -62,10 +62,8 @@ import { fmtSen } from '../scm/shared/format';
 export type MonthStatement = {
   id: number;
   fileName: string;
-  /** First and last movement date the file carried. Null when it carried none. */
   periodFrom: string | null;
   periodTo: string | null;
-  /** What the FILE printed, when it printed them. */
   openingBalanceSen: number | null;
   closingBalanceSen: number | null;
 };
@@ -73,7 +71,6 @@ export type MonthStatement = {
 /** A month-end figure somebody TYPED off the bank's own statement, for an
     account whose files print no balance (docs/bugs/0858). */
 export type TypedBalance = {
-  /** The month whose closing this is, as YYYY-MM. */
   month: string;
   closingSen: number;
   typedBy: string | null;
@@ -83,12 +80,10 @@ export type TypedBalance = {
 
 /** The previous month's closing as its own files PRINTED it (rule 5). */
 export type PrintedBalance = {
-  /** The month whose closing this is, as YYYY-MM. */
   month: string;
   closingSen: number;
   statementId: number;
   fileName: string;
-  /** The day the file closes on. */
   on: string;
 };
 
@@ -98,8 +93,6 @@ export type PrintedBalance = {
 export type MonthBalances = {
   closing: TypedBalance | null;
   previousClosing: TypedBalance | null;
-  /** The previous month's printed closing; it wins over a typed one, as a
-      printed figure does inside a month (rule 4). */
   previousPrinted?: PrintedBalance | null;
 };
 
@@ -109,60 +102,40 @@ export const NO_TYPED_BALANCES: MonthBalances = { closing: null, previousClosing
 export type ChainBreak = {
   beforeId: number;
   beforeFile: string;
-  /** Last day the earlier file covered, and what it said the balance was. */
   beforeTo: string;
   beforeClosingSen: number;
   afterId: number;
   afterFile: string;
-  /** First day the later file covered, and what it said it opened at. */
   afterFrom: string;
   afterOpeningSen: number;
-  /** Later opening minus earlier closing — the movement of the missing days. */
   gapSen: number;
 };
 
 /** Where a month's opening or closing figure was taken from: the file it was
     read off, or — when no file printed one — the person who typed it. */
 export type BalanceSource = {
-  /** The file. Null when the figure was typed. */
   statementId: number | null;
   fileName: string | null;
-  /** The day the figure stands for. */
   on: string;
-  /** Present when the figure was TYPED rather than printed: the month it was
-      typed as the closing of, who typed it, when, and their note. */
   typed?: { month: string; by: string | null; at: string; note: string | null };
-  /** Present when an OPENING is the previous month's printed closing (rule 5): the month it closed. */
   carried?: { month: string };
 };
 
 export type MonthAssembly = {
   month: string;
-  /** The calendar month itself. */
   monthFrom: string;
   monthTo: string;
-  /** The days actually covered by uploaded files — the window the
-      reconciliation runs over, so the ledger side lines up with the balances
-      the files printed rather than with days nobody has a statement for. */
   periodFrom: string;
   periodTo: string;
 
   statementOpeningSen: number | null;
-  /** Where that opening came from, so a reader can go and look at it. Null
-      when no file inside this month printed one and nothing was typed. */
   openingFrom: BalanceSource | null;
   statementClosingSen: number | null;
   closingFrom: BalanceSource | null;
 
-  /** Files whose period crosses a month edge. Their movements inside the month
-      count; their balances belong to the month they start or end in. */
   spanningIds: number[];
   breaks: ChainBreak[];
-  /** Plain sentences about what this month does not have. Empty means the
-      files cover it end to end and their balances meet. */
   gaps: string[];
-  /** Opening known, closing known (printed or typed), no break between them,
-      and a typed figure agreeing with the movements. */
   complete: boolean;
 };
 
@@ -187,8 +160,6 @@ export function monthWindow(month: string): { from: string; to: string } | null 
   const year = Number(m[1]);
   const mon = Number(m[2]);
   if (mon < 1 || mon > 12) return null;
-  /* Day 0 of the NEXT month is the last day of this one — the one piece of
-     date arithmetic that gets February right without a table. */
   const last = new Date(Date.UTC(year, mon, 0)).getUTCDate();
   return { from: `${m[1]}-${m[2]}-01`, to: `${m[1]}-${m[2]}-${pad(last)}` };
 }
@@ -233,9 +204,6 @@ export function assembleMonth(
   const window = monthWindow(month);
   if (!window) return null;
 
-  /* Rule 2: only a file lying wholly inside this month can speak for the
-     month's balances. One that straddles the edge still contributes its
-     movements — it is simply not asked what the balance was. */
   const inside = statements.filter(
     (s) => s.periodFrom != null && s.periodTo != null
       && monthOf(s.periodFrom) === month && monthOf(s.periodTo) === month,
@@ -250,22 +218,13 @@ export function assembleMonth(
   );
 
   const first = ordered.find((s) => s.openingBalanceSen != null) ?? null;
-  /* The last file that printed a closing, by the day it CLOSED — not the last
-     one uploaded. He uploads out of order and overlapping (2026-09-08). */
   const withClosing = ordered.filter((s) => s.closingBalanceSen != null);
   const last = withClosing.length > 0 ? withClosing[withClosing.length - 1]! : null;
 
-  /* Rule 4: a figure a file PRINTS always wins. Where no file inside the month
-     prints one, a figure somebody TYPED off the bank's own month-end statement
-     stands in — this month's typed closing at the end, and the previous
-     month's typed closing at the start, because a month opens where the last
-     one closed. Only the figure for exactly that month is taken: a caller
-     handing over some other month's figure is ignored, not believed. */
   const prev = previousMonth(month);
   const typedOpening = typed.previousClosing != null && prev != null && typed.previousClosing.month === prev
     ? typed.previousClosing : null;
   const typedClosing = typed.closing != null && typed.closing.month === month ? typed.closing : null;
-  /* Rule 5: the previous month's printed closing, then its typed one. */
   const printedOpening = typed.previousPrinted != null && prev != null && typed.previousPrinted.month === prev
     ? typed.previousPrinted : null;
   const statementOpeningSen = first?.openingBalanceSen ?? printedOpening?.closingSen ?? typedOpening?.closingSen ?? null;
@@ -287,18 +246,11 @@ export function assembleMonth(
       ? typedSource(typedClosing, window.to)
       : null;
 
-  /* Rule 3: walk the files in date order and check that each one opens where
-     the previous one closed. Only files printing both figures can be chained;
-     one that prints neither is silent rather than a break. */
   const breaks: ChainBreak[] = [];
   for (let i = 1; i < ordered.length; i += 1) {
     const before = ordered[i - 1]!;
     const after = ordered[i]!;
     if (before.closingBalanceSen == null || after.openingBalanceSen == null) continue;
-    /* Overlapping exports are the ordinary case, not a break: a longer file
-       covering the same days opens where the shorter one opened, and its
-       repeated movements arrived IGNORED. Only a file starting AFTER the
-       previous one ended is claiming to continue it. */
     if (String(after.periodFrom) <= String(before.periodTo)) continue;
     const gapSen = after.openingBalanceSen - before.closingBalanceSen;
     if (gapSen === 0) continue;
@@ -315,10 +267,6 @@ export function assembleMonth(
     });
   }
 
-  /* The window the reconciliation runs over: the days the files actually
-     cover, clipped to the month. Running it over the whole calendar month when
-     only the first ten days are uploaded would count thirty days of ledger
-     against ten days of bank and call the difference unexplained. */
   const covered = [
     ...ordered.map((s) => String(s.periodFrom)),
     ...ordered.map((s) => String(s.periodTo)),
@@ -353,13 +301,6 @@ export function assembleMonth(
     );
   }
 
-  /* A typed figure is checked the way the chain is (rule 3): the opening plus
-     this month's movements must reach the closing. Where they do not, a day is
-     missing from the files or the figure is mistyped — and the amount is
-     named, because it is the size of what is missing. Two PRINTED figures are
-     left to the reconciliation's own identity, which says the same thing in
-     its own words. An IGNORED movement is out, as it is there: a repeat of one
-     already recorded, or a pair the bank itself reversed. */
   let typedShortSen = 0;
   if ((openingFrom?.typed != null || openingFrom?.carried != null || closingFrom?.typed != null)
     && statementOpeningSen != null && statementClosingSen != null) {

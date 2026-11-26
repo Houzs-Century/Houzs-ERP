@@ -1,8 +1,3 @@
-/* Field photos upload the moment they are picked, so a driver never loses them
-   to a page reload or a dropped signal at Complete. Pinned here: the per-photo
-   state machine (queued -> uploading -> done | failed -> retry), one upload at
-   a time, Complete refused while anything is in flight or failed, and no
-   silent cap. */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { type ListedFieldPhoto,
@@ -97,12 +92,10 @@ describe("useFieldPhotos", () => {
     const { result } = renderHook(() => useFieldPhotos({ stampLabel: "DO-2611-0001", max: 10, upload, restore: null }));
 
     act(() => result.current.add([jpg("a.jpg"), jpg("b.jpg")]));
-    // Complete is blocked the moment photos are picked, before any upload ends.
     expect(result.current.gate("none").ok).toBe(false);
 
     await waitFor(() => expect(result.current.photos.map((p) => p.status)).toEqual(["done", "failed"]));
     expect(upload).toHaveBeenCalledTimes(2);
-    // The stamped copy is what was uploaded, not the raw file.
     expect(upload.mock.calls[0]?.[0].name).toBe("stamped.jpg");
     expect(result.current.photos[1]?.error).toBe("No signal");
     const blocked = result.current.gate("none");
@@ -198,7 +191,6 @@ describe("useFieldPhotos after a page reload", () => {
   it("re-lists the photos already uploaded for this stop and completes with them", async () => {
     const upload = vi.fn(async () => ({ r2Key: "slips/new", uploadSessionId: "s3" }));
     const restore = fakeRestore();
-    // A fresh mount is exactly what a reload produces: nothing in memory.
     const { result } = renderHook(() => useFieldPhotos({ stampLabel: null, max: 10, upload, restore }));
     expect(result.current.restore.phase).toBe("loading");
     expect(result.current.gate("none").ok).toBe(false);
@@ -269,12 +261,10 @@ describe("useFieldPhotos after a page reload", () => {
     const restore = fakeRestore({ list, pollMs: 30 });
     const { result, unmount } = renderHook(() => useFieldPhotos({ stampLabel: null, max: 10, upload: vi.fn(), restore }));
     await waitFor(() => expect(result.current.photos.map((p) => p.key)).toEqual(["slips/driver-1"]));
-    // The helper takes a photo on their phone.
     server = [driver, helper];
     await waitFor(() => expect(result.current.photos.map((p) => p.key)).toEqual(["slips/helper-1", "slips/driver-1"]));
     expect(result.current.photos[0]).toMatchObject({ uploadedBy: "Ali", canRemove: false });
     server = [];
-    // The helper completed: the server lists nothing pending, so both leave this phone too.
     await waitFor(() => expect(result.current.photos).toHaveLength(0));
     unmount();
   });
@@ -295,8 +285,6 @@ describe("useFieldPhotos after a page reload", () => {
   });
 });
 
-/* HC-DO-2611-151 (2026-11-11): an iPhone photo sat on "Uploading..." for ever, so
-   Complete stayed refused. Nothing may hang without ending in done or failed. */
 describe("a photo never hangs on Uploading", () => {
   it("withTimeout resolves the fallback value, or rejects the fallback Error, after the wait", async () => {
     vi.useFakeTimers();

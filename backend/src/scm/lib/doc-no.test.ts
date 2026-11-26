@@ -1,10 +1,3 @@
-// The JE-number company prefix. It is the ONE place company behaviour used to
-// be keyed on a hardcoded numeric id (`Number(companyId) === 1 ? '' : '2990-'`),
-// which mis-fires in any environment where the `companies.id` bigint differs
-// (staging vs prod) and would drop a future THIRD company into the '2990-'
-// branch. The prefix now resolves from `companies.code`, exactly like the SO/PO
-// minters. These cases pin two things that must both hold: the prefix follows
-// the CODE, and HOUZS's historical BARE output is byte-identical to before.
 
 import { describe, it, expect } from 'vitest';
 import { fakeSb } from './fake-postgrest';
@@ -14,7 +7,7 @@ import { todayMyt } from './my-time';
 describe('jePrefixForCode — resolves from the company CODE', () => {
   it('HOUZS mints BARE (historical convention, NOT its HC- doc prefix)', () => {
     expect(jePrefixForCode('HOUZS')).toBe('');
-    expect(jePrefixForCode('houzs')).toBe(''); // case-insensitive
+    expect(jePrefixForCode('houzs')).toBe('');
   });
 
   it('2990 keeps 2990-', () => {
@@ -34,9 +27,6 @@ describe('jePrefixForCode — resolves from the company CODE', () => {
 });
 
 describe('jePrefixForCompany — resolves the CODE from the id, then the prefix', () => {
-  // Deliberately NOT the production id layout: HOUZS is id 7, 2990 is id 3 here.
-  // Keying on the id (the old `=== 1`) would give the WRONG prefix; keying on
-  // the code — which is what this does — is correct regardless of the ids.
   const sb = () =>
     fakeSb({
       companies: [

@@ -37,7 +37,6 @@ export type PoOutstandingLineRow = Record<string, unknown> & {
   delivery_date?: string | null;
   supplier_delivery_date_2?: string | null;
   supplier_delivery_date_3?: string | null;
-  /** Resolved by GET /outstanding/po-lines: the line's date, else the PO header's. */
   estimate_delivery_date_1?: string | null;
   estimate_delivery_date_2?: string | null;
   estimate_delivery_date_3?: string | null;
@@ -47,11 +46,8 @@ export type PoOutstandingLineRow = Record<string, unknown> & {
 };
 
 export type PoOutstandingSetRow = PoOutstandingLineRow & {
-  /** Longest-common-prefix of the grouped component item codes (e.g. "9058"). */
   set_code: string;
-  /** How many component lines this set row folds together (1 = a plain line). */
   component_count: number;
-  /** The distinct component item codes, comma-joined, for the drill/tooltip. */
   component_codes: string;
 };
 
@@ -73,8 +69,6 @@ export function longestCommonPrefix(items: string[]): string {
   return p.replace(/[-(\s]+$/, '');
 }
 
-/** The grouping key for one line. Blank desc2 → key on item_code so distinct
- *  accessories with no spec are never merged together. */
 function groupKey(r: PoOutstandingLineRow): string {
   const desc2 = str(r.item_desc2).trim();
   const spec = desc2 || `CODE:${str(r.item_code)}`;

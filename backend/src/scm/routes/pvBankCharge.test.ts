@@ -1,6 +1,3 @@
-// DEV-75: a Payment Voucher header carries the bank's charge (bank_charge_sen,
-// integer sen). Never added to total_sen; its posting is pvBankChargePosting.test.ts.
-// A negative or fractional charge is refused by name, like a line amount.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -8,11 +5,6 @@ import type { User } from '@supabase/supabase-js';
 import { fakeSb, type Row } from '../lib/fake-postgrest';
 import type { Env, Variables } from '../env';
 
-/* The audit PRE-FLIGHT (`assertAuditWritable`) probes an RPC and refuses the
-   whole save with 409 when it cannot answer — deliberately, so a change is
-   never stored without its record of who made it. The fake has no rpc(), so it
-   gets one that answers "writable"; without it every case here would 409 before
-   reaching the date branch under test. */
 const sb = Object.assign(
   fakeSb({
     payment_vouchers: [],
@@ -25,13 +17,8 @@ const sb = Object.assign(
   { rpc: async () => ({ data: true, error: null }) },
 );
 
-/* supabaseAuth swaps whatever the caller set for the service client, so the
-   fake has to be injected at that seam rather than through the context. */
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => sb }));
 
-/* Imported at module scope on purpose — awaited inside a test body, a router
-   of this size charges its transform to testTimeout and the suite goes red
-   only under the parallel load of a full run. */
 const { paymentVouchers } = await import('./payment-vouchers');
 
 const DRAFT = (): Row => ({
@@ -43,11 +30,6 @@ const DRAFT = (): Row => ({
   updated_at: '2026-08-01T00:00:00Z', company_id: 1,
 });
 
-/* supabaseAuth derives `houzsUser` — and the permission set every SCM gate
-   reads — from whatever the global /api/* auth left on `user`, so the harness
-   sets THAT rather than houzsUser directly. The Houzs session user is not a
-   Supabase User; the context slot is typed as one, which is the seam
-   supabaseAuth exists to bridge. */
 const CALLER = {
   id: 7, email: 'finance@houzs.test', name: 'Finance', permissions: ['*'],
 } as unknown as User;

@@ -13,9 +13,7 @@ import { fmt } from './settlement-ui';
 
 export type CardPickState = {
   ok: boolean;
-  /** Entries + card payments − the movement: what goes to the charges account. */
   differenceSen: number;
-  /** The difference as a percentage of the card payments, to two places. */
   pct: number;
   message: string;
 };

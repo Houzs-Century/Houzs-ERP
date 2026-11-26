@@ -104,9 +104,7 @@ describe("Sales Attending — staff not on the Sales Team roster", () => {
     expect(jason).toBeTruthy();
     expect(lim).toBeTruthy();
     expect(screen.queryByText("Not in the Sales Team yet — adding puts them in it")).toBeNull();
-    // Sorted A→Z by shown name: Jason before Lim.
     expect(jason.compareDocumentPosition(lim) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // The non-roster staff member carries the inline "+ team" tag.
     const limRow = lim.closest("label") as HTMLElement;
     expect(limRow.textContent).toContain("team");
   });

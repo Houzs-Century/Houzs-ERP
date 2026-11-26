@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// scm/lib/grn-post-tail — what a GRN post does AFTER its stock IN has committed.
-//
-// None of this is the receipt itself, and each step was already best-effort: a
-// failure never undid the post. Split out of postGrnAndRollup (routes/grns.ts) so
-// the atomic post (GRN_POST_MODE=atomic, lib/stock-post-tx.ts) can commit the
-// core first and run these on the ordinary client after commit. The two-step path
-// runs them straight after its own writes, as before.
-//
-//   - drop-ship and oversell retro-cost reconciles, then the DO / SI cost restamps
-//     they call for (the reconcile needs the new lots, so it waits for the commit);
-//   - rack placement, receipt-to-SO assignment, SO stock allocation.
-// ----------------------------------------------------------------------------
 
 import { reconcileDropshipBatches } from './inventory-movements';
 import { reconcileUncostedOuts } from './oversell-retrocost';
@@ -29,7 +16,6 @@ export type GrnPostTail = {
   grnNo: string;
   companyId: number;
   userId: string;
-  /** Set only when this call wrote the IN rows; the reconciles run on these. */
   booked: { buckets: GrnTailBucket[]; receiptCutoffTs: string } | null;
 };
 
@@ -42,7 +28,7 @@ async function restampDos(sb: ReconcileClient, doIds: string[], tag: string): Pr
     const { restampSiFromDo } = await import('./recost');
     for (const doId of doIds) {
       await restampDoActualCost(sb, doId);
-      try { await restampSiFromDo(sb, doId); } catch { /* best-effort */ }
+      try { await restampSiFromDo(sb, doId); } catch { }
     }
   } catch (e) { console.error(`[${tag}] DO restamp failed:`, e); }
 }
@@ -50,15 +36,8 @@ async function restampDos(sb: ReconcileClient, doIds: string[], tag: string): Pr
 export async function runGrnPostTail(sb: ReconcileClient, tail: GrnPostTail): Promise<void> {
   const { grnId, grnNo, companyId, userId, booked } = tail;
   if (booked) {
-    /* Drop-ship receipt reconcile (mig 0057) — a sofa drop-shipped against this
-       batch before receipt consumed no lot; consume that shortfall from the new
-       lots so coverage and valuation do not count the shipped units twice.
-       Ledger-driven and idempotent. Then restamp the DO lines and their SIs. */
     const reconcile = await timed('tail-dropship', () => reconcileDropshipBatches(sb, booked.buckets, userId));
     await restampDos(sb, reconcile.affectedDoIds, 'dropship');
-    /* Oversell retro-cost (mig 0154) — normal DO short-ships that shipped
-       uncosted BEFORE this receipt (receiptCutoffTs) take their cost from the
-       arriving lots. Drop-ship shorts belong to the reconcile above. */
     const oversell = await timed('tail-oversell', () => reconcileUncostedOuts(
       sb,
       booked.buckets.map((m) => ({ warehouse_id: m.warehouse_id, item_code: m.item_code, variant_key: m.variant_key })),
@@ -67,7 +46,6 @@ export async function runGrnPostTail(sb: ReconcileClient, tail: GrnPostTail): Pr
     ));
     await restampDos(sb, oversell.affectedDoIds, 'oversell');
   }
-  /* Physical rack placement (separate ledger, mig 0151). */
   try {
     const { placeGrnLinesOnRacks } = await import('./grn-rack-sync');
     await timed('tail-racks', () => placeGrnLinesOnRacks(sb, grnId, grnNo, userId));
@@ -77,7 +55,6 @@ export async function runGrnPostTail(sb: ReconcileClient, tail: GrnPostTail): Pr
     const { recordReceiptAssignments } = await import('./receipt-so-assignment');
     await timed('tail-receipt-so', () => recordReceiptAssignments(sb, grnId, companyId));
   } catch (e) { console.error('[receipt-so] post-grn failed:', e); }
-  /* B2C SO auto-allocation — re-walk PENDING SO lines against the new stock. */
   try {
     const { recomputeAllocationAfterSave } = await import('./stock-allocation-job');
     await recomputeAllocationAfterSave(sb, 'post-grn');

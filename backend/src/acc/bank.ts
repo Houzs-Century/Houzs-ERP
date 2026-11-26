@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// acc/bank — the database side of bank reconciliation (layer 4, phase 4).
-//
-// The readers and the one writer that the routes need. Everything that decides
-// anything lives next door in bank-parse / bank-match / bank-reconcile, which
-// are pure and therefore testable without a database; this file only fetches,
-// and posts through the one gate.
-//
-// The one writer, postBankLine, is deliberately thin: a movement that settles a
-// merchant statement is posted by LAYER 3's postBatchReceipt, not by a second
-// path of this module's own. There is one notion of "the acquirer paid us" in
-// this system and one place that books it — 0335's header says so — and a bank
-// screen that wrote its own receipts would be a second, parallel truth about
-// the same money.
-// ----------------------------------------------------------------------------
 
 import type { BankColumnMap, BankParseConfig } from './bank-parse';
 import type { BankRecognitionRule, PayableBatch, PayoutAdviceForMatch, QrReportForMatch } from './bank-match';
@@ -56,8 +41,6 @@ export async function loadBankConfig(
   if (!all.ok) return all;
   const found = all.configs.find((c) => c.account_code === accountCode);
   if (!found) {
-    /* Name what IS set up. "Not configured" alone leaves the operator guessing
-       whether he picked the wrong account or nobody has done the setup. */
     const known = all.configs.map((c) => `${c.account_code} (${c.bank_code})`).join(', ');
     return {
       ok: false,
@@ -158,10 +141,10 @@ export async function loadPayableBatches(
   const batches: PayableBatch[] = [];
   for (const b of (batchRes.data ?? []) as Array<Record<string, any>>) {
     const id = Number(b.id);
-    if ((openByBatch.get(id) ?? 0) > 0) continue;             // not reconciled yet
+    if ((openByBatch.get(id) ?? 0) > 0) continue;
     const payableSen = Number(b.stated_net_sen ?? b.net_sen ?? 0);
     const outstandingSen = payableSen - (receivedByBatch.get(id) ?? 0) - (chargedByBatch.get(id) ?? 0);
-    if (outstandingSen === 0) continue;                        // already in the bank, or kept by it
+    if (outstandingSen === 0) continue;
     batches.push({
       id,
       acquirerCode: String(b.acquirer_code),
@@ -207,8 +190,6 @@ export async function loadQrReports(
     .eq('company_id', companyId).in('settlement_row_id', ids).order('id').range(f, t));
   if (links.error) return { ok: false, reason: `QR sales: ${links.error.message}` };
 
-  /* Each sale's LIVE entry — a payment corrected since is reversed and booked
-     again, and only the standing one is the money on the bank account. */
   const paymentIds = [...new Set(links.data.map((l) => String(l.payment_id)))];
   const jes = paymentIds.length === 0 ? { data: [] as Array<Record<string, any>>, error: null } : await chunkIn<Record<string, any>>(paymentIds, (ids, f, t) => sb
     .from('journal_entries').select('id, je_no, source_type, source_doc_no, reversed')
@@ -308,9 +289,6 @@ export async function loadPayoutAdvices(
 export async function loadAccountLedger(
   sb: any, companyId: number, accountCode: string, upTo: string,
 ): Promise<{ ok: true; movements: LedgerMovement[] } | Fail> {
-  /* Paged (Conts #334): a bank account passes 1,000 ledger lines within a year,
-     and an unpaged read got the first 1,000 and no error, so the rest of the
-     postings read as "not in the books". line_id keeps the pages stable. */
   const { data, error } = await paginateAll<Record<string, any>>((lo, hi) => sb.from('v_gl_entries')
     .select('je_no, entry_date, source_type, source_doc_no, debit_sen, credit_sen, notes, party_name, reversed, reversed_by_je')
     .eq('company_id', companyId)
@@ -320,9 +298,6 @@ export async function loadAccountLedger(
     .range(lo, hi));
   if (error) return { ok: false, reason: error.message };
 
-  /* One ENTRY per row, not one line: an entry can touch the bank account twice
-     (a transfer in and out on the same journal), and the reconciliation matches
-     entries. Summed rather than deduplicated, so nothing is lost either way. */
   const byJe = new Map<string, LedgerMovement>();
   for (const r of (data ?? []) as Array<Record<string, any>>) {
     /* A REVERSED entry and the contra that undid it are one correction, not
@@ -491,9 +466,6 @@ export async function loadLineMonth(
     .eq('id', Number(line.statement_id)).eq('company_id', companyId).maybeSingle();
   if (sErr) return { ok: false, reason: sErr.message };
   const accountCode = stmtRow == null ? '' : String((stmtRow as Record<string, any>).account_code ?? '');
-  /* A line whose statement cannot be found is not a line this guard can clear.
-     Saying so is a refusal the operator can act on; assuming "not locked" is
-     the failure this whole function exists to prevent. */
   if (!accountCode) {
     return { ok: false, reason: `bank line ${lineId} has no statement to check a lock against` };
   }
@@ -530,8 +502,6 @@ export async function loadLinesForRepeats(
   };
 }
 
-/** Rows or the read's error, the shape a single PostgREST call answers with,
-    so a call site swaps its query for one of these and keeps its handling. */
 type Rows = { data: Array<Record<string, any>>; error: { message: string } | null };
 
 /**

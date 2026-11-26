@@ -1,16 +1,9 @@
-/**
- * The header's round back button must land on the Product Models list. It used
- * to be history-back, and opening the list's detail drawer changes no URL, so
- * history-back left Product Models for whatever page came before it.
- */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ProductModelDetail } from './ProductModelDetail';
 
-// Hook results must be stable references: the page's seeding effect depends on
-// them, and a fresh object per render loops it forever.
 const STABLE = vi.hoisted(() => ({
   model: {
     data: {

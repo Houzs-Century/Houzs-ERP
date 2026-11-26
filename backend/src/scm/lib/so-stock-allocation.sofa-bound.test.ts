@@ -25,11 +25,6 @@ import { recomputeSoStockAllocation } from './so-stock-allocation';
 
 type Row = Record<string, any>;
 
-/* The gate test's purpose-built fake, extended with the two operators the
-   bound read and the sofa lot load issue: `.gt('po_items.received_qty', 0)`
-   (an embedded-path filter — the parent row passes when any embedded row
-   does) and `.not('batch_no', 'is', null)`. Everything unimplemented throws,
-   so a green test cannot come from a filter the fake ignored. */
 function fakeSb(tables: Record<string, Row[]>) {
   const from = (table: string) => {
     const filters: Array<(r: Row) => boolean> = [];
@@ -101,11 +96,6 @@ function fakeSb(tables: Record<string, Row[]>) {
 const WH = 'WH-MAIN';
 const PIECE = '9058-1S';
 
-/* A migrated sofa piece: CONFIRMED order, Processing Date set (the gate is not
-   what these tests are about), one piece line, its converted PO line embedded
-   the way the bound read's `po_items:purchase_order_items!inner` returns it.
-   No open lot carries a batch, so findCoveringBatch has nothing — the exact
-   state every balance-imported sofa set is in. */
 const world = (line: Row, poItems: Row[]) => fakeSb({
   stock_allocation_recompute_lock: [{ lock_key: 'GLOBAL', locked_by: null, locked_until: null }],
   mfg_sales_orders: [{
@@ -201,9 +191,6 @@ describe('sofa lines under hard binding', () => {
   });
 });
 
-/* 2990-0011 (Sim, 2026-10-20): a customer-rejected return is not owed again.
-   2990-DR-2610-001 brought 2990-SO-2606-001's set back; with the return netted
-   back in, the earlier-dated order took the returned batch straight back. */
 describe('a returned sofa set is stock for the next matching order', () => {
   const VK = { fabricCode: 'EZ-003', seatHeight: '28', legHeight: '6"' };
   const line = (id: string, docNo: string, extra: Row = {}): Row => ({

@@ -33,19 +33,11 @@ export interface AgentBrainUsageSink {
 }
 
 export interface AskAgentBrainOptions {
-  /** System prompt — the agent's voice + task. */
   system: string;
-  /** Pre-compacted JSON-serialisable data the brain reasons over. */
   payload: unknown;
-  /** Response cap; briefs are one short paragraph, keep this tight. */
   maxTokens?: number;
-  /** Accumulates Anthropic token usage for the Agent Console run log. */
   usageSink?: AgentBrainUsageSink;
-  /** Records each call into ai_usage_events (services/aiUsage.ts); null records nothing. */
   aiUsage: AiUsageTag | null;
-  /** Optional non-text content blocks (image / document) appended AFTER the text
-   *  payload in the user turn — the assistant uses this to let the model READ an
-   *  uploaded image or PDF. Every existing caller omits it and is unchanged. */
   contentBlocks?: Array<Record<string, unknown>>;
 }
 
@@ -101,19 +93,6 @@ export async function askAgentBrain(
   }
 }
 
-// ---------------------------------------------------------------------------
-// askAgentBrainWithTools — the MULTI-TURN sibling of askAgentBrain, for callers
-// that let the model fetch what it needs on demand (Anthropic tool use). Same
-// contract otherwise: best-effort (any failure returns null and the caller falls
-// back to its single-shot path), same usageSink, same model + bill.
-//
-// SAFETY BOUNDARY: this engine is deliberately dumb about policy. It knows how to
-// run the tool_use handshake and cap the loop — it does NOT know scope, redaction
-// or which tools a caller may see. Those live entirely in `dispatch` and in the
-// `tools` the caller passes. A tool result is whatever dispatch returns, verbatim;
-// so dispatch MUST redact + company-scope every result BEFORE returning it, exactly
-// as the single-shot gather path redacts before the model call.
-// ---------------------------------------------------------------------------
 
 /** One tool offered to the model — Anthropic's tool schema shape. */
 export interface AgentToolDef {
@@ -123,18 +102,11 @@ export interface AgentToolDef {
 }
 
 export interface AskAgentBrainWithToolsOptions {
-  /** System prompt — voice + task + the grounding/read-only rules. */
   system: string;
-  /** Pre-compacted JSON-serialisable data seeded into the first user turn. */
   payload: unknown;
-  /** Tools the model may call this run. An empty array degrades to single-shot. */
   tools: AgentToolDef[];
-  /** Runs ONE tool call, returns its (already governed + redacted) result. A throw
-   *  is caught and handed back to the model as an error result, never propagated. */
   dispatch: (name: string, input: Record<string, unknown>) => Promise<unknown>;
   maxTokens?: number;
-  /** Hard cap on model<->tool round-trips; the FINAL turn is sent without tools so
-   *  a model that keeps asking for tools is forced to answer instead of hanging. */
   maxTurns?: number;
   usageSink?: AgentBrainUsageSink;
   aiUsage: AiUsageTag | null;
@@ -156,7 +128,6 @@ export async function askAgentBrainWithTools(
   ];
   try {
     for (let turn = 0; turn < maxTurns; turn++) {
-      // The LAST allowed turn drops `tools`, so the model must answer in prose.
       const offerTools = turn < maxTurns - 1 && opts.tools.length > 0;
       const res = await recordAi(opts.aiUsage, fetch(ANTHROPIC_URL, {
         method: "POST",
@@ -175,7 +146,7 @@ export async function askAgentBrainWithTools(
       }));
       if (!res.ok) {
         console.warn(`[agent-brain] tools Anthropic ${res.status}`);
-        return null; // best-effort: caller falls back to the single-shot path
+        return null;
       }
       const j = (await res.json()) as {
         content?: AnthropicContentBlock[];
@@ -193,8 +164,6 @@ export async function askAgentBrainWithTools(
       );
 
       if (offerTools && j.stop_reason === "tool_use" && toolUses.length) {
-        // Echo the assistant turn verbatim, then answer every tool_use with a
-        // tool_result in the SAME order the API requires.
         messages.push({ role: "assistant", content });
         const results: Array<{ type: "tool_result"; tool_use_id: string; content: string }> = [];
         for (const tu of toolUses) {
@@ -210,7 +179,6 @@ export async function askAgentBrainWithTools(
         continue;
       }
 
-      // No tool call (or the forced final turn): the answer is the text blocks.
       const text = content
         .filter((b) => b.type === "text" && typeof (b as { text?: string }).text === "string")
         .map((b) => (b as { text?: string }).text)

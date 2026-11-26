@@ -1,8 +1,3 @@
-/* Setup › Currencies in the redesign (Finance-1a-Setup, batch 6 §6.4). What is
-   pinned: the master as the shared table (Code · Name · Symbol · Rate to MYR ·
-   Status · Updated), MYR as the base at 1, Edit opened by a double-click or the
-   row's ⋯ (no Edit button), New currency in the same modal, and the payloads
-   the two calls send — unchanged from before the redesign. */
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -38,9 +33,7 @@ describe('the currency master', () => {
     expect(within(rowOf('USD')).getByText('4.452')).toBeTruthy();
     expect(within(rowOf('USD')).getByText('Active')).toBeTruthy();
     expect(within(rowOf('EUR')).getByText('Not offered')).toBeTruthy();
-    /* Updated is the row's own date, in the house format. */
     expect(within(rowOf('USD')).getByText('2026/10/28')).toBeTruthy();
-    /* No Edit button repeats the double-click. */
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 

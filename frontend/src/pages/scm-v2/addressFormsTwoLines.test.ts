@@ -30,9 +30,6 @@ const walk = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
   return /\.tsx$/.test(name) && !/\.test\./.test(name) ? [p] : [];
 });
 
-/* A form label for line 3 / 4, however it is spelled. Grid column headers and
-   audit labels are not inputs and are written differently (`label: 'Address 3'`
-   in a column list is not matched: no `Line`, and no JSX `label=`). */
 const THIRD_LINE_INPUT = /(label=\{?["'`]Address (line |Line )?[34]\b|["'`>]Address (line|Line) [34]\b|Address (line|Line) \$\{)/;
 
 const files = walk(SRC).map((p) => ({ rel: relative(SRC, p).replace(/\\/g, '/'), text: readFileSync(p, 'utf8') }));

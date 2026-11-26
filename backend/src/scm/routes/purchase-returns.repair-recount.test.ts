@@ -1,10 +1,3 @@
-/* B1 (Hookka-session audit, 16 Oct 2026): a REPAIR purchase return re-opened its
- * PO. 2990-PRT-2610-001 sent one XAMMAR-2A(RHF) back to HOOKKA for corner
- * cushioning; the goods moved into KL SERVICE (still owned), but the recount
- * counted the line as returned, so 2990-PO-2607-018 dropped to received 0 and
- * listed the same unit as incoming again. Only a CREDIT return consumes the
- * receipt. The REPAIR case fails pre-fix: returned_qty went 0 -> 1.
- */
 import { describe, expect, test } from 'vitest';
 import { adjustGrnReturnedQty } from './purchase-returns';
 
@@ -81,7 +74,6 @@ describe('a CREDIT return says whether the supplier sends a replacement', () => 
   test('no replacement: returned_qty still moves, but the PO stays RECEIVED', async () => {
     const sb = fakeSb(world('CREDIT', false));
     await adjustGrnReturnedQty(sb, 'gi-1');
-    // returned_qty feeds the returnable cap + PI headroom, so it still counts the unit.
     expect(sb.tables.grn_items[0].returned_qty).toBe(1);
     expect(sb.tables.grn_items[0].returned_closed_qty).toBe(1);
     expect(sb.tables.purchase_order_items[0].received_qty).toBe(1);

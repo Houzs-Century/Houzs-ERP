@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// Purchase Return "Edit" must open an editor.
-//
-// The V2 detail page is read-only by design; its Edit button navigates to
-// `?edit=1`, and — like PurchaseOrderDetailV2 / GoodsReceivedDetailV2 /
-// PurchaseInvoiceDetailV2 — the page must forward that flag to the lazy-loaded
-// legacy editor. The editor has NO route of its own, so #794 deleted it as
-// "unrouted, no importer", and the V2 page never had the forward: Edit rewrote
-// the URL and nothing changed. This pins both halves so neither can be
-// removed again without a red test.
-// ----------------------------------------------------------------------------
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";

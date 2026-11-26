@@ -1,9 +1,3 @@
-/* Creating a CONFIRMED order from the catalogue with a SOFFIO (8030-) line asks
- * the operator to check the code first: a fully extend sofa is SOFFIO 2.0
- * (5562-). "Go back" sends nothing; "Yes, it is SOFFIO" creates; no 8030 line,
- * no ask. Drives the real page; faked: the catalogue, the create call, the
- * validate dry-run and the dialogs.
- */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";

@@ -1,10 +1,3 @@
-// TanStack Query hooks for Payment Vouchers (Phase 1-B, MYR).
-//
-// HOUZS VENDOR — port of the PV slice of 2990's apps/backend/src/lib/flow-queries.ts.
-// Import boundary only: all reads/writes go through the vendored authedFetch
-// (→ /api/scm/payment-vouchers…). A DRAFT PV is created here, posted to the GL
-// from the detail page, and cancelled (which reverses the GL entry + any PI
-// settlement).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DOC_FILE_ACCEPT } from './doc-file-mime';
@@ -23,7 +16,6 @@ import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { reportInBandFailure, type InBandFailure } from './mutation-error';
 import { runAiRead, runOneAiRead, type AiReadStage } from './ai-read-job';
 
-// baseQuery is a custom-hook factory — only ever called from use* hooks below.
 // eslint-disable-next-line react-hooks/rules-of-hooks
 const baseQuery = <T>(key: string[], path: string) => useQuery({
   queryKey: key,
@@ -33,8 +25,6 @@ const baseQuery = <T>(key: string[], path: string) => useQuery({
   retryDelay: 800,
 });
 
-/* List row + detail shapes are loosely typed (accessors read by name), matching
-   the PI/GRN list convention. */
 export type PaymentVoucherRow = Record<string, unknown> & {
   id: string;
   pv_number: string;
@@ -42,20 +32,15 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   voucher_date: string | null;
   payee_name: string;
   total_sen?: number;
-  /** DEV-75: recorded only — not in total_sen, posts nothing. */
   bank_charge_sen?: number | null;
   currency?: string;
   exchange_rate?: string | number | null;
   credit_account_code?: string;
-  /** The Remark (stored as notes): what Finance typed beside the voucher (owner
-      2026-10-14: Notes; 2026-11-08: Description; 2026-11-09: Remark — the Description
-      is now what the bills say, description_text). */
   notes?: string | null;
   /** The Description: what is paid for, as the bills say it — an AP payment's invoices'
       lines, else its own lines, else its requests' purposes, else the remark; never the
       bill number (owner 2026-11-09; server: payment-vouchers-describe.ts). */
   description_text?: string;
-  /** The bank it pays into: its own fields, else its request's, else its supplier's. */
   pay_bank?: string | null;
   pay_account_no?: string | null;
   pay_account_name?: string | null;
@@ -69,11 +54,7 @@ export type PaymentVoucherRow = Record<string, unknown> & {
   checked_by?: string | null;
   approved_at?: string | null;
   approved_by?: string | null;
-  /** What remains of this voucher's ADVANCE (paid ahead of any invoice, not
-      yet knocked off) — the list paints such rows and offers a chip. 0 when
-      none. Server: listPaymentVouchersHandler. */
   advance_remaining_sen?: number | null;
-  /** The journal its approval posted (the live one when an earlier was reversed); null until approved. */
   je_no?: string | null;
 };
 
@@ -135,17 +116,6 @@ export const usePaymentVoucherDetail = (id: string | null) => useQuery({
   enabled: !!id,
 });
 
-/* `idempotencyKey` is OPTIONAL and must be destructured OUT of the body — the
-   rest-spread would otherwise post it as a voucher field. Pass one per voucher
-   intent (see lib/idempotency.ts): the middleware replays the first response —
-   the SAME pvNumber — instead of raising a second voucher to pay the same
-   supplier. Omitting it is exactly today's behaviour (the middleware no-ops).
-
-   NOT on fix/so-idempotency's list, and the omission is worth naming: this is
-   the most literal money-out document in the app, and lib/idempotency.ts even
-   cites this file — but for /post and /cancel, which "detect their own replay
-   and echo back". CREATE has no such guard. The domain-idempotent note was about
-   two OTHER endpoints and quietly read as if the file were covered. */
 export const useCreatePaymentVoucher = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -155,9 +125,7 @@ export const useCreatePaymentVoucher = () => {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
-      /* A bill now vouchered is another's same bill (the pile says so on return). */
       void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
-      /* A voucher answering a request takes it off Finance's waiting count. */
       void qc.invalidateQueries({ queryKey: ['payment-requests'] });
     },
   });
@@ -195,8 +163,6 @@ export const useUpdatePvText = () => {
   });
 };
 
-/* A voucher that posts (or approves and posts) or cancels moves money on the invoices and AP bills it settles, the
-   supplier's advances and reservations, and the bank board, not only on itself. */
 const invalidatePvSettlement = (qc: ReturnType<typeof useQueryClient>) => {
   for (const k of ['purchase-invoices', 'purchase-invoice-detail', 'ap-invoices', 'ap-invoice', 'supplier-advances', 'pv-reservations', 'daily-bank', 'journal-entries']) {
     void qc.invalidateQueries({ queryKey: [k] });
@@ -212,7 +178,6 @@ export const usePostPaymentVoucher = () => {
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
-      // A post settles linked PIs and AP bills: refresh what it settled.
       invalidatePvSettlement(qc);
     },
   });
@@ -265,27 +230,21 @@ export const useCancelPaymentVoucher = () => {
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       invalidatePvSettlement(qc);
-      /* A cancelled voucher puts its request back on Finance's waiting count. */
       void qc.invalidateQueries({ queryKey: ['payment-requests'] });
     },
   });
 };
 
-/* ── Phase 3: the approval cycle. Each mutation refreshes the list, the
-   detail, and the Daily Bank board — a voucher entering or leaving the queue
-   moves the board's "available" figure. */
 const approvalMutation = (path: 'submit' | 'withdraw' | 'check' | 'approve') => () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => authedFetch<InBandFailure>(`/payment-vouchers/${id}/${path}`, { method: 'POST' }),
     onSuccess: (d, id) => {
-      /* Approve posts the voucher in the same request (approval IS the posting). */
       if (path === 'approve') reportInBandFailure('Voucher posted, but not every step finished', d);
       void qc.invalidateQueries({ queryKey: ['payment-vouchers'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
       void qc.invalidateQueries({ queryKey: ['payment-voucher-detail', id] });
       void qc.invalidateQueries({ queryKey: ['daily-bank'] });
-      // Approve posts the GL and settles invoices in the same request.
       if (path === 'approve') invalidatePvSettlement(qc);
     },
   });
@@ -293,7 +252,6 @@ const approvalMutation = (path: 'submit' | 'withdraw' | 'check' | 'approve') => 
 export const useSubmitPaymentVoucher = approvalMutation('submit');
 export const useWithdrawPaymentVoucher = approvalMutation('withdraw');
 export const useCheckPaymentVoucher = approvalMutation('check');
-/* Approve posts the GL in the same request — the response is the post's. */
 export const useApprovePaymentVoucher = approvalMutation('approve');
 
 /* Remind approver (the redesign's e8; owner 2026-11-03: 主要是付款吧) — a note in
@@ -305,9 +263,7 @@ export type PvRemindRefusal = { id: string; pvNumber: string | null; error: stri
 export type PvRemindResult = {
   reminded: Array<{ id: string; pvNumber: string }>;
   refused: PvRemindRefusal[];
-  /** How many people the note reached. */
   approvers: number;
-  /** When these vouchers may be reminded again (one reminder per voucher an hour). */
   nextAt: string;
 };
 export const useRemindApprover = () => {
@@ -335,16 +291,9 @@ export const useRejectPaymentVoucher = () => {
   });
 };
 
-/* ── Bill OCR (2026-09-02) — read incoming bills into voucher pre-fills.
-   Each `bills` entry is ONE document; its files are its pages (the human
-   groups pages at upload — the server never guesses). Nothing is written by
-   this call. */
 export type BillExtraction = {
   vendorName: string | null; vendorRegNo: string | null;
-  /** proforma / quotation: not yet the real invoice — a payment on it owes the official one (item 3). */
-  /** payment_proof (a transfer slip) / summary (a claim listing): read, but not a bill — the pile sets them aside. */
   documentKind: 'invoice' | 'bill' | 'receipt' | 'statement' | 'proforma' | 'quotation' | 'payment_proof' | 'summary' | 'unknown';
-  /** One page of several separate purchases — each line is one purchase. Absent from an older reader. */
   severalReceipts?: boolean;
   invoiceNumber: string | null; invoiceDate: string | null; dueDate: string | null;
   currency: string; totalSen: number | null; sstSen: number | null;
@@ -360,13 +309,10 @@ export type VendorMemory = { payeeName: string | null; debitAccountCode: string 
 export type ExtractedBill =
   | {
     index: number; ok: true; extraction: BillExtraction; supplierMatch: { id: string; code: string | null; name: string; confidence: 'exact' | 'contains' } | null; memory: VendorMemory | null;
-    /** The events the server matched to what the bill printed — suggestions only (6a). */
     eventSuggestions?: EventSuggestion[];
   }
   | { index: number; ok: false; reason: string };
 
-/* FileReader, not buf→btoa: a chunked fromCharCode spread stack-overflows on a
-   multi-megabyte PDF, and readAsDataURL hands back base64 in one move. */
 export const fileToBase64 = (f: File): Promise<string> => new Promise((resolve, reject) => {
   const r = new FileReader();
   r.onerror = () => { reject(new Error(`${f.name} could not be read from disk.`)); };
@@ -374,9 +320,6 @@ export const fileToBase64 = (f: File): Promise<string> => new Promise((resolve, 
   r.readAsDataURL(f);
 });
 
-/* On the scan queue (2026-11-11): one job per bill, polled, so the page can
-   show each bill waiting, being read, read or failed. A bill whose read failed
-   is that bill's answer (ok: false), never the batch's. */
 type BillsToRead = Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>;
 export async function extractBills(
   bills: BillsToRead, onStage: ((index: number, stage: AiReadStage) => void) | null,
@@ -413,11 +356,7 @@ export type PvFile = {
   id: string; file_name: string; mime: string;
   size_bytes: number; sort_no: number; created_at: string;
 };
-/* One file as the scan/upload paths carry it (same shape useExtractBills
-   sends) — built once from the File and reused for read + attach. */
 export type PvFilePayload = { name: string; mime: string; dataBase64: string };
-/* What a voucher file may be — the server's PV_FILE_MIMES (pv-files.ts),
-   as an <input accept>. */
 export const PV_FILE_ACCEPT = DOC_FILE_ACCEPT;
 
 export const usePvFiles = (pvId: string | null) => useQuery({
@@ -452,16 +391,11 @@ export const useDeletePvFile = () => {
   });
 };
 
-/* The authed byte fetch behind every attachment reader (authedFetch
-   JSON-parses, so it can't carry these) — the voucher's files and, since
-   2026-09-06, the AP invoice's (ap-invoice-queries.ts hands its own path
-   in). Same Worker-proxy pattern as slip.ts's fetchSlipAsObjectUrl, reusing
-   the exported API_URL instead of declaring another copy. */
 async function fetchDocFileResponse(path: string): Promise<Response> {
   const token = readAuthToken();
   if (!token) throw new Error('Your session has expired — please sign in again.');
   let signal: AbortSignal | undefined;
-  try { signal = AbortSignal.timeout(60_000); } catch { signal = undefined; } // pre-2022 browsers
+  try { signal = AbortSignal.timeout(60_000); } catch { signal = undefined; }
   const res = await correlatedFetch(`${API_URL}${path}`, {
     headers: { authorization: `Bearer ${token}`, ...companyHeader() },
     signal,
@@ -473,7 +407,6 @@ async function fetchDocFileResponse(path: string): Promise<Response> {
   return res;
 }
 
-/* View one attachment as a blob object URL. The caller revokes it. */
 export async function fetchDocFileBlobUrl(path: string): Promise<{ url: string; contentType: string }> {
   const res = await fetchDocFileResponse(path);
   const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
@@ -485,20 +418,11 @@ export async function fetchDocFileBlobUrl(path: string): Promise<{ url: string; 
 export const fetchPvFileBlobUrl = (pvId: string, fileId: string): Promise<{ url: string; contentType: string }> =>
   fetchDocFileBlobUrl(`/payment-vouchers/${pvId}/files/${fileId}`);
 
-/* The print's merge lives ON THE WORKER (backend pv-files.ts print-bundle +
-   lib/pdf-attach.ts): the stored bills are in R2 next door, and pdf-lib in
-   the browser would cost ~200KB gzip against a bundle gate that allows one
-   change +60. So the client posts the RENDERED voucher page(s) up — one
-   part per voucher — and receives one finished PDF back: voucher A, A's
-   files in sort order, voucher B, B's… Raw fetch (binary response;
-   authedFetch JSON-parses). The ONE door for every print bundle — the
-   vouchers' here, Supplier bills' (POST /ap-invoices/print-bundle, batch 4
-   step 8) through the same call. */
 export async function fetchPrintBundle(path: string, parts: unknown[]): Promise<Blob> {
   const token = readAuthToken();
   if (!token) throw new Error('Your session has expired — please sign in again.');
   let signal: AbortSignal | undefined;
-  try { signal = AbortSignal.timeout(120_000); } catch { signal = undefined; } // pre-2022 browsers
+  try { signal = AbortSignal.timeout(120_000); } catch { signal = undefined; }
   const res = await correlatedFetch(`${API_URL}${path}`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...companyHeader() },
@@ -555,9 +479,7 @@ export type RefundSource = {
   status: string | null;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: RefundPayment[];
-  /** What the document was paid: booked here plus, on an order, brought over from AutoCount. */
   bookedSen: number;
-  /** The part of it brought over from AutoCount (optional against an older server). */
   importedSen?: number;
   refunds: RefundVoucherRow[];
   refundedSen: number;

@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// receiptsModel — the rows of Money in › Receipts (the owner's Claude Design,
-// batch 5 §2): the official receipts (one per customer payment, the paper),
-// the sundry-income and other-debtor receipts (the money-in list) and the
-// customer payments mirror, as ONE kind of row; the kind segments, the status
-// chips each kind has, the search, and what each row says in the design's
-// words. Pure — the page brings the reads and the steps.
-// ----------------------------------------------------------------------------
 
 import type { ReceiptRow } from '../../../vendor/scm/lib/accounting-queries';
 import { searchText, soRefOfCamelStamp } from '../../../lib/so-ref-search';
@@ -30,23 +22,16 @@ export type ReceiptItem = {
   kind: ReceiptKind;
   id: string;
   no: string;
-  /** The day the money came: the payment's for an official receipt, the receipt's otherwise. */
   date: string;
   from: string;
-  /** What it was for: the order (or invoice), the first line, the bills. */
   forText: string;
-  /** Where For opens — the order, the first bill; null when it opens nothing. */
   forHref: string | null;
-  /** Method / into: the payment method, or the bank the money went into. */
   via: string;
   amountSen: number;
-  /** The status chip key the row answers to within its kind. */
   status: string;
-  /** All's three groups; null for the customer payments mirror. */
   group: 'pending' | 'final' | 'cancelled' | null;
   cancelled: boolean;
   tag: Tag;
-  /** A cancelled official receipt's reason. */
   note: string | null;
   official?: OfficialListRow;
   receipt?: ReceiptRow;
@@ -57,7 +42,6 @@ export type ReceiptItem = {
 export const debtorStageOf = (r: Pick<ReceiptRow, 'status' | 'submittedAt' | 'checkedAt'>): DebtorStage =>
   pvStage({ status: r.status, submitted_at: r.submittedAt ?? null, checked_at: r.checkedAt ?? null });
 
-/** "2026-10" for a date. */
 const monthOf = (d: string): string => d.slice(0, 7);
 
 const soHref = (doc: string): string => `/scm/sales-orders/${encodeURIComponent(doc)}`;
@@ -86,7 +70,6 @@ export function officialItem(r: OfficialListRow): ReceiptItem {
 export function receiptItem(r: ReceiptRow, bankName: (code: string) => string): ReceiptItem {
   const date = String(r.date).slice(0, 10);
   if (r.kind === 'CUSTOMER') {
-    /* Its number IS the order; For has nothing more to say. */
     return {
       key: `customer:${r.id}`, kind: 'customer', id: r.id, no: r.number, date, from: r.payer,
       forText: '—', forHref: soHref(r.number), via: methodWord(r.moneyAccount), amountSen: r.totalSen,

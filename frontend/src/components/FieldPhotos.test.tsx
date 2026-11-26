@@ -1,7 +1,3 @@
-/* The field-photo block: on a phone the add tile offers the camera OR the photo
-   library (iPhone `capture` alone forces the camera, so a photo already taken
-   could not be picked), "Take another" after a shot, and a failed photo shows
-   Retry and Remove. */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FieldPhotos } from "./FieldPhotos";

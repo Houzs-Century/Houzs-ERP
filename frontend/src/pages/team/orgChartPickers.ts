@@ -1,5 +1,3 @@
-// Org-chart reporting helpers, lifted out of Team.tsx so the cycle rule and the
-// picker's option list can be tested directly — and so the page stops growing.
 import type { TeamMember } from "../../types";
 
 /**
@@ -25,8 +23,6 @@ export function isDescendantOf(
   return false;
 }
 
-/* The org-chart card's pickers, sized to the card (32px / 11px) rather than to
-   a form row. SearchableSelect applies this to its input. */
 export const ORG_PICKER_CLS =
   "h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px] text-ink outline-none focus:border-primary";
 

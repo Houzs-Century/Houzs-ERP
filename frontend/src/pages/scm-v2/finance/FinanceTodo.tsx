@@ -31,7 +31,6 @@ const ICON: Record<TodoIcon, LucideIcon> = {
   'alert-triangle': AlertTriangle, 'calendar-days': CalendarDays, 'pen-line': PenLine, 'file-text': FileText, 'hand-coins': HandCoins,
 };
 
-/** Tile colours by kind of job (the design's `tone` table) — the module's classes. */
 const TILE: Record<TodoTone, string> = {
   routine: styles.tileRoutine, manual: styles.tileManual, cards: styles.tileCards, bank: styles.tileBank,
   money: styles.tileMoney, out: styles.tileOut, err: styles.tileErr,
@@ -44,7 +43,6 @@ const GROUPS: Array<{ id: TodoGroup; label: string; icon: LucideIcon }> = [
   { id: 'misc', label: 'Others', icon: Layers },
 ];
 
-/** Inside the recon group: merchant reports first, then bank statements; each runs upload → confirm → choose. */
 const RECON_ORDER: Record<string, number> = {
   'card-missing': 0, 'card-matched': 1, 'card-choose': 2, 'bank-missing': 10, 'bank-decide': 11, routine: 12, task: 20,
 };
@@ -92,7 +90,6 @@ type RowHandlers = { onOpenTask: (job: TodoJob) => void; onTaskAction: (job: Tod
 function JobRow({ job, today, others = false, h }: { job: TodoJob; today: string; others?: boolean; h: RowHandlers }) {
   const Icon = ICON[job.icon];
   const t = job.task;
-  /* A task's row opens it; its button marks it done (or, for a routine, does what the routine does). */
   const button = t && (t.kind === 'task' || t.action === 'voucher' || others)
     ? (
       <button type="button" className={`${styles.action} ${job.action.primary ? styles.actionPrimary : styles.actionSecondary}`}
@@ -147,7 +144,6 @@ function Groups({ data, h }: { data: FinanceTodo; h: RowHandlers }) {
     pay: 'requests and vouchers',
   };
   const all = [...GROUPS, ...data.groups.map((g) => ({ id: g.id, label: g.label, icon: Layers }))];
-  /* A job under a group that is no longer listed still shows — under Others. */
   const known = new Set(all.map((g) => g.id));
   const groupOf = (j: TodoJob) => (known.has(j.group) ? j.group : 'misc');
   const shown = all.map((g) => ({ ...g, jobs: sortGroup(g.id, data.mine.filter((j) => groupOf(j) === g.id)) })).filter((g) => g.jobs.length > 0);
@@ -203,7 +199,6 @@ export function FinanceTodoPage() {
   const mark = useMarkTask();
   const navigate = useNavigate();
   const [adding, setAdding] = useState(false);
-  /* List or Calendar — in the address, so either can be linked to. */
   const [params, setParams] = useSearchParams();
   const calendar = params.get('view') === 'calendar';
   const setView = (v: 'list' | 'calendar') => {
@@ -212,7 +207,6 @@ export function FinanceTodoPage() {
     setParams(next, { replace: true });
   };
   const [openTask, setOpenTask] = useState<{ id: string; occursOn: string; due: string } | null>(null);
-  /* The requests job's Review opens the Payment requests drawer here (the redesign, step 10). */
   const requestsOpen = params.get('drawer') === 'requests';
   const closeRequests = () => {
     const next = new URLSearchParams(params);
@@ -231,7 +225,6 @@ export function FinanceTodoPage() {
       const t = j.task;
       if (!t) return;
       mark.mutate({ id: t.id, kind: 'done', occursOn: t.occursOn }, {
-        /* A routine's voucher is drafted on the voucher page — the routine is marked as started. */
         onSuccess: () => { if (t.kind === 'routine' && t.action === 'voucher') navigate(j.action.to); },
       });
     },
@@ -314,8 +307,6 @@ export function FinanceTodoPage() {
             {data.money && (
               <Link to="/scm/daily-bank?view=board" className={styles.moneyCard} aria-label="Can move today">
                 <div className={styles.moneyHead}><span>Can move today</span><ArrowUpRight size={15} /></div>
-                {/* Bank and cash less the vouchers awaiting approval (the Daily Bank board's own sum);
-                    card money not paid out yet is shown under it, not counted in it. */}
                 <div className={styles.moneyBig}>{fmtSen(data.money.bankCashSen - data.money.awaitingSen)}</div>
                 <div className={styles.moneyLines}>
                   <div className={styles.moneyLine}><span>Bank &amp; cash</span><span>{fmtSenPlain(data.money.bankCashSen)}</span></div>

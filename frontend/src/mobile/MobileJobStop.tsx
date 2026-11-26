@@ -20,19 +20,12 @@ import {
 export { useJobProgressMap } from "../vendor/scm/lib/job-progress-queries";
 export { jobRefOf, jobKey, jobLabelOf, type JobRef, type JobProgress } from "../vendor/scm/lib/delivery-job";
 
-/* A run-sheet stop that is NOT a delivery order: Setup / Dismantle (a project),
-   a Service Case leg, or a manual DP job (Supplier pickup, Transfer, Lorry
-   service). Same chain as a DO — On the way -> Arrived -> photos -> Complete —
-   through /delivery-jobs (backend scm/routes/delivery-job-progress.ts), which
-   also files the photos on the job's own document. */
 
 export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   jobRef: JobRef; seq: number | null; onBack: () => void; onDone: () => void;
 }) {
   const qc = useQueryClient();
   const base = `/delivery-jobs/${jobRef.sourceType}/${encodeURIComponent(jobRef.sourceId)}/${encodeURIComponent(jobRef.leg)}`;
-  /* The crew share the stop: while it is open and not completed, ask again so
-     the other crew member's On the way / Arrived / Complete shows here too. */
   const q = useQuery({
     queryKey: ["delivery-job", jobKey(jobRef)], queryFn: () => authedFetch<JobResponse>(base), staleTime: 15_000,
     refetchInterval: (query) => (query.state.data?.progress?.completed_at ? false : CREW_STOP_POLL_MS),
@@ -42,8 +35,6 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   const [notes, setNotes] = useState("");
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracyM: number | null; atIso: string } | null>(null);
   const [capturing, setCapturing] = useState(false);
-  /* "Report a problem": sent AFTER the job is completed, so a problem never
-     blocks the job (A2). */
   const [issueOn, setIssueOn] = useState(false);
   const [issueDraft, setIssueDraft] = useState<DeliveryIssueDraft>(EMPTY_ISSUE_DRAFT);
   const issuesQ = useRunDeliveryIssues({ jobs: [jobKey(jobRef)] }, true, CREW_STOP_POLL_MS);
@@ -53,8 +44,6 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   const who = (id: unknown) => (id == null ? null : people[String(id)] || null);
   const ctx = q.data?.context;
   const done = !!progress?.completed_at;
-  // The backend takes at most 10 photos when a job is completed (delivery-job-progress.ts MAX_PHOTOS).
-  // After a page reload the photos already uploaded for this stop come back from the server.
   const photoContext = fieldPhotoContext({ kind: "job", key: jobKey(jobRef) });
   const photos = useFieldPhotos({
     stampLabel: null, // no time watermark on photos (owner 2026-11-11)
@@ -77,7 +66,6 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
       return true;
     } catch (e) {
       setError((e as Error).message || "Could not save. Check your connection and try again.");
-      // The other crew member may have just done it: show the stop as it is now.
       void refresh();
       return false;
     } finally { setBusy(false); }
@@ -95,7 +83,6 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
   };
 
   const complete = async () => {
-    // Photos upload as they are taken; Complete sends only the uploaded ones.
     const gate = photos.gate("Take at least one POD photo first.");
     if (!gate.ok) { setError(gate.reason); return; }
     const issueError = issueOn ? deliveryIssueDraftError(issueDraft) : null;
@@ -214,7 +201,6 @@ export function MobileJobStop({ jobRef, seq, onBack, onDone }: {
                 </button>
               </div>
             )}
-            {/* The crew reports; the office opens the case from the DO / SO screen. */}
             <MobileDeliveryIssues issues={issuesQ.data} canCreateCase={false} />
             {(step === "arrived" || done) && (
               !issueOn ? (

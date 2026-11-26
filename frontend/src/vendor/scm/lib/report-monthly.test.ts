@@ -55,8 +55,6 @@ describe('mergeColumns', () => {
   });
 
   test('a line only a later column has lands right after the line before it in that column', () => {
-    /* 900-A014 booked in August only, reversed in September: the cumulative
-       range nets it to nothing, so the spine lacks it. */
     const merged = mergeColumns([
       { key: 'cumulative', lines: [line('blk', 0, 0, 'block'), line('a', 30), line('c', 5), line('tot', 35, 0, 'total')] },
       { key: '2026-09', lines: [line('blk', 0, 0, 'block'), line('a', 10), line('x', -15), line('c', 5), line('tot', 0, 0, 'total')] },
@@ -176,7 +174,6 @@ describe('each report as lines', () => {
     expect(lines.find((l) => l.id === 'net:surplus')).toMatchObject({ label: 'Cash surplus / (deficit)', kind: 'net', amountSen: -20_000, pct: -40 });
     expect(lines.find((l) => l.id === 'bal:opening')).toMatchObject({ label: 'Balance b/f', kind: 'total', amountSen: -10_000 });
     expect(lines.find((l) => l.id === 'bal:closing')).toMatchObject({ label: 'Balance c/f', kind: 'net', amountSen: -30_000, pct: null });
-    /* Nothing split on this tree: no line carries a Settlement / Deposit pair. */
     expect(lines.some((l) => 'sd' in l)).toBe(false);
   });
 
@@ -202,7 +199,6 @@ describe('each report as lines', () => {
     expect(sdAt('tot:cf:in')).toEqual(sdOf(50_000, 40_000));
     expect(sdAt('tot:cf:ops')).toEqual(sdOf(10_000, 20_000));
     expect(sdAt('cf:sub:ops')).toEqual(sdOf(40_000, 20_000));
-    /* Not split: the tax group, its line, the block titles, the surplus and the balances. */
     expect([sdAt('out:acc:910-0000'), sdAt('tot:cf:tax'), sdAt('blk:cf:in'), sdAt('net:surplus'), sdAt('bal:closing')]).toEqual([undefined, undefined, undefined, undefined, undefined]);
     const merged = mergeColumns([{ key: '2026-10', lines }, { key: '2026-09', lines: lines.map((l) => (l.id === 'cf:sub:ops' ? { ...l, amountSen: 1, sd: sdOf(1, 0) } : l)) }]);
     const sub = merged.find((l) => l.id === 'cf:sub:ops')!;

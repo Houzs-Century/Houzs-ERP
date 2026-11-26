@@ -1,19 +1,3 @@
-// ---------------------------------------------------------------------------
-// fleet-day-view.ts — the PURE assembler behind GET /trips/day (Fleet Module A4).
-//
-// A4 is a READ / RENDER layer over trips that are ALREADY scheduled: pick a date
-// (+ optional depot warehouse) and see every trip that day, each lorry's route on
-// one map, and a printable per-lorry run-sheet. Nothing here schedules or writes
-// — the trip + its stops came from scm.trips / scm.trip_stops (mig 0053), the
-// customer / phone / house-type / revenue from the SO/DO the stop points at, and
-// the delivery time window from scm.delivery_residence_rules (mig 0196).
-//
-// The DB reads (trips, stops, do->so resolution, residence rules, geocode cache,
-// the driver/helper/lorry/warehouse masters) happen in the route handler; this
-// file is the pure, deterministic SHAPING of those rows into the day-view model,
-// so the grouping, ordering, totals and enrichment merge are unit-testable
-// without a database or a Google key.
-// ---------------------------------------------------------------------------
 
 export interface MasterName {
   id: string;
@@ -78,8 +62,6 @@ export interface StopEnrichment {
   earliestTime: string | null;
   latestTime: string | null;
   accessNote: string | null;
-  /** The stop's postcode + state: off the SO, the DP job, or the postcode found
-   *  in the address text (scm/lib/postcode-from-address.ts). */
   postcode: string | null;
   state: string | null;
 }
@@ -112,8 +94,6 @@ export interface DayTrip {
   status: string;
   is_outsourced: boolean;
   total_distance_km: number | null;
-  /** Planned departure (mig 20261101T0900) vs the actual clock-in / clock-out
-   *  departure (mig 0053). ISO strings; null until set. */
   planned_depart_at: string | null;
   clock_in_at: string | null;
   clock_out_at: string | null;
@@ -124,8 +104,6 @@ export interface DayTrip {
   depot: LatLng | null;
   total_revenue_sen: number;
   total_drops: number;
-  /** Of the DELIVERY drops: how many are DELIVERED, and how many of those carry
-   *  real POD evidence (signature/photo/GPS). total_with_pod <= total_delivered. */
   total_delivered: number;
   total_with_pod: number;
   stops: DayStop[];
@@ -138,14 +116,9 @@ export interface AssembleInput {
   helpersById: Map<string, MasterName>;
   lorriesById: Map<string, MasterLorry>;
   warehousesById: Map<string, MasterWarehouse>;
-  /** stopId -> enrichment (phone / house type / window). Missing = no source. */
   enrichByStopId: Map<string, StopEnrichment>;
-  /** stopId -> geocoded point. Missing = could not geocode / no key. */
   geoByStopId: Map<string, LatLng>;
-  /** warehouseId -> geocoded depot point. Missing = no depot geocode. */
   depotByWarehouseId: Map<string, LatLng>;
-  /** stopId -> the stop's DO delivery/POD state. Missing = no DO / not delivered /
-   *  no POD — all count as not-done in the per-trip rollup. */
   podByStopId: Map<string, { delivered: boolean; hasPod: boolean }>;
 }
 
@@ -261,8 +234,6 @@ export function assembleDayView(input: AssembleInput): { trips: DayTrip[] } {
     };
   });
 
-  // Stable display order: by trip_no so the side panel + colour assignment are
-  // deterministic across reloads (colour is assigned by the frontend off this).
   dayTrips.sort((a, b) => String(a.trip_no ?? '').localeCompare(String(b.trip_no ?? '')));
   return { trips: dayTrips };
 }

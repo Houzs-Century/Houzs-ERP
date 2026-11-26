@@ -1,8 +1,3 @@
-// The AI Connector's in-process call marker (routes/mcp.ts -> middleware/auth.ts).
-// An hzmcp_ token is honoured ONLY on a request carrying this header with this
-// isolate's random secret — i.e. a call routes/mcp.ts made into the app itself.
-// The secret never leaves the isolate, so a token copied out of an AI app cannot
-// be used against /api/* directly.
 export const MCP_INNER_HEADER = "x-houzs-mcp-inner";
 
 let secret: string | null = null;
@@ -22,13 +17,6 @@ export function isMcpInner(value: string | undefined): boolean {
   return diff === 0;
 }
 
-// ── one token check per lookup ──────────────────────────────────────────────
-// routes/mcp.ts verifies the token at the door (mcpIdentity: token not expired
-// or revoked, account active, AI access on) and then makes one or more inner
-// GETs for the same tool call. Those inner GETs reuse that answer for a few
-// seconds instead of resolving the token again in middleware/auth.ts. Every new
-// request from the AI app is still checked at the door, so Disconnect / Remove
-// stop the NEXT request. Per isolate; never shared between isolates.
 export const VERIFIED_TTL_MS = 15_000;
 const verified = new Map<string, { id: unknown; exp: number }>();
 
@@ -49,17 +37,6 @@ export function recallVerified<T>(token: string, now: number): T | null {
   return e.id as T;
 }
 
-// ── the one write door: a confirmed action ──────────────────────────────────
-// An hzmcp_ token is read-only (middleware/auth.ts) EXCEPT for one request: the
-// in-process call routes/mcp.ts confirm_action makes right after it claimed the
-// person's pending action row (mcp_pending_actions, single use). That call
-// carries MCP_ACTION_HEADER = the action id, and is admitted only when ALL hold:
-//   - the per-isolate inner secret is present (checked first, in auth.ts);
-//   - the action id was armed by confirm_action in this isolate a moment ago,
-//     for this same token, and has not been used (taking it disarms it);
-//   - method + path is the allowlisted route for that action's kind.
-// Anything else stays 403. Orders, money, stock, approvals and deletes are not
-// on the list and cannot be reached.
 export const MCP_ACTION_HEADER = "x-houzs-mcp-action";
 
 export const ACTION_ALLOWLIST: readonly { kind: string; method: string; path: string }[] = [

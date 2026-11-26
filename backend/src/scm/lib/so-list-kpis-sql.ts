@@ -1,21 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-list-kpis-sql — the Sales Order list's status pills, On Hold pill and
-// money strip in TWO SQL statements, instead of paging every matching order.
-//
-// Production PostgREST has aggregates off, so GET /mfg-sales-orders?page= took
-// the fallback: page the status column of the whole scoped set (about 12 round
-// trips for 11,000 orders) and page the money columns of the whole filtered set
-// (up to 12 more), one after another, plus a head count for On Hold. Here the
-// SAME closures (`read.scoped`, `read.header`, the money skip-cancelled term)
-// are compiled to SQL by pgrest-sql.ts and answered by Postgres directly.
-//
-// The numbers are the fallback's numbers, by construction:
-//   - pills: the rows go through the same tallyStatusRows, weighted by count;
-//   - On Hold: rows of the scoped set matching HELD_OR_TERM, as the head count;
-//   - money: Σ local_total_sen, Σ (balance_sen_live ?? balance_sen),
-//     Σ paid_total_sen — SUM skips NULL exactly as the `?? 0` reduce does.
-// Returns null when the caller must use its PostgREST path (list-sql.ts).
-// ----------------------------------------------------------------------------
 
 import { HELD_OR_TERM } from './document-hold';
 import { NOT_CANCELLED_OR } from './list-money-cancelled';

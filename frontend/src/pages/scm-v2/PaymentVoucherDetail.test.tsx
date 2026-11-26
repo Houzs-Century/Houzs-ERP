@@ -12,16 +12,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-/* Hoisted with the mocks that read them (vi.mock factories run before the
-   file's own consts exist). */
 const { updateAsync, approveAsync, idle, DETAIL, FILES } = vi.hoisted(() => {
-  /* The voucher's stored files, as usePvFiles hands them (empty unless a test fills it). */
   const FILES: Array<Record<string, unknown>> = [];
   const updateAsync = vi.fn(async (_b: Record<string, unknown>) => ({ ok: true }));
   const idle = () => ({ mutateAsync: vi.fn(async () => ({ ok: true })), isPending: false });
-  /* The rejected voucher as prod holds it: its formal number kept, every mark
-     cleared, ONE stored line on the Other Creditor control, one AP-invoice
-     allocation. */
   const DETAIL = {
     paymentVoucher: {
       id: 'pv-9', pv_number: '2990-HPV-2609-009', status: 'DRAFT', purpose: 'SUPPLIER_PAYMENT',
@@ -45,7 +39,6 @@ vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => (
   useUploadOfficialDoc: () => ({ mutateAsync: uploadOfficialAsync, isPending: false }),
 }));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) => ({
-  /* The real constants stay (PV_FILE_ACCEPT for the files card); only the hooks are stubbed. */
   ...(await importOriginal<typeof import('../../vendor/scm/lib/payment-voucher-queries')>()),
   usePaymentVoucherDetail: () => ({ data: DETAIL, isLoading: false }),
   useUpdatePaymentVoucher: () => ({ mutateAsync: updateAsync, isPending: false }),
@@ -59,8 +52,6 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) =
   usePvReservations: () => ({ data: { byPi: {}, byApInvoice: {}, holders: {} }, isLoading: false }),
   NO_RESERVATIONS: { byPi: {}, byApInvoice: {}, holders: {} },
 }));
-/* The AP invoices (non-stock bills): META's, and another supplier's that must
-   stay off this voucher's picker. */
 vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useApInvoices: () => ({ data: { rows: [
     { kind: 'API', id: 'api-meta', invoiceNumber: '2990-API-2609-004', supplierId: 'sup-meta', supplierCode: '405-M001', supplierName: 'META PLATFORM IRELAND LIMITED', supplierInvoiceRef: 'META-SEP', invoiceDate: '2026-09-01', dueDate: null, currency: 'MYR', totalSen: 1007742, paidSen: 0, outstandingSen: 1007742, status: 'POSTED' },
@@ -89,7 +80,6 @@ vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) 
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => vi.fn(async () => true), usePrompt: () => vi.fn(async () => null) }));
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
 vi.mock('./EntityHistoryPanel', () => ({ EntityHistoryPanel: () => null }));
-/* The trail read inline (the redesign): who did what, off the same audit log as the drawer. */
 vi.mock('../../vendor/scm/lib/entity-audit-queries', () => ({ useEntityAuditLog: () => ({ data: [{ id: 't1', action: 'reject', actor_name_snapshot: 'Mei Ling', status_snapshot: 'DRAFT', note: 'Wrong bank account', created_at: '2026-11-02T03:00:00Z' }], isLoading: false, isError: false }) }));
 vi.mock('../../components/scm-v2/PrintPreviewModal', () => ({
   PrintPreviewModal: () => null,
@@ -121,8 +111,6 @@ const draw = () => render(
   </MemoryRouter>,
 );
 
-/* Approved, still a draft: the approval stamped and the posting died. The
-   Approve button hid itself on approved_at, so nothing could finish it. */
 describe('a voucher whose posting failed after approval', () => {
   const MARK = '2026-11-06T03:00:00Z';
   const at = (over: Record<string, unknown>) => {
@@ -200,7 +188,6 @@ describe('Edit text & bank: the words and the bank of a voucher the first yes ha
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Edit text & bank' }));
     expect((screen.getByLabelText('Line 1 description') as HTMLInputElement).value).toBe('Settle 1 invoice(s) — META PLATFORM IRELAND LIMITED');
-    /* The bank the voucher pays into, as the page reads it (own, else request's, else supplier's). */
     expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('CITIBANK');
     expect((screen.getByLabelText('Account no.') as HTMLInputElement).value).toBe('0123 4567');
     expect((screen.getByLabelText('Account name') as HTMLInputElement).value).toBe('');
@@ -273,13 +260,10 @@ describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', 
     updateAsync.mockClear();
     draw();
     await waitFor(() => expect(screen.getByText(/One line, written by the system on save/)).toBeTruthy());
-    /* The plain voucher's editor is gone — no debit account to pick, no line to add. */
     expect(screen.queryByText('Add another line')).toBeNull();
     expect(screen.queryByText('Account (Debit) *')).toBeNull();
     expect(screen.getByText('Lines (1)')).toBeTruthy();
 
-    /* The AP invoice (not a purchase invoice) is listed, marked, prefilled at
-       what the voucher already applies; another supplier's stays off. */
     expect(screen.getByText('2990-API-2609-004')).toBeTruthy();
     expect(screen.queryByText('2990-API-2609-777')).toBeNull();
     expect(screen.queryByText(/no outstanding purchase invoices/)).toBeNull();
@@ -287,7 +271,6 @@ describe('Edit on a DRAFT AP Payment is the AP form, not the plain voucher\'s', 
     expect((screen.getByLabelText('Apply to 2990-API-2609-004') as HTMLInputElement).value).toBe('10,077.42');
     expect(screen.getByText('Applying RM 10,077.42 = RM 10,077.42')).toBeTruthy();
 
-    /* A prepay rides the same voucher; the total follows ticks + prepay. */
     const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
     fireEvent.focus(prepay);
     fireEvent.change(prepay, { target: { value: '100' } });
@@ -362,7 +345,6 @@ describe('the Description, the Remark and the bank it pays into', () => {
 describe('Applies to: each invoice opens and its Back returns to the voucher', () => {
   const PI_ROW = { id: 'a2', kind: 'PI', piId: 'pi-7', invoiceNumber: '2990-PI-2609-011', supplierInvoiceRef: null, amountSen: 5000, status: 'POSTED' };
   const allocs = DETAIL.allocations as Array<Record<string, unknown>>;
-  /* The opened page, standing in for the AP bill / PI page: its Back is theirs. */
   const Opened = ({ name }: { name: string }) => {
     const navigate = useNavigate();
     return <button type="button" onClick={() => navigate(returnToWorkspaceOpener() ?? '/scm/list')}>{`Back from ${name}`}</button>;

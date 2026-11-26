@@ -58,8 +58,6 @@ const CHIPS = [
 
 const DOC_LABEL: Record<CancelRequestRow['doc_type'], string> = { SO: 'Sales Order', PO: 'Purchase Order', DO: 'Delivery Order' };
 
-/* doc_key is each document's own route key: the Sales Order's number, the
-   Purchase Order's and the Delivery Order's id. */
 const DOC_PATH: Record<CancelRequestRow['doc_type'], (key: string) => string> = {
   SO: (key) => `/scm/sales-orders/${encodeURIComponent(key)}`,
   PO: (key) => `/scm/purchase-orders/${key}`,

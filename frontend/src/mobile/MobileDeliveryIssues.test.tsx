@@ -3,7 +3,6 @@ import { fireEvent } from "@testing-library/dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// Only the office create call is stubbed; summary/formatting stay real.
 const createServiceCaseForIssue = vi.fn(async (..._a: unknown[]) => ({ id: 77, assr_no: "ASSR/2611-050" }));
 vi.mock("../vendor/scm/lib/delivery-issue-queries", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),

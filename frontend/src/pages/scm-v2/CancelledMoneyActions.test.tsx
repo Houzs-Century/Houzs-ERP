@@ -1,7 +1,3 @@
-// The SO list's bar for ticked orders holding money: the money still on them,
-// Refund and Convert over several orders of any customers (cancelled or live —
-// a live order gives what is above its floor), and nothing at all while a
-// ticked order has no money (a tick made to print is not a money question).
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -25,7 +21,6 @@ import { CancelledMoneyActions, sourcesOf } from './CancelledMoneyActions';
 const WITH_MONEY: ConvertSource[] = [
   { docNo: '2990-SO-2607-024', customer: 'Yap Kah Heng', status: 'CANCELLED', cancelledOn: '2026-08-01', remainingSen: 336_500, bookedSen: 336_500, movableSen: 336_500, keepSen: 0 },
   { docNo: '2990-SO-2608-028', customer: 'Larding Chen', status: 'CANCELLED', cancelledOn: '2026-08-20', remainingSen: 143_300, bookedSen: 143_300, movableSen: 143_300, keepSen: 0 },
-  /* A live order: RM 1,500 total, RM 1,000 on it, keeps 50% — RM 250 may move. */
   { docNo: '2990-SO-2609-060', customer: 'Lim Ah Lian', status: 'CONFIRMED', cancelledOn: null, remainingSen: 100_000, bookedSen: 100_000, movableSen: 25_000, keepSen: 75_000 },
 ];
 const T = (docNo: string, status = 'CANCELLED', customer: string | null = null) => ({ docNo, status, customer });
@@ -82,7 +77,6 @@ describe('CancelledMoneyActions', () => {
     expect(navigateSpy).toHaveBeenCalledWith(`/scm/sales-orders/new?copyFrom=${encodeURIComponent('2990-SO-2609-060')}&convert=${encodeURIComponent('2990-SO-2609-060:25000,2990-SO-2608-028:143300')}`);
   });
 
-  /* A payment request per order since 2026-10-14: each order its customer's bank, one reason, all required. */
   it('Refund sends one request per ticked order — each with its customer\'s bank, one reason — then clears the ticks', async () => {
     refundMutate.mockResolvedValue([{ docNo: '2990-SO-2608-028', requestNo: '2990-PRQ-2610-001' }, { docNo: '2990-SO-2607-024', requestNo: '2990-PRQ-2610-002' }]);
     const onDone = vi.fn();

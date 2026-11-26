@@ -45,7 +45,6 @@ export function useStickyFilters(
   const idleTtlMs = opts?.idleTtlMs;
   const restored = useRef(false);
 
-  // Pick out only the allow-listed keys (or all if no list).
   function pluck(src: URLSearchParams): URLSearchParams {
     if (!keys) return new URLSearchParams(src);
     const out = new URLSearchParams();
@@ -56,8 +55,6 @@ export function useStickyFilters(
     return out;
   }
 
-  // Mount-only restore. Skip if the URL already carries any allow-listed
-  // param — bookmarked / shared link wins.
   useEffect(() => {
     if (restored.current) return;
     restored.current = true;
@@ -65,14 +62,9 @@ export function useStickyFilters(
     if (current.toString() !== "") return;
     try {
       if (!storageKey) return;
-      // Drop the pre-2026-08-24 localStorage copy: it is the one that used to
-      // resurrect a filter set from a previous day / previous login.
       localStorage.removeItem(storageKey);
       const saved = sessionStorage.getItem(storageKey);
       if (!saved) return;
-      // With an idle TTL the value is stored as {v, t}. Drop it when the last
-      // CHANGE was more than idleTtlMs ago, or when it is not in that shape
-      // (a pre-TTL plain-string entry) — either way it is stale.
       let snapStr = saved;
       if (idleTtlMs != null) {
         let parsed: unknown;
@@ -84,24 +76,16 @@ export function useStickyFilters(
         }
         snapStr = rec.v;
       }
-      // Pluck on restore too — legacy entries that contained keys
-      // since renamed (e.g. an old `tab=` from before a sub-tab key
-      // rename) must be dropped, not merged back into the URL where
-      // they'd collide with an outer router that owns the same key.
       const next = pluck(new URLSearchParams(snapStr));
       if (next.toString() === "") return;
-      // Merge into existing params (preserve any unrelated keys
-      // like `?focus=` set by a deep-link).
       const merged = new URLSearchParams(params);
       for (const [k, v] of next) merged.set(k, v);
       setParams(merged, { replace: true });
     } catch {
-      // Storage unavailable — silent no-op.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Mirror URL → storage on every change.
   useEffect(() => {
     try {
       if (!storageKey) return;
@@ -117,7 +101,6 @@ export function useStickyFilters(
         sessionStorage.setItem(storageKey, snap);
       }
     } catch {
-      // ignore quota / privacy errors
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);

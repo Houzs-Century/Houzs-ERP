@@ -36,9 +36,6 @@ export async function moveModelCategory(
        system hit a problem" (owner 2026-09-18: two "SERVICE X SL" models of the
        same code, changing one to SERVICE hit the other). */
     if ((modelErr as { code?: string }).code === '23505') {
-      // Best-effort enrichment: name the code in the message when we can read
-      // it. A failed re-read must not turn an actionable clash into a 500, so
-      // it just falls back to the code-less sentence.
       const { data: self, error: selfErr } = await scopeToCompanyId(supabase
         .from('product_models')
         .select('model_code')
@@ -81,12 +78,6 @@ export type ModelMovePlan =
   | { ok: true; moves: Map<string, Omit<ImportModelMove, 'skuCount'>>; conflicts: Map<string, string> }
   | { ok: false; reason: string };
 
-/* Import SKUs, before anything is written: which rows change the category of a
-   SKU that belongs to a model (keyed by row code -> the model move), and which
-   rows must be refused because the file gives SKUs of ONE model more than one
-   category. A row that restates the category a sibling is leaving counts as a
-   disagreement too — the file says both, so neither is picked. Existing SKUs in
-   this company only; a blank or unreadable category cell takes no part. */
 export async function planModelCategoryMoves(
   supabase: SupabaseClient,
   companyId: number,

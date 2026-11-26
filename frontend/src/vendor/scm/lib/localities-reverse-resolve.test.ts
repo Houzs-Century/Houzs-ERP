@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// Reverse address-resolution helpers.
-//
-// The SO / mobile SO forms let the operator start from a Postcode or a City and
-// have the State (and, via the state→warehouse mapping, the Sales Location) fill
-// itself in. These tests pin the resolver contract the wiring depends on:
-//   - a postcode resolves to its unique {state, city}
-//   - a city resolves to its state ONLY when unambiguous
-//   - an ambiguous city yields NO guess (null)
-//   - resolving never mutates its input (so a postcode can't wipe itself)
-// ----------------------------------------------------------------------------
 import { describe, it, expect } from 'vitest';
 import {
   resolvePostcode,
@@ -22,14 +11,12 @@ const row = (postcode: string, city: string, state: string): LocalityRow => ({
   postcode, city, state, stateCode: '', country: 'Malaysia',
 });
 
-// A small MY fixture. "Taman Melati" deliberately sits under TWO states to
-// exercise the ambiguous-city path; 43300 is a real single-state Selangor code.
 const ROWS: LocalityRow[] = [
   row('43300', 'Seri Kembangan', 'Selangor'),
   row('47810', 'Petaling Jaya', 'Selangor'),
   row('50000', 'Kuala Lumpur', 'Wilayah Persekutuan Kuala Lumpur'),
   row('10000', 'George Town', 'Pulau Pinang'),
-  row('81100', 'Taman Melati', 'Johor'),        // ambiguous city ↓
+  row('81100', 'Taman Melati', 'Johor'),
   row('53100', 'Taman Melati', 'Wilayah Persekutuan Kuala Lumpur'),
 ];
 

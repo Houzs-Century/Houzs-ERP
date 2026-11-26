@@ -37,7 +37,6 @@ vi.mock("../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => vi.fn
 import { MobileConvertWizard } from "./MobileConvertWizard";
 
 afterEach(cleanup);
-/* Braces, not a concise arrow — a returned mock becomes vitest's teardown. */
 beforeEach(() => { authedFetch.mockReset(); });
 
 const wrap = (ui: React.ReactNode) => {
@@ -45,7 +44,6 @@ const wrap = (ui: React.ReactNode) => {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 };
 
-/** Answer the wizard's source list + convertible-lines GETs, then the POST. */
 const serveDoToSi = () => {
   authedFetch.mockImplementation(async (url: string) => {
     if (url.startsWith("/delivery-orders-mfg?limit=200")) {
@@ -69,7 +67,6 @@ const serveDoToSi = () => {
   });
 };
 
-/** The parsed body of the one POST to the convert endpoint. */
 const postedBody = (): Record<string, unknown> => {
   const call = authedFetch.mock.calls.find(
     (args: unknown[]) => typeof args[0] === "string" && args[0].startsWith("/sales-invoices/from-dos"),
@@ -89,8 +86,6 @@ describe("MobileConvertWizard — DO → SI drafts, never sends", () => {
         onCreated={() => {}}
       />,
     );
-    /* Lines arrive pre-ticked, so the operator's three taps really are: open,
-       Create, done — which is what made an accidental issue so cheap. */
     const cta = await screen.findByText("Create Sales Invoice");
     await userEvent.click(cta);
     await waitFor(() => expect(postedBody()).toBeTruthy());
@@ -106,8 +101,6 @@ describe("MobileConvertWizard — DO → SI drafts, never sends", () => {
     expect(postedBody().picks).toEqual([{ doItemId: "dl-1", qty: 1 }]);
   });
 
-  /* The route reads `body.asDraft === true` strictly, so a truthy stand-in
-     ("true", 1) would silently issue the invoice. Pin the literal. */
   it("sends a real boolean, which is what the route tests for", async () => {
     await createDraft();
     expect(typeof postedBody().asDraft).toBe("boolean");

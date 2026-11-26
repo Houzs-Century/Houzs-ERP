@@ -6,7 +6,7 @@
 import { describe, expect, test } from 'vitest';
 import printRaw from '../src/routes/assr_print.ts?raw';
 
-const supplierBlock = printRaw.slice(printRaw.indexOf('// ── Supplier Service Order (design handoff). ──'));
+const supplierBlock = printRaw.slice(printRaw.indexOf('const tripReason = String((trip || currentReturn)?.reason ?? "").trim();'));
 
 describe('Supplier Service Order layout', () => {
   test('the supplier copy drops the filler row and tfoot that made the blank page', () => {

@@ -1,5 +1,3 @@
-// The "When blank" column must say what resolveLeadDays (backend lead-time.ts)
-// will really use, or the screen lies about the PO date (2990-0063).
 import { describe, expect, test } from 'vitest';
 import { leadFallbackLabel } from './mrp-queries';
 

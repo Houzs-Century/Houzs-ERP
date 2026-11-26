@@ -100,9 +100,6 @@ describe('the other half: what the ERP reads and what AcSyncService applies', ()
   });
 
   test('every PO route applies UDF from the payload it is given', () => {
-    /* CreatePo reads p.UDF; /so-to-po and the conversions go through
-       PurchaseHeader, which reads p.UDF; /edit reads Header.UDF. ApplyUdf is
-       what reads the nested object. No service change is needed for the keys. */
     const createPo = acSync.slice(acSync.indexOf('static string CreatePo('), acSync.indexOf('// ── conversions'));
     expect(createPo).toContain('ApplyUdf(p, k => po.UDF[k], (k, v) => po.UDF[k] = v);');
     const purchaseHeader = acSync.slice(acSync.indexOf('static void PurchaseHeader('), acSync.indexOf('/* Source line keys'));
@@ -115,8 +112,6 @@ describe('the other half: what the ERP reads and what AcSyncService applies', ()
   });
 
   test('a date UDF is tried as a DateTime when the book refuses the string', () => {
-    /* The book's UDF_EDate* columns are datetime, like SO.UDF_PDate, which lands
-       this way today. */
     const setUdf = acSync.slice(acSync.indexOf('static void SetUdf('), acSync.indexOf('NOT APPLIED', acSync.indexOf('static void SetUdf(')));
     expect(setUdf).toContain('shapes.Add("DateTime"); values.Add(dt);');
   });

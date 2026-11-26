@@ -40,10 +40,6 @@ import { attachGrnLineFacts, piPoNumbersByInvoice, piPoPriceSummaryByInvoice, ty
 export const purchaseInvoicesListEnrichment = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoicesListEnrichment.use('*', supabaseAuth);
 
-/* One list page is capped at 100 rows (the list handler's pageSize cap), so a
-   well-behaved client asks for at most that many. Bound it defensively — the
-   endpoint is read-only, but computeMrp downstream is company-wide work and
-   there is no reason to fan a giant unbounded list into it. */
 const MAX_IDS = 200;
 
 purchaseInvoicesListEnrichment.get('/list-mrp-enrichment', async (c) => {
@@ -52,12 +48,8 @@ purchaseInvoicesListEnrichment.get('/list-mrp-enrichment', async (c) => {
   const raw = (c.req.query('piIds') ?? '').trim();
   const piIds = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))].slice(0, MAX_IDS);
   if (piIds.length === 0) return c.json({ enrichment: {} });
-  /* The 15-min list snapshot, not a live run (lib/list-mrp-source.ts). */
   const listMrp = resolveListMrp(sb, c, wantsListMrpRefresh(c));
 
-  /* Re-read (id, grn_id) under the company predicate — the tenant boundary. The
-     ids come from a page the client already received, so this is also defence
-     in depth: an id from another company simply does not come back. */
   const { data, error } = await scopeToCompany(
     sb.from('purchase_invoices').select('id, grn_id'), c,
   ).in('id', piIds);
@@ -92,7 +84,6 @@ purchaseInvoicesListEnrichment.get('/list-po-price', async (c) => {
   const piIds = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))].slice(0, MAX_IDS);
   if (piIds.length === 0) return c.json({ summary: {} });
 
-  // Same tenant boundary as the list: an id from another company does not come back.
   const { data: heads, error: hErr } = await scopeToCompany(sb.from('purchase_invoices').select('id'), c).in('id', piIds);
   if (hErr) return c.json({ error: 'enrichment_failed', reason: hErr.message }, 500);
   const ids = ((heads ?? []) as Array<{ id: string }>).map((h) => h.id);

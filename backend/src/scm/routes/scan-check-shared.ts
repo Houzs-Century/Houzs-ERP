@@ -27,7 +27,6 @@ export const callerId = (c: { get(k: 'houzsUser'): { id?: unknown } | undefined 
 };
 
 const MAX_FILES = 50;
-// Older than this, a working copy no longer comes back on its own.
 export const KEEP_DAYS = 14;
 
 export type CheckRow<R> = {
@@ -79,19 +78,13 @@ export const hasLines = (review: unknown): boolean => {
 };
 
 type UploadOpts = {
-  /** What a copy reused from an earlier read of the same file carries for this new scan. */
   scannedToday: <T extends object>(review: T) => T;
   documentType: CheckDocType;
-  // The AI-usage feature the split is booked under.
   feature: string;
   reviewVersion: number;
-  // Where the queue is unbound (test runtime): read one document now.
   runLocal: (env: Env, id: string, row: Record<string, unknown>) => Promise<unknown>;
 };
 
-/* Multipart, repeated `file`. Every file is one document, except a PDF of several
-   pages, which is split into the documents it holds. Answers with the batch once
-   every document is queued; the reading happens after. */
 export async function handleUpload(c: CheckContext, opts: UploadOpts): Promise<Response> {
   // company-scope: every scan_jobs row below is inserted with company_id = the active company; the image_keys update targets only the row just inserted.
   let form: FormData;
@@ -107,7 +100,6 @@ export async function handleUpload(c: CheckContext, opts: UploadOpts): Promise<R
   const uploaderStaffId = (await resolveCallerStaffId(svc, houzsUserId)) ?? c.get('user').id;
   const batchId = crypto.randomUUID();
 
-  // Every document to read: whole files, and each part of a split PDF.
   const docs: Array<{ name: string; mime: string; bytes: ArrayBuffer; pages: [number, number] | null }> = [];
   for (const f of files) {
     const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
@@ -126,18 +118,11 @@ export async function handleUpload(c: CheckContext, opts: UploadOpts): Promise<R
   const ids: string[] = [];
   let reused = 0;
   for (const d of docs) {
-    /* The same file read before in this company: take that read (as first
-       matched, before any edit) instead of paying for another, like Hookka's
-       file-hash cache. The operator still checks it. */
     const fileHash = await sha256Hex(d.bytes);
     const { data: prior, error: priorErr } = await svc.from('scan_jobs').select('review, error').eq('company_id', companyId).eq('document_type', opts.documentType)
       .eq('file_hash', fileHash).not('review', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
-    // A failed look-up only costs a fresh read, never a wrong one.
     if (priorErr) console.warn('[scan check] earlier-read look-up failed, reading afresh:', priorErr.message);
     const found = priorErr ? null : (prior as { review: { v?: number } | null; error: string | null } | null);
-    // A read kept in an older shape is read again rather than reused, and so is
-    // one with no lines: an empty read is a failed or doubtful one, and reusing
-    // it made every re-upload of DO-2611-037 come back empty (2026-11-13).
     const seen = found?.review?.v === opts.reviewVersion && hasLines(found.review) ? found : null;
     const { data, error } = await svc.from('scan_jobs').insert({
       status: seen ? 'done' : 'queued', document_type: opts.documentType, review_state: seen ? 'pending' : 'reading', batch_id: batchId,
@@ -163,14 +148,12 @@ export async function handleUpload(c: CheckContext, opts: UploadOpts): Promise<R
         if (readErr) { console.error('[scan check] job read failed:', id, readErr.message); return; }
         await opts.runLocal(c.env, id, data as Record<string, unknown>);
       })();
-      try { c.executionCtx.waitUntil(run); } catch { /* non-Workers runtime (tests) */ }
+      try { c.executionCtx.waitUntil(run); } catch { }
     }
   }
   return c.json({ success: true, data: { batchId, documents: ids.length + reused, reused } }, 202);
 }
 
-/* Delete scans from the list (Clear all sends every id). The read stays for the
-   audit and the learning pool. */
 export async function handleDiscard(c: CheckContext, documentType: CheckDocType): Promise<Response> {
   const svc = svcOf(c.env);
   const rows = await ownRows<unknown>(svc, c, documentType, idsOf(await jsonBody(c)));
@@ -182,9 +165,6 @@ export async function handleDiscard(c: CheckContext, documentType: CheckDocType)
   return c.json({ success: true, data: { discarded: ids.length } });
 }
 
-/* Mark this read as a good example: the sample lands ACCEPTED (corrected = what
-   was read) and joins the scanner's few-shot pool, the same promotion a posted
-   draft gives it. */
 export async function handleGold(c: CheckContext, documentType: CheckDocType): Promise<Response> {
   // company-scope: the sample id comes from the caller's own company-scoped scan row; so_scan_samples has no company column.
   const svc = svcOf(c.env);
@@ -200,7 +180,6 @@ export async function handleGold(c: CheckContext, documentType: CheckDocType): P
   return c.json({ success: true });
 }
 
-/* Read a document that failed once more. */
 export async function handleRetry(c: CheckContext, documentType: CheckDocType): Promise<Response> {
   const svc = svcOf(c.env);
   const row = (await ownRows<unknown>(svc, c, documentType, [c.req.param('id') as string]))[0] as CheckRow<unknown> | undefined;
@@ -212,7 +191,6 @@ export async function handleRetry(c: CheckContext, documentType: CheckDocType): 
   return c.json({ success: true });
 }
 
-/* The document as uploaded (or its pages), for the preview. */
 export async function handleFile(c: CheckContext, documentType: CheckDocType): Promise<Response> {
   const row = (await ownRows<unknown>(svcOf(c.env), c, documentType, [c.req.param('id') as string]))[0] as CheckRow<unknown> | undefined;
   const key = row?.image_keys?.[0];

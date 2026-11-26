@@ -1,7 +1,3 @@
-/* A long value in the right-hand info column of a printed document (a project
-   name, a customer reference, a PI's PO list) was drawn on one line from 33 mm
-   right of centre and ran past the page margin. Measured on the text as drawn.
-   Sister finding: Conts #743. */
 import { describe, expect, test } from 'vitest';
 import { jsPDF } from 'jspdf';
 import { drawInfoColumns } from './pdf-common';

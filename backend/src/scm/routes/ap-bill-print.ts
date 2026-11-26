@@ -1,24 +1,3 @@
-// ----------------------------------------------------------------------------
-// Supplier bills print bundle — Money out › Supplier bills in the owner's
-// Claude Design (batch 4, step 8): the ticked AP bills, purchase invoices and
-// supplier credit notes print as ONE document in list order, and with
-// "With files" each one's stored files follow its page.
-//
-//   POST /ap-invoices/print-bundle   { parts: [{ kind, id, pageBase64 }] }
-//
-// The voucher print's own door (routes/pv-files.ts, lib/pdf-attach.ts): the
-// client renders each document's page(s) with jsPDF — letterhead and CJK stay
-// where they are — and posts them up; this pulls the stored files off R2 next
-// door and hands back one PDF: A's page(s), A's files in attach order, B's
-// page(s), B's files… An AP bill (or a supplier's debit note) lends its own
-// files (acc_ap_invoice_files), a supplier credit note its own
-// (acc_credit_note_files); a purchase invoice keeps no files here, so its page
-// stands alone. A part whose document cannot be loaded fails the WHOLE request
-// by its number — a bundle quietly missing a document is the dishonest
-// branch — and a stored file whose R2 object is gone becomes a notice page.
-// Reads only, nothing posts; reading rides the finance area guard, as the
-// voucher bundle does.
-// ----------------------------------------------------------------------------
 
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
@@ -41,11 +20,8 @@ type Paper =
   | { state: 'missing' }
   | { state: 'failed'; reason: string };
 
-/** The number a read row carries under `column`, as text. */
 const numberIn = (data: unknown, column: string): string => String((data as Record<string, unknown>)[column] ?? '');
 
-/** The paper behind one part, read in the company you are working in: its
-    number, and the files it keeps (none for a purchase invoice). */
 async function loadPaper(c: Ctx, kind: BillKind, id: string): Promise<Paper> {
   const sb = c.get('supabase');
   switch (kind) {
@@ -56,7 +32,6 @@ async function loadPaper(c: Ctx, kind: BillKind, id: string): Promise<Paper> {
       return { state: 'found', number: numberIn(data, 'invoice_number'), files: AP_INVOICE_FILES };
     }
     case 'SCN': {
-      /* A supplier's credit note only — the customer side prints on Money in. */
       const { data, error } = await scopeToCompany(sb.from('acc_credit_notes').select('id, note_number').eq('id', id).eq('kind', 'SCN'), c).maybeSingle();
       if (error) return { state: 'failed', reason: error.message };
       if (!data) return { state: 'missing' };

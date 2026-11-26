@@ -2,8 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../types";
 import type { JobRow, QueueRow } from "./healthMeasures";
 
-// No database in the light suite: getDb throws, so the measuring side reports
-// every part as "could not be checked", which is itself the behaviour under test.
 vi.mock("../db/client", () => ({
   getDb: () => {
     throw new Error("no database in tests");

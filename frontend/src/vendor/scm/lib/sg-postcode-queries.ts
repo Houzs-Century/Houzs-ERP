@@ -1,12 +1,3 @@
-// Live Singapore postcode -> address lookup via GET /api/scm/sg-postcode/:code
-// (backend routes/sg-postcode.ts). Singapore's ~150k per-building postcodes are
-// NOT seeded in scm.my_localities (only 55 area-representative codes are), so a
-// real SG postcode is resolved live through the official OneMap API instead of
-// being imported into the shared master.
-//
-// INERT until configured: the backend returns { configured: false } when it has
-// no OneMap credentials. Callers MUST degrade (let the operator type the code /
-// address by hand) and never assume a live result.
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
@@ -18,9 +9,6 @@ export interface SgAddress {
   address: string;
   lat: string;
   lng: string;
-  // URA planning area for this coordinate (pln_area_n), uppercased; "" when the
-  // backend could not resolve it. resolveSgPlanningArea maps it to a seeded
-  // { state, city } so the form fills City + State as well as the address.
   planningArea: string;
 }
 

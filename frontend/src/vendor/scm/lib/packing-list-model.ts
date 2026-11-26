@@ -30,10 +30,8 @@
 import type { PackingStop } from './packing-list-queries';
 import { shortRackLabel } from './rack-label';
 
-/* ── 1. Loading order ─────────────────────────────────────────────────────── */
 
 export type LoadingSection<S> = {
-  /** 1..N in LOADING order. NOT the stop number — see the note above. */
   load_no: number;
   stop: S;
 };
@@ -52,15 +50,9 @@ export function loadingOrder<S extends { stop_no: number }>(stops: readonly S[])
   return out;
 }
 
-/* ── 2. The delivery-status rollup ────────────────────────────────────────── */
 
 /** The owner's four rungs, in his words, over the statuses scm.do_status has.
  *  DRAFT is deliberately rung 0 — it is before the ladder starts, not on it. */
-/* A Map, not an object literal: `.get()` returns `| undefined`, so the miss
-   branch below is a real branch the compiler and the linter both see. An index
-   into a `Record<string, T>` types as T, which makes the guard read as dead
-   code — and deleting it is how an unlisted status would silently become
-   rung 0. */
 export const DO_RUNG: ReadonlyMap<string, { rung: number; label: string }> = new Map([
   ['DRAFT', { rung: 0, label: 'Draft' }],
   ['LOADED', { rung: 1, label: 'Confirmed' }],
@@ -72,13 +64,9 @@ export const DO_RUNG: ReadonlyMap<string, { rung: number; label: string }> = new
 ]);
 
 export type StatusRollup = {
-  /** The furthest rung any member delivery order has reached. */
   label: string;
-  /** How many have reached that rung. */
   reached: number;
-  /** How many delivery orders the count is over (cancelled ones excluded). */
   total: number;
-  /** Cancelled member DOs — outside the ladder, reported rather than hidden. */
   cancelled: number;
 };
 
@@ -101,9 +89,6 @@ export function rollupDeliveryStatus(
   for (const status of byDo.values()) {
     if (status === 'CANCELLED') { cancelled += 1; continue; }
     const hit = DO_RUNG.get(status);
-    /* An unrecognised status is NOT folded into rung 0. It is a value nothing
-       in this ladder can speak for, so it stays out of the numerator and the
-       denominator rather than being reported as "Draft". */
     if (hit) rungs.push(hit.rung);
   }
   if (rungs.length === 0) return null;
@@ -123,10 +108,7 @@ export function rollupLabel(rollup: StatusRollup | null): string | null {
   return rollup ? `${rollup.label} ${rollup.reached}/${rollup.total}` : null;
 }
 
-/* ── 3. Racks ─────────────────────────────────────────────────────────────── */
 
-/** Leading integer, so "Rack 3" sorts before "Rack 20". Lifted from Hookka's
- *  `rack-format.ts` — same rule, because the same warehouse reads both sheets. */
 const rackNum = (s: string): number => {
   const m = s.match(/\d+/);
   return m ? Number(m[0]) : Number.POSITIVE_INFINITY;
@@ -157,7 +139,6 @@ export function formatRacksCompact(labels: readonly (string | null | undefined)[
   return sorted.map(shortRackLabel).join(', ');
 }
 
-/* ── 4. Volume ────────────────────────────────────────────────────────────── */
 
 /**
  * m³ from the stored milli-m³, or null when NOT ONE member delivery order

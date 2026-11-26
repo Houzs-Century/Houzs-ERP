@@ -221,7 +221,6 @@ describe("EventPnlTable - before the event ends a click sets the Forecast (owner
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(onForecast).toHaveBeenCalledWith("sales", 120000));
     expect(onSave).not.toHaveBeenCalled();
-    /* Rental is real (actual): a click still edits the actual, not a Forecast. */
     expect(within(rowOf("Rental")).getAllByRole("cell")[0]!.getAttribute("title")).toBe("Click to edit");
   });
 

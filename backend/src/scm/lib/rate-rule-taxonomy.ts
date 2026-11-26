@@ -94,8 +94,6 @@ export const RULE_CATEGORY: Record<RateRuleType, RateRuleCategory> = {
   POSITIONAL_TIER: 'DELIVERY',
   OVERAGE: 'DELIVERY',
   SOFA_BRACKET: 'DELIVERY',
-  /* Dispose rides a delivery — you take the old mattress away while dropping
-     the new one — so it is priced with the delivery, not as a service call. */
   DISPOSE: 'DELIVERY',
   SETUP: 'SITE_WORK',
   DISMANTLE: 'SITE_WORK',
@@ -158,8 +156,6 @@ export const RULE_JOB_TYPE: Record<RateRuleType, string | null> = {
   TRANSFER: 'TRANSFER',
   OUTSTATION: null,
   OUTSTATION_TRIP: null,
-  /* A charge on each delivery order (Singapore's SST and cost shares of the
-     goods value, a permit): it prices the delivery, not a job of its own. */
   DO_CHARGE: 'DELIVERY',
 };
 

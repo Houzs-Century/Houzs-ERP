@@ -65,9 +65,6 @@ export type PiListLine = {
   so_doc_no: string | null;
 };
 
-/* AutoCount's Purchase Invoice Detail Listing captions, read from the company's
-   saved default layout "SS" (FormPurchaseInvoicePrintDetailListing) on
-   2026-09-15. The extras after them are this ERP's own columns. */
 export const PI_LABELS = {
   docNo: 'Doc No',
   supplierInvoiceNo: 'Supplier Invoice No.',

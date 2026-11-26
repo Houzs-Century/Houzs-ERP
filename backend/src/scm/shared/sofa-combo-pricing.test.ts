@@ -14,17 +14,6 @@ import {
   type SofaComboRow,
 } from './sofa-combo-pricing';
 
-/**
- * Commander 2026-05-28 (HOOKKA `findComboSubset` + `comboMatches` 1:1) —
- * SUBSET / group-coverage match against OR-set slots (string[][]).
- *
- * Match rule: every combo SLOT must be covered by a DISTINCT built module
- * whose code is in that slot's OR-set. The built module count may EXCEED the
- * slot count — extra modules beyond the matched subset are allowed and stay
- * at full master price; the combo never folds them in. Pricing applies the
- * combo to the matched subset ONLY when it is strictly cheaper than that
- * subset's à-la-carte sum (cheaper-only guard, owned caller-side).
- */
 
 describe('normalizeComboModules', () => {
   it('passes through string[][] sorting codes within each slot, dropping empties', () => {
@@ -40,8 +29,6 @@ describe('normalizeComboModules', () => {
 
 describe('canonicalizeComboModulesForStorage (HOOKKA canonicalSizes 1:1)', () => {
   it('sorts codes within each slot AND sorts slots by first code', () => {
-    // L-slot supplied before the 2A-slot, codes reversed inside each → both
-    // levels get sorted so equivalent combos store byte-identical JSON.
     expect(
       canonicalizeComboModulesForStorage([
         ['L(RHF)', 'L(LHF)'],
@@ -81,11 +68,9 @@ describe('canonicalizeComboModulesForStorage (HOOKKA canonicalSizes 1:1)', () =>
 describe('canonicalizeLayoutModulesForStorage (Quick Pick — preserves order)', () => {
   it('keeps a middle Console in the middle (combo form sorts it to the end)', () => {
     const built = [['1A(LHF)'], ['Console'], ['1A(RHF)']];
-    // The combo canonicalizer alphabetically sorts the slots → Console last.
     expect(canonicalizeComboModulesForStorage(built)).toEqual([
       ['1A(LHF)'], ['1A(RHF)'], ['Console'],
     ]);
-    // The layout canonicalizer PRESERVES the built left-to-right order.
     expect(canonicalizeLayoutModulesForStorage(built)).toEqual([
       ['1A(LHF)'], ['Console'], ['1A(RHF)'],
     ]);
@@ -129,27 +114,21 @@ describe('matchComboSubset (HOOKKA findComboSubset 1:1)', () => {
   });
 
   it('EXTRA built module beyond the slots is allowed — subset = matched only', () => {
-    // Combo "2+L" = [{2A(LHF),2A(RHF)},{L(LHF),L(RHF)}]; built adds a stray 1NA.
     const slots = [['2A(LHF)', '2A(RHF)'], ['L(LHF)', 'L(RHF)']];
-    // 2A(LHF)→slot0, L(RHF)→slot1; the 1NA at index 2 is an extra (not returned).
     expect(matchComboSubset(['2A(LHF)', 'L(RHF)', '1NA'], slots)).toEqual([0, 1]);
-    // Even two extras ride free.
     expect(matchComboSubset(['2A(LHF)', 'L(RHF)', '1NA', 'Console'], slots)).toEqual([0, 1]);
   });
 
   it('extra module that ALSO fits a slot still only consumes one per slot', () => {
-    // Three 2A built, combo needs one 2A-slot + one L-slot. One 2A covers the
-    // 2A-slot, the L covers the L-slot, the other two 2A are extras.
     const slots = [['2A(LHF)', '2A(RHF)'], ['L(LHF)', 'L(RHF)']];
     const subset = matchComboSubset(['2A(LHF)', '2A(RHF)', 'L(LHF)'], slots);
     expect(subset).not.toBeNull();
-    expect(subset!.length).toBe(2); // one per slot, third 2A is an extra
+    expect(subset!.length).toBe(2);
   });
 
   it('OR-alternative cover — built code is one of a slot OR-set, order-free', () => {
     const slots = [['2A(LHF)', '2A(RHF)'], ['L(LHF)', 'L(RHF)']];
     expect(matchComboSubset(['2A(RHF)', 'L(LHF)'], slots)).toEqual([0, 1]);
-    // L-shape laid out chaise-first — order independent.
     expect(matchComboSubset(['L(RHF)', '2A(LHF)'], slots)).toEqual([0, 1]);
   });
 
@@ -159,10 +138,7 @@ describe('matchComboSubset (HOOKKA findComboSubset 1:1)', () => {
   });
 
   it('overlapping OR-sets resolved by matching (needs backtracking)', () => {
-    // slots [{X,Y},{X}], built [X, Y]: grabbing X for slot0 strands slot1;
-    // correct cover X→slot1, Y→slot0. Both consumed → subset [0,1].
     expect(matchComboSubset(['X', 'Y'], [['X', 'Y'], ['X']])).toEqual([0, 1]);
-    // built [Y, Y] vs [{X,Y},{X}] — only one slot accepts Y → can't cover both.
     expect(matchComboSubset(['Y', 'Y'], [['X', 'Y'], ['X']])).toBeNull();
   });
 
@@ -204,14 +180,13 @@ describe('pickComboMatch / pickComboPrice', () => {
   });
 
   it('SUBSET match: extra module allowed, matchedIndices excludes the extra', () => {
-    // built = combo subset + a stray 1NA extra.
     const m = pickComboMatch(
       { baseModel: '5530', modules: ['2A(RHF)', 'L(LHF)', '1NA'], customerId: null, tier: 'PRICE_2', height: '28', asOf },
       [row()],
     );
     expect(m).not.toBeNull();
     expect(m!.comboPriceSen).toBe(275000);
-    expect(m!.matchedIndices).toEqual([0, 1]); // the 1NA at index 2 is an extra
+    expect(m!.matchedIndices).toEqual([0, 1]);
   });
 
   it('all combo slots must be covered — too few built modules → null', () => {
@@ -251,12 +226,10 @@ describe('pickComboMatch / pickComboPrice', () => {
     const companyTier = row({ id: 'c-tier', tier: 'PRICE_2', customerId: null, pricesByHeight: { '28': 200 } });
     const custAny = row({ id: 'u-any', tier: null, customerId: 'CUST', pricesByHeight: { '28': 300 } });
     const custTier = row({ id: 'u-tier', tier: 'PRICE_2', customerId: 'CUST', pricesByHeight: { '28': 400 } });
-    // With a customer + tier, the customer+tier row wins.
     expect(pickComboMatch(
       { baseModel: '5530', modules: ['2A(LHF)', 'L(RHF)'], customerId: 'CUST', tier: 'PRICE_2', height: '28', asOf },
       [companyAny, companyTier, custAny, custTier],
     )!.row.id).toBe('u-tier');
-    // Without a customer, the company+tier row wins over company+ANY.
     expect(pickComboMatch(
       { baseModel: '5530', modules: ['2A(LHF)', 'L(RHF)'], customerId: null, tier: 'PRICE_2', height: '28', asOf },
       [companyAny, companyTier],
@@ -274,8 +247,6 @@ describe('pickComboMatch / pickComboPrice', () => {
   });
 
   it('equal effective_from: newest created_at wins, regardless of row order', () => {
-    // The 2026-07-12 Trrbu drift: duplicate live rows sharing effective_from
-    // made the winner depend on fetch order (POS cache vs server query).
     const dup1 = row({ id: 'dup1', effectiveFrom: '2026-05-01', createdAt: '2026-05-01T19:25:58Z', pricesByHeight: { '28': 249000 } });
     const dup2 = row({ id: 'dup2', effectiveFrom: '2026-05-01', createdAt: '2026-05-18T03:28:39Z', pricesByHeight: { '28': 199000 } });
     for (const rows of [[dup1, dup2], [dup2, dup1]]) {
@@ -293,7 +264,7 @@ describe('pickComboMatch / pickComboPrice', () => {
       expect(pickComboMatch(
         { baseModel: '5530', modules: ['2A(LHF)', 'L(RHF)'], customerId: null, tier: 'PRICE_2', height: '28', asOf },
         rows,
-      )!.row.id).toBe('bbb'); // descending id — same winner both orders
+      )!.row.id).toBe('bbb');
     }
   });
 
@@ -331,8 +302,6 @@ describe('pickComboMatch / pickComboPrice', () => {
 
   it('legacy flat string[] row still requires its exact codes', () => {
     const legacy = row({ modules: (['2A(LHF)', 'L(RHF)'] as unknown) as string[][] });
-    // normalizeComboModules wraps the flat codes into singleton slots → exact
-    // codes required, no OR widening. An extra still rides free.
     expect(pickComboPrice(
       { baseModel: '5530', modules: ['2A(LHF)', 'L(RHF)', '1NA'], customerId: null, tier: 'PRICE_2', height: '24', asOf },
       [legacy],
@@ -346,13 +315,10 @@ describe('pickComboMatch / pickComboPrice', () => {
 
 describe('spreadComboTotal (PO cost side — HOOKKA redistribution 1:1)', () => {
   it('spreads proportional to base cost; sum equals combo total exactly', () => {
-    // bases 600 + 400 = 1000; combo 900 → ratio 0.9 → 540 + 360 = 900.
     expect(spreadComboTotal([60000, 40000], 90000)).toEqual([54000, 36000]);
   });
 
   it('rebalances the rounding residual into the highest-cost line', () => {
-    // bases 100 + 100 + 100 = 300; combo 100 → floor(33.33)=33 each = 99,
-    // residual 1 → highest line (ties → first) gets it: 34 + 33 + 33 = 100.
     const out = spreadComboTotal([10000, 10000, 10000], 10000);
     expect(out.reduce((s, c) => s + c, 0)).toBe(10000);
     expect(out).toEqual([3334, 3333, 3333]);
@@ -361,7 +327,6 @@ describe('spreadComboTotal (PO cost side — HOOKKA redistribution 1:1)', () => 
   it('residual lands on the dearest line, not just the first', () => {
     const out = spreadComboTotal([10000, 50000], 30001);
     expect(out.reduce((s, c) => s + c, 0)).toBe(30001);
-    // base 10k/60k → 5000.16→5000; 50k/60k → 25000.83→25000; residual 1 → line[1]
     expect(out).toEqual([5000, 25001]);
   });
 
@@ -396,10 +361,6 @@ describe('buildComboLabel (HOOKKA renderComponentSizes 1:1)', () => {
   });
 });
 
-/* Combo cost/sell split (Phase 5, Part 1) — the engine charges the SELLING
- * price merged over COST per height. POS + server both call this so the
- * engine input is identical (mirrors the module sell_price_sen ?? base_price_sen
- * repoint). */
 describe('comboChargedPrices', () => {
   it('uses selling per height when set', () => {
     expect(comboChargedPrices({ '24': 380000 }, { '24': 300000 })).toEqual({ '24': 380000 });

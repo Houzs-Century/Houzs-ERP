@@ -99,7 +99,6 @@ const all = [
 ];
 
 beforeEach(() => {
-  // The SCREEN holds one receipt; the filtered set holds two with three lines.
   h.rows = [all[0]!];
   h.aoa = [];
   h.written = [];

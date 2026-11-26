@@ -1,10 +1,3 @@
-// Books › Stock close (GL redesign item 4, the owner's redesign batch 6 §3).
-// Pinned: the stock now with its five closing stocks (g5) on the share bar's
-// legend; every closed month split by bucket, a bucket booked nowhere hidden,
-// how it was booked and until when the nightly run re-checks it; the run log's
-// every outcome — the quiet "no change" rows included, which is the whole point
-// of the log — with its Every run / Changes / Failed filter; Run now sends the
-// chosen month (any month, through "Other month…") and says what it did.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -57,7 +50,6 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 const card = (name: string) => screen.getByRole('region', { name });
-/** The card's table: DataTable title-cases its heads ("Closing Stock"). */
 const grid = (name: string) => within(card(name)).getByRole('table');
 
 describe('Books › Stock close', () => {

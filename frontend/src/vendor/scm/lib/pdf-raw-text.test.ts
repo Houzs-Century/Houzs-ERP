@@ -1,5 +1,3 @@
-// pdf-raw-text must inflate a stream whose compressed bytes end in 0x0D — the
-// merge-queue flake on purchase-order-pdf-cancelled.test.ts (2 of 3 stamps).
 import { deflateSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { pdfRawText } from './pdf-raw-text';

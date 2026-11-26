@@ -1,4 +1,3 @@
-// Sister-ERP gap review G23: the wheel must not change a focused number input.
 import { afterEach, describe, expect, it } from "vitest";
 import { installNumberInputWheelGuard } from "./numberInputWheel";
 

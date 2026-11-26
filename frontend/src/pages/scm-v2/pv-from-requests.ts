@@ -14,10 +14,8 @@ type Req = Pick<PaymentRequest, 'request_no' | 'payee_name' | 'purpose' | 'amoun
 
 export type RequestsPrefill = {
   payeeName: string;
-  /** What the money is for: each purpose once. */
   notes: string;
   payTo: PayTo;
-  /** The requests name different banks, so none was filled. */
   banksDiffer: boolean;
   lines: Array<{ description: string; amountSen: number; projectId: number | null }>;
   totalSen: number;

@@ -2,8 +2,6 @@ import { render } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { costMarker } from './costMarker';
 
-/* The SKU Master cost-column marker maps the derived-cost anchor state to a chip:
-   teal dot (ok) / amber dot (conflict) / red "Gap" chip (empty) / nothing else. */
 describe('costMarker', () => {
   it('empty -> a red "Gap" chip', () => {
     const { container } = render(<>{costMarker('empty')}</>);

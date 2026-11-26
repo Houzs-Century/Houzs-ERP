@@ -1,8 +1,3 @@
-/* Regression: CSV exports wrote a cell starting with = + - @ TAB or CR as-is,
-   so text a customer typed on the portal (=HYPERLINK(...)) ran as a formula
-   when staff opened the export in Excel. Such cells now get a leading single
-   quote; plain numbers, negatives included, stay numeric; parseCSV undoes the
-   prefix so an exported sheet re-imports unchanged. */
 import { describe, expect, test } from "vitest";
 import { guardFormula, parseCSV, toCSV, type CSVColumn } from "./csv";
 

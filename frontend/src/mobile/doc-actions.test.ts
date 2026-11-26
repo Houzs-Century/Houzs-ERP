@@ -53,7 +53,6 @@ describe('askActionReason', () => {
     const validate = (v: string) => (v.trim().length < PO_CANCEL_PROMPT.minChars ? 'too short' : null);
     expect(validate('no')).not.toBeNull();
     expect(validate('wrong supplier')).toBeNull();
-    /* readReason on the server refuses under 5 too — one rule, one number. */
     expect(PO_CANCEL_PROMPT.minChars).toBe(5);
   });
 });

@@ -22,7 +22,6 @@ import { logisticPeriod, regionOf, type PeriodDo, type DoCatLine } from '../lib/
 import { downDates, loadDownWindows } from '../lib/lorry-down-days';
 import { DO_NOT_DELIVERED_IN_LIST, DO_STOCK_OUT_STATES } from '../shared/do-shipped-states';
 
-/* A sales order that is a draft or cancelled has no balance to chase. */
 const SO_NOT_LIVE = `(${['DRAFT', 'CANCELLED'].join(',')})`;
 import { unreleasedOrders } from '../lib/so-unreleased';
 import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
@@ -33,8 +32,6 @@ logisticOverview.use('*', supabaseAuth);
 
 type Row = Record<string, unknown>;
 const DAY = 86400000;
-/** How a run's stop counts for the lorry and reads in its list, in the board's job type
- *  words. A lorry service is the lorry's own upkeep, not a job. */
 const STOP_JOB: Readonly<Record<string, { kind: LorryJobKind; type: string } | null>> = {
   DELIVERY: { kind: 'delivery', type: 'Delivery' }, SERVICE: { kind: 'service', type: 'Service case' },
   INSPECTION: { kind: 'service', type: 'Service case · Inspection' }, PICKUP: { kind: 'service', type: 'Service case · Pickup' },
@@ -48,7 +45,7 @@ const str = (v: unknown) => (v == null || v === '' ? null : String(v));
 /** Monday of the week holding `day` (ISO date). */
 export function mondayOf(day: string): string {
   const t = Date.parse(`${day}T00:00:00Z`);
-  const dow = (new Date(t).getUTCDay() + 6) % 7; // Monday = 0
+  const dow = (new Date(t).getUTCDay() + 6) % 7;
   return iso(t - dow * DAY);
 }
 
@@ -58,17 +55,12 @@ export function mondayOf(day: string): string {
 logisticOverview.get('/', (c) =>
   serveSwr(c, { family: 'logov', parts: [todayMyt(), c.req.query('warehouse') ?? '', c.req.query('from') ?? '', c.req.query('to') ?? ''], softSeconds: 5 * 60, hardSeconds: 2 * 60 * 60, build: () => buildLogisticOverview(c) }));
 
-/* On-time delivery for the period (lib/on-time-delivery.ts): the rate, per lorry, driver
-   and region, and the late / early / on-time orders behind them. */
 logisticOverview.get('/on-time', (c) =>
   serveSwr(c, { family: 'logov-ontime', parts: [todayMyt(), c.req.query('warehouse') ?? '', c.req.query('from') ?? '', c.req.query('to') ?? ''], softSeconds: 5 * 60, hardSeconds: 2 * 60 * 60, build: () => buildOnTime(c) }));
 
 async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Variables }>): Promise<SwrBuild> {
   const sb = c.get('supabase');
   const today = todayMyt();
-  /* ?warehouse=<id>: delivery orders and lorry runs of that warehouse only;
-     absent = every warehouse. Delivered-but-owing stays company-wide (it is
-     a sales order balance, not a warehouse's). */
   const wq = c.req.query('warehouse') ?? '';
   const warehouseId = /^[0-9a-f-]{36}$/i.test(wq) ? wq : null;
   const byWh = <Q,>(q: Q): Q => (warehouseId ? (q as unknown as { eq: (col: string, v: string) => Q }).eq('warehouse_id', warehouseId) : q);
@@ -82,7 +74,6 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     .not('status', 'in', DO_NOT_DELIVERED_IN_LIST)), c).order('id').range(f, t));
   if (dos.error) return fail('delivery orders', dos.error);
 
-  // Weeks: 8 back, this week, next week.
   const weeks = Array.from({ length: 10 }, (_, i) => {
     const from = iso(Date.parse(`${firstWeek}T00:00:00Z`) + i * 7 * DAY);
     return { from, to: iso(Date.parse(`${from}T00:00:00Z`) + 6 * DAY), doCount: 0, doAmountSen: 0, delivered: 0, current: from === thisMonday };
@@ -94,20 +85,14 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     const date = String(d.do_date ?? '').slice(0, 10);
     const w = weekOf(date);
     if (w) { w.doCount += 1; w.doAmountSen += num(d.local_total_sen); }
-    // A DELIVERED order without a delivered_at stamp (older imports) counts on its DO date.
     const dw = d.status === 'DELIVERED' ? weekOf(String(d.delivered_at ?? d.do_date ?? '')) : undefined;
     if (dw) dw.delivered += 1;
-    // Monthly volume is what was confirmed delivered, in the month it was delivered.
     const dm = d.status === 'DELIVERED' ? String(d.delivered_at ?? d.do_date ?? '').slice(0, 7) : '';
     if (dm) { const row = deliveredMonths.get(dm) ?? { month: dm, doCount: 0, doAmountSen: 0 }; row.doCount += 1; row.doAmountSen += num(d.local_total_sen); deliveredMonths.set(dm, row); }
-    /* A DO dated ahead of today has not gone out: the month counts what left up to today,
-       the same window as the period figures above it, so the two tally. */
     const m = date <= today ? date.slice(0, 7) : '';
     if (m) { const row = months.get(m) ?? { month: m, doCount: 0, doAmountSen: 0 }; row.doCount += 1; row.doAmountSen += num(d.local_total_sen); months.set(m, row); }
   }
 
-  /* Delivered but still owing: an order whose delivery is done and whose
-     balance is above zero, aged from its last delivery. */
   const owing = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
     .select('doc_no, balance_sen').gt('balance_sen', 0).not('status', 'in', SO_NOT_LIVE), c).order('doc_no').range(f, t));
   if (owing.error) return fail('order balances', owing.error);
@@ -131,9 +116,6 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     if (age > 30) overdue30 = { count: overdue30.count + 1, balanceSen: overdue30.balanceSen + bal, oldestDays: Math.max(overdue30.oldestDays, age) };
   }
 
-  /* Two process gaps management should see: DOs loaded more than a week ago
-     and never closed as delivered (the POD step skipped, so "delivered" and
-     "owing" read low), and DOs carrying no cost (their margin reads 100%). */
   const weekAgo = iso(Date.parse(`${today}T00:00:00Z`) - 7 * DAY);
   const monthAgo = iso(Date.parse(`${today}T00:00:00Z`) - 30 * DAY);
   const notClosed = await paginateAll<Row>((f, t) => scopeToCompany(byWh(sb.from('delivery_orders')
@@ -155,8 +137,6 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   }
   const doNoCost = { count: (noCost.data ?? []).length, amountSen: (noCost.data ?? []).reduce((a, d) => a + num(d.local_total_sen), 0) };
 
-  /* The selected period (?from=&to=, default this month to today): the DOs
-     issued in it, the lorry each went on, and their lines by category. */
   const ISO = /^\d{4}-\d{2}-\d{2}$/;
   const qFrom = c.req.query('from'); const qTo = c.req.query('to');
   const pFrom = qFrom && ISO.test(qFrom) ? qFrom : `${today.slice(0, 7)}-01`;
@@ -167,8 +147,6 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     .in('status', [...DO_STOCK_OUT_STATES])), c).order('id').range(f, t));
   if (periodDos.error) return fail('delivery orders in the period', periodDos.error);
   const doIds = (periodDos.data ?? []).map((d) => String(d.id));
-  /* The lorry: the DO's crew record first, else the lorry run it was put on,
-     else the Vehicle typed on the DO itself. */
   const crew = await chunkIn<Row>(doIds, (b, f, t) => scopeToCompany(sb.from('delivery_order_crew')
     .select('do_id, lorry_id, lorry_plate').in('do_id', b), c).order('id').range(f, t));
   if (crew.error) return fail('delivery crews', crew.error);
@@ -183,7 +161,6 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   const lorryOfDo = new Map<string, string>();
   for (const s of stops.data) { const l = lorryOfTrip.get(String(s.trip_id)); if (l) lorryOfDo.set(String(s.do_id), l); }
   for (const r of crew.data) { const l = str(r.lorry_id) || str(r.lorry_plate); if (l) lorryOfDo.set(String(r.do_id), l); }
-  /* The fleet, to name each lorry by its plate and list our own even on no day out. */
   const fleet = await scopeToCompany(sb.from('lorries').select('id, plate, is_internal, active'), c);
   if (fleet.error) return fail('lorries', fleet.error);
   const plateOf = new Map((fleet.data as Row[]).map((l) => [String(l.id), String(l.plate ?? '—')]));
@@ -202,16 +179,13 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   const prodCat = new Map(prods.data.map((p) => [String(p.code), str(p.category)]));
   const catLines: DoCatLine[] = doLines.data.map((l) => {
     const raw = prodCat.get(String(l.item_code ?? '')) ?? null;
-    /* Transport, disposal, storage fees: a charge on the order, not a product. */
     const fee = raw === 'SERVICE' || String(l.item_group ?? '').toLowerCase() === 'service' || String(l.item_code ?? '').toUpperCase().startsWith('SVC-');
     return { doId: String(l.delivery_order_id), category: fee ? 'Charges' : PROCUREMENT_CATEGORY_LABEL[procurementCategory(raw, str(l.item_group))], sen: num(l.line_total_sen) };
   });
-  /* A day in the workshop is not a day the lorry could have gone out. */
   const pEnd = pTo < today ? pTo : today;
   const down = await loadDownWindows(sb, pFrom, pEnd, today);
   if (down.error) return fail('lorry down days', { message: down.error });
   const downByPlate = new Map([...downDates(down.windows, pFrom, pEnd)].map(([id, days]) => [plateOf.get(id) ?? id, days]));
-  /* What each lorry did, from its runs' stops and event set-ups and dismantles. */
   const used = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('trips')
     .select('id, lorry_id, trip_date').gte('trip_date', pFrom).lte('trip_date', pEnd).neq('status', 'CANCELLED'), c).order('id').range(f, t));
   if (used.error) return fail('lorry runs in the period', used.error);
@@ -224,12 +198,9 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
   const lorryJobs: LorryJobDetail[] = [];
   for (const s of usedStops.data) {
     const run = runOf.get(String(s.trip_id));
-    /* A service case's delivery leg is a DELIVERY stop too; it rides the run as a service job. */
     const leg = s.assr_case_id != null && String(s.stop_type) === 'DELIVERY' ? STOP_JOB.SERVICE : STOP_JOB[String(s.stop_type)];
     if (run?.plate && run.date && leg) lorryJobs.push({ plate: run.plate, date: run.date, kind: s.assr_case_id != null ? 'service' : leg.kind, type: leg.type, ref: str(s.dp_no), customer: str(s.customer_name), assrId: s.assr_case_id != null ? String(s.assr_case_id) : null, doId: str(s.do_id) });
   }
-  /* An event's set-up and dismantle live on the project, never on a run, so they add to
-     the run stops rather than repeat them. */
   for (const j of projectJobs.data) {
     const typed = j.lorryPlate ? (fleetByNorm.get(j.lorryPlate.replace(/\s+/g, '').toUpperCase()) ?? j.lorryPlate) : null;
     const plate = j.lorryId ? plateOf.get(j.lorryId) : typed;
@@ -243,7 +214,6 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
     podClosed: pDos.filter((d) => d.status === 'DELIVERED').length,
     ...logisticPeriod(pDos, catLines, pFrom, pTo, fleetLorries, today, downByPlate, lorryJobs),
     lorryJobs,
-    /* The delivery orders behind every figure above, for the page's drill-down. */
     doList: (periodDos.data ?? []).map((d, i) => ({
       id: String(d.id), doNumber: str(d.do_number), soDocNo: str(d.so_doc_no), customer: str(d.debtor_name),
       date: pDos[i]!.doDate, region: regionOf(pDos[i]!.state), state: pDos[i]!.state, amountSen: pDos[i]!.amountSen, lorry: pDos[i]!.lorry, status: pDos[i]!.status,

@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emptyLiveDeliveries, isSoFullyCovered } from './so-delivery-sync';
 
-/* The 2026-09-04 shape, pinned: three DELIVERED 2990 delivery orders carried
-   line_count, money and OUT movements but ZERO rows in delivery_order_items.
-   The release arm read "no rows" as "nothing delivered" and sent three
-   delivered orders back to READY_TO_SHIP, where MRP re-planned goods already
-   in the customers' homes. A live document with no rows is broken evidence,
-   never a delivery that un-happened. */
 describe('emptyLiveDeliveries', () => {
   it('names a DELIVERED document that has no line rows', () => {
     expect(emptyLiveDeliveries([
@@ -42,9 +36,6 @@ describe('emptyLiveDeliveries', () => {
   });
 });
 
-/* The decision the guard sits in front of. With zero DO rows every SO line
-   nets to 0, so coverage is false — which is exactly why the guard must run
-   BEFORE the release arm reads that false as "un-delivered". */
 describe('isSoFullyCovered against an empty delivery', () => {
   it('reads an SO with two lines and no DO rows as not covered', () => {
     expect(isSoFullyCovered(

@@ -1,8 +1,3 @@
-// Reopen a completed/voided service case for a DIFFERENT complaint (owner
-// 2026-09-22). Self-contained: renders its own header button (only on a
-// closed case) + a small modal that captures the new complaint and the stage
-// to re-assess from, then POSTs /reopen and reloads. Kept out of
-// ServiceCases.tsx, which is at its size ceiling.
 import { useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { api } from "../../api/client";

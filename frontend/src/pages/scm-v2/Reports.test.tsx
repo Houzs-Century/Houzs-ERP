@@ -52,9 +52,7 @@ const bsData = {
   totals: { assetsSen: 103_000, liabilitiesSen: 60_000, equitySen: 0, earningsSen: 43_000, checkSen: 0 },
 };
 
-/* Every column is one read: the P&L for its dates (September sold less), the balance sheet for its day. */
 const reads = vi.hoisted(() => ({ keys: [] as unknown[][], fail: false }));
-/* The Forecast Balance Sheet's one read, when a test sets it. */
 const bsForecast = vi.hoisted(() => ({ value: undefined as unknown }));
 vi.mock('@tanstack/react-query', () => ({
   useQueries: ({ queries }: { queries: Array<{ queryKey: unknown[] }> }) => queries.map((q) => {
@@ -76,7 +74,6 @@ vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) 
 /* A category's figure opens the General Ledger (docs/bugs/0924): the navigation is caught, not followed. */
 const { navigateSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn() }));
 vi.mock('react-router-dom', async (orig) => ({ ...(await orig<Record<string, unknown>>()), useNavigate: () => navigateSpy }));
-/* The editor has its own contract (ReportLayoutEditor.test.tsx); here it only has to open. */
 vi.mock('./ReportLayoutEditor', () => ({ ReportLayoutEditor: () => <div role="dialog" aria-label="Layout · P&L">editor</div> }));
 
 const xlsx = vi.fn(async (..._a: unknown[]) => {});
@@ -110,16 +107,13 @@ describe('the P&L', () => {
     at(OCT, <PnLTab />);
     expect(screen.getByText('Trading income')).toBeTruthy();
     expect(screen.getByText('GROSS PROFIT').closest('tr')!.textContent).toContain('500.00');
-    /* Tax posted → profit before tax, the Taxation section, then net AFTER tax. */
     expect(screen.getByText('PROFIT BEFORE TAX').closest('tr')!.textContent).toContain('445.00');
     expect(screen.getByText('Taxation')).toBeTruthy();
     const net = screen.getByText('NET PROFIT').closest('tr')!;
     expect(net.textContent).toContain('415.00');
     expect(net.className).toMatch(/rowFinal/);
     expect(screen.getByText(/Closing stock is what the shelves hold as of 2026\/10\/31/)).toBeTruthy();
-    /* One read for the one column, on the period in the address. */
     expect(reads.keys).toContainEqual(['report-pnl', '2026-10-01', '2026-10-31']);
-    /* The chart over the statement: twelve months ending with the period's (its own contract: ReportBarChart.test). */
     expect(screen.getByLabelText('Revenue, cost and expenses · Nov 25 – Oct 26')).toBeTruthy();
   });
 
@@ -193,7 +187,6 @@ describe('the P&L', () => {
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent);
     expect(heads).toEqual(['Account', 'October 2026This period%', 'September 2026Previous period%', 'ChangeThis period less the other']);
     expect(reads.keys).toContainEqual(['report-pnl', '2026-09-01', '2026-09-30']);
-    /* Sales 1,000.00 against 800.00: the change is 200.00 on sales and on net. */
     const sales = screen.getByText('501-0000').closest('tr')!;
     expect([...sales.querySelectorAll('td')].at(-1)!.textContent).toBe('200.00');
     expect([...screen.getByText('NET PROFIT').closest('tr')!.querySelectorAll('td')].at(-1)!.textContent).toBe('200.00');
@@ -301,7 +294,6 @@ describe('the balance sheet', () => {
     expect(heads.slice(1, 4)).toEqual(['Dec 2026Forecast only', 'Nov 2026Forecast only', 'Oct 2026%']);
     expect(heads.slice(-2)).toEqual(['Forecast%', 'Forecast%']);
     const bank = [...screen.getByText('BANK').closest('tr')!.querySelectorAll('td')].map((td) => td.textContent);
-    /* December's forecast, November's, then October's actual: amount and % of total assets. */
     expect(bank.slice(0, 3)).toEqual(['970.0090.0%', '950.0090.0%', '930.0090.3%']);
     expect(document.body.textContent).toContain('Forecast: from the actual sheet at the end of Oct 2026');
     expect(document.body.textContent).toContain('its salaries owed on 410-0010 ACCRUAL - SALARIES and paid the month after');

@@ -1,7 +1,3 @@
-// Symptom: adding or editing a line on a POSTED goods receipt read as clean when its stock write was refused.
-// Cause: writeMovements never throws (it returns { ok:false, reason }), the result was discarded inside a
-//   `catch { best-effort }`, and the answers were a plain `{ item }` / `{ ok: true }`; the PO recount result too.
-// Fix: the line is still saved, and the refusal rides back as `movementErrors` (and `recountError`).
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -26,7 +22,6 @@ function makeSb() {
     app_config: [],
   });
   const realFrom = base.from;
-  /* Every stock insert is refused, the way a constraint or a transient PostgREST error answers writeMovements. */
   (base as { from: unknown }).from = (t: string) => {
     const q = realFrom(t);
     if (t === 'inventory_movements') {

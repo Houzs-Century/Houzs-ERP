@@ -50,7 +50,6 @@ const MIME_BY_EXT: Record<string, string> = {
   png: "image/png",
   webp: "image/webp",
 };
-/** Served inline: a PDF or a raster image; anything else downloads inertly. */
 function isInlineMime(mime: string): boolean {
   return mime === "application/pdf" || mime.startsWith("image/");
 }
@@ -67,7 +66,6 @@ function genId(): string {
   return `memo-${crypto.randomUUID().replace(/-/g, "").slice(0, 11)}`;
 }
 
-/** Today in Malaysia time as YYYY-MM-DD — the memo's default date. */
 function todayMyt(now = Date.now()): string {
   return new Date(now + 8 * 3_600_000).toISOString().slice(0, 10);
 }

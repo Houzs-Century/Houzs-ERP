@@ -47,7 +47,6 @@ const DETAIL = {
   activity: [
     { id: 11, action: "sales_comment", note: "Customer chased today.", created_at: "2026-08-02T01:00:00Z" },
     { id: 10, action: "customer_comment", note: "Any update?", created_at: "2026-08-01T01:00:00Z" },
-    // Auto-emitted ops event — NOT part of the rep's conversation.
     { id: 12, action: "stage_change", note: "", created_at: "2026-08-03T01:00:00Z" },
   ],
 };
@@ -61,12 +60,6 @@ function renderScreen() {
   );
 }
 
-/* POLL, never a fixed tick. The first two drafts of this file advanced time by
-   hand — three `await Promise.resolve()` ticks, then one `setTimeout(0)` — and
-   both left the screen on "Loading…" often enough to fail the FIRST test in the
-   file while the rest passed, because by then the module was warm. A timing
-   assumption that is usually right is the worst kind: it reads as a broken
-   component. `findBy*` and `waitFor` retry until the query actually settles. */
 
 describe("MobileMyCaseDetail", () => {
   beforeEach(() => {
@@ -78,14 +71,9 @@ describe("MobileMyCaseDetail", () => {
   it("shows the case, and says out loud that it is read-only", async () => {
     renderScreen();
     expect(await screen.findByText("ASSR-2608-007")).toBeTruthy();
-    // Twice on purpose: the sticky header and the Customer card. getByText
-    // would throw "found multiple elements" on that, which reads as a missing
-    // name rather than a duplicated one.
     expect(screen.getAllByText("Tan Wei Ming").length).toBe(2);
     expect(screen.getByText("Left armrest sags after two weeks.")).toBeTruthy();
     expect(screen.getByText("12 Jalan Satu, Petaling Jaya")).toBeTruthy();
-    /* A screen quietly smaller than the one a colleague is using reads as a
-       fault, so the reason is on it. */
     expect(screen.getByText(/Read-only/)).toBeTruthy();
   });
 
@@ -100,8 +88,6 @@ describe("MobileMyCaseDetail", () => {
 
   it("prints the CANONICAL stage word, not a short form of its own", async () => {
     renderScreen();
-    // ASSR_STAGE_LABEL.pending_solution — the desktop detail table used to say
-    // "Solution" here, which is the drift this module keeps producing.
     expect(await screen.findByText("Pending Solution")).toBeTruthy();
   });
 

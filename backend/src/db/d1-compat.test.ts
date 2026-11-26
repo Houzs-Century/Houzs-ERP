@@ -44,7 +44,6 @@ describe("toPgPlaceholders", () => {
   });
 
   it("maps mixed numbered placeholders with reuse (uniqueProjectCode)", () => {
-    // services/projects.ts — bind(base, prefix.length, prefix); ?2 reused.
     expect(
       toPgPlaceholders(
         "WHERE code = ?1 OR (length(code) > ?2 AND substr(code, 1, ?2) = ?3)",

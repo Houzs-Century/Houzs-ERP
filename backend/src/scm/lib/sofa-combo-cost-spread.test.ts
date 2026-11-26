@@ -6,10 +6,6 @@ import {
   type SofaComboRow,
 } from '../shared/sofa-combo-pricing';
 
-/* Fixtures copy the SHAPE of the company-2 master combo rows and order lines
-   read from production on 2026-11-17 (2990-SO-2610-057, -017, -046): the same
-   models, modules, tiers, heights and dates. The amounts are illustrative: this
-   repository is public, and a cost is not public. Sen. */
 const row = (id: string, baseModel: string, modules: string[][], height: string, sen: number, effectiveFrom: string, createdAt: string, tier: SofaComboRow['tier'] = 'PRICE_2'): SofaComboRow => ({
   id, baseModel, modules, tier, customerId: null, pricesByHeight: { [height]: sen }, effectiveFrom, createdAt, deletedAt: null,
 });
@@ -20,8 +16,6 @@ const PRICE_2 = () => 'PRICE_2' as const;
 const total = (lines: readonly ComboCostLine[], plan: Map<string, number>) =>
   lines.reduce((s, l) => s + (plan.get(l.id) ?? l.line_cost_sen), 0);
 
-/* The rule before this fix, kept here only to prove the fixtures reproduce
-   what production booked: newest combo wins, lines in database order. */
 function oldSpread(lines: ComboCostLine[], combos: SofaComboRow[], asOf: string): void {
   const match = pickComboMatch(
     { baseModel: '', modules: lines.map((l) => splitSofaCode(l.item_code).sizeCode), customerId: null, tier: 'PRICE_2', height: String(lines[0]!.variants!.seatHeight), asOf },
@@ -68,7 +62,7 @@ describe('a combo that is one slot listing several codes', () => {
   it('is fine as a set with one slot per piece, or as one whole unit', () => {
     expect(isOnePieceSetCombo([['2A(LHF)', '2A(RHF)'], ['L(LHF)', 'L(RHF)']])).toBe(false);
     expect(isOnePieceSetCombo([['1S(P)']])).toBe(false);
-    expect(isOnePieceSetCombo(['1A(LHF)', '1A(RHF)'])).toBe(false); // legacy flat list: one slot each
+    expect(isOnePieceSetCombo(['1A(LHF)', '1A(RHF)'])).toBe(false);
   });
 
   it('never prices cost, while selling keeps its own matcher unchanged', () => {
@@ -137,7 +131,6 @@ describe('the 2990-SO-2610-046 shape: BOAAT two power seats at 32"', () => {
       const flipped = planComboCostSpread([rhf(), lhf()], BOAAT, PRICE_2, asOf);
       expect(flipped).toEqual(first);
     }
-    // Before the two-seat set existed: the price list's own two pieces.
     expect(total([lhf(), rhf()], planComboCostSpread([lhf(), rhf()], BOAAT, PRICE_2, '2026-10-24'))).toBe(200000);
   });
 
@@ -149,7 +142,6 @@ describe('the 2990-SO-2610-046 shape: BOAAT two power seats at 32"', () => {
   });
 });
 
-/* A minimal PostgREST stand-in: the loaders only select and filter. */
 const PLLAO_ROW = {
   id: 'p', base_model: 'Pllao', modules: [['2A(LHF)', '2A(RHF)', 'L(LHF)', 'L(RHF)']], tier: 'PRICE_2', customer_id: null,
   pwp_prices_by_height: null, label: null, effective_from: '2026-07-27', created_at: '2026-07-29T07:20:31Z',

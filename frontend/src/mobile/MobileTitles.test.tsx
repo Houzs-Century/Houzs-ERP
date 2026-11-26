@@ -1,8 +1,3 @@
-/* Mobile Titles — the phone editor of the Roles & Permissions › Titles tab.
- * The list shows one card per ACTIVE Title; opening one and changing a control
- * saves a body the API accepts for that cohort (the SAME normalise the desktop
- * uses, from lib/titlePolicyModel); Reset removes the stored row; a viewer
- * without roles.manage sees the values with every control locked. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { TitlePolicyPayload } from "../lib/titlePolicyModel";
@@ -17,8 +12,6 @@ vi.mock("../hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), error
 let canManage = true;
 vi.mock("../auth/AuthContext", () => ({ useAuth: () => ({ can: (p: string) => (p === "roles.manage" ? canManage : true) }) }));
 
-// The component fetches the payload through useQuery; feed it directly so the
-// test drives the editor, not TanStack's async machinery.
 let queryData: TitlePolicyPayload | null = null;
 const reload = vi.fn();
 vi.mock("../hooks/useQuery", () => ({

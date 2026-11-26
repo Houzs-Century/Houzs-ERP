@@ -24,8 +24,6 @@ import { DO_LOCK_COLS, DO_LOCK_LABELS } from '../shared/document-policy';
 
 export type { AuditFieldMap };
 
-/* The auditable DO header fields, camel (API) -> snake (column). Deliberately
-   the same list the PATCH's own map uses. */
 export const DO_AUDIT_FIELDS: AuditFieldMap = [
   ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
   ['salesLocation', 'sales_location'], ['ref', 'ref'], ['poDocNo', 'po_doc_no'],
@@ -65,11 +63,6 @@ export const DO_AUDIT_SELECT =
 export const DO_IDENTITY_LOCK_COLS: ReadonlySet<string> = DO_LOCK_COLS;
 export const DO_IDENTITY_LABELS: Record<string, string> = DO_LOCK_LABELS;
 
-/* The auditable LINE fields. The camel names are deliberate: unitCostSen,
-   lineCostSen and lineMarginSen are the exact keys AUDIT_FINANCE_FIELDS
-   (lib/finance-keys) strips from field_changes, so recording a line's cost here
-   is gated on read by the same rule that gates it on the detail payload.
-   Spelling one of them differently would leak cost to every reader. */
 export const DO_LINE_AUDIT_FIELDS: AuditFieldMap = [
   ['qty', 'qty'],
   ['unitPriceSen', 'unit_price_sen'],

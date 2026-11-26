@@ -1,29 +1,14 @@
-// Vendored from apps/backend/src/lib/product_models hooks (PR #49). Sister file
-// to mfg-products-queries.ts — same authedFetch + cache conventions.
-//
-// HOUZS VENDOR NOTE: the source module imported `./supabase` but never actually
-// called it (useBrandingPool reads via useMfgProducts/useProductModels, both
-// authedFetch). The dead supabase import is dropped; the API_URL warning probe
-// is dropped too (the vendored authedFetch owns the base URL). Everything else
-// — including the multipart photo upload, which rides authedFetch's FormData
-// passthrough to /api/scm/product-models/:id/photo (the Worker R2 path) — is
-// copied verbatim.
 
 import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMfgProducts, type MfgCategory } from './mfg-products-queries';
 import { authedFetch } from './authed-fetch';
 import { writeFailed } from './mutation-error';
-// HOUZS RE-SOURCING (2026-06-21): branding is maintained centrally in Houzs's
-// Project Maintenance / PMS (project_brands). The branding pool sources from
-// /api/projects/brands — which lives OUTSIDE the /api/scm mount, so it uses the
-// Houzs-native `api` client, not the /api/scm-scoped authedFetch.
 import { api } from '../../../api/client';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
 export type ProductModelRow = {
   id: string;
-  /** PR #65 — required for SOFA/BEDFRAME/MATTRESS; drives the SKU-name template. */
   branding: string | null;
   model_code: string;
   name: string;
@@ -31,36 +16,24 @@ export type ProductModelRow = {
   description: string | null;
   photo_url: string | null;
   allowed_options: AllowedOptions;
-  /** Default variant per option, keyed like a line's variants (vendor/shared/model-default-variants). */
   default_variants: Record<string, string> | null;
   active: boolean;
   created_at: string;
   updated_at: string;
-  /** PR — Wei Siang 2026-06-19: count of mfg_products SKUs under this Model.
-   *  Surfaces orphan/empty Models (e.g. all SKUs deleted from SKU Master but
-   *  the Model still lingers in Modular). Optional so older cached payloads /
-   *  the detail endpoint (which doesn't compute it) stay type-compatible. */
   sku_count?: number;
-  /** Of sku_count, the codes that are ACTIVE (Modular hides a Model with none). */
   active_sku_count?: number;
 };
 
 /** Per-category allowed-options pool. Empty `{}` = no restriction. */
 export type AllowedOptions = {
-  sizes?:                 string[];   // SOFA seat sizes OR BEDFRAME/MATTRESS sizes
-  compartments?:          string[];   // SOFA only
-  divan_heights?:         string[];   // BEDFRAME
-  total_heights?:         string[];   // BEDFRAME
-  gaps?:                  string[];   // BEDFRAME
+  sizes?:                 string[];
+  compartments?:          string[];
+  divan_heights?:         string[];
+  total_heights?:         string[];
+  gaps?:                  string[];
   leg_heights?:           string[];
   specials?:              string[];
-  /** MATTRESS only — drives the (WxLx{thickness}CM) substitution in the
-      auto-generated SKU name. Set at New Model time or edited later via
-      the Model detail page. */
   mattress_thickness_cm?: number;
-  /** SOFA only — fabric_library.id slugs ticked for this Model (e.g.
-      ['linen', 'velvet']). POS Configurator uses this list to populate
-      the fabric colour picker. Empty / missing = no fabrics offered. */
   fabrics?:               string[];
 };
 
@@ -75,7 +48,6 @@ export type ModelSkuRow = {
   price1_sen: number | null;
   cost_price_sen: number;
   unit_m3_milli: number;
-  /** Migration 0161 — whether this SKU was minted as a one-shot from a remark. */
   pos_active?: boolean;
   one_shot?: boolean;
   source_doc_no?: string | null;
@@ -87,8 +59,6 @@ export function useProductModels(opts?: { category?: MfgCategory }) {
     queryKey: ['product-models', opts?.category ?? 'all'],
     queryFn: async ({ queryKey }) => {
       const qs = opts?.category ? `?category=${opts.category}` : '';
-      /* Same 60s browser cache as /mfg-products: a refetch after a write skips
-         it, so a model's SKU count moves as soon as its SKU is made (BUG-85). */
       const pastBrowserCache = qc.getQueryState(queryKey)?.isInvalidated;
       const res = await authedFetch<{ models: ProductModelRow[] }>(
         `/product-models${qs}`,
@@ -102,7 +72,6 @@ export function useProductModels(opts?: { category?: MfgCategory }) {
   });
 }
 
-// Raw row from GET /api/projects/brands (Houzs PMS BrandManager).
 type ProjectBrandRow = {
   id: number;
   name: string;
@@ -154,7 +123,7 @@ export function useBrandingPool() {
   );
 
   const distinct = useMemo(() => {
-    const seen = new Map<string, string>(); // UPPER → first-seen original casing
+    const seen = new Map<string, string>();
     const collect = (b: string | null | undefined) => {
       const t = (b ?? '').trim();
       if (!t) return;
@@ -167,17 +136,10 @@ export function useBrandingPool() {
   }, [products.data, models.data]);
 
   return {
-    /** What dropdowns should offer: pool when set, else the distinct fallback. */
     pool: configPool.length > 0 ? configPool : distinct,
-    /** True when the maintenance pool itself has values. */
     fromConfig: configPool.length > 0,
-    /** The raw maintenance pool (may be empty). */
     configPool,
-    /** DISTINCT branding values across products + models (suggestion seed). */
     distinct,
-    /** True while any source of the resolved pool is still loading — lets a
-     *  read-only consumer avoid flashing an empty state before the fallback
-     *  (products/models) has settled. */
     isLoading: brands.isLoading || products.isLoading || models.isLoading,
   };
 }
@@ -241,9 +203,6 @@ export function useUpdateProductModel() {
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['product-models'] });
       qc.invalidateQueries({ queryKey: ['product-models', vars.id] });
-      // The PATCH auto-creates a SKU per newly ticked sofa compartment and the
-      // catalogue rows carry the Model's allowed_options; without this the
-      // SO/PO picker keeps its 5-minute-old list and the new code is missing.
       void qc.invalidateQueries({ queryKey: ['mfg-products'] });
       void qc.invalidateQueries({ queryKey: ['model-allowed-options-by-code'] });
     },
@@ -276,7 +235,6 @@ export function useGenerateModelSkus() {
       );
     },
     onSuccess: () => {
-      // The whole family: the Modular list's SKU count moves too, not just this model.
       qc.invalidateQueries({ queryKey: ['product-models'] });
       qc.invalidateQueries({ queryKey: ['mfg-products'] });
     },
@@ -295,12 +253,9 @@ export function useActivateOneShot() {
       });
     },
     onSuccess: (_, vars) => {
-      // Invalidate the detail query (skus list re-fetches and shows pos_active=true)
-      // and the flat mfg-products list (SKU Master reflects the change).
       qc.invalidateQueries({ queryKey: ['mfg-products'] });
-      // We don't have the model_id here, so invalidate all product-model details.
       qc.invalidateQueries({ queryKey: ['product-models'] });
-      void vars; // suppress unused-var warning
+      void vars;
     },
     onError: writeFailed,
   });
@@ -318,21 +273,6 @@ export function useDeleteProductModel() {
   });
 }
 
-/* ─── Photo upload / delete (PR — Commander 2026-05-27) ─────────────────
- *
- * Multipart POST sends the file body straight to the Worker, which
- * uploads to R2 (SO_ITEM_PHOTOS bucket, `product-models/{id}/...`
- * prefix) and patches product_models.photo_url with the proxy URL.
- *
- * Don't set content-type here — fetch() needs to set the multipart
- * boundary itself from the FormData. The shared authedFetch helper
- * stamps content-type only when init.body is a string, so a FormData
- * body slips past it correctly.
- *
- * HOUZS VENDOR — the source page uploaded the model photo client-side via
- * supabase.storage; here the vendored ProductModelDetail calls THIS hook so
- * the upload routes through the Worker R2 path instead.
- * ─────────────────────────────────────────────────────────────────────── */
 
 export function useUploadProductModelPhoto() {
   const qc = useQueryClient();

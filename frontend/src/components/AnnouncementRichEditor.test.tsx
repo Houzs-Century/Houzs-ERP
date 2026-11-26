@@ -6,9 +6,6 @@ import {
   normalizeLinkHref,
 } from "./AnnouncementRichEditor";
 
-// jsdom has no editing commands. Stub the two the editor relies on so a click
-// on the toolbar is observable, and so the fontSize path can be exercised by
-// hand-planting the <font size="7"> the real browser would have produced.
 const execCommand = vi.fn<(cmd: string, ui?: boolean, arg?: string) => boolean>(() => true);
 const queryCommandState = vi.fn<(cmd: string) => boolean>(() => false);
 
@@ -77,7 +74,6 @@ describe("AnnouncementRichEditor", () => {
     expect(Array.from(select.options).map((o) => o.value)).toEqual([
       "md", "10", "11", "12", "14", "16", "18", "20", "24", "28", "36",
     ]);
-    // Simulate what execCommand('fontSize', '7') leaves behind in a browser.
     execCommand.mockImplementation((cmd) => {
       if (cmd === "fontSize") el.innerHTML = '<p>a<font size="7">big</font></p>';
       return true;
@@ -85,7 +81,6 @@ describe("AnnouncementRichEditor", () => {
     fireEvent.change(select, { target: { value: "20" } });
     expect(onChange).toHaveBeenLastCalledWith('<p>a<span data-size="20">big</span></p>');
 
-    // "Default" unwraps instead of wrapping, and replaces a nested older size.
     execCommand.mockImplementation((cmd) => {
       if (cmd === "fontSize")
         el.innerHTML = '<p>a<font size="7"><span data-size="20">big</span></font></p>';
@@ -94,7 +89,6 @@ describe("AnnouncementRichEditor", () => {
     fireEvent.change(select, { target: { value: "md" } });
     expect(onChange).toHaveBeenLastCalledWith("<p>abig</p>");
 
-    // A size carried into a new paragraph by Enter is replaced, not nested.
     execCommand.mockImplementation((cmd) => {
       if (cmd === "fontSize")
         el.innerHTML = '<p><span data-size="24"><font size="7">next line</font></span></p>';
@@ -119,7 +113,6 @@ describe("AnnouncementRichEditor", () => {
     let seen: string | null = null;
     execCommand.mockImplementation((cmd) => {
       if (cmd === "fontSize") {
-        // What the browser would style: the CURRENT selection's text.
         seen = window.getSelection()!.toString();
         const r = window.getSelection()!.getRangeAt(0);
         const font = document.createElement("font");
@@ -157,7 +150,6 @@ describe("AnnouncementRichEditor", () => {
     expect(execCommand).toHaveBeenCalledWith("insertText", false, "plain words");
   });
 
-  // ---- 2026-09-05 toolbar follow-up
 
   test("heading buttons drive formatBlock, and the active heading toggles back to a paragraph", () => {
     const onChange = vi.fn();
@@ -166,7 +158,6 @@ describe("AnnouncementRichEditor", () => {
     expect(execCommand).toHaveBeenCalledWith("formatBlock", false, "<h1>");
     fireEvent.click(screen.getByRole("button", { name: "Heading 2" }));
     expect(execCommand).toHaveBeenCalledWith("formatBlock", false, "<h2>");
-    // Put the caret inside an h2 and click H2 again → back to <p>.
     const el = editor();
     el.innerHTML = "<h2>head</h2>";
     const range = document.createRange();
@@ -191,7 +182,6 @@ describe("AnnouncementRichEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Highlight" }));
     expect(onChange).toHaveBeenLastCalledWith("<p>a<mark>hi</mark>b</p>");
 
-    // Caret inside the mark → the click removes it.
     const range = document.createRange();
     range.selectNodeContents(el.querySelector("mark")!);
     const sel = window.getSelection()!;
@@ -240,7 +230,6 @@ describe("AnnouncementRichEditor", () => {
       expect(execCommand).toHaveBeenCalledWith("createLink", false, "https://houzs.my/sop"),
     );
 
-    // A refused target never reaches the browser command.
     execCommand.mockClear();
     onPromptLink.mockImplementation(async () => "javascript:alert(1)");
     fireEvent.click(screen.getByRole("button", { name: "Link" }));
@@ -276,7 +265,6 @@ describe("AnnouncementRichEditor", () => {
         '<p>x</p><img data-att="announcements/compose/1725500000000-0badf00d.jpg">',
       ),
     );
-    // The DOM keeps the local src for the author to see; the value never does.
     expect(el.querySelector("img")?.getAttribute("src")).toBe("blob:local");
   });
 
@@ -301,8 +289,6 @@ describe("AnnouncementRichEditor", () => {
       />,
     );
     const el = editor();
-    // Focus first: jsdom (like a browser) parks the caret at the start on the
-    // FIRST focus of an editing host; a real author has already clicked in.
     el.focus();
     const range = document.createRange();
     range.selectNodeContents(el.querySelector("p")!);

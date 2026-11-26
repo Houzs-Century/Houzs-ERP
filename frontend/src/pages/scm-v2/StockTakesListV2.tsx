@@ -1,8 +1,3 @@
-// StockTakesListV2 — Theme C redesign of the Stock Takes listing.
-// Physical-count reconciliation doc: OPEN (counting) → POSTED (variance
-// booked as ADJUSTMENT movements) → CANCELLED. Variance-forward framing
-// because the number that drives action is the delta between counted and
-// system qty.
 
 import { useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -43,7 +38,6 @@ import { stockTakeRowMenu } from "./row-menus";
 
 type StatusTab = "all" | "open" | "pending" | "posted" | "cancelled";
 
-/* Code first, then name — the one warehouse rule (vendor/scm/lib/warehouse-label.ts). */
 const warehouseOf = (r: StockTakeRow): string =>
   warehouseLabel(r.warehouse) || r.warehouse_id || "—";
 
@@ -107,8 +101,6 @@ function CardsGrid({ rows, onOpen }: { rows: StockTakeRow[]; onOpen: (r: StockTa
     <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
       {rows.map((r) => {
         const st = statusFor(r.status);
-        /* null = a blind OPEN take viewed without the supervise permission —
-           the server withholds the figure (it would un-blind the count). */
         const varianceHidden = r.variance_total == null && r.blind === true;
         const variance = Number(r.variance_total ?? 0);
         return (
@@ -237,11 +229,6 @@ export function StockTakesListV2() {
   const goNew = () => navigate("/scm/stock-takes/new");
   const goInventory = () => navigate("/scm/inventory");
   const goDetail = (r: StockTakeRow) => navigate(`/scm/stock-takes/${r.id}`);
-  /* Print opens the detail page's preview via ?print=1 — the same contract the
-     other documents' row menus use, and it works because the detail page now
-     consumes the param (useOpenPrintPreviewFromUrl). It could not be rendered
-     from a list row in any case: the row carries a line COUNT and a variance
-     TOTAL, never the count sheet itself. */
   const goPrint = (r: StockTakeRow) => navigate(`/scm/stock-takes/${r.id}?print=1`);
   const doCancel = async (r: StockTakeRow) => {
     if (await askConfirm({
@@ -256,9 +243,6 @@ export function StockTakesListV2() {
   const isPending = (r: StockTakeRow) => r.status.toUpperCase() === "PENDING_APPROVAL";
   const busy = approveTake.isPending || rejectTake.isPending;
 
-  /* Approve books the variance now. The list row carries no line-by-line sheet,
-     so the confirm shows what it DOES have — net variance and line count — and
-     points to the take for the full breakdown. Reject moves no stock. */
   const doApprove = async (r: StockTakeRow) => {
     const net = Number(r.variance_total ?? 0);
     const proceed = await askConfirm({
@@ -371,7 +355,6 @@ export function StockTakesListV2() {
       align: "right",
       getValue: (r) => r.variance_total ?? 0,
       render: (r) => {
-        /* null on a blind OPEN take for non-supervisors (server-stripped). */
         if (r.variance_total == null && r.blind === true) {
           return <span className="text-[12px] text-ink-muted">Hidden</span>;
         }
@@ -423,8 +406,6 @@ export function StockTakesListV2() {
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
     { value: "open", label: `Open · ${counts.open}` },
-    /* Pending-approval chip appears only once there is something waiting, so the
-       filter bar stays short on the common day where nothing is over the limit. */
     ...(counts.pending > 0 ? [{ value: "pending" as StatusTab, label: `Pending · ${counts.pending}` }] : []),
     { value: "posted", label: `Confirmed · ${counts.posted}` },
     { value: "cancelled", label: `Cancelled · ${counts.cancelled}` },

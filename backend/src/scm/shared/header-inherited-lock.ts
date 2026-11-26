@@ -28,11 +28,8 @@ export function identityLockedRefusal(opts: {
   error: string;
   fields: string[];
   labels: Record<string, string>;
-  /** The parent noun, e.g. "Delivery Order". */
   what: string;
-  /** The child noun, e.g. "Sales Invoice or Delivery Return". */
   child: string;
-  /** What stays editable, e.g. "delivery dates, dispatch details and notes". */
   ownFields: string;
 }) {
   const names = opts.fields.map((f) => opts.labels[f] ?? f);

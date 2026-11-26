@@ -56,11 +56,6 @@ export type SiListLine = {
   do_no: string | null;
 };
 
-/* AutoCount's Sales Invoice Detail Listing captions, read from the company's
-   saved layouts of FormInvoicePrintDetailListing on 2026-09-15. The book keeps
-   no DEFAULT layout for it (only a staff layout, "Chew"), so the default set is
-   the Goods Received / Purchase Invoice defaults' shape with the sales captions
-   — LIKELY AutoCount's factory default, not read from the book. */
 export const SI_LABELS = {
   docNo: 'Doc No',
   docDate: 'Doc Date',

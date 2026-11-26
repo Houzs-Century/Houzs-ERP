@@ -142,7 +142,6 @@ export function Settings() {
   );
 }
 
-// ── Connection tab ───────────────────────────────────────────
 
 function ConnectionTab() {
   const toast = useToast();
@@ -152,11 +151,6 @@ function ConnectionTab() {
   async function testConnection() {
     setTesting(true);
     try {
-      /* A non-2xx does NOT reject fetch, so testing only the throw reported
-         "Connection OK" for a server answering 500/502/404 — every failure
-         except a DNS/network drop. This button is what IT presses to decide
-         whether the server is the problem, so a false green sends them to
-         look somewhere else. */
       const res = await correlatedFetch(`${api.baseUrl}/health`);
       if (!res.ok) {
         setConnectionOk(false);
@@ -200,7 +194,6 @@ function ConnectionTab() {
   );
 }
 
-// ── Sync tab (filtered cron + full refresh) ───────────────────
 
 function SyncTab({
   status,
@@ -305,7 +298,6 @@ function SyncTab({
   );
 }
 
-// ── Email tab ────────────────────────────────────────────────
 
 interface EmailSettingsResponse {
   settings: Record<string, { value: boolean }>;
@@ -357,9 +349,6 @@ function EmailTab() {
       if (res.status === "sent") {
         toast.success("Test email sent");
       } else {
-        // Map the handful of known machine reasons to plain words; anything else
-        // (including a raw provider / exception string on status "error") falls
-        // back to one generic sentence, so no code or internals reaches the admin.
         const REASON_TEXT: Record<string, string> = {
           "missing or invalid recipient":
             "That email address doesn't look right. Please check it and try again.",
@@ -471,19 +460,9 @@ function EmailTab() {
   );
 }
 
-// ── Branding tab ─────────────────────────────────────────────
-//
-// One editable record for the company identity that used to be hardcoded
-// across the PDF letterheads, the app chrome, and the login screen. Reads
-// GET /api/branding, saves via PUT /api/branding behind an in-app confirm
-// (no window.confirm). The save is gated to settings.manage admins; non-admins
-// see the values read-only.
 
 interface BrandingResponse {
   branding?: unknown;
-  /** Active company this branding row belongs to ('HOUZS' | '2990') — the
-   *  top-bar switcher IS the company selector for this tab. Absent on a
-   *  pre-multi-company backend. */
   companyCode?: string | null;
 }
 
@@ -493,7 +472,6 @@ const BRANDING_FIELDS: {
   placeholder: string;
   hint?: string;
   optional?: boolean;
-  /** A textarea of this many rows instead of a one-line box. */
   rows?: number;
 }[] = [
   { key: "companyName", label: "Company name", placeholder: "Houzs Century Sdn Bhd" },
@@ -616,16 +594,11 @@ function LogoSlot({
   const toast = useToast();
   const dialog = useDialog();
   const copy = LOGO_SLOT_COPY[variant];
-  // ?variant=print addresses the second slot; no param = the on-screen one, so
-  // this collapses to the exact pre-2026-08 request for the app slot.
   const query = variant === "print" ? "?variant=print" : "";
   const inputRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Preview is a blob URL — the serve endpoint needs the bearer, so <img src>
-  // can't hit it directly (same pattern as Avatar). Keys carry a Date.now()
-  // stamp, so passing the key as a query param busts stale caches.
   useEffect(() => {
     if (!storedKey) {
       setUrl(null);
@@ -704,10 +677,6 @@ function LogoSlot({
         <span className="ml-1 font-normal text-ink-muted">(optional)</span>
       </label>
       <div className="flex items-center gap-3 rounded-md border border-border bg-bg/50 px-3 py-3">
-        {/* Preview each logo ON THE SURFACE IT IS FOR — the app slot against the
-            dark sidebar colour, the print slot against paper white. A white
-            logo previewed on a light card is invisible, which is exactly the
-            confusion this whole feature exists to clear up. */}
         {url ? (
           <img
             src={url}
@@ -768,21 +737,15 @@ function BrandingTab() {
   const { can } = useAuth();
   const canEdit = can("settings.manage");
 
-  // Same key as useBranding (company included), so q.reload() after a save
-  // refreshes the app chrome too.
   const q = useQuery<BrandingResponse>("/api/branding", () => api.get("/api/branding"), [getActiveCompanyId()]);
   const [form, setForm] = useState<Branding | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // Active company for this tab (echoed by GET /api/branding). Drives the
-  // default set — a blank 2990 field must stay blank, never snap to a Houzs
-  // literal — and the "editing <company>" hint in the header.
   const companyCode = (
     q.data?.companyCode?.trim() || hostDefaultCompanyCode()
   ).toUpperCase();
   const companyDefaults = defaultBrandingForCompany(companyCode);
 
-  // Hydrate the editable form once the fetch lands (and on reloads).
   useEffect(() => {
     if (q.data) setForm(normalizeBranding(q.data.branding, defaultBrandingForCompany((q.data.companyCode?.trim() || hostDefaultCompanyCode()).toUpperCase())));
   }, [q.data]);
@@ -791,17 +754,11 @@ function BrandingTab() {
     setForm((f) => (f ? { ...f, [key]: value } : f));
   }
 
-  /** Apply the server-confirmed branding after a logo change: form + module
-   *  cache + PDF logo memo, so the next generated PDF is immediately right. */
   function applyBranding(raw: unknown) {
-    // A logo route always echoes the saved row; fall back to the current form
-    // so a truncated response can never blank the fields on screen.
     const next = normalizeBranding(raw ?? form ?? {}, companyDefaults);
     setForm(next);
     setBrandingCache(next, companyCode);
     clearBrandingLogoCache();
-    // postBinary (unlike api.put/del) doesn't auto-invalidate the SWR family —
-    // drop /api/branding explicitly so the reload below fetches fresh.
     invalidate("/api/branding");
     q.reload();
   }
@@ -824,8 +781,6 @@ function BrandingTab() {
       const res = await api.put<BrandingResponse>("/api/branding", form);
       const next = normalizeBranding(res?.branding ?? form, companyDefaults);
       setForm(next);
-      // Push to the module cache so PDFs generated this session use the new
-      // values immediately, without waiting for a refetch.
       setBrandingCache(next, companyCode);
       q.reload();
       toast.success("Branding saved");
@@ -840,8 +795,6 @@ function BrandingTab() {
     <section className="relative overflow-hidden rounded-md border border-border bg-surface p-6 shadow-stone">
       <h2 className="mb-4 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-brand text-accent">
         <Building2 size={12} /> Company Identity
-        {/* Which company's row this tab edits — switch companies in the top
-            bar to edit the other one. */}
         <span className="rounded border border-border px-1.5 py-0.5 text-[9px] font-semibold text-ink-muted">
           {companyCode}
         </span>
@@ -888,9 +841,6 @@ function BrandingTab() {
             );
           })}
 
-          {/* Two logo slots: the app chrome is DARK and paper is WHITE, so one
-              file can't serve both. The print slot is optional — blank means
-              "print the app logo", the pre-2026-08 behaviour. */}
           <LogoSlot
             variant="app"
             storedKey={form.logoR2Key}
@@ -932,7 +882,6 @@ function BrandingTab() {
   );
 }
 
-// ── Activity Log ──────────────────────────────────────────────
 
 function ActivityLog() {
   const toast = useToast();

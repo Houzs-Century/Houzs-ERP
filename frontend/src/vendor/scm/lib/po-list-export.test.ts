@@ -10,7 +10,6 @@ describe("poListParams — server-filterable funnels", () => {
       currencies: ["MYR", "USD"],
     });
     expect(usp.get("status")).toBe("outstanding");
-    // JSON, not comma-join — a creditor name may itself contain a comma.
     expect(usp.get("creditorNames")).toBe(JSON.stringify(["DIGLANT SDN BHD", "FOO, INC"]));
     expect(usp.get("creditorCodes")).toBe(JSON.stringify(["400-D001"]));
     expect(usp.get("currencies")).toBe(JSON.stringify(["MYR", "USD"]));

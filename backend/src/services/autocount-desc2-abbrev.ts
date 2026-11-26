@@ -43,12 +43,6 @@ export const DESC2_ABBREVIATIONS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bFully Cover\b/gi, 'F.Cover'],
 ];
 
-/* WHY THERE IS NO BARE `Drawer` -> `Dwr` RULE. It was written and removed the
-   same hour. The abbreviations run over the WHOLE string, and a bare,
-   case-insensitive `Drawer` reaches into an add-on's prose as well as a picker's
-   name: HC-SO-007678's note came out as "one Dwr on the left and one Dwr on the
-   right". Every rule above names a WHOLE PHRASE somebody picked, which is the
-   property that stops it happening. A test pins it. */
 
 /**
  * Shorten `text` only as far as it must be, and only if it is over `max`.
@@ -73,14 +67,8 @@ export function abbreviateDesc2(text: string, max: number): string {
     out = out.replace(pattern, short);
     if (out.length <= max) return out;
   }
-  /* THE LAST RUNG, and it is the owner's decision rather than a heuristic: the
-     special order does not have to reach AutoCount at all. */
   const pointed = pointSpecialsAtTheErp(out);
   if (pointed.length <= max) return pointed;
-  /* Still over even with the specials replaced by a pointer, so the length is
-     in the build or the colour and no rung here can reach it. Return the
-     SHORTENED text: it is the same specification in the owner's own words, and
-     the caller's refusal then reports the length that is actually the problem. */
   return out;
 }
 
@@ -97,7 +85,6 @@ export function abbreviateDesc2(text: string, max: number): string {
  */
 export const SPECIAL_ORDER_POINTER = 'Special Order: Refer to ERP';
 
-/** The segment separator `buildVariantSummary` and `composeSofaDesc2` both use. */
 const SEGMENT = ' / ';
 
 /**

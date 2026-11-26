@@ -53,8 +53,6 @@ export function joinSupplierCategories(values: string[]): string {
   return values.map((v) => v.trim()).filter(Boolean).join(', ');
 }
 
-/** Case-insensitive membership test against the pool. Legacy rows may carry
- *  uppercase enum values ('SOFA') — those still match pool entry 'Sofa'. */
 function inPool(value: string, pool: string[]): boolean {
   const lc = value.trim().toLowerCase();
   return pool.some((p) => p.trim().toLowerCase() === lc);

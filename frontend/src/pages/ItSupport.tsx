@@ -50,8 +50,6 @@ function UrgencyBadge({ priority }: { priority: string }) {
   return <Badge tone={urgencyTone(priority)} size="sm" caseless>{urgencyText(priority)}</Badge>;
 }
 
-/* One picture's preview address, released when the file goes. Made in the
-   effect rather than a memo so StrictMode's second mount never holds a released one. */
 function useObjectUrl(file: File): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -105,9 +103,6 @@ function Thumb({ file, onRemove }: { file: File; onRemove: () => void }) {
   );
 }
 
-/* Click to browse, drop files on the box, or paste a screenshot anywhere on
-   the page. Only one of these boxes is ever on screen, so a page-wide paste
-   cannot land in the wrong one; a text paste is left alone. */
 function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
   const [refused, setRefused] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -158,12 +153,10 @@ function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => vo
   );
 }
 
-// Built once: the sidebar does not change while the app runs.
 const MODULES = itModuleIndex(NAV_TABS);
 
 function NewRequest({ from, onSent, onCancel }: { from: string; onSent: (code: string) => void; onCancel: () => void }) {
   const [title, setTitle] = useState("");
-  // Picked for them when they came from a page; they can change it or leave "Not sure".
   const [module, setModule] = useState(() => (from ? MODULES.moduleFor(from) : ""));
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState("bug");
@@ -258,7 +251,6 @@ function OneRequest({ code }: { code: string }) {
     try {
       setDetail(await fresh<Detail>(path));
       setLoadError(null);
-      // Reading it marked it seen on the hub, so the menu count has moved.
       refreshUnread();
     } catch (err) {
       setLoadError(message(err, "This IT request could not be opened."));
@@ -319,7 +311,6 @@ function OneRequest({ code }: { code: string }) {
       setBusy("");
     }
   };
-  /* The download needs the Authorization header, which a plain link cannot send. */
   const openFile = async (a: FileRef) => {
     if (busy) return;
     setError(null);
@@ -431,7 +422,6 @@ function RequestList({ tab, onTab, onOpen, onNew }: {
     return () => window.clearInterval(t);
   }, [load]);
 
-  // Counts come from every request, never from what the search box left.
   const counts = useMemo(
     () => Object.fromEntries(IT_TABS.map((k) => [k, (rows ?? []).filter((r) => itInTab(r.status, k)).length])) as Record<ItTab, number>,
     [rows],

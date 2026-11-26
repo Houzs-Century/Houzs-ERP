@@ -37,11 +37,6 @@ export type SoLineSourceFields = {
   item_group?: string | null;
   stock_status?: string | null;
   stock_state?: "stock" | "po" | "shortage" | null;
-  /** The SERVER's verdict over both columns above (scm/lib/so-line-effective-stock.ts),
-   *  since 2026-08-17. The SO list's Stock Status column rolls up this same
-   *  function, so the pill and the board column can no longer hold two
-   *  opinions — which is what printed `SHORT: MATTRESS` over a mattress that
-   *  was in the warehouse on 2990-SO-2608-002. */
   stock_status_effective?: "READY" | "PARTIAL" | "PENDING" | null;
   coverage_po?: string | null;
   coverage_eta?: string | null;
@@ -52,7 +47,6 @@ export type SoLineSourceFields = {
    *  (no PO raised for the line) falls through to the shipped/ready/coverage
    *  trace, so a stock-only line still shows where its goods came from. */
   bound_source_pos?: string[];
-  /** BUG-72: PO number -> ETA of its still-open goods (absent once received). */
   bound_source_po_etas?: Record<string, string>;
   shipped_source_pos?: string[];
   shipped_source_adj?: boolean;
@@ -78,14 +72,6 @@ export function soLineStockPill(l: SoLineSourceFields): { label: string; cls: st
     return { label: "READY", cls: "bg-synced-bg text-synced" };
   const shipped = (l.delivered_qty ?? 0) > 0 && (l.remaining_qty ?? null) === 0;
   if (shipped) return { label: "DELIVERED", cls: "bg-surface-dim text-ink-muted" };
-  /* PREFER THE SERVER'S VERDICT. The `||` below is the rule this client used to
-     own outright, and the SO list rolled up a DIFFERENT one — so the same order
-     read READY here and SHORT on the board. Since 2026-08-17 both handlers stamp
-     `stock_status_effective` from ONE backend function and the list rolls up the
-     same call, so the two surfaces are the same answer rather than two
-     implementations that agree on a good day. The fallback stays for a payload
-     that predates the field (a cached detail response, the consignment line
-     shape) and is byte-identical to the old behaviour. */
   const effective = l.stock_status_effective
     ?? (l.stock_state === "stock" || l.stock_status === "READY" ? "READY"
       : l.stock_status === "PARTIAL" ? "PARTIAL" : "PENDING");
@@ -97,14 +83,6 @@ export function soLineStockPill(l: SoLineSourceFields): { label: string; cls: st
 export function SoStockPill({ line }: { line: SoLineSourceFields }) {
   const stock = soLineStockPill(line);
   if (!stock) return <span className="text-[11px] text-ink-muted">—</span>;
-  /* A REFUSAL THAT REACHES NOBODY IS THE DEFECT (vendor/scm/lib/mutation-error.ts:
-     35 write paths once refused correctly and told no one, and the owner
-     reported it as "the button does nothing"). A PENDING pill on a line whose
-     goods are visibly sitting in KL DISPLAY is exactly that shape — correct,
-     and unexplainable to the person reading it. So the warehouse is NAMED under
-     the pill and the full sentence, including what to do instead, is on the
-     hover. Mobile renders the same two things from the same payload field
-     (mobile/source-chips.tsx) — one rule, two presentations. */
   const ns = line.non_selling_warehouse ?? null;
   return (
     <span className="inline-flex flex-col items-start gap-0.5">
@@ -142,7 +120,6 @@ const chipBase =
    SHIPPED source is anchored history and earns the solid chip. READY
    projections and incoming MRP coverage are floating — live, recomputed on
    every view — so they wear the dashed identity the other surfaces use. */
-/* The ETA sits on its own line so a PO chip fits the 200px Incoming PO column. */
 const EtaLine = ({ eta }: { eta: string }) => (
   <span className="text-[10px] font-normal text-ink-muted">ETA {formatDate(eta)}</span>
 );
@@ -188,21 +165,15 @@ export function SoSourceChips({
   const shippedPos = line.shipped_source_pos ?? [];
   const shippedSet = new Set(shippedPos);
   const fullyShipped = (line.delivered_qty ?? 0) > 0 && (line.remaining_qty ?? null) === 0;
-  // READY chips only while something is still un-shipped; a PO already shown
-  // as the shipped source is not repeated (one chip per PO, the shipped
-  // meaning wins). Adjustment folds into ONE "STOCK ADJ" chip with the
-  // shipped-side flag.
   const readyChips = fullyShipped
     ? []
     : (line.ready_source_pos ?? []).filter((r) => !(r.po && shippedSet.has(r.po)));
   const readyPoChips = readyChips.filter((r) => r.kind === "po" && r.po);
   const anyAdj = Boolean(line.shipped_source_adj) || readyChips.some((r) => r.kind === "adjustment");
-  // Incoming (un-arrived) remainder — the MRP coverage PO + ETA.
   const incomingPo = line.stock_state === "po" && line.coverage_po ? line.coverage_po : null;
   const showIncoming = incomingPo && !shippedSet.has(incomingPo) && !readyPoChips.some((r) => r.po === incomingPo);
 
   if (shippedPos.length === 0 && readyPoChips.length === 0 && !anyAdj && !incomingPo) {
-    /* BEFORE the dash: an unresolved read is not "nothing on the way". */
     return coveragePlaceholder(coverage) ?? <span className="text-[11px] text-ink-muted">—</span>;
   }
   return (

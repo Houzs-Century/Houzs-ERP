@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./errorReporter", () => ({ reportClientError: vi.fn() }));
 
-/* Module-level state (the in-flight intent, the registered openers) is the
-   point of this module, so every test gets a FRESH copy. */
 async function freshModule() {
   vi.resetModules();
   return await import("./chunkActionRecovery");
@@ -98,7 +96,6 @@ describe("chunkActionRecovery — a chunk that 404s during a print reloads once 
   it("shows the banner instead when the page cannot reopen that print", async () => {
     const mod = await freshModule();
     const d = deps();
-    // A preview whose page never registered a URL opener (the phone's SO detail).
     void mod.trackPrintAction({ kind: "preview", open: vi.fn() }, () => new Promise(() => {}), d.now);
     expect(await mod.handleActionChunkFailure(staleError(), d)).toBe("banner");
     expect(d.reload).not.toHaveBeenCalled();
@@ -137,7 +134,6 @@ describe("chunkActionRecovery — a chunk that 404s during a print reloads once 
     void mod.trackPrintAction({ kind: "preview", open }, () => new Promise(() => {}), d.now);
     expect(await mod.handleActionChunkFailure(staleError(), d)).toBe("reload");
 
-    // The reload landed on a build that STILL cannot fetch it.
     now = T0 + 60_000;
     void mod.trackPrintAction({ kind: "preview", open }, () => new Promise(() => {}), d.now);
     expect(await mod.handleActionChunkFailure(staleError(), d)).toBe("banner");
@@ -183,7 +179,6 @@ describe("chunkActionRecovery — a chunk that 404s during a print reloads once 
     expect(await mod.handleActionChunkFailure(staleError(), d)).toBe("banner");
     expect(mod.rememberBlockedPrintForReload(T0 + 1_000, d.location)).toBe(true);
     expect(mod.peekPrintResume("/scm/sales-orders/HC-SO-012016", T0 + 2_000)?.kind).toBe("preview");
-    // A click is not a loop: it leaves no cooldown behind.
     expect(sessionStorage.getItem(mod.ACTION_RELOAD_KEY)).toBeNull();
     release();
   });

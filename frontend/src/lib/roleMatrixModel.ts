@@ -99,12 +99,8 @@ export const PARENT_DERIVED_KEYS: readonly string[] = ["scm"] as const;
 interface ModuleSpec {
   id: string;
   labelEn: string;
-  /** A page belongs to this module when its key equals, or starts with
-   *  `<prefix>.`, any of these. Order matters: first spec to claim a page wins. */
   pagePrefixes: string[];
-  /** Permission `resource` values whose CRUD keys this module's level drives. */
   resources: string[];
-  /** SCM area: pages + the scm.access umbrella only; fine SCM keys stay explicit. */
   scmArea?: boolean;
 }
 
@@ -141,9 +137,7 @@ export interface MatrixModule {
   id: string;
   labelEn: string;
   scmArea: boolean;
-  /** Pages this module governs, catalogue order, parents before children. */
   pages: PageLite[];
-  /** The module's "top" page key (shallowest), or null for a page-less module. */
   topPageKey: string | null;
   perm: ModulePermKeys;
 }
@@ -153,7 +147,6 @@ function pageMatchesPrefix(key: string, prefix: string): boolean {
 }
 
 function specForPage(key: string): ModuleSpec | null {
-  // Most specific (longest prefix) wins, so scm.sales beats a hypothetical scm.
   let best: { spec: ModuleSpec; len: number } | null = null;
   for (const spec of MODULE_SPECS) {
     for (const p of spec.pagePrefixes) {
@@ -187,7 +180,7 @@ export function buildMatrixModules(
 ): MatrixModule[] {
   const byModule = new Map<string, PageLite[]>();
   for (const page of pages) {
-    if (PARENT_DERIVED_KEYS.includes(page.key)) continue; // derived, not an own row
+    if (PARENT_DERIVED_KEYS.includes(page.key)) continue;
     const spec = specForPage(page.key);
     if (!spec) continue;
     const list = byModule.get(spec.id) ?? [];
@@ -197,7 +190,6 @@ export function buildMatrixModules(
 
   return MODULE_SPECS.map((spec) => {
     const modPages = byModule.get(spec.id) ?? [];
-    // The top page = the one with no parent inside this module (shallowest key).
     const top = modPages.find((p) => !p.parent) ?? modPages.at(0) ?? null;
     return {
       id: spec.id,
@@ -266,7 +258,6 @@ export function moduleLevel(
     }
     return common ?? "none";
   }
-  // Page-less: highest tier whose keys are all present.
   if (m.perm.manage.length > 0 && m.perm.manage.every((k) => perms.has(k))) return "full";
   if (m.perm.write.length > 0 && m.perm.write.every((k) => perms.has(k))) return "edit";
   if (m.perm.read.length > 0 && m.perm.read.every((k) => perms.has(k))) return "view";

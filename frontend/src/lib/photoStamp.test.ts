@@ -1,6 +1,3 @@
-/* The stamp burned into a field photo: the DO / job number and the SERVER's
-   Malaysia time, so a phone with its clock set back cannot stamp another day;
-   when the server cannot be asked, the phone's time is used and says so. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CLOCK_TTL_MS, resetStampClock, stampLines, stampNow, stampPhoto } from "./photoStamp";
 
@@ -10,7 +7,6 @@ describe("stampNow", () => {
   beforeEach(() => resetStampClock());
 
   it("uses the server's Date header, not the phone clock", async () => {
-    // The phone thinks it is a day earlier than the server.
     const phone = Date.parse("2026-11-07T06:00:00Z");
     const clock = await stampNow(async () => res("Sun, 08 Nov 2026 06:00:00 GMT"), () => phone);
     expect(clock.source).toBe("server");
@@ -34,7 +30,6 @@ describe("stampNow", () => {
     const phone = Date.parse("2026-11-08T06:00:00Z");
     const offline = await stampNow(async () => { throw new Error("offline"); }, () => phone);
     expect(offline).toEqual({ at: new Date(phone), source: "device" });
-    // A cross-origin response hides the Date header: same fallback.
     const hidden = await stampNow(async () => res(null), () => phone);
     expect(hidden.source).toBe("device");
   });
@@ -42,7 +37,6 @@ describe("stampNow", () => {
 
 describe("stampLines", () => {
   it("prints the job number and the Malaysia date and time", () => {
-    // 22:30 UTC is 06:30 the next morning in Malaysia.
     expect(stampLines("DO-2611-0042", { at: new Date("2026-11-07T22:30:00Z"), source: "server" }))
       .toEqual(["DO-2611-0042", "2026/11/08 06:30"]);
   });
@@ -59,7 +53,6 @@ describe("stampLines", () => {
 describe("stampPhoto", () => {
   it("passes a file the browser cannot draw through unchanged", async () => {
     const f = new File(["x"], "a.jpg", { type: "image/jpeg" });
-    // jsdom has no createImageBitmap: the photo must still go up.
     expect(await stampPhoto(f, ["DO-1"])).toBe(f);
     const pdf = new File(["%PDF"], "a.pdf", { type: "application/pdf" });
     expect(await stampPhoto(pdf, ["DO-1"])).toBe(pdf);

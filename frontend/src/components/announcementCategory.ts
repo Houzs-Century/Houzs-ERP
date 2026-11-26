@@ -6,37 +6,17 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-// ────────────────────────────────────────────────────────────────────────────
-// announcementCategory — the ONE definition of what a notice category looks
-// like and whether it blocks. Read by the mandatory modal (AnnouncementBanner),
-// the pop-up hook, the Announcements page (Inbox / Manage / composer), the
-// dashboard stack and the notification panel, so a colour or a CTA label can
-// never differ between two of them.
-//
-// Colours are unchanged from the 2026-07-09 banner redesign: Notice=petrol,
-// Warning=err, SOP=brass, Learning=trend blue. Brass stays brand-only
-// elsewhere; the SOP acknowledge button is the one sanctioned exception and it
-// is inherited from that banner, not invented by the 2026-09-04 redesign.
-// All classes are static literals — Tailwind's content scan can't see
-// runtime-composed names, so never build them.
-// ────────────────────────────────────────────────────────────────────────────
 
 export type AnnouncementCategory = "GENERAL" | "WARNING" | "SOP" | "LEARNING";
 
 export type CategoryMeta = {
   label: string;
   Icon: LucideIcon;
-  /** Tinted pill: `bg-* text-*`. */
   pillCls: string;
-  /** Solid rail / bar colour. */
   railCls: string;
-  /** Solid primary CTA. */
   solidCls: string;
-  /** Bordered card outline for the mandatory modal / dashboard banner. */
   borderCls: string;
-  /** Eyebrow text colour. */
   textCls: string;
-  /** Icon chip on the modal and the dashboard banner. */
   chipCls: string;
   ctaLabel: string;
 };

@@ -1,16 +1,3 @@
-// The MONTH screen's render contract. The assembling rules are pinned on the
-// server (backend/src/acc/bank-month.test.ts); what is proved here is that the
-// screen says them out loud rather than presenting a month it cannot stand up:
-//
-//   • a month missing a day says so ABOVE the verdict, and names both files,
-//     both dates and the amount that moved between them — a difference read
-//     carefully off an incomplete month is the wrong number read carefully;
-//   • the opening and closing figures name the file they were taken off, so a
-//     balance is never a number nobody can check;
-//   • a file that straddles the month end is listed and labelled, because its
-//     movements DO count here and its balances do not;
-//   • the month reuses the file screen's own rows, so a movement has one set of
-//     buttons wherever it is looked at.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -66,9 +53,6 @@ const STATEMENTS = [
   { id: 3, account_code: '310-0020', file_name: 'd03.csv', period_from: '2026-09-03', period_to: '2026-09-03', opening_balance_sen: 1020000, closing_balance_sen: 1090000, spanning: false },
 ];
 
-/* vi.hoisted, because a vi.mock factory runs before the consts above exist —
-   the mutable handles have to be created in the hoisted block or every test
-   reads undefined. */
 const state = vi.hoisted(() => ({
   months: [] as unknown[],
   assembly: null as unknown,
@@ -85,15 +69,12 @@ const state = vi.hoisted(() => ({
   entries: [] as unknown[],
   match: vi.fn(),
   book: vi.fn(),
-  /* Whether the person may post a manual journal and match bank lines (Record journal). */
   mayPost: true,
 }));
 
-/* The A4 statement's letterhead and who printed it. */
 vi.mock('../../hooks/useBranding', () => ({ useBranding: () => ({ companyName: 'Houzs Century', companyCode: 'HC' }) }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { name: 'Chew', email: 'chew@example.com' }, can: () => state.mayPost }) }));
 
-/* Record journal opens the manual journal form, which names the bank's account from the chart. */
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/accounting-queries')>()),
   useAccounts: () => ({
@@ -102,11 +83,8 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   }),
 }));
 
-/* To do's own "upload the statement" rule says where the uploads stop. */
 vi.mock('./finance/finance-todo-queries', () => ({ useFinanceTodo: () => ({ data: { mine: state.todo, others: [] } }) }));
 
-/* The failed-print notice needs the app's notify; the tab is mounted without
-   the provider here, so the hook is a spy. */
 vi.mock('../../vendor/scm/components/NotifyDialog', () => ({ useNotify: () => vi.fn() }));
 
 vi.mock('./bank-queries', () => ({
@@ -121,8 +99,6 @@ vi.mock('./bank-queries', () => ({
     },
     isLoading: false,
   }),
-  /* The file screen's rows come with it; the month renders them, so their hooks
-     have to exist even where this screen never presses them. */
   useBankSetup: () => ({ data: { accounts: [], recognises: [] }, isLoading: false }),
   useBankStatements: () => ({ data: { statements: [] }, isLoading: false }),
   useBankStatement: () => ({ data: undefined, isLoading: false }),
@@ -146,7 +122,6 @@ vi.mock('./bank-queries', () => ({
 
 import { BankMonthTab, monthLabel, parseRm, previousMonthOf } from './BankMonthTab';
 
-/* jsdom does not scroll; the walk's chips scroll to the tabs they open. */
 Element.prototype.scrollIntoView = vi.fn();
 
 const setUp = (over: {
@@ -172,24 +147,18 @@ const setUp = (over: {
   state.entries = [];
 };
 
-/* The print dialog this screen mounts reads the company branding through
-   react-query, so the tree needs a client — the same wrapper NotificationBell's
-   test uses. Retries off: a test that waits out a retry is a slow test that
-   still fails. */
 const show = (at = '/scm/bank-recon') => render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <MemoryRouter initialEntries={[at]}><BankMonthTab /></MemoryRouter>
   </QueryClientProvider>,
 );
 
-/* The redesign opens a month by itself: the account with lines to decide, its oldest month not yet locked. */
 const openMonth = () => show();
 
 describe('the accounts and their months', () => {
   test('names the month in the numeric shape the rest of the ERP uses', () => {
     expect(monthLabel('2026-09')).toBe('09/2026');
     expect(monthLabel('2026-01')).toBe('01/2026');
-    /* Anything that is not a month is shown as it came rather than guessed at. */
     expect(monthLabel('rubbish')).toBe('rubbish');
   });
 
@@ -198,7 +167,6 @@ describe('the accounts and their months', () => {
     show();
     expect(screen.getByText('2 lines to decide')).toBeTruthy();
     expect(screen.getByText('All matched · 2026/08 not locked yet')).toBeTruthy();
-    /* The account with lines to decide comes up, and its month opens below. */
     expect(screen.getByText('310-0020 statements')).toBeTruthy();
     expect(screen.getByText('September 2026')).toBeTruthy();
   });
@@ -297,7 +265,6 @@ describe('what is still to decide, on the month', () => {
     expect(screen.getByText('1 still to decide')).toBeTruthy();
     fireEvent.click(screen.getByText('Match the obvious ones now'));
     await waitFor(() => expect(state.autoMatch).toHaveBeenCalledTimes(2));
-    /* One call per file of the month, in the order the files cover it. */
     expect(state.autoMatch.mock.calls.map((c) => c[0])).toEqual([1, 3]);
     expect(await screen.findByText(/3 matched — JE-1, JE-2, JE-3; 1 pair the bank reversed left out/)).toBeTruthy();
     /* The voucher a line names is the rule too (owner 2026-11-10). */
@@ -380,7 +347,7 @@ describe('the month-end balance typed off the bank statement', () => {
   });
 
   test('offers the closing box, and the previous month\'s, only where no file prints the figure', () => {
-    setUp();   // both ends printed by files
+    setUp();
     openMonth();
     expect(screen.queryByLabelText('Closing balance per the bank statement')).toBeNull();
     expect(screen.queryByLabelText('Closing balance of the previous month')).toBeNull();
@@ -408,8 +375,6 @@ describe('the month-end balance typed off the bank statement', () => {
     expect(screen.getByText(/Not a money amount/)).toBeTruthy();
   });
 
-  /* A figure with no author is a number nobody can check: the screen names
-     who typed it, the box carries it, and it can be taken back. */
   test('names the typed figure where the figures come from, shows it in the box, and can clear it', () => {
     setUp({
       assembly: { ...NO_BALANCES, statementClosingSen: 1090000, closingFrom: TYPED_CLOSING },
@@ -419,7 +384,6 @@ describe('the month-end balance typed off the bank statement', () => {
     expect(screen.getByText(/the closing balance typed for 09\/2026 by Chew on 2026-09-13/)).toBeTruthy();
     expect((screen.getByLabelText('Closing balance per the bank statement') as HTMLInputElement).value).toBe('10900.00');
     expect(screen.getByText(/typed by Chew on 2026-09-13/)).toBeTruthy();
-    /* Nothing changed, so there is nothing to save. */
     expect(screen.getAllByText('Save')[0]!.closest('button')!.disabled).toBe(true);
     fireEvent.click(screen.getByText('Clear'));
     expect(state.typeClosing).toHaveBeenCalledWith({ accountCode: '310-0020', month: '2026-09', closingSen: null, note: null });
@@ -447,9 +411,6 @@ describe('a month with a day missing from it', () => {
     gaps: ['d04.csv closes on 2026-09-04 and d08.csv opens on 2026-09-08 at a different figure — 20000 sen moved on days between them that have not been uploaded.'],
   };
 
-  /* THE ONE THAT MATTERS. A difference computed over a month short of four
-     days is not a smaller version of the right answer, it is an answer about a
-     different month — so what is missing is said FIRST. */
   test('says what is missing above the verdict', () => {
     setUp({ assembly: BROKEN });
     openMonth();
@@ -472,8 +433,6 @@ describe('a month with a day missing from it', () => {
 });
 
 describe('where the figures came from', () => {
-  /* A balance with no provenance is a number nobody can check — both ends name
-     their file and their day. */
   test('names the file and day behind each end of the month', () => {
     setUp();
     openMonth();
@@ -540,7 +499,7 @@ describe('closing a month', () => {
   });
 
   test('the lock is off while lines are still to decide, or a day is missing', () => {
-    setUp();   // one line still to decide
+    setUp();
     openMonth();
     expect(screen.getByText('Lock Sep').closest('button')!.disabled).toBe(true);
     expect(screen.getByText(/Can’t lock yet · 1 line to decide/)).toBeTruthy();
@@ -554,9 +513,6 @@ describe('closing a month', () => {
     expect(screen.queryByLabelText('Why this month is being closed anyway')).toBeNull();
   });
 
-  /* THE ONE THAT MATTERS ON A CLOSED MONTH: the figures shown are the ones
-     SNAPSHOTTED when it was closed, not today's. A lock exists to fix a claim,
-     and rendering live numbers here would quietly rewrite it. */
   test('a closed month shows the figures it was closed at, and who closed it', () => {
     setUp({ lock: HELD });
     openMonth();
@@ -573,9 +529,6 @@ describe('closing a month', () => {
     expect(screen.getByText('Unlock…')).toBeTruthy();
   });
 
-  /* Reopening demands a reason, and the button stays dead until there is one —
-     the server refuses without it, and a screen that lets the press through
-     just to collect a refusal has wasted the trip. */
   test('reopening cannot be pressed without a reason', () => {
     setUp({ lock: HELD });
     openMonth();
@@ -609,9 +562,6 @@ describe('the reconciliation statement', () => {
     expect(screen.getByText('Print reconciliation')).toBeTruthy();
   });
 
-  /* The redesign (owner question d6): the statement is an A4 page the browser
-     prints — the walk, then the three lists; matched lines are not printed;
-     Draft until the month is locked, Final after. */
   test('prints the walk from the ledger to the bank, marked Draft while the month is open', () => {
     setUp();
     openMonth();
@@ -623,7 +573,6 @@ describe('the reconciliation statement', () => {
     expect(sheet.textContent).toContain('Balance per bank statement on 2026/09/03');
     expect(sheet.textContent).toContain('Bank lines not in the ledger yet');
     expect(sheet.textContent).toContain('Ledger entries not on the bank yet');
-    /* Nothing set aside, nothing owed by the books: each list says None. */
     expect(screen.getAllByText('None.').length).toBe(2);
   });
 
@@ -648,8 +597,6 @@ describe('the reconciliation statement', () => {
   });
 });
 
-/* A line set aside is out of the ledger and on the statement: the difference
-   names it apart, and the month cannot lock while it moves the balance. */
 describe('lines set aside', () => {
   const ASIDE = { ...LINE, id: 9, line_no: 9, kind: 'OTHER' as const, state: 'IGNORED' as const, amount_sen: 30000, note: 'own transfer' };
   const UNTALLIED = { ...RECON, bankNotInBooks: { count: 0, sen: 0 }, computedClosingSen: 1060000, unexplainedSen: 30000, tallies: false };
@@ -667,7 +614,6 @@ describe('lines set aside', () => {
     setUp({ lines: [{ ...ASIDE, kind: 'DUPLICATE' as const }], recon: UNTALLIED });
     openMonth();
     expect(screen.queryByText(/set aside/, { selector: 'button' })).toBeNull();
-    /* Said where the difference is walked, and where the month stands. */
     expect(screen.getAllByText('RM 300.00 unexplained').length).toBeGreaterThan(0);
   });
 });
@@ -676,7 +622,6 @@ describe('the movements of the month', () => {
   test('carries the file screen own rows, with what each movement came off', () => {
     setUp();
     openMonth();
-    /* A payout the matcher could not tie to one report sits under To choose, and the month opens there. */
     expect(screen.getByRole('tab', { name: /^To choose/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('a card payout, matched')).toBeTruthy();
   });
@@ -706,7 +651,6 @@ describe('the movements of the month', () => {
   });
 });
 
-/* ── The redesign's six tabs (batch 3, step 10) ─────────────────────────── */
 describe('the month in six tabs', () => {
   const CERTAIN = { ...LINE, id: 2, line_no: 3, matched_batch_id: 7, candidates: [{ id: 7, acquirerCode: 'HLB', fileName: 'hlb-0901.csv', periodFrom: '2026-09-01', periodTo: '2026-09-01', payableSen: 60000, outstandingSen: 60000 }] };
   const ONE_ENTRY = {
@@ -726,7 +670,6 @@ describe('the month in six tabs', () => {
     expect(tabOf('No entry found').textContent).toBe('No entry found1');
     expect(tabOf('Matched').textContent).toBe('Matched1');
     expect(tabOf('Set aside').textContent).toBe('Set aside1');
-    /* The month opens on the first tab with lines to work. */
     expect(tabOf('To match').getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText(/Same amount, one entry, names agree/)).toBeTruthy();
   });
@@ -813,7 +756,6 @@ describe('the month in six tabs', () => {
   test('Matched and Set aside list what was decided, with Undo', () => {
     setUp({ lines: [MATCHED, ASIDE] });
     openMonth();
-    /* Nothing open: the month opens on Matched. */
     expect(tabOf('Matched').getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText(/JE-2609-0050/)).toBeTruthy();
     expect(screen.getByText('Undo')).toBeTruthy();

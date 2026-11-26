@@ -109,18 +109,6 @@ export function isEditable(docType: LockedDocType, counts: DownstreamCounts): bo
 export const doCancelDbRefusal = (err: { code?: string | null } | null | undefined): DownstreamRefusal | null =>
   err?.code === 'P0410' ? REFUSALS.DO : null;
 
-/* ── A FAILED COUNT IS NOT ZERO ─────────────────────────────────────────────
-   Every function below used to drop the PostgREST `error` and read `count ?? 0`
-   / `data ?? []`. A read that FAILED then arrived at downstreamVerdict as "this
-   document has no children", which is exactly the absence that authorises the
-   cancel or the line edit the whole module exists to refuse — one dropped error
-   and a shipped SO is cancellable again, against the owner's rule at the top of
-   this file. A failed read must never read as an absence when the absence is
-   what authorises the write.
-
-   So an unreadable count refuses too, with its own code. Call sites are
-   unchanged: they already do `if (lock) return c.json(lock, 409)`, and a 409
-   the operator can retry is the right answer to "we could not check". */
 export const DOWNSTREAM_CHECK_FAILED = 'downstream_check_failed';
 
 const checkFailedRefusal = (docType: LockedDocType, reason: string): DownstreamRefusal => ({
@@ -130,8 +118,6 @@ const checkFailedRefusal = (docType: LockedDocType, reason: string): DownstreamR
 
 type Sb = SupabaseClient<any, any, any>;
 
-/** A live-child count, or the reason it could not be taken. Never a bare number:
- *  the caller must not be able to spend an unreadable count as a zero. */
 type LiveCount = { ok: true; count: number } | { ok: false; reason: string };
 
 const liveCount = async (
@@ -149,8 +135,6 @@ const liveCount = async (
   return { ok: true, count: count ?? 0 };
 };
 
-/** Fold the reads into the verdict — but refuse outright if ANY of them failed,
- *  before a single unreadable count can be counted as zero. */
 function verdictFromReads(
   docType: LockedDocType,
   reads: Array<[keyof DownstreamCounts, LiveCount]>,
@@ -193,9 +177,7 @@ export type SoLineFreezeRead =
   | {
       ok: true;
       freeze: SoLineFreeze;
-      /** Every line of the order, cancelled included, with its sofa build key. */
       lines: Array<{ id: string; cancelled: boolean; buildKey: string | null }>;
-      /** The verdict for the non-cancelled lines: nothing left to convert. */
       fullyFrozen: boolean;
     }
   | { ok: false; refusal: DownstreamRefusal };
@@ -267,8 +249,6 @@ export async function readSoLineFreeze(sb: Sb, soDocNo: string): Promise<SoLineF
   for (const [k, v] of moreDo.map) doStatus.set(k, v);
   for (const [k, v] of moreSi.map) siStatus.set(k, v);
 
-  /* A line whose parent document could not be found at all is treated as LIVE:
-     absence of the header is not evidence the shipment was cancelled. */
   const downstream: SoFreezeDownstreamLine[] = [
     ...doLines.map((l) => ({ kind: 'DO' as const, so_item_id: l.so_item_id, status: doStatus.get(l.delivery_order_id) ?? null })),
     ...siLines.map((l) => ({ kind: 'SI' as const, so_item_id: l.so_item_id, do_item_id: l.do_item_id, status: siStatus.get(l.sales_invoice_id) ?? null })),
@@ -311,9 +291,6 @@ export async function poHasDownstream(sb: Sb, poId: string): Promise<DownstreamR
   return verdictFromReads('PO', [['grns', grns]]);
 }
 
-/** Live GRNs holding one of this PO's LINES. A multi-PO receipt names only its
- *  first PO in grns.purchase_order_id (grns POST /from-pos), so the header alone
- *  left every later PO on it unlocked (sister review G5). */
 const liveGrnCountByPoLines = async (sb: Sb, poId: string): Promise<LiveCount> => {
   const linked = await readPoLineLinkedGrnIds(sb, poId);
   if (!linked.ok) return linked;

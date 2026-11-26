@@ -1,5 +1,3 @@
-// The sales batch's rules: the shape a device may send, how a repeat is
-// classified, and the inventory movements a receipt produces.
 import { describe, expect, test } from "vitest";
 import { auditEntriesFor, classifyIncoming, movementsFor, parseIncomingSale, voidMovementsFor } from "./pos-sync";
 

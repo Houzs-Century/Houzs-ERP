@@ -1,22 +1,3 @@
-// ---------------------------------------------------------------------------
-// connect.ts — ERP -> Houzs Connect (chat.houzscentury.com) sender.
-//
-// The Delivery Planning board's "Send Now" posts an order event here; Connect
-// upserts the customer's contact + attributes and fires the named automation,
-// which sends the Meta-approved WhatsApp template (with Confirm / Amend
-// buttons). The customer's tap comes back to the ERP at /api/chat-callback.
-//
-// ONE call per CUSTOMER PHONE, bundling that customer's selected orders as
-// ref_1..N / delivery_date_1..N / brand_1..N (+ order_total). Connect's flow
-// picks the N-order template from order_total, so a 2/3/4-order bundle needs the
-// matching Meta-approved template AND a flow that branches on the count; until
-// those exist only a single-order (N=1) bundle renders correctly.
-//
-// Auth: the X-Connect-Key header carries CONNECT_WEBHOOK_KEY, the shared secret
-// Connect's /api/webhooks/erp checks. Gated on CONNECT_WEBHOOK_URL +
-// CONNECT_WEBHOOK_KEY — while either is unset isConnectConfigured() is false and
-// the board's Send Now answers 503, exactly as the retired Seampify path did.
-// ---------------------------------------------------------------------------
 
 /** The Connect automation the delivery follow-up triggers, matched BY NAME.
  *  Must equal the automation's name in chat.houzscentury.com exactly. */
@@ -55,43 +36,19 @@ export interface ConnectOrder {
    *  linked). /api/chat-callback resolves either number back to the SO, so a
    *  conversation opened under the old rule still records. */
   ref: string;
-  /** The customer Reference No. from scm.mfg_sales_orders.ref, e.g. "HC 11063"
-   *  — distinct from `ref`, which is the SO doc_no. Connect shows it on the
-   *  contact's order card; blank is fine, Connect hides an empty field. */
   orderRef: string;
   branding: string;
-  /** yyyy/mm/dd, already the effective (amended ?? original) date. */
   deliveryDate: string;
-  /** Outstanding balance in sen (local_total − Σpayments) from the SO list's
-   *  own view; null when the view had no row for the doc. Drives `amount`. */
   balanceSen?: number | null;
-  /** The order's gross value in sen (local_total_sen) from the SO list's own
-   *  view; null when the view had no row for the doc. Drives `order_amount`,
-   *  the panel-only total Connect shows — distinct from the owed `amount`. */
   totalSen?: number | null;
-  /** The order's ERP company code, uppercase (`HOUZS` / `2990`); null when the
-   *  company is unresolved. Drives `company_code` — the signal Connect routes
-   *  the balance send on so a 2990 order is not auto-sent HOUZS's bank account.
-   *  It is the ORDER's company, not the sending user's; delivery-messages.ts
-   *  groups a send by company, so every order in one build shares it. */
   companyCode?: string | null;
 }
 
 /** Everything the ERP must tell Connect on EVERY send besides the order lines. */
 export interface ConnectSendContext {
-  /** Absolute URL the flow's call_rest_api node posts the customer's tap to. */
   callbackUrl: string;
-  /** The Connect automation to fire, BY NAME. Defaults to the delivery
-   *  follow-up; scm/lib/delivery-message-kinds.ts maps the board's message
-   *  kinds onto the seeded names. */
   automation?: string;
-  /** Per-kind template variables (driver fields, postpone fields, postage
-   *  address …) merged LAST, so a kind can set what it needs. */
   extra?: Record<string, string>;
-  /** Reset the contact's conversation state (CONNECT_RESET_ATTRIBUTES).
-   *  Defaults to true — right for a message that OPENS a Confirm / Amend
-   *  conversation. A reminder or driver info sent to a customer who already
-   *  confirmed passes false, or it would unlock the Delivery Lock guard. */
   resetConversation?: boolean;
 }
 
@@ -217,7 +174,6 @@ export function buildDeliveryFollowUp(
     full_name: name,
     order_total: String(orders.length),
   };
-  // Resets FIRST so a real value below (amount) wins over its reset.
   if (ctx.resetConversation ?? true) {
     for (const key of CONNECT_RESET_ATTRIBUTES) attributes[key] = '';
   }
@@ -228,27 +184,11 @@ export function buildDeliveryFollowUp(
     attributes[`delivery_date_${n}`] = o.deliveryDate;
     attributes[`brand_${n}`] = o.branding;
   });
-  // EVERY bundled order, not only the 3 lines shown: the flow's callback echoes
-  // this as `refs`, so one Confirm / Amend tap lands on all of them in the ERP
-  // (/api/chat-callback resolves each number, our doc_no or AutoCount's).
   attributes.refs_all = orders.map((o) => o.ref).join(',');
-  // ONE balance paragraph for the whole message, so the figure is the sum over
-  // EVERY bundled order (not only the 3 lines shown) and only of what is owed —
-  // an over-paid order must not shrink another's balance. Nothing owed leaves
-  // amount '' and the flow's has_balance branch stays quiet.
   const owedSen = orders.reduce((sum, o) => sum + Math.max(0, Number(o.balanceSen ?? 0)), 0);
   if (owedSen > 0) attributes.amount = formatRm(owedSen);
-  // The order card's gross value: the sum over EVERY bundled order, panel-only.
-  // Unlike `amount` (template text, so formatRm with commas), this is a PLAIN
-  // decimal — no thousands separators — so Connect's own Number()/money() parses
-  // it. Unknown/zero leaves it the empty reset, so the card shows nothing.
   const totalSen = orders.reduce((sum, o) => sum + Math.max(0, Number(o.totalSen ?? 0)), 0);
   if (totalSen > 0) attributes.order_amount = (totalSen / 100).toFixed(2);
-  // The order card lists EVERY bundled order, NOT capped at CONNECT_ORDER_LINES
-  // (that cap bounds only the template's ref_N params). One entry per order,
-  // primary first: its SO doc_no (same as ref_1), its customer Ref No., and its
-  // own gross value as a PLAIN decimal — the amounts sum to order_amount. A send
-  // with no orders leaves the empty reset, so a prior longer list cannot leak.
   if (orders.length > 0) {
     attributes.orders_json = JSON.stringify(
       orders.map((o) => ({
@@ -258,13 +198,6 @@ export function buildDeliveryFollowUp(
       })),
     );
   }
-  // The order-batch's ERP company code (uppercase, e.g. HOUZS / 2990) — the
-  // signal Connect routes the balance send on, because the Houzs balance
-  // template bakes HOUZS's bank account and a 2990 order must be tagged for
-  // manual collection instead of auto-sent that account. PER ORDER-BATCH's
-  // company (delivery-messages groups a send by company, so every bundled order
-  // carries the same code), never the sending user's active company. Unset when
-  // unresolved — Connect then falls back to the SO doc_no prefix (`2990-SO…`).
   const companyCode = orders.find((o) => o.companyCode)?.companyCode ?? '';
   if (companyCode) attributes.company_code = companyCode;
   attributes.callback_url = ctx.callbackUrl;
@@ -350,13 +283,10 @@ export function buildSyncHeadline(
     const s = String(value ?? '').trim();
     if (s) out[key] = s;
   };
-  // The customer Reference No. (ref, e.g. "HC 11063"); the SO doc_no when blank.
   put('reference_no', String(first.ref ?? '').trim() || first.doc_no);
   put('brand', first.branding);
   put('purchase_venue', first.venue);
   put('sales_person', first.agent);
-  // "Delivery State" on the panel is the Malaysian state the order ships to
-  // (customer_state), NOT the ERP's delivery_state status enum.
   put('delivery_state', first.customer_state);
   put('house_type', first.house_type);
   put('disposal', first.disposal_request);
@@ -405,16 +335,7 @@ export async function postConnectContact(
     });
     const text = (await res.text().catch(() => '')).slice(0, 2000);
     if (res.ok) {
-      // A SYNC (expectTrigger false) names the CONNECT_SYNC_AUTOMATION sentinel
-      // on purpose, so an empty `triggered` is the success case — it upserted the
-      // contact's fields and sent nothing. A real send leaves expectTrigger unset.
       if (opts?.expectTrigger === false) return { ok: true, httpCode: res.status, error: null };
-      // 200 means Connect ACCEPTED the event, not that a message went out: it
-      // upserts the contact and answers `triggered: [names]` — an EMPTY list
-      // when no enabled automation carries that name (still DRAFT, disabled,
-      // renamed). Reporting that as sent put "Done Balance Collection" on an
-      // order whose customer got nothing (2026-10-05). Treat it as a failure
-      // the operator can act on.
       const untriggered = connectUntriggeredReason(text, contact.automation);
       if (untriggered) return { ok: false, httpCode: res.status, error: untriggered };
       return { ok: true, httpCode: res.status, error: null };

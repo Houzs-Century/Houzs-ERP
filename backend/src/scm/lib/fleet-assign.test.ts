@@ -154,7 +154,6 @@ describe('assignFleet — load balancing', () => {
       lorries: [lorry('l1')],
       drivers: [], helpers: [], config: CFG,
     });
-    // One lorry, two days -> both assigned to l1 (each day it is free).
     expect(r.assignments.map((a) => a.lorryId)).toEqual(['l1', 'l1']);
   });
 });
@@ -168,7 +167,7 @@ describe('assignFleet — crew pairing', () => {
       helpers: [helper('h1')],
       config: CFG,
     });
-    expect(r.assignments[0].driverId).toBe('d2');   // plate matched (space-insensitive)
+    expect(r.assignments[0].driverId).toBe('d2');
     expect(r.assignments[0].helperId).toBe('h1');
   });
 
@@ -181,10 +180,10 @@ describe('assignFleet — crew pairing', () => {
       config: CFG,
     });
     const drivers = r.assignments.map((a) => a.driverId);
-    expect(new Set(drivers).size).toBe(2);          // two distinct drivers
+    expect(new Set(drivers).size).toBe(2);
     const helpers = r.assignments.map((a) => a.helperId);
     expect(helpers[0]).toBe('h1');
-    expect(helpers[1]).toBeNull();                  // only one helper -> second trip gets none
+    expect(helpers[1]).toBeNull();
   });
 
   it('falls back to any free driver when no plate match exists', () => {
@@ -204,7 +203,6 @@ describe('assignFleet — A3 driver-leave exclusion', () => {
     const r = assignFleet({
       groups: [group('A', { date: '2026-08-01' })],
       lorries: [lorry('l1', { plate: 'WXY1234' })],
-      // d2 is the plate-paired driver but is on leave 08-01 -> d1 takes it.
       drivers: [driver('d1', 'ZZZ0000'), driver('d2', 'WXY 1234')],
       helpers: [helper('h1')],
       config: CFG,
@@ -222,7 +220,6 @@ describe('assignFleet — A3 driver-leave exclusion', () => {
       config: CFG,
       driverLeave: [{ driverId: 'd2', from: '2026-08-01', to: '2026-08-03', reason: 'MC' }],
     });
-    // 08-05 is after the leave -> the paired driver is back.
     expect(r.assignments[0].driverId).toBe('d2');
   });
 
@@ -235,7 +232,6 @@ describe('assignFleet — A3 driver-leave exclusion', () => {
       config: CFG,
       driverLeave: [{ driverId: 'd1', from: '2026-08-02', to: '2026-08-02', reason: 'annual' }],
     });
-    // The trip still ships on the lorry; only the auto driver-pick is withheld.
     expect(r.assignments).toHaveLength(1);
     expect(r.assignments[0].driverId).toBeNull();
   });
@@ -247,7 +243,6 @@ describe('assignFleet — WS2 helper-leave exclusion', () => {
       groups: [group('A', { date: '2026-08-01' })],
       lorries: [lorry('l1')],
       drivers: [driver('d1')],
-      // h1 is first but on leave 08-01 -> h2 takes it.
       helpers: [helper('h1'), helper('h2')],
       config: CFG,
       helperLeave: [{ helperId: 'h1', from: '2026-08-01', to: '2026-08-03', reason: 'MC' }],
@@ -285,7 +280,7 @@ describe('assignFleet — A3 3PL overflow (own-fleet slots)', () => {
   it('spills the group beyond the fleet slots to overflow (default 1 trip/lorry/day)', () => {
     const r = assignFleet({
       groups: [group('A'), group('B'), group('C')],
-      lorries: [lorry('l1'), lorry('l2')],   // 2 lorries, 1 slot each -> 1 overflow
+      lorries: [lorry('l1'), lorry('l2')],
       drivers: [driver('d1'), driver('d2')],
       helpers: [],
       config: CFG,
@@ -302,7 +297,7 @@ describe('assignFleet — A3 3PL overflow (own-fleet slots)', () => {
       lorries: [lorry('l1'), lorry('l2')],
       drivers: [driver('d1'), driver('d2')],
       helpers: [],
-      config: { ...CFG, maxTripsPerLorryPerDay: 2 },   // 2 lorries x 2 trips -> all 3 fit
+      config: { ...CFG, maxTripsPerLorryPerDay: 2 },
     });
     expect(r.assignments).toHaveLength(3);
     expect(r.overflow).toHaveLength(0);
@@ -312,8 +307,8 @@ describe('assignFleet — A3 3PL overflow (own-fleet slots)', () => {
     const r = assignFleet({
       groups: [
         group('A', { date: '2026-08-01' }),
-        group('B', { date: '2026-08-01' }),   // overflow on 08-01 (1 lorry, 1 slot)
-        group('C', { date: '2026-08-02' }),   // fits on 08-02
+        group('B', { date: '2026-08-01' }),
+        group('C', { date: '2026-08-02' }),
       ],
       lorries: [lorry('l1')],
       drivers: [driver('d1')],

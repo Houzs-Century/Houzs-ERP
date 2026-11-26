@@ -105,7 +105,6 @@ export function PnlView({ p, mode, split, showPct, period, months }: ViewProps) 
   );
 }
 
-/** A share Finance keeps: of the DOs' value, or of the fairs' sales. */
 function RateBox({ bp, what, useSave }: { bp: number; what: string; useSave: () => { mutate: (b: { pct: number }) => void; isPending: boolean } }) {
   const save = useSave();
   const [text, setText] = useState(String(bp / 100));
@@ -122,7 +121,6 @@ function RateBox({ bp, what, useSave }: { bp: number; what: string; useSave: () 
   );
 }
 
-/* ── Set/Dismantle Income (in-house) · the trips — a Finance list ──────────── */
 const TRIP_COLUMNS: GridColumn[] = [
   { key: 'date', label: 'Date', kind: 'text', width: 100 },
   { key: 'trip', label: 'Trip', kind: 'center', width: 96 },
@@ -135,13 +133,11 @@ const TRIP_COLUMNS: GridColumn[] = [
   { key: 'ours', label: 'Ours', kind: 'center', width: 64 },
   { key: 'income', label: 'Income', kind: 'money', width: 110 },
 ];
-/** "[AKEMI] HOMEDEC @ KLCC" → "HOMEDEC"; the brand, the booths cell's. */
 const fairWord = (name: string) => name.replace(/^\s*\[[^\]]*\]\s*/, '').replace(/\s*@.*$/, '').trim() || name;
 const brandOf = (name: string) => /^\s*\[([^\]]+)\]/.exec(name)?.[1]?.trim() ?? fairWord(name);
 
 function TripsList({ p }: { p: LogisticsPnl }) {
   const save = useSaveTripMark();
-  /* A tick that lands back on the rule is stored as the rule, never as a mark. */
   const flip = (t: LogisticsSetupTrip) => {
     const next = !t.inHouse;
     save.mutate({ tripKey: t.key, inHouse: next === !t.outsourced ? null : next });
@@ -195,7 +191,6 @@ function TripsList({ p }: { p: LogisticsPnl }) {
   );
 }
 
-/* ── The rate per trip, by area ────────────────────────────────────────────── */
 function AreaRatesList({ rates }: { rates: LogisticsAreaRate[] }) {
   const rows: GridRow[] = rates.map((a) => ({
     id: a.key, label: a.label,
@@ -234,7 +229,6 @@ function AreaRateInput({ a }: { a: LogisticsAreaRate }) {
   );
 }
 
-/* ── Upkeep and insurance & road tax, spread ───────────────────────────────── */
 const SPREAD_COLUMNS: GridColumn[] = [
   { key: 'account', label: 'Account', kind: 'text', width: 220 },
   { key: 'what', label: 'What', kind: 'text', width: 260 },
@@ -282,7 +276,6 @@ function SpreadInput({ r }: { r: LogisticsSpreadRow }) {
   );
 }
 
-/* ── What was billed extra ─────────────────────────────────────────────────── */
 const INCOME_COLUMNS: GridColumn[] = [
   { key: 'date', label: 'Bill date', kind: 'text', width: 100 },
   { key: 'for', label: 'For', kind: 'text', width: 80 },

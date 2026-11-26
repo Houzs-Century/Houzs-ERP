@@ -51,8 +51,6 @@ export async function listOpenDefects(
     companySql = " AND p.company_id = ?";
     binds.push(opts.companyId);
   }
-  // Open-only is the default (the service team's actionable queue); `all` drops
-  // the filter so a resolved photo stays listed with its Done stamp.
   const openSql = opts.includeResolved ? "" : " AND COALESCE(la.status, '') <> 'done'";
   const rows = await env.DB.prepare(
     `SELECT

@@ -68,43 +68,19 @@ export type PoLineDraft = {
   materialKind: MaterialKind;
   itemCode: string;
   materialName: string;
-  /** Per-line free text — scm.purchase_order_items.notes. The PO twin of the
-      SO line's `remark`, and the column AutoCount's own Description 2 was
-      copied into by the 2026-08-28 migration (measured on production
-      2026-09-04: 923 of 1,117 migrated company-1 PO lines carry the book's
-      wording here — 891 byte-identical to description2, 32 the same text plus
-      a suffix).
-      It is NOT on the AutoCount write-back path — PO_ITEM_COLS
-      (backend/src/scm/lib/autocount-outbox.ts) does not select `notes` — so it
-      is the one place the book's wording survives a save, unlike description2,
-      which the item PATCH regenerates from buildVariantSummary on every write
-      (mfg-purchase-orders.ts, "Description 2 is server-owned"). Until 2026-09-04
-      this card had no field for it at all, so the text was invisible. */
   notes?: string;
   supplierSku?: string;
   qty: number;
   unitPriceSen: number;
   discountSen?: number;
   deliveryDate?: string;
-  /* Supplier-revised per-line delivery dates (migration 0180). All optional;
-     the supplier pushes the date back. The EFFECTIVE line date readers use =
-     MAX over non-null of [deliveryDate, date2, date3, date4]. */
   supplierDeliveryDate2?: string;
   supplierDeliveryDate3?: string;
   supplierDeliveryDate4?: string;
   warehouseId?: string;
-  /* Set when itemCode matches an mfg_product — drives which variant editor
-     renders (sofa / bedframe). Lowercase to match SoLineCard's itemGroup. */
   category?: string;
-  /** Variant payload (fabric / gap / divan / leg / seat / total height /
-      specials). Shipped to the API as NewPoItem.variants. */
   variants: Record<string, unknown>;
-  /** true once the operator types into Unit Price — a manual override wins and
-      the parent's supplier-price auto-fill stops touching this line's cost. */
   priceTouched?: boolean;
-  /** Source SO line id. Set by the "From SO" flows, and — since 2026-07-31 —
-      editable on the PO detail grid so a hand-typed line can be bound to the
-      Sales Order line it is actually buying for. Null = stock replenishment. */
   soItemId?: string | null;
 };
 
@@ -121,9 +97,6 @@ export const emptyPoLine = (): PoLineDraft => ({
 });
 
 
-/* ──────────────────────────────────────────────────────────────────────
-   PoLineCard
-   ────────────────────────────────────────────────────────────────────── */
 
 export const PoLineCard = ({
   index,
@@ -163,60 +136,24 @@ export const PoLineCard = ({
      (the PI and PC cards) keeps getting. */
   photos?: React.ReactNode;
   currency: string;
-  /** Picked supplier id ('' when none yet). Gates the binding-filtered pickers. */
   supplierId: string;
-  /** Bindings for the picked supplier (empty when no supplier / no bindings). */
   bindings: BindingRow[];
-  /** Full mfg_products catalogue — the picker fallback when a supplier has no
-      bindings (or no supplier is picked yet). */
   allSkus: MfgProductRow[];
-  /** Warehouses for the per-line ship-to override. */
   warehouses: Warehouse[];
-  /** Maintenance config (variant option pools). null until loaded. */
   maint: MaintenanceConfig | null;
-  /** Fabric trackings (variant fabric dropdown). */
   fabrics: FabricTrackingRow[];
   /** Per-category Special Orders pools (full special_addons rows) — feed the
       shared SpecialOrders block (owner 2026-07-20 unification). */
   specialsPools: { bedframe: SpecialAddonRow[]; sofa: SpecialAddonRow[] };
-  /** Patch arbitrary line fields (qty / price / discount / delivery / ship-to /
-      supplierSku / description …). */
   onChange: (patch: Partial<PoLineDraft>) => void;
-  /** Adopt a supplier binding (fills code + name + SKU + price + category and
-      re-arms supplier-price auto-fill). */
   onPickBinding: (b: BindingRow) => void;
-  /** Patch one variant key (parent owns the bedframe Total-Height auto-compute). */
   onSetVariant: (k: string, v: unknown) => void;
-  /** Item-first reverse lookup — fired when a code is typed before a supplier is
-      picked, so the parent can narrow the supplier list. Pass null to clear. */
   onPendingItemPick: (code: string | null) => void;
-  /** Remove this line. */
   onRemove: () => void;
-  /** Read-only when true (locked PO). */
   disabled?: boolean;
-  /** T12 — PI reuse: hide the PO-only fields that don't apply to a Purchase
-      Invoice (per-line delivery date, supplier-revised dates, ship-to warehouse,
-      supplier SKU). Defaults off (PO renders them). */
   hidePoFields?: boolean;
-  /** T12 — PI reuse: a line that descends from a GRN keeps its identity
-      (item code + supplier SKU) and variants READ-ONLY; only qty/price/discount
-      stay editable. Defaults off (full Create-style editing). */
   identityReadOnly?: boolean;
-  /** Source-SO-line picker. Pass the candidate SO lines for THIS line's SKU and
-      the picker renders; omit it entirely and the card behaves exactly as
-      before (Create + the PI reuse do not offer it). The parent owns candidate
-      selection so the card never fetches — see PurchaseOrderDetail, which reads
-      the SAME /outstanding-so-items shortage view the From-SO picker and the
-      mobile convert wizard use, rather than inventing a second query. */
   soLinkOptions?: Array<{ value: string; label: string }>;
-  /** Render the per-line Remarks box (writes `notes`). OPT-IN, and default OFF
-      on purpose: this card is reused by the Purchase Invoice and the
-      Purchase-Consignment Order details, and each of those parents enumerates
-      the fields it sends on add/update. A box those parents do not send would
-      accept typing and silently discard it on save, which is worse than no box
-      at all. Turn it on in a parent only when that parent also carries `notes`
-      in BOTH its add-item and update-item payloads. On today's tree that is
-      the Purchase Order detail. */
   showRemarks?: boolean;
 }) => {
   const l = line;
@@ -227,8 +164,6 @@ export const PoLineCard = ({
   const allowOpts = useModelAllowedOptionsByCode(l.itemCode || undefined).data ?? null;
   const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
   const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
-  // PR #135 — only sofa / bedframe carry a variant editor (mattress size +
-  // branding are encoded in the SKU code itself).
   const showVariants = showsVariantEditor(l.category) && Boolean(maint);
   /* THE SPECIAL ORDER IS NOT A BEDFRAME/SOFA FEATURE. Owner 2026-09-10, after
      the field opened on the Sales Order: 「你确定是 CS order 有而已，还是全部吗？
@@ -250,8 +185,6 @@ export const PoLineCard = ({
     hasItemCode: Boolean(l.itemCode),
     pickedSpecialCount: 0,
   });
-  // T12 — identity (code/SKU/description) + variants lock for GRN-sourced PI
-  // lines; the whole card's `disabled` (locked doc) still wins over everything.
   const identityLocked = disabled || identityReadOnly;
   const pickable = pickableBindings(bindings, allSkus);
 
@@ -267,7 +200,6 @@ export const PoLineCard = ({
         gap: 'var(--space-3)',
       }}
     >
-      {/* Card header — Line N · category badge · line total · remove */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
           <span style={{
@@ -293,10 +225,6 @@ export const PoLineCard = ({
               {categoryLabel}
             </span>
           )}
-          {/* The stored SO link, stated on the card itself. A PO line that
-              carries one is what lets a shipment bind its incoming batch; a
-              line without one silently loses the drop-ship offer, so the
-              difference has to be visible while the line is being edited. */}
           {l.soItemId ? (
             <span
               title="Bound to a Sales Order line — this PO can be resolved as that line's incoming supply."
@@ -353,9 +281,6 @@ export const PoLineCard = ({
         </div>
       </div>
 
-      {/* Identity row — Internal code + Supplier SKU side by side. T12: when
-          hidePoFields (PI) the Supplier SKU column is dropped, so the code spans
-          the row alone. */}
       <div className={hidePoFields ? undefined : styles.formGrid2}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Item Code (Internal)</span>
@@ -366,14 +291,10 @@ export const PoLineCard = ({
             disabled={identityLocked}
             onChange={(e) => {
               const code = e.target.value;
-              // Bound match wins (autofills supplier SKU + price).
               const match = supplierId
                 ? pickable.find((b) => b.item_code === code)
                 : undefined;
               if (match) { onPickBinding(match); return; }
-              // No binding (no supplier yet, OR supplier has no binding for this
-              // code) → one-off line: pull name + category from the master SKU
-              // list so the row isn't left blank.
               const sku = allSkus.find((p) => p.code === code);
               onChange({
                 itemCode: code,
@@ -381,7 +302,6 @@ export const PoLineCard = ({
                 bindingId: undefined,
                 category: sku?.category.toLowerCase() ?? l.category,
               });
-              // Reverse supplier lookup only matters before a supplier is chosen.
               if (!supplierId) onPendingItemPick(code || null);
             }}
             placeholder="Type or pick our internal SKU…"
@@ -389,9 +309,6 @@ export const PoLineCard = ({
             style={{ fontFamily: 'var(--font-mono)' }}
           />
           <datalist id={`bindings-${l.rid}`}>
-            {/* Only show bound SKUs when the supplier actually HAS bindings;
-                otherwise fall back to the full catalogue so the picker is never
-                dead. */}
             {supplierId && pickable.length > 0
               ? [...pickable].sort((a, b) => byText(a.material_name, b.material_name)).map((b) => (
                   <option key={b.id} value={b.item_code}>
@@ -406,14 +323,9 @@ export const PoLineCard = ({
             }
           </datalist>
         </label>
-        {/* T12 — Supplier SKU is a PO-only field; hidden on the PI card. */}
         {!hidePoFields && (
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Supplier SKU</span>
-          {/* Bi-directional picker: typing/picking a supplier_sku reverse-fills
-              the matching binding's internal itemCode + name + price.
-              Requires a supplier picked first (we only know which bindings to
-              search). */}
           <input
             type="text"
             list={`supplier-skus-${l.rid}`}
@@ -449,11 +361,6 @@ export const PoLineCard = ({
         )}
       </div>
 
-      {/* Source Sales Order line — OPTIONAL by design. A genuine stock
-          replenishment PO has no SO and must stay valid, so the empty option is
-          first and is the default. Only lines still short of supply for THIS
-          SKU are offered (the parent filters); the server re-checks company,
-          cancellation and SKU match and refuses a mismatch. */}
       {soLinkOptions && !hidePoFields && (
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Source Sales Order line (optional)</span>
@@ -472,7 +379,6 @@ export const PoLineCard = ({
         </label>
       )}
 
-      {/* Description — full width */}
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Description</span>
         <input
@@ -508,8 +414,6 @@ export const PoLineCard = ({
         </label>
       )}
 
-      {/* SPECIAL ORDER for the categories with no variant grid — mattress,
-          accessory, dining. Free text only; see specialSurface above. */}
       {specialSurface.block && (
         <div style={{
           background: 'var(--c-cream)',
@@ -529,7 +433,6 @@ export const PoLineCard = ({
         </div>
       )}
 
-      {/* Per-category variant editor (PR #126 logic, PR #129 card layout) */}
       {showVariants && (
         <div style={{
           background: 'var(--c-cream)',
@@ -549,9 +452,6 @@ export const PoLineCard = ({
             {mfgCategoryLabel(l.category)} Variants
           </div>
 
-          {/* BEDFRAME — Fabrics · Gaps · Divan · Leg (dropdowns) + Special Orders.
-              Total Height is AUTO-COMPUTED (Divan + Leg + Gap) in the parent's
-              setVariant, so there's no manual Total picker here. */}
           {l.category === 'bedframe' && (
             <>
               <div className={styles.formGrid4}>
@@ -608,7 +508,6 @@ export const PoLineCard = ({
             </>
           )}
 
-          {/* SOFA — Fabrics · Seat · Leg + Special Orders. */}
           {l.category === 'sofa' && (
             <>
               <div className={styles.formGrid4}>
@@ -658,9 +557,6 @@ export const PoLineCard = ({
         </div>
       )}
 
-      {/* Pricing row — Qty · Unit Price · Discount · Delivery · Ship-to. T12: on
-          the PI card (hidePoFields) Delivery + Ship-to are dropped, so the row
-          collapses to 3 columns. */}
       <div className={styles.formGrid4} style={{ gridTemplateColumns: hidePoFields ? 'repeat(3, 1fr)' : 'repeat(5, 1fr)' }}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Qty</span>
@@ -676,9 +572,6 @@ export const PoLineCard = ({
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Unit Price ({currency})</span>
-          {/* MoneyInput — free typing, no mid-keystroke reformat. Manual edit
-              wins: flag priceTouched so the parent's supplier-price auto-fill
-              stops overwriting this line. */}
           <MoneyInput
             bare
             valueSen={l.unitPriceSen}
@@ -701,7 +594,6 @@ export const PoLineCard = ({
             currency={currency}
           />
         </label>
-        {/* T12 — Delivery + Ship-to are PO-only; hidden on the PI card. */}
         {!hidePoFields && (
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Delivery Date</span>
@@ -731,10 +623,6 @@ export const PoLineCard = ({
         )}
       </div>
 
-      {/* Supplier-revised delivery dates (Houzs mig 0026). The supplier pushes
-          the delivery back; the latest non-empty date is the effective one used
-          downstream (MRP / GRN / on-time). All optional. T12: PO-only — hidden
-          on the PI card. Seeded + persisted by PurchaseOrderNew/Detail. */}
       {!hidePoFields && (
       <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <label className={styles.field}>
@@ -770,9 +658,6 @@ export const PoLineCard = ({
       </div>
       )}
 
-      {/* PHOTOS — last, because it is reference material rather than a field
-          the operator tabs through, and because a rail above the dates would
-          push the thing they came here to edit below the fold. */}
       {photos}
     </div>
   );

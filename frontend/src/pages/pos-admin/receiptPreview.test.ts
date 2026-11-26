@@ -17,7 +17,6 @@ describe("receiptPreview", () => {
     const s = posSettingsDefaults().sst_receipt;
     const off = receiptPreviewLines(s, SAMPLE_BILL, false);
     expect(off.find((l) => l.startsWith("SST 8%"))).toMatch(/0\.00$/);
-    /* 2 x 59.90 + 159.00 = 278.80 gross, 11.98 off, FOC mug 0 */
     expect(off.find((l) => l.startsWith("Sub Total"))).toMatch(/278\.80$/);
     expect(off.find((l) => l.startsWith("FINAL TOTAL"))).toMatch(/266\.82$/);
     expect(off.some((l) => l.startsWith("  FOC"))).toBe(true);

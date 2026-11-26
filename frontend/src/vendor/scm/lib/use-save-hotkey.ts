@@ -16,7 +16,6 @@ export const isSaveHotkey = (e: { key: string; ctrlKey: boolean; metaKey: boolea
   || ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's');
 
 export function useSaveHotkey(onSave: () => void, enabled: boolean): void {
-  /* The latest handler, so the listener never calls a stale closure. */
   const latest = useRef(onSave);
   latest.current = onSave;
   useEffect(() => {

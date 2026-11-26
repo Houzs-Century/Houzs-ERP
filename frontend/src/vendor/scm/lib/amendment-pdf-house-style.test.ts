@@ -1,7 +1,3 @@
-// B30 (sister: Conts #401). The amendment's change table used autoTable's "grid"
-// theme and overrode only the header's weight, so the theme's own teal header
-// band (fill 26,188,156, white text) was printed on every amendment. Measured
-// off the DRAWN page content, not the options object.
 import { describe, expect, test, vi } from 'vitest';
 import { pdfRawText } from './pdf-raw-text';
 
@@ -13,7 +9,6 @@ vi.mock('./pdf-common', async (orig) => {
   return { ...real, deliverPdf: (doc: JsPdf) => { captured.doc = doc; } };
 });
 
-// jsPDF writes a fill colour as `r g b rg`, each channel to two decimals.
 const fill = (r: number, g: number, b: number) =>
   `${+(r / 255).toFixed(2)} ${+(g / 255).toFixed(2)} ${+(b / 255).toFixed(2)} rg`;
 

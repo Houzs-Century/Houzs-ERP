@@ -1,15 +1,3 @@
-// ---------------------------------------------------------------------------
-// vision-blocks.ts — turn an uploaded image or PDF into Anthropic content blocks
-// so the Assistant can READ the file. The app already sends images/PDFs to Claude
-// natively in the scan-OCR routes (scan-payment.ts / scan-so.ts); this is the
-// same shape, factored out for the assistant. NO new R2 bucket, NO SDK, NO beta
-// header — claude-sonnet-4-6 reads images + PDFs GA.
-//
-// PDFs are sent NATIVELY as `document` base64 blocks (no text extraction). VIDEO
-// is not a Messages-API content type and the model cannot ingest raw video — the
-// allowlist rejects it. Files never persist here; the base64 is in-memory only,
-// so callers must cap count + size (below) to respect the Worker isolate.
-// ---------------------------------------------------------------------------
 
 export const ASSISTANT_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
 export const ASSISTANT_PDF_MIME = "application/pdf";
@@ -23,8 +11,6 @@ export type ContentBlock = {
   source: { type: "base64"; media_type: string; data: string };
 };
 
-// ArrayBuffer -> base64, chunked (Workers have no Node Buffer). Same impl as the
-// scan routes' private toBase64.
 function toBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   const chunkSize = 0x8000;

@@ -22,7 +22,6 @@ describe('planPhotoBudget', () => {
       { dtlKey: 2, sizes: [900_000] },
       { dtlKey: 3, sizes: [10_000] },
     ]);
-    /* 900 KB is 1.2 MB encoded: one fits, the second would pass 2 MiB, the small third still fits. */
     expect(plan.attach).toEqual([1, 3]);
     expect(plan.tooLarge.map((t) => t.dtlKey)).toEqual([2]);
   });

@@ -95,8 +95,6 @@ describe("recorder never throws into the caller", () => {
 });
 
 describe("recordAi", () => {
-  // A stub env.DB: the recorder must write through the invocation's own client
-  // (one per request / cron run), never open its own.
   function stubEnv() {
     const run = vi.fn(async () => ({}));
     const bind = vi.fn(() => ({ run }));
@@ -140,7 +138,6 @@ describe("month bucketing", () => {
   });
 
   it("uses the MYT month, not UTC, across the year end", () => {
-    // 16:30 UTC on 31 Dec is already 1 Jan in Malaysia.
     expect(lastMonths(new Date("2026-12-31T16:30:00Z"), 2)).toEqual(["2026-12", "2027-01"]);
   });
 });
@@ -154,13 +151,11 @@ describe("buildAiUsageReport", () => {
   it("back-fills agents from agent_runs only before the first recorded month", () => {
     const report = buildAiUsageReport({
       months: ["2026-08", "2026-09", "2026-10"],
-      // 2026-09-30 17:00 UTC = 1 Oct MYT, so October is the first recorded month.
       firstRecordedAt: "2026-09-30T17:00:00.000Z",
       events: [ev("2026-10", "scan_so", 1, 1_000_000), ev("2026-10", "agent:delivery", null, 0)],
       agentRuns: [
         { month: "2026-08", agent: "delivery-run", runs: 3, tokensIn: 1_000_000, tokensOut: 0 },
         { month: "2026-09", agent: "pms-brief", runs: 1, tokensIn: 0, tokensOut: 1_000_000 },
-        // Same month as the first event: must NOT be added on top of events.
         { month: "2026-10", agent: "delivery-run", runs: 9, tokensIn: 5_000_000, tokensOut: 0 },
       ],
     });

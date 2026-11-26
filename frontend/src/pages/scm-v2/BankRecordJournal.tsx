@@ -34,8 +34,6 @@ export const recordableLine = (l: BankLine): boolean =>
 
 type LineRef = Pick<BankLine, 'id' | 'booked_on'>;
 
-/* The month a line is listed (and locked) under is its own date's (the
-   month's rule 1, and the server's lockMonthOf). */
 const lookAgain = async (accountCode: string, line: LineRef) => {
   const fresh = await fetchBankMonth(accountCode, line.booked_on.slice(0, 7));
   return { locked: fresh.lock != null, now: fresh.lines.find((l) => l.id === line.id) ?? null };
@@ -46,7 +44,6 @@ export async function recordRefusal(accountCode: string, line: LineRef): Promise
   const { locked, now } = await lookAgain(accountCode, line);
   if (locked) return `${monthTitle(line.booked_on.slice(0, 7))} is locked for ${accountCode}, so nothing was written. Unlock the month to record this line.`;
   if (!now || now.state !== 'OPEN') return 'This bank line is no longer open — it was matched or set aside meanwhile. Nothing was written.';
-  /* An entry that fits the line now is matched, never recorded a second time. */
   const fits = now.entryCandidates.map((e) => e.jeNo);
   if (fits.length > 0) {
     return `${fits.length === 1 ? `${fits[0]} now fits` : `${fits.join(', ')} now fit`} this line, so nothing was written. Match it under ${fits.length === 1 ? 'To match' : 'To choose'}.`;
@@ -72,9 +69,7 @@ export async function settleLine(
 }
 
 export function BankRecordJournal({ line, accountCode, onClose, onToast }: {
-  /** The line being recorded; the drawer is closed while null. */
   line: BankLine | null;
-  /** The bank account the line moved on — its ledger code. */
   accountCode: string;
   onClose: () => void;
   onToast: (text: string) => void;
@@ -93,7 +88,6 @@ export function BankRecordJournal({ line, accountCode, onClose, onToast }: {
       try {
         return await settleLine(accountCode, line, jeNo, match.mutateAsync);
       } finally {
-        /* The entry is posted whatever became of the match: the month is read again. */
         invalidateAfterBankPosting(qc);
       }
     },

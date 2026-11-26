@@ -1,7 +1,3 @@
-// The phase-1 accounting hooks: each one's contract is the URL + verb + body
-// it sends, so that is what these tests pin. authed-fetch is mocked at the
-// module seam (the so-versioned-mutation.test.ts pattern) — no network, no
-// component tree, just the hook running under a real QueryClient.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';

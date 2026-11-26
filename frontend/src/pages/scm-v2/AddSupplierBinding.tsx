@@ -4,12 +4,6 @@ import { Button } from '../../components/Button';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { useSuppliers, useCreateBinding } from '../../vendor/scm/lib/suppliers-queries';
 
-/* B2 — add a supplier binding for this SKU without leaving the product drawer.
-   Reuses the same create-binding mutation the Supplier side uses (POST
-   /suppliers/:id/bindings, company-scoped, server-validated). Editing an EXISTING
-   binding still happens on the Supplier side (owner ruling); this only ADDS one.
-   On success the drawer's supplier list + cost anchor refresh. Own file so
-   Products.tsx stays under its size ceiling. */
 export const AddSupplierBinding = ({ productCode, productName }: { productCode: string; productName: string }) => {
   const qc = useQueryClient();
   const suppliers = useSuppliers();

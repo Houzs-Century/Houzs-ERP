@@ -90,16 +90,12 @@ export function splitByWeight(totalSen: number, weights: ReadonlyArray<readonly 
   return out;
 }
 
-/* ── What the planner is given ──────────────────────────────────────────── */
 
 /** A line on the prepaid account other than the release itself: a bill (or its
     credit) naming the month it pays for, or the books' opening. */
 export type PrepaidLine = {
-  /** The month the line pays for; null for the books' opening balance. */
   month: Ym | null;
-  /** Debit less credit, sen. */
   amountSen: number;
-  /** The document it came from (AP invoice number, the opening's number). */
   docNo: string;
 };
 
@@ -110,9 +106,7 @@ export type PlanOrder = {
   docNo: string;
   soDate: string | null;
   status: string;
-  /** The order's total — what its net sales are measured against. */
   totalSen: number;
-  /** The day it ended without the rest of its sale (cancelled or closed); null while it is live. */
   endedOn: string | null;
 };
 
@@ -120,52 +114,41 @@ export type PlanOrder = {
 export type PlanSale = { docNo: string; day: string; amountSen: number };
 
 export type PlanInput = {
-  /** The first month a release may be dated in (the books' start). */
   booksStart: Ym;
-  /** The last month planned. */
   through: Ym;
   prepaid: PrepaidLine[];
   closes: PlanClose[];
   orders: PlanOrder[];
   sales: PlanSale[];
-  /** An order's goods as at the end of a day (the four goods buckets). */
   goodsAt: (docNo: string, day: string) => number;
 };
 
-/* ── What it answers ────────────────────────────────────────────────────── */
 
 export type LayerBasis = 'close' | 'goods' | 'none';
 
 export type PlanLayer = {
-  /** 'opening' or 'bill:YYYY-MM'. */
   key: string;
   month: Ym | null;
   amountSen: number;
   docs: string[];
   basis: LayerBasis;
-  /** The orders its amount is split over. */
   orders: number;
-  /** The first month it may release in. */
   fromMonth: Ym;
-  /** The release dated in each month, oldest first (months with nothing left out). */
   byMonth: Array<{ month: Ym; sen: number }>;
   releasedSen: number;
   leftSen: number;
-  /** What a person should know: scaled to the bill, waiting for the report, nothing to carry it. */
   note: string | null;
 };
 
 export type PlanMonth = {
   month: Ym;
   totalSen: number;
-  /** The month's release per layer (only layers that moved). */
   parts: Array<{ key: string; sen: number }>;
 };
 
 export type CommissionPlan = {
   months: PlanMonth[];
   layers: PlanLayer[];
-  /** Each layer's per-order shares — the page's drill-down and the tests. */
   shares: Map<string, Map<string, number>>;
 };
 
@@ -179,7 +162,6 @@ export const layerLabel = (l: Pick<PlanLayer, 'key' | 'month'>): string => {
   return `${name} ${m[1]} bill`;
 };
 
-/** How much of an order is sold by the end of a day, 0..1. */
 function soldShare(o: PlanOrder | undefined, sales: PlanSale[] | undefined, end: string): number {
   if (!o) return 0;
   if (o.endedOn != null && o.endedOn <= end) return 1;
@@ -197,7 +179,6 @@ export function planCommissionRelease(input: PlanInput): CommissionPlan {
   const live = (o: PlanOrder): boolean => o.status !== 'DRAFT';
   const endedBy = (o: PlanOrder, day: string): boolean => o.endedOn != null && o.endedOn <= day;
 
-  /* The bills by the month they pay for; the opening on its own. */
   const billByMonth = new Map<Ym, { amountSen: number; docs: Set<string> }>();
   let opening: { amountSen: number; docs: Set<string> } | null = null;
   for (const p of input.prepaid) {
@@ -275,7 +256,6 @@ export function planCommissionRelease(input: PlanInput): CommissionPlan {
     });
   }
 
-  /* The release: per order, whole sen, cumulative; the month's release is what moved. */
   const months = monthsFromTo(input.booksStart, input.through);
   const monthTotals = new Map<Ym, Map<string, number>>(months.map((m) => [m, new Map()]));
   const layers: PlanLayer[] = [];
@@ -317,16 +297,13 @@ export function planCommissionRelease(input: PlanInput): CommissionPlan {
   };
 }
 
-/* ── One layer, order by order (the page's drill-down) ──────────────────── */
 
 export type LayerOrderRow = {
   docNo: string;
   soDate: string | null;
   status: string;
   totalSen: number;
-  /** The order's share of the layer. */
   shareSen: number;
-  /** How much of it is sold by the end of the plan's last month, 0..1. */
   sold: number;
   releasedSen: number;
   leftSen: number;

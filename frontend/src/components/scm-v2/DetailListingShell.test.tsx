@@ -1,6 +1,3 @@
-/* B23: Print / Preview on a Detail Listing used to fire on a 60 / 250 ms timer
-   after starting the inquiry, so a fetch slower than that printed an empty or
-   "Loading" sheet. They now wait for the inquiry's rows. */
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';

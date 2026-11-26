@@ -35,10 +35,6 @@ type Row = Record<string, unknown>;
 
 const BLIP = { message: 'connection terminated unexpectedly' };
 
-/* A chainable, awaitable PostgREST stand-in. `failing` names the tables whose
-   SELECTs resolve `{ data: null, error }` — the exact shape supabase-js returns
-   for a dropped connection, an RLS refusal or a statement timeout. Everything
-   else answers normally, so each test isolates ONE read. */
 function fakeSb(tables: Record<string, Row[]>, failing: string[] = []) {
   const fail = new Set(failing);
   class Q {
@@ -67,14 +63,6 @@ function fakeSb(tables: Record<string, Row[]>, failing: string[] = []) {
   return { from: (t: string) => new Q(tables[t] ?? [], t) };
 }
 
-/* ONE delivered line of 10, fully consumed: 7 invoiced and 3 returned, so the
-   honest answer is remaining 0 and the fail-open answer is remaining 10. The gap
-   between those two numbers is the whole bug, and it is what every case below
-   measures.
-   BOTH downstream sides carry a row on purpose — the cancelled-filter reads
-   (sales_invoices, delivery_returns) only happen when their line tables returned
-   something, so a fixture with an empty return side would EXERCISE only four of
-   the six reads while appearing to cover all six. */
 const FULLY_CONSUMED = (): Record<string, Row[]> => ({
   delivery_orders: [{ id: 'do-1', company_id: 1, do_number: 'DO-1', status: 'DISPATCHED', debtor_code: 'C1', debtor_name: 'Cust' }],
   delivery_order_items: [{ id: 'dl-1', delivery_order_id: 'do-1', item_code: 'ITEM-1', qty: 10 }],
@@ -86,8 +74,6 @@ const FULLY_CONSUMED = (): Record<string, Row[]> => ({
 
 describe('doLineRemaining fails CLOSED — no read may report an empty ledger', () => {
   test('the ledger is readable when nothing fails: 10 delivered, 7 invoiced, 3 returned, 0 open', async () => {
-    /* The control. Without it every assertion below could be passing because the
-       fixture never produced a ledger at all. */
     const r = await doLineRemaining(fakeSb(FULLY_CONSUMED()), ['do-1'], 'invoiceable');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -109,8 +95,6 @@ describe('doLineRemaining fails CLOSED — no read may report an empty ledger', 
       const r = await doLineRemaining(fakeSb(FULLY_CONSUMED(), [table]), ['do-1'], 'invoiceable');
       expect(r.ok).toBe(false);
       if (r.ok) {
-        // The fail-open regression, named: a ledger that says 10 are still open
-        // on a line that has been invoiced in full.
         throw new Error(`read failure produced a ledger; dl-1 remaining = ${r.lines.get('dl-1')?.remaining}`);
       }
       expect(r.reason).toContain(table);
@@ -127,9 +111,6 @@ describe('doLineRemaining fails CLOSED — no read may report an empty ledger', 
 
 describe('doRemainingByItemId fails CLOSED', () => {
   test('0 still means "nothing open" for a line that genuinely no longer exists', async () => {
-    /* The distinction that matters: a MISSING line is honestly 0 and must stay
-       0, or every caller would start refusing legitimate work. Only an
-       unreadable line becomes a refusal. */
     const r = await doRemainingByItemId(fakeSb(FULLY_CONSUMED()), ['ghost'], 'invoiceable');
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -158,8 +139,6 @@ describe('resolveCandidateDoIds fails CLOSED — an empty picker is a completion
   });
 
   test('a failed sweep refuses instead of answering "no deliveries"', async () => {
-    /* Both pickers turn this list into `{ lines: [] }`, which on screen reads
-       "there is nothing left to invoice / return from any delivery". */
     const r = await resolveCandidateDoIds(fakeSb(FULLY_CONSUMED(), ['delivery_orders']), undefined, 1, 'invoiceable');
     expect(r.ok).toBe(false);
   });
@@ -172,13 +151,6 @@ describe('resolveCandidateDoIds fails CLOSED — an empty picker is a completion
   });
 });
 
-/* THE CALLER THE DEFERRAL NAMED. doPendingItemCodesOf decides which item codes
-   on a Delivery Order still have qty open; the SI insert/PATCH paths refuse a
-   line that SHADOWS one of them. Its own DO-lines read was already fail-closed;
-   the remaining computation underneath it was not, so a blip there emptied the
-   pending set, which the guard reads as "no line is shadowed" — i.e. ALLOWED.
-   unlinkedScanRefusal turns `ok: false` into a refusal at every call site, so
-   fixing it here fixes all of them. */
 describe('doPendingItemCodesOf — the shadow guard cannot be switched off by a blip', () => {
   const PARTLY_INVOICED = (): Record<string, Row[]> => ({
     delivery_orders: [{ id: 'do-1', company_id: 1, do_number: 'DO-1', status: 'DISPATCHED', debtor_code: 'C1', debtor_name: 'Cust' }],

@@ -71,19 +71,16 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
       return;
     }
     const BOTTOM_GAP = 12;
-    /* Below this a frozen box shows about 3 rows of a long table (a 42-line SO): the page scrolls instead. */
     const MIN_FREEZE_H = 360;
     const recompute = () => {
       const el = scrollWrapRef.current;
       const rootEl = freezeRootRef.current;
       if (!el || !rootEl || window.innerWidth < 640) {
-        setFreezeBox(null); // mobile card view — leave the flow alone
+        setFreezeBox(null);
         return;
       }
       const raw = getComputedStyle(document.documentElement).getPropertyValue("--page-header-offset");
       const parsed = parseFloat(raw);
-      /* A page without a pinned PageHeader publishes no var — fall back to
-         clearing the app chrome bar alone. */
       const pageTop = Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : 64;
       /* The frozen composition is the WHOLE component (owner pointed at the
          scrolled state he wants kept: "我要滑动到这里freeze着"): the toolbar
@@ -118,9 +115,6 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
       const belowBox = Math.max(0, Math.round(rootRect.bottom - spacerH - boxRect.bottom));
       const stickTop = pageTop + aboveBox;
       const maxH = Math.floor(window.innerHeight - stickTop - belowBox - BOTTOM_GAP);
-      /* Only freeze when the rows genuinely overflow the cap — compare CONTENT
-         height against the prospective cap (scrollHeight is cap-independent),
-         so a short table keeps its plain flow and never grows a scrollbar. */
       if (maxH < MIN_FREEZE_H || el.scrollHeight <= maxH) {
         setFreezeBox((prev) => (prev === null ? prev : null));
         return;
@@ -140,10 +134,6 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
          component restores exactly that missing runway, so page-scroll always
          lands on the frozen composition; `position: sticky` on the table box
          is then just the safety net for measurement drift. */
-      /* In "table" mode the anchor IS the sticky box, whose rect is clamped once it
-         sticks, so its resting top moved with the scroll and every resize re-solved
-         the runway against a moving target (2026-10-26: the board went sluggish).
-         Read the resting top off the non-sticky element right above the box. */
       const boxEl = el.parentElement;
       const prevEl = from === "table" ? (boxEl?.previousElementSibling as HTMLElement | null) : null;
       const anchorTopNow = from === "table"
@@ -151,29 +141,11 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
         : anchorRect.top;
       const anchorRestingTop = anchorTopNow + (main?.scrollTop ?? 0);
       const target = Math.max(0, Math.ceil(anchorRestingTop - pageTop));
-      /* The spacer supplies only the MISSING scroll — the page already scrolls
-         by whatever sits below the capped table (pager, margins, page footer),
-         and adding the full target ON TOP of that let the page overshoot the
-         composition by exactly that surplus, shoving the toolbar and header
-         out under the page header (owner's "??" screenshot). Sizing the spacer
-         as target − existing makes the page's scroll LIMIT land precisely on
-         the frozen composition, so the geometry holds even where an animated/
-         transformed ancestor silently disables the box's position:sticky (a
-         transform makes it the containing block); the in-box thead sticky
-         scrolls against the wrapper and is immune to all of that. */
       let runway = target;
       let cappedMaxH = maxH;
       if (main) {
         const spacerNow = runwaySpacerRef.current?.offsetHeight ?? 0;
         const wrapNow = el.clientHeight;
-        /* Solve for the scroll range the page WOULD have with no spacer and
-           the box at the full viewport-fit cap, then split the difference:
-           too little range -> the spacer supplies the deficit; too much ->
-           the box gives the surplus back (shrinking it shortens the page by
-           the same amount), so scroll-max lands the anchor EXACTLY on the
-           page header's bottom edge either way. Both terms are derived from
-           the live measurement, so one RO tick after any layout change this
-           re-converges; the same-value guard stops the feedback there. */
         const baseScrollable = Math.max(
           0,
           main.scrollHeight - spacerNow - main.clientHeight + (maxH - wrapNow)
@@ -181,8 +153,6 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
         runway = Math.max(0, target - baseScrollable);
         const surplus = Math.max(0, baseScrollable - target);
         cappedMaxH = maxH - surplus;
-        /* A table with a lot of page below it (a sales order's payments and contract) has no room left to fill: held at
-           the minimum it was a five-row box on a 40-line order. The page scrolls instead and every line shows. */
         if (cappedMaxH < MIN_FREEZE_H) {
           setFreezeBox((prev) => (prev === null ? prev : null));
           return;
@@ -205,13 +175,6 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
     // loading, filters expanding — they all resize main's first child.
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(recompute) : null;
     try {
-      /* Climb from the table to <main>'s DIRECT child that contains it — the
-         page-content flow whose height tracks rows, funnel, filters, all of
-         it. NOT main.firstElementChild: main's first children are the sticky
-         app bars (h-14 / h-[52px], display-fixed — the desktop one is even
-         0px tall), which never resize, and observing one of those meant the
-         one recompute that ran during a loading transient (rows unmounted →
-         "nothing overflows" → disarm) was also the LAST recompute ever. */
       let contentEl: Element | null = scrollWrapRef.current;
       const mainEl = scrollWrapRef.current?.closest("main") ?? null;
       while (contentEl && contentEl.parentElement && contentEl.parentElement !== mainEl) {
@@ -219,7 +182,6 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
       }
       ro?.observe(contentEl ?? document.body);
     } catch {
-      /* no-op */
     }
     window.addEventListener("resize", recompute);
     return () => {
@@ -229,18 +191,13 @@ export function useFrozenTableHeader(enabled: boolean, from: "toolbar" | "table"
   }, [enabled, from, fillScreen]);
 
   return {
-    /** Root of the frozen composition — everything that must stay on screen. */
     rootRef: freezeRootRef,
-    /** The element that scrolls vertically; the sticky thead freezes to its top. */
     scrollWrapRef,
-    /** Bottom spacer that gives back the page scroll the height cap took away. */
     spacerRef: runwaySpacerRef,
     freezeBox,
-    /** Sticky style for the bordered table box; undefined = not frozen. */
     boxStyle: freezeBox
       ? ({ position: "sticky", top: freezeBox.top, zIndex: 10 } as const)
       : undefined,
-    /** Height cap for the scroller; undefined = not frozen, plain flow. */
     scrollStyle: freezeBox ? { maxHeight: freezeBox.maxH } : undefined,
   };
 }

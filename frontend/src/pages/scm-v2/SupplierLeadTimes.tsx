@@ -19,8 +19,6 @@ import { writeFailed } from '../../vendor/scm/lib/mutation-error';
 import { useCategoryLeadTimes, GLOBAL_LEAD_KEY, leadFallbackLabel } from '../../vendor/scm/lib/mrp-queries';
 import { LeadTimesTable } from './LeadTimesTable';
 
-/* SET overrides only; a category that is absent is not overridden. The rows are
-   every product category the base list carries (2990-0063). */
 type SupplierLeadTimes = Partial<Record<string, number>>;
 
 function useSupplierLeadTimes(supplierId: string) {
@@ -37,7 +35,6 @@ function useSupplierLeadTimes(supplierId: string) {
 function useSaveSupplierLeadTime(supplierId: string) {
   const qc = useQueryClient();
   return useMutation({
-    // leadDays null = clear the override (DELETE); a number = set it (PUT).
     mutationFn: (body: { category: string; leadDays: number | null }) =>
       authedFetch(`/mrp-supplier-lead-times`, {
         method: body.leadDays === null ? 'DELETE' : 'PUT',
@@ -49,7 +46,7 @@ function useSaveSupplierLeadTime(supplierId: string) {
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['mrp-supplier-lead-times', supplierId] });
-      void qc.invalidateQueries({ queryKey: ['mrp'] }); // order-by dates recompute
+      void qc.invalidateQueries({ queryKey: ['mrp'] });
     },
     onError: writeFailed,
   });

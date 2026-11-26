@@ -14,23 +14,18 @@ import { describe, expect, test, vi } from 'vitest';
 const mutateAsync = vi.fn(async (_body: Record<string, unknown>) => ({ id: 'pv-1', pvNumber: 'PV-2609-001' }));
 
 const extractAsync = vi.fn(async () => ({ bills: [] }));
-/* The bill a payment request carries, read on opening (6.2) — none unless a test says. */
 const extractRequestAsync = vi.fn(async (_id: string): Promise<{ bills: unknown[] }> => ({ bills: [] }));
 const uploadPvAsync = vi.fn(async (_v: { pvId: string; file: { name: string } }) => ({ ok: true, file: { id: 'f1' } }));
-/* Set by the copy-as-new test; undefined everywhere else (no ?copyFrom → the
-   detail hook is disabled and the page never sees it). */
 let copySourceDetail: { paymentVoucher: Record<string, unknown>; lines: Array<Record<string, unknown>>; allocations: unknown[] } | undefined;
 /* What other unposted vouchers already applied (docs/bugs/0653) — empty
    everywhere but the reservations test, which sets and restores it. */
 let reservations: { byPi: Record<string, number>; byApInvoice: Record<string, number>; holders: Record<string, string[]> } = { byPi: {}, byApInvoice: {}, holders: {} };
-/* The document a Customer Refund names (§14) — set by the refund test. */
 let refundSource: Record<string, unknown> | undefined;
 /* Each read of the refund source: the document and the request left out of the held money (owner 2026-10-14). */
 const refundSourceAsks: Array<[string, string | null]> = [];
 const submitAsync = vi.fn(async (_id: string) => ({}));
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useCreatePaymentVoucher: () => ({ mutateAsync, isPending: false }),
-  /* Save & prepare: the voucher's own Prepare after the create (the redesign). */
   useSubmitPaymentVoucher: () => ({ mutateAsync: submitAsync, isPending: false }),
   usePvReservations: () => ({ data: reservations, isLoading: false }),
   NO_RESERVATIONS: { byPi: {}, byApInvoice: {}, holders: {} },
@@ -49,15 +44,12 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
 }));
 vi.mock('../../lib/idempotency', () => ({ useIdempotencyKey: () => 'idem-1' }));
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ can: () => true }) }));
-/* The AP invoices (non-stock bills) the picker lists BESIDE the PIs. */
 vi.mock('../../vendor/scm/lib/ap-invoice-queries', () => ({
   useApInvoices: () => ({ data: { rows: [
     { kind: 'API', id: 'api-1', invoiceNumber: '2990-API-2609-001', supplierId: 'sup-1', supplierCode: 'S001', supplierName: 'Foshan Chairs', supplierInvoiceRef: 'RENT-9', invoiceDate: '2026-09-03', dueDate: null, currency: 'MYR', totalSen: 42000, paidSen: 0, outstandingSen: 42000, status: 'POSTED' },
   ] }, isLoading: false }),
 }));
-/* The company's pay-from bank (BANK_PAY_DEFAULT); unset = the receive bank. */
 let payFromRole: string | null = null;
-/* The supplier's bank on Supplier maintenance — set by the bank-fields test only. */
 let supplierBank: Record<string, string> = {};
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   /* The real pure helpers stay (postableAccounts — docs/bugs/0693); only the hooks are stubbed. */
@@ -85,10 +77,8 @@ vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({
   useSuppliers: () => ({ data: [
     { id: 'sup-1', code: 'S001', name: 'Foshan Chairs', currency: 'MYR' },
     { id: 'sup-405', code: '405-Z002', name: 'Zhejiang Ju Miao', currency: 'MYR' },
-    /* No invoice anywhere — the prepay-only case. */
     { id: 'sup-2', code: 'S002', name: 'Empty Hands Sdn Bhd', currency: 'MYR' },
   ], isLoading: false }),
-  /* A fresh object every render, as a refetch gives: the bank fields must not loop on it. */
   useSupplierDetail: () => ({ data: { supplier: { id: 'sup-1', currency: 'MYR', ...supplierBank } } }),
 }));
 vi.mock('../../vendor/scm/lib/currencies-queries', async (importOriginal) => ({
@@ -138,10 +128,8 @@ describe('the AP Payment (?type=ap)', () => {
   test('supplier required, no hand-written lines, tick pays in full, and the save debits AP', async () => {
     draw('/scm/payment-vouchers/new?type=ap');
     expect(screen.getByText('New AP payment')).toBeTruthy();
-    /* No expense-lines card — the GL line is composed, not typed. */
     expect(screen.queryByText('Lines')).toBeNull();
 
-    /* The supplier picker is a type-to-search combobox now — open and pick. */
     fireEvent.focus(screen.getByLabelText(/Supplier \*/));
     fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
     /* The list shows each invoice's DATE, oldest first — the order you settle
@@ -150,8 +138,6 @@ describe('the AP Payment (?type=ap)', () => {
     expect(numbers).toEqual(['2990-PI-2609-002', '2990-PI-2609-001']);
     expect(screen.getByText('2026/08/15')).toBeTruthy();
 
-    /* Tick the first invoice — the amount becomes its full outstanding, and
-       the footer spells out the entry it will book. */
     fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-001 in full'));
     expect(screen.getByText(/Applying RM 2,550\.00/)).toBeTruthy();
     expect(screen.getByText(/Books: Dr 400-0000 Account Payable RM 2,550\.00/)).toBeTruthy();
@@ -214,11 +200,9 @@ describe('the AP Payment (?type=ap)', () => {
     fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
     const tick = screen.getByLabelText('Pay 2990-PI-2609-002 in full');
     fireEvent.click(tick);
-    /* Partial outstanding: 1,000.00 − 400.00 already paid = 600.00 */
     expect(screen.getByText(/Applying RM 600\.00/)).toBeTruthy();
     fireEvent.click(tick);
     expect(screen.getByText(/Applying RM 0\.00/)).toBeTruthy();
-    /* Nothing applied -> the save is not even offered. */
     expect((screen.getByText('Save draft').closest('button') as HTMLButtonElement).disabled).toBe(true);
     expect(mutateAsync).not.toHaveBeenCalled();
   });
@@ -252,7 +236,6 @@ describe('an AP invoice beside the purchase invoices (owner 2026-09-06)', () => 
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.allocations).toEqual([{ apInvoiceId: 'api-1', amountSen: 30000 }]);
     expect(payload.paymentRequestId).toBe('prq-2');
-    /* The bill stays with the invoice — nothing to read for an AP Payment. */
     expect(extractRequestAsync).not.toHaveBeenCalled();
     requestDetail = undefined;
   });
@@ -301,11 +284,9 @@ describe('paying ahead (预付) on the AP Payment', () => {
     fireEvent.focus(screen.getByLabelText(/Supplier \*/));
     fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
 
-    /* The banner names the supplier's UNSPENT advance and its holding voucher. */
     expect(screen.getByText(/already holds RM 500\.00 of unspent advance/)).toBeTruthy();
     expect(screen.getByText('PV-2608-777')).toBeTruthy();
 
-    /* Tick one invoice + type a prepay — the composed AP line carries BOTH. */
     fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-002 in full'));
     const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
     fireEvent.focus(prepay);
@@ -327,7 +308,6 @@ describe('paying ahead (预付) on the AP Payment', () => {
     draw('/scm/payment-vouchers/new?type=ap');
     fireEvent.focus(screen.getByLabelText(/Supplier \*/));
     fireEvent.mouseDown(screen.getByText('S002 · Empty Hands Sdn Bhd'));
-    /* The empty-list sentence no longer swallows the box. */
     expect(screen.getByText(/No outstanding bill from this supplier/)).toBeTruthy();
     const prepay = screen.getByLabelText('Prepay amount') as HTMLInputElement;
     fireEvent.focus(prepay);
@@ -339,7 +319,6 @@ describe('paying ahead (预付) on the AP Payment', () => {
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     const payload = mutateAsync.mock.calls[0]![0];
     expect(payload.lines).toEqual([expect.objectContaining({ debitAccountCode: '400-0000', amountSen: 50000 })]);
-    /* Nothing to knock off — the payload carries no allocation at all. */
     expect(payload.allocations ?? []).toEqual([]);
   });
 });
@@ -363,7 +342,6 @@ describe('copy as new (?copyFrom=…)', () => {
       expect(screen.getByText(/Copied from PV-2608-009/)).toBeTruthy();
       expect(screen.getByDisplayValue('Electricity Aug')).toBeTruthy();
       expect(screen.getByDisplayValue('Deposit topup')).toBeTruthy();
-      /* Identity is NOT copied: the source's August date never appears. */
       expect(screen.queryByDisplayValue('2026-08-01')).toBeNull();
     } finally {
       copySourceDetail = undefined;
@@ -379,8 +357,6 @@ describe('the plain Payment Voucher (/new)', () => {
     expect(screen.queryByLabelText(/Supplier/)).toBeNull();
     expect(screen.queryByText('Outstanding bills')).toBeNull();
 
-    /* The Paid From combobox: pre-filled with the default bank's label, and
-       its open list offers money accounts only — expense and AP are gone. */
     const paidFrom = screen.getByLabelText(/Pay from/) as HTMLInputElement;
     expect(paidFrom.value).toBe('310-0010 · Bank — Maybank');
     fireEvent.focus(paidFrom);
@@ -414,8 +390,6 @@ describe('the plain Payment Voucher (/new)', () => {
         } },
       }]}><PaymentVoucherNew /></MemoryRouter>,
     );
-    /* The operator's own casing beats the print, and the account is what THEY
-       saved last time — shown resolved, still editable. */
     expect((screen.getByLabelText(/Pay to/) as HTMLInputElement).value).toBe('TNB');
     expect((screen.getByLabelText('Account (debit) *') as HTMLInputElement).value).toBe('900-A002 · Advertisement');
   });
@@ -467,20 +441,16 @@ describe('the plain Payment Voucher (/new)', () => {
         } },
       }]}><PaymentVoucherNew /></MemoryRouter>,
     );
-    /* The page took the stash (cleared for the next voucher) and says so. */
     expect(takePvFiles()).toEqual([]);
     expect(screen.getByText(/2 scanned file\(s\) will be attached/)).toBeTruthy();
     expect(screen.getByText(/tnb-page-1\.pdf, tnb-page-2\.jpg/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('Save draft'));
     await waitFor(() => expect(uploadPvAsync).toHaveBeenCalledTimes(2));
-    /* AFTER the create, onto ITS id, in scan order — sort_no is print order. */
     expect(uploadPvAsync.mock.calls.map((c) => [c[0].pvId, c[0].file.name])).toEqual([
       ['pv-1', 'tnb-page-1.pdf'],
       ['pv-1', 'tnb-page-2.jpg'],
     ]);
-    /* Saved cleanly: no dialog stands in the way — the redesign opens the
-       voucher and says it in a toast. */
     await waitFor(() => expect(screen.queryByText(/did not attach/)).toBeNull());
   });
 
@@ -535,10 +505,8 @@ describe('the plain Payment Voucher (/new)', () => {
     window.dispatchEvent(f3);
     expect(f3.defaultPrevented).toBe(true);
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
-    /* Off the window before the next page listens, or two forms hear one key. */
     filled.unmount();
 
-    /* A fresh, empty voucher: F3 says what is missing and saves nothing. */
     mutateAsync.mockClear();
     draw('/scm/payment-vouchers/new');
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true, bubbles: true }));
@@ -546,7 +514,6 @@ describe('the plain Payment Voucher (/new)', () => {
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 
-  /* DEV-75: the bank's charge rides the header — recorded only, never added to a line or the total. */
   test('Bank Charges is sent as its own sen figure and leaves the lines alone', async () => {
     mutateAsync.mockClear();
     render(
@@ -580,7 +547,6 @@ describe('the plain Payment Voucher (/new)', () => {
     fireEvent.change(paidFrom, { target: { value: 'cash' } });
     expect(screen.getByText('320-1000 · Cash in hand')).toBeTruthy();
     expect(screen.queryByText(/Bank — Maybank/)).toBeNull();
-    /* Picking writes the VALUE and restores the full label. */
     fireEvent.mouseDown(screen.getByText('320-1000 · Cash in hand'));
     expect(paidFrom.value).toBe('320-1000 · Cash in hand');
   });
@@ -608,18 +574,15 @@ describe('the event each line is for (owner 2026-09-30, 5a — the header a defa
     expect((screen.getByLabelText('line 1 event') as HTMLInputElement).value).toMatch(/HOMELOVE @ SETIA SPICE/);
     expect((screen.getByLabelText('line 2 event') as HTMLInputElement).value).toMatch(/HOMELOVE @ SETIA SPICE/);
 
-    /* Line 2 names its own event. */
     fireEvent.focus(screen.getByLabelText('line 2 event'));
     fireEvent.mouseDown(screen.getByText(/MLE @ PWCC/));
     expect((screen.getByLabelText('line 2 event') as HTMLInputElement).value).toMatch(/MLE @ PWCC/);
 
-    /* A line added now takes the header's event. */
     fireEvent.keyDown(screen.getByLabelText('line 2 amount'), { key: 'Insert' });
     expect((screen.getByLabelText('line 3 event') as HTMLInputElement).value).toMatch(/HOMELOVE @ SETIA SPICE/);
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', cancelable: true, bubbles: true }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
-    /* The empty third line is not sent; each sent line carries its own event. */
     expect(mutateAsync.mock.calls[0]![0].lines).toEqual([
       expect.objectContaining({ description: 'BOOTH RENTAL', amountSen: 10000, projectId: 336 }),
       expect.objectContaining({ description: 'ADMIN FEE', amountSen: 500, projectId: 348 }),
@@ -667,7 +630,6 @@ describe('answering several payment requests with ONE voucher (?fromRequests=)',
     expect((screen.getByLabelText(/^Pay to/) as HTMLInputElement).value).toBe('');
     expect(screen.getByText(/Answering 2 payment requests, RM 151.06 in all/)).toBeTruthy();
     expect(screen.getByText(/They name different payees/)).toBeTruthy();
-    /* Two account names: no bank is guessed, and the page says so. */
     expect(screen.getByText(/They name different banks: type the bank yourself/)).toBeTruthy();
     expect((screen.getByLabelText('Bank') as HTMLInputElement).value).toBe('');
     expect((screen.getByLabelText('Voucher remark') as HTMLTextAreaElement).value).toBe('lalamove to Armani; meta ads invoice');
@@ -749,10 +711,8 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     expect(payload.paymentRequestId).toBe('prq-1');
     expect(payload.notes).toBe('Booth F1 rental');
     expect(payload).toMatchObject({ billRef: 'MLE-0925', billDate: '2026-09-01' });
-    /* A request with no bank leaves the bank fields empty. */
     expect(payload).toMatchObject({ payToBankName: null, payToAccountNo: null, payToAccountName: null });
     expect(payload.lines).toEqual([expect.objectContaining({ description: 'BOOTH F1 RENTAL 50%', debitAccountCode: '900-A002', amountSen: 800000, projectId: 348 })]);
-    /* The bill's own number and date ride the voucher (item 1, 2026-10-01). */
     expect(payload).toMatchObject({ billRef: 'MLE-0925', billDate: '2026-09-01' });
     requestDetail = undefined;
   });
@@ -783,7 +743,6 @@ describe('answering a payment request (?fromRequest=, 申请付款)', () => {
     draw('/scm/payment-vouchers/new?fromRequest=prq-1');
     expect((screen.getByLabelText('Bill no.') as HTMLInputElement).value).toBe('MLE-0925');
     expect(screen.getByText('match HC-PV-2609-004')).toBeTruthy();
-    /* Asked without the request itself — a request is never its own match. */
     expect(billMatchAsks).toContainEqual(['MLE-0925', '2026-09-01', 'prq-1']);
     const account = screen.getByLabelText('line 1 amount').closest('[data-line]')!.querySelector('[role="combobox"]') as HTMLInputElement;
     fireEvent.focus(account);
@@ -806,10 +765,8 @@ describe('invoices another unapproved voucher already applies stay off the picke
       draw('/scm/payment-vouchers/new?type=ap');
       fireEvent.focus(screen.getByLabelText(/Supplier \*/));
       fireEvent.mouseDown(screen.getByText('S001 · Foshan Chairs'));
-      /* pi-2: 600.00 outstanding, 600.00 reserved → gone. api-1: 420.00 reserved in full → gone. */
       expect(screen.queryByText('2990-PI-2609-002')).toBeNull();
       expect(screen.queryByText('2990-API-2609-001')).toBeNull();
-      /* pi-1: 2,550.00 − 550.00 reserved → 2,000.00 is all that can be applied. */
       expect(screen.getByText('2990-PI-2609-001')).toBeTruthy();
       fireEvent.click(screen.getByLabelText('Pay 2990-PI-2609-001 in full'));
       expect(screen.getByText(/Applying RM 2,000\.00/)).toBeTruthy();
@@ -836,7 +793,6 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     };
     draw('/scm/payment-vouchers/new?type=refund');
     expect(screen.getByText('New customer refund')).toBeTruthy();
-    /* No lines card, no payee box, no transfer toggle — the body is the document. */
     expect(screen.queryByText('Lines')).toBeNull();
     expect(screen.queryByText('Internal transfer')).toBeNull();
     const doc = screen.getByLabelText('Refunded document') as HTMLInputElement;
@@ -851,7 +807,6 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     expect(screen.getByText('from AutoCount — counts')).toBeTruthy();
     expect(screen.getByText('RM 300.00 refundable')).toBeTruthy();
     expect(screen.getByText('2990-MRF-2607-001').closest('a')!.getAttribute('href')).toBe('/scm/payment-vouchers/pv-old');
-    /* The amount opened at the headroom; type a partial. */
     const amount = screen.getByLabelText('Refund amount') as HTMLInputElement;
     expect(amount.value).toBe('300.00');
     fireEvent.focus(amount);
@@ -910,7 +865,6 @@ describe('the Customer Refund (?type=refund, §14)', () => {
     expect((screen.getByText('Sales Invoice').closest('button') as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/Answering HC-PRQ-2610-009 from Nancy — a refund of RM 1,200\.00 on HC-SO-2610-144/)).toBeTruthy();
     await waitFor(() => expect((screen.getByLabelText('Refund amount') as HTMLInputElement).value).toBe('1,200.00'));
-    /* Its own amount is not held against it; another request's still is. */
     expect(refundSourceAsks.some(([d, ex]) => d === 'HC-SO-2610-144' && ex === 'r9')).toBe(true);
     expect(screen.getByText(/Waiting on other refund requests/)).toBeTruthy();
     expect(extractRequestAsync).not.toHaveBeenCalled();

@@ -1,6 +1,3 @@
-/* The rows of Money in › Credit / debit notes (batch 5 step 7): a note or an
-   other debtor's debit note as one row, the segment it falls in, its status,
-   what an other debtor's credit knocked off, and the URL's view read back. */
 
 import { describe, expect, test } from 'vitest';
 import type { ArListRow } from '../../../vendor/scm/lib/ar-invoice-queries';

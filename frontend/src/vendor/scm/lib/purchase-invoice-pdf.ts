@@ -1,12 +1,3 @@
-// Purchase Invoice PDF — internal copy / for filing.
-// Dual-code layout (Commander): supplier code first, our code alongside.
-// purchase_invoice_items has NO supplier_sku column — resolved at print time
-// from supplier_material_bindings via the doc's supplier_id.
-//
-// 2026-06-19 — unified "Hookka-tidy" layout shared with SO/PO/DO/SI: real
-// letterhead header, the drawInfoColumns info block (SUPPLIER label-gutter +
-// INVOICE DETAILS colon-aligned), and the consistent footer (doc no · portal ·
-// page n of m). A4 portrait, pure B&W. Dual-code table + totals unchanged.
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -39,20 +30,13 @@ type PiHeader = {
 type PiItem = {
   item_code: string; material_name: string;
   qty: number; unit_price_sen: number; line_total_sen: number;
-  /* Dual-code extras — optional so older call sites keep compiling. */
   supplier_sku?: string | null;
   item_group?: string | null;
   description?: string | null;
   variants?: Record<string, unknown> | null;
-  /* The line's own PO, resolved per line by the detail endpoint. */
   source_po_number?: string | null;
 };
 
-/* Draw ONE purchase invoice's content into `doc` (letterhead → info → codes
-   note → table → totals → footer). Does NOT make the doc or save it — the
-   caller finalizes ONCE, so several PIs can share one combined doc. The footer
-   page loop runs from `startPage` so a combined doc only re-numbers THIS PI's
-   pages on each invocation (jsPDF has no per-section page reset). */
 export async function renderPurchaseInvoiceInto(
   doc: import('jspdf').jsPDF,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- autotable fn loosely typed (matches the PO generator)
@@ -60,9 +44,6 @@ export async function renderPurchaseInvoiceInto(
   header: PiHeader,
   items: PiItem[],
 ): Promise<void> {
-  /* Before ANY drawing: a customer / supplier name, address or remark that
-     carries CJK needs the font embedded up front, or helvetica silently paints
-     the whole field as mojibake. No-op for a pure-WinAnsi document. */
   await ensurePdfCjkFont(doc, [header, items]);
 
   const startPage = doc.getNumberOfPages();
@@ -77,11 +58,6 @@ export async function renderPurchaseInvoiceInto(
     ],
   });
 
-  /* Load supplier master + dual-code lookups BEFORE the info block so the
-     canonical SUPPLIER block can include address / tel / attn / terms — the
-     PI's own header carries only { code, name } (endpoint economy), the top-up
-     comes from GET /suppliers/:id. loadSupplierDocData is a single parallel
-     round; moving it forward doesn't add a request. */
   const { skuMap, fabricMap, fabricDescMap, supplier: sFull } = await loadSupplierDocData(header.supplier_id, items);
   const supplierAddressLines = [
     sFull?.address,
@@ -93,17 +69,11 @@ export async function renderPurchaseInvoiceInto(
   const statusText = statusLabel('pi', header.status);
   /* Every PO the lines bill, not only the header's first (owner 2026-11-10). */
   const poNumbers = piPoNumbers(items.map((it) => it.source_po_number), header.purchase_order?.po_number ?? null);
-  /* Two per printed line: the right-hand rail has ~56mm for a value and does
-     not wrap, and a receipt can span a dozen POs. */
   const poRefLines: string[] = [];
   for (let i = 0; i < poNumbers.length; i += 2) {
     poRefLines.push(poNumbers.slice(i, i + 2).join(', ') + (i + 2 < poNumbers.length ? ',' : ''));
   }
   y = drawInfoColumns(doc, y,
-    /* Canonical supplier block via the shared helper — Company, Code,
-       Address, Tel, Fax, Email, Attn, Terms, Note. Previously the PI printed
-       only Company + Code + Note; matching the PO / GRN / PR now, every
-       purchasing doc reads the same rows. */
     supplierBlock({
       name: header.supplier?.name ?? sFull?.name,
       code: header.supplier?.code ?? sFull?.code,
@@ -129,17 +99,11 @@ export async function renderPurchaseInvoiceInto(
     },
   );
 
-  // Codes note (dual-code lookups already loaded above, next to the supplier
-  // block, so the block prints with a full supplier profile in one round).
   doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(80);
   doc.text('Codes shown are SUPPLIER codes; our reference in second column.', margin, y);
   doc.setFont('helvetica', 'normal'); doc.setTextColor(0);
   y += 4;
 
-  /* Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→accessories→
-     services) — mirror the sales side. The shared helper keys on `item_code`;
-     PI lines expose `item_code`, so sort a shimmed view that carries the
-     original row back unchanged (render-time only, no persistence touched). */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
       items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
@@ -198,7 +162,6 @@ export async function renderPurchaseInvoiceInto(
   drawRow('Paid',        fmtRm(header.paid_sen, header.currency), ty + 4); ty += 4;
   drawRow('Outstanding', fmtRm(header.total_sen - header.paid_sen, header.currency), ty + 4, true);
 
-  // Footer: doc no · portal · page n of m on every page (of THIS PI's run)
   const pageCount = doc.getNumberOfPages();
   for (let p = startPage; p <= pageCount; p += 1) {
     doc.setPage(p);
@@ -210,7 +173,6 @@ export async function renderPurchaseInvoiceInto(
   }
 }
 
-/* Single PI → its own file (unchanged behaviour). */
 export async function generatePurchaseInvoicePdf(
   header: PiHeader,
   items: PiItem[],
@@ -223,8 +185,6 @@ export async function generatePurchaseInvoicePdf(
   deliverPdf(doc, `${header.invoice_number}-${safeName(header.supplier?.name ?? 'supplier')}.pdf`, opts?.action);
 }
 
-/* Several PIs → ONE combined file, each PI starting on a new page. For the
-   batch "Export PDF" action on the Purchase Invoices list. */
 export async function generateCombinedPurchaseInvoicePdf(
   docs: Array<{ header: PiHeader; items: PiItem[] }>,
   opts?: { fileName?: string; action?: PdfAction },

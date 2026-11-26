@@ -97,70 +97,40 @@ export type MigratedInvoiceKind = 'PI' | 'SI';
 export type MigratedSourceLine = {
   lineId: string;
   itemCode: string;
-  /** the quantity that would be invoiced now */
   qty: number;
   unitPriceSen: number;
   discountSen?: number;
-  /**
-   * The order line this delivery/receipt line came from (so_item_id /
-   * purchase_order_item_id). Two lines of one document sharing it is rule 3's
-   * duplicate.
-   */
   sourceLineKey?: string | null;
 };
 
 /** A migrated GRN or DO, with the AutoCount invoices raised from it. */
 export type MigratedSourceDoc = {
-  /** the ERP document number (HC-GR-000034 / HC-DO-005452) */
   docNo: string;
-  /** the AutoCount document this mirrors (GR-000034 / DO-005452) */
   acDocNo: string | null;
-  /** AutoCount invoice numbers raised from it — empty means never invoiced */
   acInvoiceNos: string[];
-  /** AutoCount invoice numbers raised from it that AutoCount later CANCELLED */
   acCancelledInvoiceNos?: string[];
-  /**
-   * Who the invoice is with — the supplier on a receipt, the debtor on a
-   * delivery. One AutoCount invoice routinely spans several of our documents
-   * (309 of 4,789 purchase invoices and 568 of 9,245 sales invoices do), and the
-   * merged ERP invoice can carry only ONE party on its header. Rule 5 refuses
-   * the group rather than letting the first document's party win by sort order.
-   */
   partyKey?: string | null;
   lines: MigratedSourceLine[];
 };
 
 export type MigratedGateReason =
   | 'ok'
-  /** the ERP document carries no AutoCount document number to mirror */
   | 'no_autocount_document'
-  /** AutoCount never raised an invoice from this document */
   | 'no_autocount_invoice'
-  /** every AutoCount invoice raised from it was cancelled */
   | 'autocount_invoice_cancelled'
-  /** invoiced across several AutoCount invoices and there is no line key to split by */
   | 'ambiguous_autocount_invoices'
-  /** no line left to invoice */
   | 'nothing_to_invoice'
-  /** the same order line appears on two rows of one document */
   | 'duplicate_source_lines'
-  /** the documents one AutoCount invoice spans do not agree on the supplier / debtor */
   | 'party_disagrees_across_sources'
-  /** what we would bill is not what AutoCount billed */
   | 'total_disagrees_with_autocount';
 
 export type MigratedInvoicePlan = {
-  /** the AutoCount invoice this mirrors */
   acInvoiceNo: string;
-  /** HC-<acInvoiceNo> */
   invoiceNumber: string;
-  /** every migrated source document whose lines this invoice carries */
   sourceDocNos: string[];
   lineCount: number;
   qty: number;
-  /** what this invoice would be worth, in sen, from the SOURCE lines only */
   valueSen: number;
-  /** what AutoCount actually billed on that invoice, in sen */
   acValueSen: number;
   unpricedLines: number;
   eligible: boolean;
@@ -174,7 +144,6 @@ export type MigratedBlockedSource = {
   reason: MigratedGateReason;
   lineCount: number;
   unpricedLines: number;
-  /** filled for total_disagrees_with_autocount so the report can print both */
   valueSen?: number;
   acValueSen?: number;
 };
@@ -244,21 +213,15 @@ export function planMigratedInvoices(
 
   for (const s of sources) {
     if (!s.acDocNo) { block(s, 'no_autocount_document'); continue; }
-    /* Rule 3 first: a duplicated line makes every later number wrong, so it must
-       not be reachable by any path that writes. */
     if (duplicateSourceLineKeys(s.lines).length > 0) { block(s, 'duplicate_source_lines'); continue; }
     const invoiceable = s.lines.filter((l) => l.qty > 0);
     if (invoiceable.length === 0) { block(s, 'nothing_to_invoice'); continue; }
     const acs = [...new Set(s.acInvoiceNos.map((x) => x.trim()).filter(Boolean))].sort();
     if (acs.length === 0) {
-      /* "AutoCount cancelled it" and "AutoCount never raised one" are different
-         facts about the business and get different names, though both refuse. */
       block(s, (s.acCancelledInvoiceNos ?? []).length > 0
         ? 'autocount_invoice_cancelled' : 'no_autocount_invoice');
       continue;
     }
-    /* No line-to-line key exists on either side, so "which of these two invoices
-       billed this line" has no answer. Refuse and name it. */
     if (acs.length > 1) { block(s, 'ambiguous_autocount_invoices'); continue; }
     const g = groups.get(acs[0]!) ?? [];
     g.push({ ...s, lines: invoiceable });
@@ -270,10 +233,6 @@ export function planMigratedInvoices(
     const lines = docs.flatMap((d) => d.lines);
     const valueSen = lines.reduce((t, l) => t + lineValueSen(l), 0);
     const acValueSen = acTotal(acInvoiceNo) ?? -1;
-    /* Rule 5: the merged header can name only ONE supplier / debtor, and which
-       one it would name is decided by sort order. Sort order is not evidence, so
-       a group that disagrees is refused. Checked BEFORE the total, because a
-       group billed to the wrong party is wrong even when the money adds up. */
     const parties = [...new Set(docs.map((d) => d.partyKey).filter((p): p is string => !!p))];
     const partySplit = parties.length > 1;
     const eligible = !partySplit
@@ -310,21 +269,6 @@ export function planMigratedInvoices(
   return { plans, blocked };
 }
 
-/* ── AutoCount write-back suppression ──────────────────────────────────────
-   The AutoCount outbox (lib/autocount-outbox.ts) enqueues a gr_to_pi transfer
-   when a GRN is converted and a do_to_iv transfer when a DO is. For a MIGRATED
-   document that is exactly the wrong thing: the invoice being created here
-   already exists in the live AED_HOUZS book, and its parent carries a
-   linked_ac_docno, so dispatchOne resolves a real FromDocNo and pushes a SECOND
-   purchase invoice / sales invoice into the owner's live accounts.
-
-   enqueueConvert has none of the "already in AutoCount" protection its
-   enqueueSoCreate / enqueuePoCreate siblings have (both bail on a populated
-   linked_ac_docno), so the refusal lives here, in front of it.
-
-   It is RECORDED, not silent. The outbox already has the vocabulary for this —
-   recordConvertSkipped exists precisely so a conversion the ERP will not send
-   leaves a row saying why, rather than a gap nobody can tell from a bug. */
 
 export const MIGRATED_WRITEBACK_SKIP_REASON =
   'carried over from AutoCount at the 2026-08 cutover — the invoice this mirrors already exists '
@@ -416,10 +360,6 @@ export function refuseMigratedSources(
  */
 export const AUTOCOUNT_IS_ACTIVE_BOOK = false;
 
-/* The mirror decision, pure: a migrated document must mirror AutoCount only while
-   AutoCount is the active book AND the document is not one AutoCount never
-   invoiced. Both the GR and the DO guard are this one rule, one table each — so a
-   test can drive BOTH branches even though the exported guards read the constant. */
 export function mustMirrorAutoCount(
   autocountActiveBook: boolean,
   doc: { docNo: string; migrated: boolean },

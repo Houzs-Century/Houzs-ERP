@@ -10,12 +10,10 @@ import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
 
 export type ReleaseLayer = {
-  /** 'opening' or 'bill:YYYY-MM'. */
   key: string;
   month: string | null;
   amountSen: number;
   docs: string[];
-  /** How its orders' shares were found: the Event Commission close, the goods of the orders, or nothing carries it. */
   basis: 'close' | 'goods' | 'none';
   orders: number;
   fromMonth: string;

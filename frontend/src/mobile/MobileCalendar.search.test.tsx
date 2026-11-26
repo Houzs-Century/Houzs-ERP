@@ -1,6 +1,3 @@
-/* The phone calendar's search covers ALL dates, like desktop: it counts every
-   match, Enter / Next jump to the month of the next one, and an empty result
-   says so instead of drawing an empty month. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

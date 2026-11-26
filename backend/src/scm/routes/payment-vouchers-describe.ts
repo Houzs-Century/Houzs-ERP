@@ -31,18 +31,14 @@ export type Described = {
   pay_account_name: string | null;
 };
 
-/* The lines the system writes on a voucher (PaymentVoucherNew's AP payment and
-   transfer lines, pv-refund.ts's refund line): they say how, not what for. */
 const SYSTEM_LINE = /^(settle \d+ invoice\(s\)|prepay [\d.,]+|internal transfer\b|refund on )/i;
 const isSystemLine = (d: string): boolean => SYSTEM_LINE.test(d);
-/** A line made from a request starts with the request's number: what is paid for follows it. */
 const withoutRequestNo = (d: string, requestNos: readonly string[]): string => {
   for (const no of requestNos) {
     if (no && d.toUpperCase().startsWith(no.toUpperCase())) return d.slice(no.length).replace(/^[\s:—–-]+/, '');
   }
   return d;
 };
-/** Each text once, trimmed and with its spaces closed, in the order first seen. */
 const once = (texts: readonly unknown[]): string[] => {
   const out: string[] = [];
   for (const t of texts) {
@@ -62,7 +58,6 @@ const bankOf = (r: Record<string, unknown> | null | undefined, bank: string, no:
   ({ bank: text(r?.[bank]), accountNo: text(r?.[no]), accountName: text(r?.[name]) });
 const anyOf = (b: Bank): boolean => Boolean(b.bank || b.accountNo || b.accountName);
 
-/* The three fields as a voucher is given them (create), and as an edit changes them. */
 const PAY_TO: Array<[string, string]> = [
   ['payToBankName', 'pay_to_bank_name'],
   ['payToAccountNo', 'pay_to_account_no'],
@@ -84,7 +79,6 @@ export async function describeVouchers(
   const requests: Rows = [];
   const lines: Rows = [];
   const allocations: Rows = [];
-  /* A hundred vouchers a read, each read paged: a voucher may carry many lines. */
   for (let i = 0; i < ids.length; i += 100) {
     const batch = ids.slice(i, i + 100);
     const [rq, ln, al] = await Promise.all([
@@ -106,8 +100,6 @@ export async function describeVouchers(
     allocations.push(...(al.data ?? []));
   }
 
-  /* The invoices an AP payment pays: their lines (AP invoices, less the opening ones)
-     and their items (goods invoices). */
   const idsOf = (key: string): string[] => once(allocations.map((a) => a[key]));
   const apIds = idsOf('ap_invoice_id');
   const piIds = idsOf('pi_id');

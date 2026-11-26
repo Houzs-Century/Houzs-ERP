@@ -57,9 +57,7 @@ import { useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
 import { mfgCategoryLabel } from '../../vendor/scm/lib/product-categories-store';
 
 export type SalesInvoiceAddLine = {
-  /** Goes in the Line items Section's `actions` slot. `null` when not offered. */
   action: ReactNode;
-  /** Goes inside that Section, under the table. `null` while closed. */
   panel: ReactNode;
 };
 
@@ -75,8 +73,6 @@ const EMPTY: Draft = { itemCode: '', description: '', qty: 1, unitPriceSen: 0, d
 
 const DATALIST_ID = 'si-add-line-products';
 
-/* Same clamp the server applies in `buildItemRow` — shown so the operator sees
-   the figure that will be stored, not one the server will quietly lower. */
 const lineTotalSen = (d: Draft): number =>
   Math.max(0, d.qty * d.unitPriceSen - d.discountSen);
 
@@ -93,8 +89,6 @@ export function useSalesInvoiceAddLine(
   const [error, setError] = useState<string | null>(null);
   const addItem = useAddSalesInvoiceItem();
 
-  /* The SKU catalogue behind the code field. Only fetched while the row is
-     open — a detail page that is only ever READ must not pull the catalogue. */
   const products = useMfgProducts({ enabled: open });
 
   const close = () => {
@@ -106,8 +100,6 @@ export function useSalesInvoiceAddLine(
   const submit = async () => {
     const itemCode = draft.itemCode.trim();
     if (!itemCode) {
-      /* The server answers 400 `item_code_required`. Saying it here costs one
-         round trip less and keeps what was typed. */
       setError('Item code is required — pick a SKU before adding the line.');
       return;
     }
@@ -132,10 +124,6 @@ export function useSalesInvoiceAddLine(
       });
       close();
     } catch (e) {
-      /* The row STAYS OPEN holding the typing. Every 409 this endpoint answers
-         is actionable — pick a different code, go through "Add from Delivery
-         Order", lower the quantity — and none of that is possible from a form
-         that has cleared itself. */
       setError(e instanceof Error ? e.message : 'The line was not added. Please try again.');
     }
   };
@@ -152,10 +140,6 @@ export function useSalesInvoiceAddLine(
   if (!canAdd || !open) return { action, panel: null };
 
   const panel = (
-    /* A fieldset, not a div: the line table's own column headers carry
-       "Unit price" / "Discount" filter buttons, so the add row's fields are
-       only unambiguously addressable — to a screen reader and to a test —
-       inside a named group. */
     <fieldset className="mt-3 rounded-lg border border-primary/40 bg-surface p-4">
       <legend className="px-1 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
         New line

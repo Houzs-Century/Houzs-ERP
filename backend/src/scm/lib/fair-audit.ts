@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// fair-audit — a History row for every change of an order's fair (owner
-// 2026-10-16: re-assigns by Finance / PMS need an audit trail; 2026-10-19:
-// salespeople see it in History too).
-//
-// Until now no fair change was recorded anywhere: the header edit's differ maps
-// venue but not `project_id`, the settle screen wrote none, and the brand
-// re-detect and the nightly reconcile moved links silently. Every writer now
-// calls `recordFairChange` with the state before and after, and History reads
-// "Fair: MID VALLEY — REX (10/15 - 10/18) · AKEMI → …" — the FAIR's name and
-// the booth's brand, never a project id (owner: the order shows the fair name).
-//
-// Best-effort like every audit write here (so-audit.ts): it never blocks or
-// fails the change it records.
-// ----------------------------------------------------------------------------
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordSoAudit } from './so-audit';
@@ -100,6 +85,5 @@ export async function recordFairChange(args: {
       ...(args.note ? { note: args.note } : {}),
     });
   } catch {
-    /* Audit never blocks the change it records (so-audit.ts). */
   }
 }

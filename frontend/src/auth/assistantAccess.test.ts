@@ -1,10 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { ASSISTANT_DENIED_POSITIONS, ASSISTANT_KNOWN_POSITIONS, canUseAssistant } from "./assistantAccess";
 
-/* LOCKSTEP with backend/src/services/assistant-scope.ts and its test. The two
-   files share no import under the vendored-clone architecture, so these fixtures
-   ARE the contract. If the backend list changes and this does not, a Sales user
-   sees a launcher that 403s — or worse, the FE hides a tab the backend serves. */
 
 describe("assistant access (FE mirror)", () => {
   test("deny list is field crew + Sales, lowercased", () => {
@@ -53,7 +49,6 @@ describe("assistant access (FE mirror)", () => {
   });
 
   test("the server capability WINS over the name lists when present", () => {
-    // A denied name the server nonetheless allowed → allowed (server is the control).
     expect(
       canUseAssistant({
         permissions: [],
@@ -61,7 +56,6 @@ describe("assistant access (FE mirror)", () => {
         capabilities: { "org.assistant.use": true },
       }),
     ).toBe(true);
-    // A recognised, non-denied name the server denied → denied.
     expect(
       canUseAssistant({
         permissions: [],
@@ -69,7 +63,6 @@ describe("assistant access (FE mirror)", () => {
         capabilities: { "org.assistant.use": false },
       }),
     ).toBe(false);
-    // Key absent from a present set fails closed, even for a name that would pass.
     expect(
       canUseAssistant({ permissions: [], position_name: "HR Manager", capabilities: {} }),
     ).toBe(false);

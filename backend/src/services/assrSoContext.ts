@@ -1,7 +1,3 @@
-// The Sales Order a service case is raised against, as the case reads it: the
-// customer context createAssrCase binds (moved here from services/assr.ts) and
-// the address in the SO's shape — lines + Postcode + City + State (owner
-// 2026-11-17: "the case's address in the SO's format, filled from the SO").
 import type { Env } from "../types";
 import { soStreetTail } from "./autocount-address-fit";
 import { canonicalizeMyState, isCanonicalMyState } from "../scm/lib/canonical-state";
@@ -47,23 +43,11 @@ export function caseAddressFromSo(o: {
   return Object.values(out).some((v) => v != null) ? out : null;
 }
 
-// The platform-native SO row for a doc number, shaped like the AutoCount
-// getSingle context so createAssrCase's binds stay source-agnostic, plus the
-// SO's owning company_id (drives the case's company stamp) and its address in
-// the case's shape. It covers 2990 orders (live-mirrored into
-// scm."mfg_sales_orders") and Houzs SCM-native orders that never reached
-// AutoCount. Returns null when the doc is not there — or when the scm schema
-// itself is absent (D1 test mirror, pre-migration) — so the caller falls
-// through to the AutoCount path.
 export async function fetchScmSoContext(
   env: Env,
   docNo: string
 ): Promise<{ context: Record<string, unknown>; company_id: number | null; address: SoCaseAddress | null } | null> {
   try {
-    // 2990 SOs leave the free-text `agent` blank and carry the rep as
-    // salesperson_id -> scm.staff, so COALESCE to that name — else a 2990
-    // case's Sales Agent lands empty. (No `--` comments inside the SQL: the
-    // d1-compat shim folds it to one line and would comment out the tail.)
     const row = await env.DB.prepare(
       `SELECT o.debtor_name, o.phone, o.sales_location,
               COALESCE(NULLIF(o.agent, ''), sp.name) AS agent,
@@ -85,7 +69,6 @@ export async function fetchScmSoContext(
         Phone1: row.phone ?? null,
         SalesLocation: row.sales_location ?? null,
         SalesAgent: row.agent ?? null,
-        // AutoCount-specific UDF (the internal service PO) — no SCM equivalent.
         SOUDF_ToPONo: null,
         InvAddr1: address?.addr1 ?? null,
         InvAddr2: address?.addr2 ?? null,
@@ -97,8 +80,6 @@ export async function fetchScmSoContext(
       address,
     };
   } catch {
-    // scm schema absent (D1 test mirror / pre-migration) or a transient DB
-    // error — treat as "not an SCM doc" and let the AutoCount path decide.
     return null;
   }
 }

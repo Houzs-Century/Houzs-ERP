@@ -66,7 +66,6 @@ export type VoucherLine = { description: string | null; amountSen: number | null
     of several separate purchases, one line per purchase. */
 export function voucherLinesOf(ex: BillExtraction, fallback: string): VoucherLine[] {
   const charged = ex.lines.filter((l) => l.description && l.amountSen != null && l.amountSen > 0);
-  /* A claim form's rows are its lines, as the form prints them. */
   if ((ex.severalReceipts || isClaimForm(ex)) && charged.length > 1) {
     return charged.map((l) => ({ description: l.description!.trim().slice(0, 200), amountSen: l.amountSen }));
   }

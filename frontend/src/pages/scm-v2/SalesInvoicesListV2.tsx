@@ -1,5 +1,3 @@
-// SalesInvoicesListV2 — Sales Invoices listing (mirrors DO/SO V2). SI-specific:
-// money stats, payment-biased status flow, From SO/DO anchors. /scm/sales-invoices.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { siPaymentIntentSearch } from "./siPaymentIntent";
@@ -84,22 +82,17 @@ import { customerRefOf } from '../../lib/customer-ref';
 import { OVERDUE_CLASS, isPastDue } from '../../lib/tableHighlight';
 import { todayMyt } from "../../vendor/scm/lib/dates";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
-// Subset of the full SiRow (see SalesInvoicesList.tsx for the 40-field shape).
 
 type SiRow = {
   id: string;
   invoice_number: string;
-  linked_ac_docno?: string | null; // the AutoCount invoice number
-  ac_agent?: string | null; // resolveAcAgent, the agent master's spelling
-  /** Every line, AutoCount-spelled (GET /sales-invoices?page= and /export/rows). */
+  linked_ac_docno?: string | null;
+  ac_agent?: string | null;
   lines?: SiListLine[];
   subtotal_sen?: number | null;
   tax_sen?: number | null;
   so_doc_no: string | null;
   delivery_order_id: string | null;
-  /** Convert-from relation (display-only, audit R8): the readable DO number the
-   *  SI was created from, server-resolved from delivery_order_id. */
   do_number?: string | null;
   /** Source PO(s) the invoiced goods came from (batch_no = source PO on the SI's
    *  DO's OUT movements ∪ consumed FIFO lots). "—" for un-batched stock. A sales
@@ -110,13 +103,8 @@ type SiRow = {
   source_adj?: boolean;
   invoice_date: string;
   due_date: string | null;
-  /** SI's own snapshot of the customer delivery date (may be null on rows
-   *  created before the snapshot column existed). */
   customer_delivery_date?: string | null;
-  /** Linked SO's Processing date (mfg_sales_orders.processing_date),
-   *  stamped server-side onto every list row for the quick-view drawer. */
   so_processing_date?: string | null;
-  /** Linked SO's delivery date — fallback when the SI's own snapshot is null. */
   so_customer_delivery_date?: string | null;
   debtor_name: string;
   debtor_code: string | null;
@@ -136,22 +124,15 @@ type SiRow = {
   local_total_sen: number;
   total_sen: number;
   paid_sen: number;
-  /* The slice of the source Sales Order's deposit that settles this invoice,
-     stamped by the list endpoint (backend lib/si-list-stamps). `null` means the
-     server could not read the order — read as 0, which shows the LARGER
-     outstanding. Kept apart from paid_sen: different money, different document. */
   so_deposit_applied_sen?: number | null;
-  credit_notes_sen?: number | null; // customers' credit notes knocked off it (si-credit-notes) — apart from paid_sen too
+  credit_notes_sen?: number | null;
   status: string;
   currency: string;
   line_count?: number;
-  // ── Phase 2: NON-finance fields already on the SI list payload (HEADER).
   venue: string | null;
   note: string | null;
   customer_type: string | null;
   building_type: string | null;
-  // ── Phase 2 FINANCE: backend OMITS these keys for non-finance callers
-  //    (canViewScmFinance), so each is optional. margin_pct_basis = basis points.
   mattress_sofa_sen?: number;
   bedframe_sen?: number;
   accessories_sen?: number;
@@ -169,36 +150,17 @@ type SiRow = {
 
 type StatusTab = "all" | "draft" | "sent" | "partial" | "paid" | "cancelled";
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-// margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
-// Customer's PO / Ref — same fallback chain as SO/DO V2.
 const refOf = (r: SiRow): string => customerRefOf(r) || "—";
 
 const soOf = (r: SiRow): string => r.so_doc_no || "—";
-// Prefer the readable DO number (server-resolved); the raw UUID is not useful
-// to show, so fall back to a dash rather than a uuid.
 const doOf = (r: SiRow): string => r.do_number || "—";
 
 const brandOf = (r: SiRow): string => r.branding || "—";
-/* Was a THREE-tone copy while the other four lists had four — the drift this
-   module exists to end. ../../lib/brandingTone is the one home. */
 const brandTone = brandingToneForLabel;
 
-// SI status → filter bucket. Business flow: DRAFT → SENT → PARTIALLY_PAID →
-// PAID → CANCELLED. Buckets: draft / sent (Sent + Overdue) / partial / paid /
-// cancelled — the same split SI_STATUS_BUCKETS uses server-side
-// (backend/src/scm/routes/sales-invoices.ts), which is what the tab COUNTS are
-// computed from. A row whose bucket here disagrees with the server's is a row
-// the operator sees in one tab and counted in another.
-//
-// `overdue` is spelled out rather than left to the fallback below. It reached
-// the same bucket either way, but only by accident of the fallback, and it read
-// as a raw "OVERDUE" chip in the neutral tone — the one status where the
-// operator most needs the badge to shout. The server puts OVERDUE in `sent` for
-// this reason: an overdue invoice is an issued, unpaid one.
 const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
@@ -224,26 +186,10 @@ const statusFor = (
     bucket: "sent",
   };
 
-/* Derived outstanding: Total − (Paid on this invoice + the source ORDER's
-   deposit). The deposit term is why this delegates to the shared rule instead
-   of subtracting inline — the detail page, the mobile list, the PDF and the
-   Outstanding ledger all have to answer the same number, and until 2026-08-23
-   they answered six different ones (vendor/scm/lib/si-outstanding.ts). */
 const outstandingOf = (r: SiRow): number => siOwesNothing(r.status) ? 0 :
   siOutstandingSen(r.total_sen || r.local_total_sen || 0, r.paid_sen || 0, siDepositAppliedSen(r), siCreditNotesSen(r));
 
-// ─── Split-menu dropdown ────────────────────────────────────────────────────
 
-/* No "New from Sales Order" entry, and that is deliberate. A Sales Invoice in
-   this system is built from DELIVERY ORDERS — the only converter the backend
-   exposes is POST /sales-invoices/from-dos, fed by
-   GET /sales-invoices/invoiceable-do-lines. The menu carried a "New from Sales
-   Order" item until 2026-08-16 that navigated to /scm/sales-invoices/from-so:
-   no such route is registered in App.tsx, so it fell through to
-   /scm/sales-invoices/:id with id="from-so" and asked the API for an invoice
-   whose id is the literal string "from-so". Removed rather than pointed
-   somewhere, because there is nothing to point it at — SO → SI is not a
-   conversion this ERP has, in either direction. */
 function SplitDropdown({
   onFromDo,
 }: {
@@ -323,7 +269,6 @@ function ViewToggle({
   );
 }
 
-// ─── Cards grid ─────────────────────────────────────────────────────────────
 
 function CardsGrid({ rows, onOpen }: { rows: SiRow[]; onOpen: (r: SiRow) => void }) {
   if (rows.length === 0) {
@@ -392,7 +337,6 @@ function CardsGrid({ rows, onOpen }: { rows: SiRow[]; onOpen: (r: SiRow) => void
   );
 }
 
-// ─── Detail drawer ─────────────────────────────────────────────────────────
 
 function DetailDrawer({
   row,
@@ -606,9 +550,6 @@ function DetailDrawer({
                 })}
               </div>
 
-              {/* SI totals — payment-forward: Total / Paid / Outstanding are
-                  what the operator actually reads on this doc. Subtotal / SST
-                  are 6%-inclusive in Malaysia so we don't split them out. */}
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
                 <TotalRow k="Invoice total" v={fmtSen(totalSen)} strong />
                 <TotalRow
@@ -616,9 +557,6 @@ function DetailDrawer({
                   v={fmtSen(paidSen)}
                   tone="success"
                 />
-                {/* Named for the document that took it, exactly as the detail
-                    page does — netting it silently into Paid would lose the one
-                    fact the office needs. */}
                 {depositSen > 0 && (
                   <TotalRow
                     k={`Deposit on ${row.so_doc_no ?? "the order"}`}
@@ -668,8 +606,6 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                // Reopen a cancelled invoice back to SENT/Issued (2990
-                // SalesInvoicesList "Reopen Invoice" parity).
                 if (s === "cancelled" || s === "cancel") {
                   return (
                     <Button
@@ -769,23 +705,10 @@ function TotalRow({
   );
 }
 
-// Table column key → backend sort-whitelist column. SI backend whitelist is
-// { invoice_date, invoice_number, debtor_name, status, total_sen }; only the
-// `amount` (Total) column key differs from its backend name. Non-whitelisted
-// columns carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
   amount: "total_sen",
 };
 
-// ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
-// Inline per-line breakdown for one SI, lazy-fetched via the SAME
-// useSalesInvoiceDetail hook the drawer uses (TanStack-cached). Group + item
-// code/variant + Qty + Amount (line value), via the shared
-// DocumentLinesExpansion. Although a sales invoice is a sales-side surface, its
-// detail payload carries no per-line MRP coverage (stock_state / coverage_po) —
-// those ride the SO detail, not this one — so, per "do not invent a backend
-// endpoint the hook doesn't already answer", the SO/DO-only Stock + Incoming PO
-// columns are absent here.
 function SiLinesExpansion({ id }: { id: string }) {
   const detailQ = useSalesInvoiceDetail(id);
   const items =
@@ -809,7 +732,7 @@ function SiLinesExpansion({ id }: { id: string }) {
   return (
     <DocumentLinesExpansion
       isLoading={detailQ.isLoading}
-      coverage="ready" /* one query fills this drill-down — coverage-state.tsx */
+      coverage="ready"
       isError={Boolean(detailQ.error)}
       errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
       lines={lines}
@@ -819,7 +742,6 @@ function SiLinesExpansion({ id }: { id: string }) {
   );
 }
 
-// ─── Main page ──────────────────────────────────────────────────────────────
 
 export function SalesInvoicesListV2() {
   const navigate = useNavigate();
@@ -829,19 +751,9 @@ export function SalesInvoicesListV2() {
   const askChoice = useChoice();
   const askConfirm = useConfirm();
   const { nameOf: salespersonNameOf } = useStaffLookup();
-  // Active company (top-bar switcher) — the header subtitle reflects it so a
-  // per-company list is never mislabelled as another company's (e.g. Houzs).
   const branding = useBranding();
-  // Finance-viewer gate (auth/me = isFinanceViewer). Finance columns below are
-  // DECLARED only for a finance-viewer; the backend also omits their keys from
-  // the payload for everyone else (canViewScmFinance).
   const { user, can, pageAccess } = useAuth();
   const canFinance = canViewScmCosting(user);
-  // Write gate — a salesperson reaches this list read-only via the sales inherit
-  // hatch (App.tsx allowSales; backend readInheritsFrom scm.sales.orders) and
-  // cannot create/edit an invoice or record payments. Hide the create + row
-  // mutation actions rather than render-then-deny (owner off-not-hide rule).
-  // ONE gate, shared with the DO surfaces and mobile.
   const canWriteSi = canOperateSalesInvoices(user, can, pageAccess);
 
   const status = (params.get("status") ?? "all") as StatusTab;
@@ -863,12 +775,6 @@ export function SalesInvoicesListV2() {
   );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
-  // Send the active tab's BUCKET NAME as `status`; the backend resolves each
-  // bucket to the raw statuses it covers (draft = DRAFT, sent = SENT+OVERDUE, partial =
-  // PARTIALLY_PAID, paid = PAID, cancelled = CANCELLED). `all` omits the filter.
-  // ISSUED / PARTIAL / COMPLETED were listed here until 2026-08-17 and are not
-  // members of the sales_invoice_status enum — sending them made each of those
-  // three tabs 500. The server-side map is the authority (SI_STATUS_BUCKETS).
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useSalesInvoicesPaged({
@@ -888,16 +794,11 @@ export function SalesInvoicesListV2() {
     hasError: Boolean(error),
   });
   const listLoading = isLoading || searchTransition.isSearching;
-  // The list below is replaced by a pending panel while a search is in flight,
-  // and these tiles summarise the SAME payload - so a settled-looking "RM 0.00"
-  // (or the PREVIOUS term's money under a placeholder page) would outlive the
-  // rows it describes. Same flag SearchScopeHint already uses for its count.
   const statsFailed = Boolean(error);
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateSalesInvoiceStatus();
 
-  // Server already filtered + sorted this page — render verbatim.
   const rows = (data?.salesInvoices ?? []) as SiRow[];
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? {
@@ -915,21 +816,16 @@ export function SalesInvoicesListV2() {
      contradictory numbers on one screen. */
   const visible = useVisibleRows(rows);
 
-  // Money KPIs sum the rows ON SCREEN (the paginated contract has no full-set
-  // money sums), so the cards and the table can never disagree.
   const money = useMemo(() => {
     let revenueSen = 0;
     let outstandingSen = 0;
     let paidSen = 0;
     for (const r of visible.rows) {
-      if (siIsCancelled(r.status)) continue; // worth nothing: not billed, its receipts became customer credit
+      if (siIsCancelled(r.status)) continue;
       const t = r.total_sen ?? r.local_total_sen ?? 0;
       const paid = r.paid_sen ?? 0;
       revenueSen += t;
       paidSen += paid;
-      /* The KPI sums the SAME per-row figure the Outstanding column renders, so
-         the card and the table cannot disagree — which is the whole reason this
-         block sums the rows on screen rather than asking the server. */
       outstandingSen += siOwesNothing(r.status) ? 0 : siOutstandingSen(t, paid, siDepositAppliedSen(r), siCreditNotesSen(r));
     }
     return { revenueSen, outstandingSen, paidSen };
@@ -1006,7 +902,6 @@ export function SalesInvoicesListV2() {
   const printDocument = usePrintDocument();
   const goFullPage = (r: SiRow) => navigate(`/scm/sales-invoices/${r.id}`);
 
-  // ─── Multi-select → batch "Print all" ─────────────────────────────────────
   const toggleSelect = (rowId: string) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -1023,8 +918,6 @@ export function SalesInvoicesListV2() {
     });
   const clearSelection = () => setSelectedIds(new Set());
 
-  // One SI's full detail for the PDF generator, via the vendored authedFetch
-  // (→ /api/scm); same endpoint + shape as the single-row detail page.
   const fetchSiBundle = async (
     row: SiRow
   ): Promise<{ header: unknown; items: unknown[] }> => {
@@ -1034,8 +927,6 @@ export function SalesInvoicesListV2() {
     return { header: json.salesInvoice, items: json.items };
   };
 
-  // Batch "Print all" — through the same Print preview as the other lists; only
-  // the Download exit still prompts combined-vs-separate.
   const deliverSelectedSis = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
@@ -1082,9 +973,6 @@ export function SalesInvoicesListV2() {
     }
   };
   const batchPrint = usePrintPreview(deliverSelectedSis);
-  /* A cancelled or draft invoice takes no payment — the server refuses both
-     with `not_payable`, and the menu simply does not offer what it would
-     refuse. */
   const siContextMenu = salesInvoiceRowMenu<SiRow>({
     open: goFullPage, edit: goEdit, print: printDocument,
     recordPayment: (r) => goRecordPayment(r),
@@ -1103,13 +991,8 @@ export function SalesInvoicesListV2() {
     setSelected(null);
     navigate(`/scm/sales-invoices/${r.id}${siPaymentIntentSearch("balance")}`);
   };
-  /* WAS `?tab=payments&record=1`, and nothing anywhere read `tab` or `record`
-     on a sales invoice — the detail page calls `useSearchParams()` and never
-     calls `.get()`. So this button opened the invoice and did nothing. */
   const goRecordPayment = (r: SiRow) =>
     navigate(`/scm/sales-invoices/${r.id}${siPaymentIntentSearch("open")}`);
-  // Reopen a cancelled invoice → SENT (2990 SalesInvoicesList "Reopen Invoice"
-  // parity; reuses the status PATCH endpoint).
   const doReopen = async (r: SiRow) => {
     if (
       !(await askConfirm({
@@ -1188,9 +1071,6 @@ export function SalesInvoicesListV2() {
       ),
     },
     {
-      /* Convert-from relation (audit R8): the Delivery Order this SI was created
-         from. Previously only the raw delivery_order_id UUID was on the row, so
-         the list could not show a readable source DO. */
       key: "do_number",
       label: transferFromColumnLabel('do'),
       width: "128px",
@@ -1239,7 +1119,7 @@ export function SalesInvoicesListV2() {
       key: "debtor_name",
       label: "Customer",
       getValue: (r) => r.debtor_name,
-      filterSeedValues: customerNames, // seeded with every customer (server-filterable)
+      filterSeedValues: customerNames,
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
           {r.debtor_name || "—"}
@@ -1260,7 +1140,6 @@ export function SalesInvoicesListV2() {
       key: "status",
       label: "Status",
       width: "116px",
-      // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       // The export writes the word on screen (owner 2026-09-15).
       getValue: (r) => statusFor(r.status).label,
@@ -1278,18 +1157,12 @@ export function SalesInvoicesListV2() {
       label: "Outstanding",
       width: "128px",
       align: "right",
-      // Derived (Total − Paid − the order's deposit) — not backend-sortable.
       disableSort: true,
       getValue: (r) => outstandingOf(r),
       render: (r) => {
         const outstanding = outstandingOf(r);
         const dep = siDepositAppliedSen(r);
         const credit = siCreditNotesSen(r);
-        /* A smaller number with no explanation invites "why is this 2,400 when
-           the invoice is 4,400" — so when a deposit is in play the cell SAYS
-           so. The marker carries the amount and the order it was taken on, the
-           same distinction the detail page draws, rather than silently netting
-           the two kinds of money into one figure. */
         return (
           <span
             className={cn(
@@ -1323,11 +1196,6 @@ export function SalesInvoicesListV2() {
         </span>
       ),
     },
-    // ── Re-added columns (Phase 1) — data already on the SiRow payload, ported
-    //    from the legacy SalesInvoicesList buildColumns (labels/widths). All
-    //    default-hidden so the column chooser exposes them without changing the
-    //    slim default view. disableSort because the SI list is server-sorted and
-    //    these keys aren't in the backend sort whitelist.
     {
       key: "salesperson",
       label: "Salesperson",
@@ -1369,9 +1237,6 @@ export function SalesInvoicesListV2() {
       },
     },
     {
-      /* Off by default: most invoices have no order deposit, and a column of
-         dashes is noise. On when finance wants to reconcile the "dep" marker
-         above against an amount. Exports with the CSV like any other column. */
       key: "so_deposit",
       label: "SO deposit",
       width: "120px",
@@ -1479,8 +1344,6 @@ export function SalesInvoicesListV2() {
         <span className="text-[12.5px] text-ink-secondary">{r.customer_state || "—"}</span>
       ),
     },
-    // ── Re-added columns (Phase 2) — NON-finance fields already on the SI
-    //    payload (HEADER). Default-hidden + disableSort. Safe for everyone.
     {
       key: "venue",
       label: "Venue",
@@ -1525,8 +1388,6 @@ export function SalesInvoicesListV2() {
         <span className="text-[12.5px] text-ink-secondary">{r.building_type || "—"}</span>
       ),
     },
-    // ── Phase 2 FINANCE columns — cost / margin / per-category subtotals.
-    //    DECLARED ONLY for a finance-viewer (backend also omits the keys).
     ...(canFinance
       ? ([
           {
@@ -1689,7 +1550,6 @@ export function SalesInvoicesListV2() {
       : ([] satisfies Column<SiRow>[])),
   ];
 
-  // AutoCount's Detail Listing columns lead, in its order (si-list-columns.tsx).
   const columns = siGridColumns<SiRow>(erpColumns);
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
@@ -1703,9 +1563,6 @@ export function SalesInvoicesListV2() {
 
   return (
     <PullToRefresh onRefresh={onPullToRefresh}>
-      {/* When the drawer is open the desktop shell reflows into the left
-          520 + gutter so stats/table are cleanly visible next to it instead
-          of being half-covered. Mobile keeps the full-width overlay. */}
       <div
         className={cn(
           "transition-[padding] duration-200",
@@ -1724,7 +1581,6 @@ export function SalesInvoicesListV2() {
         </div>
       </div>
 
-      {/* Desktop sticky page chrome — matches SO/DO listing pattern. */}
       <div className="-mx-4 hidden pb-3 sm:-mx-6 md:block">
         <div className="px-4 sm:px-6">
           <PageHeader
@@ -1732,8 +1588,6 @@ export function SalesInvoicesListV2() {
             title="Sales Invoices"
             description={`Every ${shortCompanyName(branding.companyName)} sales invoice — Sent to Paid. Click any row for the quick view; open the full page to edit or record a payment.`}
             primaryAction={
-              /* Export lines is a READ under the caller's sales scope, so a
-                 reader without write access gets it too. */
               <div className="flex items-stretch gap-2">
                 {canWriteSi ? (
                   <>
@@ -1887,7 +1741,6 @@ export function SalesInvoicesListV2() {
             <DataTable<SiRow, SiListLine>
               tableId="sales-invoices-v2"
               rows={rows}
-              /* Feeds the stat strip so the tiles describe what is on screen. */
               onFilteredRowsChange={visible.onFilteredRowsChange}
               onColFiltersChange={onColFiltersChange}
               loading={listLoading}

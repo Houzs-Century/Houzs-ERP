@@ -1,10 +1,3 @@
-// ATOMICITY (2026-09-23): a create-as-posted GRN must be INSERTED as DRAFT, then
-// flipped to POSTED by postGrnAndRollup (the one chokepoint that also writes
-// stock IN + rolls up the PO received_qty). Inserting it POSTED first and posting
-// in a separate step left a phantom POSTED GRN — status POSTED, no posted_at, no
-// stock, PO still outstanding — whenever the request died in between
-// (HC-GRN-2609-118, the 2026-09-22 Worker crashes). This drives the REAL create
-// route and asserts the row is inserted DRAFT with a null posted_at.
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -26,7 +19,6 @@ const base = fakeSb({
   app_config: [],
 });
 
-// Wrap from('grns').insert to record every inserted header payload.
 const sb = Object.assign(
   {
     ...base,
@@ -56,8 +48,6 @@ const CALLER = {
 
 const { grns } = await import('./grns');
 
-// The session user the SCM auth bridge turns into houzsUser. The purchaser
-// holds Post GRN, so create-as-posted reaches its insert.
 const POSTER = { ...CALLER, permissions: [], position_capabilities: ['scm.grn.post'] };
 
 async function createPosted(sessionUser: unknown = POSTER) {
@@ -75,8 +65,6 @@ async function createPosted(sessionUser: unknown = POSTER) {
     body: JSON.stringify({
       supplierId: 'sup-1',
       warehouseId: 'wh-1',
-      // A manual (no purchaseOrderItemId) priced line — skips the PO over-receipt
-      // and zero-cost gates, so the create reaches its header insert cleanly.
       items: [{
         materialKind: 'mfg_product', itemCode: 'X-1', materialName: 'Widget',
         qtyReceived: 1, qtyAccepted: 1, unitPriceSen: 10000, unitCostSen: 10000,
@@ -87,8 +75,6 @@ async function createPosted(sessionUser: unknown = POSTER) {
 
 describe('GRN create is atomic — inserted DRAFT, never a phantom POSTED', () => {
   it('inserts a create-as-posted GRN with status DRAFT and null posted_at', async () => {
-    // The post chokepoint may or may not run to completion under the fake; either
-    // way the header must have been INSERTED as DRAFT, which is the fix.
     await createPosted().catch(() => undefined);
     expect(grnInserts.length).toBeGreaterThan(0);
     const header = grnInserts[grnInserts.length - 1]!;

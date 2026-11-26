@@ -19,23 +19,11 @@
 import { describe, it, expect } from 'vitest';
 import { applySoAmendment } from './so-revision';
 
-/* `unknown`, not `any`: a new file's eslint ceiling is ZERO, and a fake client
-   is exactly where an `any` would stop the compiler noticing a fixture that does
-   not match the shape the engine reads. */
 type Row = Record<string, unknown>;
 type PgrstResult = { data: unknown; error: null };
 
-/* Declared here rather than imported from so-revision so this file still RUNS
-   when the source fix is stashed — the proof that these tests bite is `git stash
-   && vitest` showing the price assertions fail, and an import of a type that
-   does not exist yet would instead fail the whole file to load. */
 type SoAmendmentApproval = { approvedByUserId: string; approvalPermission: string };
 
-/* ── Minimal chainable, awaitable PostgREST stand-in ────────────────────────
-   Covers exactly the surface applySoAmendment + snapshotSo + recomputeOneLine +
-   recordSoAudit use. One addition over the reviseBoundPo suite's copy: a
-   `.update(...).select(...)` returns the UPDATED rows, because the revision bump
-   at the end of the apply reads its own write back and throws when it is empty. */
 class Query {
   private op: 'select' | 'update' | 'delete' | 'insert' | 'upsert' = 'select';
   private filters: Array<{ kind: 'eq' | 'in'; col: string; val: unknown }> = [];
@@ -55,9 +43,6 @@ class Query {
   in(col: string, val: unknown[]) { this.filters.push({ kind: 'in', col, val }); return this; }
   or() { return this; }
   lte() { return this; }
-  /* The frozen-line read (downstream-lock.readSoLineFreeze) pages with range and
-     the header cascades exclude frozen ids with not(); these stores carry no
-     delivery order, so neither changes a result. */
   range() { return this; }
   not() { return this; }
   order(col: string, opts?: { ascending?: boolean }) { this.orders.push({ col, asc: opts?.ascending !== false }); return this; }
@@ -94,8 +79,6 @@ class Query {
         rows.push(row);
         inserted.push(row);
       }
-      /* PostgREST returns the inserted rows ONLY when .select() was chained
-         (`insert(...).select('id').single()`); a bare insert returns no data. */
       const back = this.returning ? (this.wantSingle ? (inserted[0] ?? null) : inserted.map((r) => ({ ...r }))) : null;
       return (this.result = { data: back, error: null });
     }
@@ -111,8 +94,6 @@ class Query {
       return (this.result = { data: null, error: null });
     }
     let out = [...filtered];
-/* Sort key as a zero-padded string so an `unknown` column can be ordered
-       without a numeric cast. Only `line_no` is ever ordered here. */
     const ord = (v: unknown): string => (v == null ? '' : String(v).padStart(12, '0'));
     for (const o of [...this.orders].reverse()) {
       out.sort((a, b) => {
@@ -121,11 +102,6 @@ class Query {
       });
     }
     if (this.limitN != null) out = out.slice(0, this.limitN);
-    /* DETACHED copies, like a real PostgREST response. Handing back the live
-       store objects would let a later `.update()` mutate a row the caller is
-       still holding as its BEFORE value — which silently emptied the audit's
-       from -> to rows here, since noteChange drops a change whose from equals
-       its to. */
     out = out.map((r) => ({ ...r }));
     return (this.result = { data: this.wantSingle ? (out[0] ?? null) : out, error: null });
   }
@@ -140,12 +116,9 @@ function fakeSb(store: Record<string, Row[]>) {
   return { from: (table: string) => new Query(store, table, ids) };
 }
 
-const DOC = 'HC-SO-2608-901';   // NOT a `2990-` doc — assertNotMirrored must pass
+const DOC = 'HC-SO-2608-901';
 const AMD = 'amd-price-1';
 
-/* ONE plain catalogue accessory at RM 100. Non-sofa with a sell price is the
-   category the recompute treats as AUTHORITATIVE, i.e. exactly the case where an
-   operator-entered price is at risk of being overwritten. */
 const CATALOGUE_SEN = 10000;
 const product = (over: Partial<Row> = {}): Row => ({
   code: 'ACC-1', company_id: 1, category: 'ACCESSORY',
@@ -164,8 +137,6 @@ const soLine = (over: Partial<Row> = {}): Row => ({
   unit_cost_sen: 3000, line_cost_sen: 3000, ...over,
 });
 
-/** `linked_ac_docno` is the ONLY marker of an AutoCount-migrated order on the SO
- *  header (mig 0271); null = a NATIVE order this ERP priced itself. */
 function baseStore(opts: { linkedAcDocNo?: string | null } = {}): Record<string, Row[]> {
   return {
     so_amendments: [{
@@ -177,9 +148,6 @@ function baseStore(opts: { linkedAcDocNo?: string | null } = {}): Record<string,
       doc_no: DOC, company_id: 1, revision: 1, version: 3,
       linked_ac_docno: opts.linkedAcDocNo ?? null,
       customer_state: null, cross_category_source_doc_no: null,
-      /* The approve-so route claims the SO's edit lease BEFORE calling the
-         engine, and the engine's revision bump is predicated on holding it —
-         so the fixture starts where the route leaves off. */
       edit_lease_token: 'lease-1', edit_lease_expires_at: '2099-01-01T00:00:00.000Z',
     }],
     mfg_sales_order_items: [soLine()],
@@ -200,9 +168,6 @@ const specLine = (over: Partial<Row> = {}): Row => ({
   ...over,
 });
 
-/* The approve-so route is the only caller, and it reaches here having already
-   checked scm.amendment.approve_lines / approve_delivery / approve_so and the
-   status transition. `concurrency` mirrors the lease it claims first. */
 const APPROVED: SoAmendmentApproval = { approvedByUserId: 'user-approver', approvalPermission: 'scm.amendment.approve_lines' };
 const apply = (store: Record<string, Row[]>, authority: SoAmendmentApproval | null = APPROVED) =>
   applySoAmendment(fakeSb(store), AMD, 'user-approver', undefined, { soVersion: 3, leaseToken: 'lease-1' }, authority);
@@ -210,8 +175,6 @@ const apply = (store: Record<string, Row[]>, authority: SoAmendmentApproval | nu
 const lineOf = (store: Record<string, Row[]>, id = 'L1') =>
   store.mfg_sales_order_items.find((r) => r.id === id)!;
 
-/* ── The defect ─────────────────────────────────────────────────────────────
-   Each of these is a price an approver signed for on a NATIVE order. */
 describe('applySoAmendment — an APPROVED amendment carries the approved unit price (native SO)', () => {
   it('a price CUT below the catalogue survives the recompute', async () => {
     const store = baseStore();
@@ -220,7 +183,7 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
     await apply(store);
 
     const line = lineOf(store);
-    expect(line.unit_price_sen).toBe(5000);   // NOT the RM100 catalogue price
+    expect(line.unit_price_sen).toBe(5000);
     expect(line.total_sen).toBe(5000);
     expect(line.balance_sen).toBe(5000);
   });
@@ -236,11 +199,6 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
   });
 
   it('a QTY-only amendment does not silently RE-PRICE a hand-priced line', async () => {
-    /* The editor sends newUnitPriceSen on every SPEC/QTY line, not only when the
-       price moved (SalesOrderDetail buildAmendmentLines). So on a line already
-       discounted to RM 80, approving a pure quantity change used to reset it to
-       the RM 100 catalogue — money moving on an amendment that never asked to
-       move it, and which the approver's diff showed as a quantity change. */
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ unit_price_sen: 8000, total_sen: 8000 })];
     store.so_amendment_lines = [specLine({
@@ -293,9 +251,6 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
     expect(res.addedLineIds).toEqual([]);
   });
 
-  /* Conts #384: the ADD insert wrote no line_no, so the SO, DO and invoice
-     (ordered by line_no, NULLS LAST) dropped amended lines to the bottom in no
-     fixed order. */
   it('ADDED lines continue the order\'s line numbering, one number each', async () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine(), soLine({ id: 'L2', line_no: 2 })];
@@ -349,11 +304,6 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
   });
 });
 
-/* ── The guard the trust flag exists to be ──────────────────────────────────
-   trustOperatorSelling stops a CLIENT authoring a price. The fix must not turn
-   the amendment into a second unguarded way to do that: the trust is a REQUIRED
-   argument naming the approval gate the caller passed, so a caller with no
-   approval gets the authoritative catalogue price exactly as before. */
 /* ── RM 0, the value the suite above stops one short of ─────────────────────
    Every case above signs for a NON-ZERO price, and each one passes under plain
    `trustOperatorSelling: true`, because that flag reads `manualUnitSelling > 0`.
@@ -372,17 +322,12 @@ describe('applySoAmendment — an approved RM 0 is a price, not a missing price'
     await apply(store);
 
     const line = lineOf(store);
-    expect(line.unit_price_sen).toBe(0);      // NOT the RM100 catalogue price
+    expect(line.unit_price_sen).toBe(0);
     expect(line.total_sen).toBe(0);
     expect(line.balance_sen).toBe(0);
   });
 
   it('a QTY-only amendment leaves a line already at 0 alone', async () => {
-    /* A free gift / PWP reward sits at 0. The editor sends newUnitPriceSen on
-       EVERY changed line, so approving a pure quantity change used to hand that
-       line the catalogue price and bill the customer for the giveaway — the
-       same defect as the RM 80 -> RM 100 case above, at the value that case
-       did not cover. */
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ unit_price_sen: 0, total_sen: 0, balance_sen: 0 })];
     store.so_amendment_lines = [specLine({
@@ -397,10 +342,6 @@ describe('applySoAmendment — an approved RM 0 is a price, not a missing price'
   });
 
   it('an amendment that requests NO price still takes the catalogue figure', async () => {
-    /* The guard that keeps 'operator-zero' honest. `new_unit_price_sen: null`
-       is "not requested", NOT "requested zero" — it must not be read as an
-       authored 0, or every QTY change on a normally-priced line would zero it.
-       specLine's default is null, so this is the untouched-price case. */
     const store = baseStore();
     store.so_amendment_lines = [specLine({ new_qty: 2 })];
 
@@ -410,12 +351,6 @@ describe('applySoAmendment — an approved RM 0 is a price, not a missing price'
   });
 
   it('an ADDED line at 0 still takes the catalogue price — Add and Edit differ here on purpose', async () => {
-    /* addLineTrust stays plain `true` while amendTrust became 'operator-zero'.
-       An ADD line names a SKU and nothing else about it is established, so a 0
-       reads as an unfilled field; editing an EXISTING line moves a price that
-       is already known, which is a deliberate act. The migrated-order sibling
-       of this assertion (below) predates 'operator-zero' and is the protection
-       this one keeps honest — if either moves, both must. */
     const store = baseStore();
     store.so_amendment_lines = [specLine({
       id: 'al-add', sales_order_item_id: null, change_type: 'ADD',
@@ -429,9 +364,6 @@ describe('applySoAmendment — an approved RM 0 is a price, not a missing price'
   });
 
   it('RM 0 WITHOUT the approval authority is still refused', async () => {
-    /* The ceiling. 'operator-zero' rides on `approval`, which only the
-       approve-so gate constructs — so an unapproved apply cannot author a 0
-       any more than it could author RM 50. */
     const store = baseStore();
     store.so_amendment_lines = [specLine({ new_unit_price_sen: 0, zero_price_intended: true })];
 
@@ -479,7 +411,7 @@ describe('applySoAmendment — the MIGRATED-order protections still hold', () =>
 
     await apply(store);
 
-    expect(lineOf(store).unit_price_sen).toBe(7300);   // never the RM100 catalogue
+    expect(lineOf(store).unit_price_sen).toBe(7300);
     expect(lineOf(store).total_sen).toBe(29200);
   });
 
@@ -497,10 +429,6 @@ describe('applySoAmendment — the MIGRATED-order protections still hold', () =>
   });
 
   it('a line ADDED to a migrated order treats 0 as "not provided" — the operator is authoring it NOW', async () => {
-    /* The one place 'including-zero' must NOT reach. It is a statement about a
-       price AutoCount already recorded; a line being typed today has no such
-       history, so 0 means the price was not entered and the catalogue fill is
-       the right answer (mfg-pricing-recompute's own note on the flag). */
     const store = baseStore({ linkedAcDocNo: 'AC-SO-0001' });
     store.so_amendment_lines = [specLine({
       id: 'al-add', sales_order_item_id: null, change_type: 'ADD',
@@ -514,18 +442,7 @@ describe('applySoAmendment — the MIGRATED-order protections still hold', () =>
   });
 });
 
-/* ── A SEEDED 0 is not a requested price (HC-SO-013490) ─────────────────────
-   The amend editor fills a re-picked line's price from the catalogue, and a SKU
-   with no sell price seeds 0 with `priceAuthored: false`. Both builders used to
-   send that 0 as `newUnitPriceSen` on every changed line, so a SPEC swap to an
-   unpriced SKU reached here as an approved RM 0: on a migrated order
-   'including-zero' kept it, on a native one 'operator-zero' did. 11 lines on
-   10 orders were billed RM 0 that way (HC-SO-013490: 8,500 -> 0). The builders
-   now send NO price for an unauthored 0 (amendmentRequestedUnitPriceSen), and
-   these pin what the engine does with that: the line keeps its stored price, on
-   both order shapes, while a typed 0 an approver signed still lands as 0. */
 describe('applySoAmendment — a SPEC swap to an UNPRICED SKU keeps the stored price when no price is requested', () => {
-  /* The swap target: a catalogue row with NO sell price, the shape that seeds 0. */
   const unpriced = () => product({ code: 'MAT-2', name: 'Mattress (unpriced)', sell_price_sen: null, base_price_sen: null });
   const swapLine = (over: Partial<Row> = {}) => specLine({
     new_item_code: 'MAT-2',
@@ -630,22 +547,10 @@ describe('applySoAmendment — an UNCLAIMED requested 0 keeps the stored price',
   });
 });
 
-/* ── The discount channel (mig 0317) ─────────────────────────────────────
-   Until 0317 this block was titled "What an approved amendment still CANNOT
-   change": so_amendment_lines had no discount column, the apply copied the
-   line's existing discount forward, and reducing an amount on a locked SO was a
-   unit-price change only. That gap is what silently dropped a delivery-fee
-   reduction (RM 250 → 125 books as a DISCOUNT against the derived unit, and
-   the derived unit is rebuilt by rederiveDeliveryFee — the discount is the one
-   lever that survives). new_discount_sen now rides with new_remark's exact
-   NULL semantics: null = not requested (every pre-0317 row), and the value is
-   clamped to [0, qty * unit] at apply. */
 describe('applySoAmendment — the discount channel (mig 0317)', () => {
   it('a requested discount is applied and reduces the line total', async () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ unit_price_sen: 25000, total_sen: 25000 })];
-    /* The fee-shape request: unit re-sent unchanged, ONLY the discount moves —
-       exactly what the fee cell produces for 250 → 125. */
     store.so_amendment_lines = [specLine({ new_unit_price_sen: 25000, new_discount_sen: 12500 })];
 
     await apply(store);
@@ -653,7 +558,7 @@ describe('applySoAmendment — the discount channel (mig 0317)', () => {
     const line = lineOf(store);
     expect(line.discount_sen).toBe(12500);
     expect(line.unit_price_sen).toBe(25000);
-    expect(line.total_sen).toBe(12500);      // 250.00 - 125.00
+    expect(line.total_sen).toBe(12500);
     expect(line.balance_sen).toBe(12500);
   });
 
@@ -664,8 +569,8 @@ describe('applySoAmendment — the discount channel (mig 0317)', () => {
     await apply(store);
 
     const line = lineOf(store);
-    expect(line.discount_sen).toBe(5000);    // clamped to qty * unit
-    expect(line.total_sen).toBe(0);          // floor, never negative
+    expect(line.discount_sen).toBe(5000);
+    expect(line.total_sen).toBe(0);
   });
 
   it('a zero discount is a real request — it CLEARS the one on the line', async () => {
@@ -686,9 +591,9 @@ describe('applySoAmendment — the discount channel (mig 0317)', () => {
 
     await apply(store);
 
-    expect(lineOf(store).discount_sen).toBe(1500);       // unchanged — no channel
+    expect(lineOf(store).discount_sen).toBe(1500);
     expect(lineOf(store).unit_price_sen).toBe(5000);
-    expect(lineOf(store).total_sen).toBe(5000 - 1500);   // discount still applied
+    expect(lineOf(store).total_sen).toBe(5000 - 1500);
   });
 
   it('an ADDED line always lands with zero discount', async () => {
@@ -714,7 +619,6 @@ describe('applySoAmendment — the discount channel (mig 0317)', () => {
 describe('applySoAmendment — a SPEC re-syncs the line NAME to the new code\'s catalogue name', () => {
   it('rewrites description from the swapped-to code\'s catalogue name', async () => {
     const store = baseStore();
-    // The catalogue product the SPEC swaps TO — a different code, a different name.
     store.mfg_products.push(product({ code: 'ACC-2', name: 'Nesting Table' }));
     store.so_amendment_lines = [specLine({ new_item_code: 'ACC-2' })];
 
@@ -722,7 +626,7 @@ describe('applySoAmendment — a SPEC re-syncs the line NAME to the new code\'s 
 
     const line = lineOf(store);
     expect(line.item_code).toBe('ACC-2');
-    expect(line.description).toBe('Nesting Table');   // NOT the stale 'Side Table'
+    expect(line.description).toBe('Nesting Table');
   });
 
   it('a QTY-only change leaves the name untouched (the write is scoped to SPEC)', async () => {
@@ -739,14 +643,6 @@ describe('applySoAmendment — a SPEC re-syncs the line NAME to the new code\'s 
   });
 });
 
-/* ── A delivery-date amendment (the reschedule road) ────────────────────────
-   BUG-HISTORY 2026-09-22 (HC-SO-011177): an approved "deliver earlier" amendment
-   wrote ONLY customer_delivery_date and left amended_delivery_date null, so the
-   next AutoCount -> ERP delivery-date re-sync (which skips a header ONLY when
-   amended_delivery_date is set) clobbered the approved date back to the book
-   value. The visible surfaces read the RAW customer_delivery_date (SO detail, HC
-   delivery sheet), so the date must land there to be SEEN; amended_delivery_date
-   is what makes it STICK. These pin both, plus the line-level override. */
 describe('applySoAmendment — an approved delivery-date amendment is both SEEN and STICKS', () => {
   const APPROVE_DELIVERY: SoAmendmentApproval = { approvedByUserId: 'user-approver', approvalPermission: 'scm.amendment.approve_delivery' };
   const seedDeliveryAmendment = () => {
@@ -766,9 +662,7 @@ describe('applySoAmendment — an approved delivery-date amendment is both SEEN 
     await apply(store, APPROVE_DELIVERY);
 
     const header = store.mfg_sales_orders[0] as Row;
-    // The visible surfaces (SO detail, HC delivery sheet) read customer_delivery_date raw.
     expect(header.customer_delivery_date).toBe('2026-10-19');
-    // amended_delivery_date is what every AutoCount -> ERP re-sync guard checks.
     expect(header.amended_delivery_date).toBe('2026-10-19');
   });
 
@@ -783,11 +677,6 @@ describe('applySoAmendment — an approved delivery-date amendment is both SEEN 
   });
 });
 
-/* DEV-70 — the submit route now splits a SKU swap that also moves the price
-   (lib/amendment-noop-lines splitPriceFromSpec): the LINES half arrives with
-   no price, the PRICE half with nothing but the price. HC-SO-013490/A1: the
-   King mattress line held the RM 8,500 set price and the swapped-to SKU sells
-   at 0 in the catalogue. */
 describe('applySoAmendment — the two halves of a split SKU-swap-with-price (DEV-70)', () => {
   const PRICE_APPROVED: SoAmendmentApproval = { approvedByUserId: 'user-finance', approvalPermission: 'scm.amendment.approve_price' };
   const swapStore = (linkedAcDocNo: string | null) => {
@@ -886,7 +775,6 @@ describe('applySoAmendment — Sales Exemption Expiry freezes on the first amend
     await amendDate(store, '2026-11-10');
     expect(so(store).sales_exemption_expiry).toBe('2026-11-10');
 
-    /* apply() asserts the version and lease the approve route claimed; the first apply spent them. */
     Object.assign(so(store), { version: 3, edit_lease_token: 'lease-1', edit_lease_expires_at: '2099-01-01T00:00:00.000Z' });
     await amendDate(store, '2026-11-20');
     expect(so(store).customer_delivery_date).toBe('2026-11-20');

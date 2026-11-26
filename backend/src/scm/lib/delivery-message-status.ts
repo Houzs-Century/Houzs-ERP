@@ -26,9 +26,6 @@ import { recordSoAudit } from './so-audit';
 
 export interface StatusNotMoved { docNo: string; reason: string }
 
-/* A version race with another writer of the same header (stock allocation, the
-   sheet sync) is retried; an open SO editor lease is not - that order is the
-   editor's until it saves. */
 const CONFLICT_RETRIES = 2;
 
 export async function markSentStatus(

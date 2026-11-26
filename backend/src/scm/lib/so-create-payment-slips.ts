@@ -32,9 +32,6 @@ import { checkPaymentSlip } from '../shared/payment-slip-required';
  * single-deposit fallback, a money row must never be silently dropped.
  */
 export const soCreatePaymentSchema = z.object({
-  /* READ the shared list, never re-type it — payment-methods.ts states that
-     rule, and this file was extracted from the router just as main introduced
-     it, so the two arrived together and only look independent. */
   /* Plus `converted` — money moved from a cancelled order (docs/bugs/0927),
      a Sales-Order-only method that names the order it comes from. */
   method:            z.enum([...PAYMENT_METHOD_CODES, 'converted']),
@@ -43,10 +40,6 @@ export const soCreatePaymentSchema = z.object({
   approvalCode:      z.string().optional().nullable(),
   merchantProvider:  z.string().trim().min(1).optional().nullable(),
   installmentMonths: z.number().int().min(0).max(60).optional().nullable(),
-  /* Nullable in the SCHEMA only so a converted row can send none; a keyed row
-     without one is refused by planCreatePaymentSlips with the shared sentence,
-     not by a zod issue nobody reads. `.min(1)` keeps an EMPTY STRING out — ''
-     is a client forgetting to omit the field. */
   uploadSessionId:   z.string().min(1).optional().nullable(),
 });
 
@@ -58,7 +51,6 @@ export type SoCreatePayment = z.infer<typeof soCreatePaymentSchema>;
 export type PendingSlipRow = { r2_key: string | null; status: string };
 
 export type CreatePaymentSlipPlan =
-  /** `slipKeys[i]` is row i's R2 key, or null for a converted row (the only kind allowed none). */
   | { ok: true; slipKeys: Array<string | null> }
   | { ok: false; reason: string };
 
@@ -101,8 +93,6 @@ export function planCreatePaymentSlips(
       continue;
     }
     const row = found.get(sessionId);
-    /* 'uploaded' only — a 'promoted' session already belongs to an earlier
-       payment, so accepting it here is the replay this guard exists for. */
     if (!row || row.status !== 'uploaded' || !row.r2_key) {
       return { ok: false, reason: `Payment ${i + 1} slip missing or not uploaded.` };
     }

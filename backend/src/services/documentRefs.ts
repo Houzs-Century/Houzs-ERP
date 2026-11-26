@@ -40,9 +40,6 @@ export type DocumentRef = {
   voidReason: string | null;
 };
 
-/** The company runs on Malaysia time: the month in the number is the month
- *  the office sees, not the UTC month (an 11 pm post on the 31st is still
- *  this month's number). */
 const MYT_OFFSET_MS = 8 * 3_600_000;
 export function yymmFor(nowMs = Date.now()): string {
   const d = new Date(nowMs + MYT_OFFSET_MS);
@@ -72,7 +69,6 @@ function isUniqueViolation(msg: string): boolean {
   return /unique|duplicate key|23505/i.test(msg);
 }
 
-/** The highest sequence the registry holds for a series (the counter's floor). */
 async function seriesFloor(env: Env, series: string): Promise<number> {
   // company-scope: a global registry keyed by (department, type, month); numbers are company-wide by design.
   const row = await env.DB.prepare("SELECT MAX(seq) AS m FROM document_refs WHERE series = ?")
@@ -206,8 +202,6 @@ export async function mintDocumentRef(env: Env, input: MintInput): Promise<Docum
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       lastError = e;
-      // Someone took this number between our floor read and our insert (only
-      // reachable without the counter): read the floor again and go round.
       if (isUniqueViolation(msg)) continue;
       throw e;
     }

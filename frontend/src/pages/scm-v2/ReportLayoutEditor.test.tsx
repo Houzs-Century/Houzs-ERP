@@ -54,7 +54,6 @@ const RESPONSE: ReportLayoutResponse = {
 };
 
 const co = { 1: { active: true }, 2: { active: true } };
-/* The Cash Flow: RECEIPTS (In) and PAYMENTS (Out); 300-0000 sits on both sides; 910-0000 on neither. */
 const RP: ReportLayoutResponse = {
   report: 'rp',
   blocks: [{ key: 'accounts', title: 'Accounts', sections: ['CURRENT ASSETS', 'COST OF GOODS SOLD', 'EXPENSES'] }],
@@ -117,16 +116,13 @@ describe('the layout editor', () => {
     const opex = within(rowOf('Operating Expense')).getAllByRole('cell');
     expect(opex[0]!.textContent).toBe('900-0000');
     expect(opex[1]!.textContent).toBe('Operating Expense');
-    /* ADVERTISEMENT is unticked for HOUZS, ticked for 2990. */
     expect((screen.getByLabelText('ADVERTISEMENT for HOUZS') as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText('ADVERTISEMENT for 2990') as HTMLInputElement).checked).toBe(true);
-    /* 900-H010 is on the chart (HOUZS) but nowhere in the tree: it is listed in its own table under the tree. */
     const [tree, unplaced] = screen.getAllByRole('table');
     expect(within(tree!).queryByText('900-H010')).toBeNull();
     expect(within(unplaced!).getByText(/^Expenses — the report prints them under Unassigned at the foot of Expenses/)).toBeTruthy();
     expect(rowOf('900-H010').textContent).toContain('HOMESTAY EXPENSES');
     expect(screen.getByRole('button', { name: 'Place 900-H010' })).toBeTruthy();
-    /* Save waits for an edit. */
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByText('Unsaved changes')).toBeNull();
   });
@@ -160,7 +156,6 @@ describe('the layout editor', () => {
       '900-H010',
     ]);
     expect((saved().blocks.expenses![0] as { hiddenFor?: number[] }).hiddenFor).toEqual([2]);
-    /* The tick under ADVERTISEMENT (HOUZS) rode along untouched. */
     expect(((saved().blocks.expenses![0] as { children: Array<{ hiddenFor?: number[] }> }).children[0]!).hiddenFor).toEqual([1]);
   });
 
@@ -202,7 +197,6 @@ describe('the layout editor', () => {
     expect(within(region()).getByRole('heading', { name: 'Unassigned accounts 1' })).toBeTruthy();
     fireEvent.click(within(region()).getByRole('button', { name: 'Pick up 900-H010' }));
     fireEvent.click(screen.getByRole('button', { name: 'Place inside ADVERTISEMENT' }));
-    /* Nothing left to place: the table goes, the count says 0. */
     expect(within(region()).getByRole('heading', { name: 'Unassigned accounts 0' })).toBeTruthy();
     expect(within(region()).getByText('Every account is placed in the layout above.')).toBeTruthy();
     expect(screen.getAllByRole('table')).toHaveLength(1);
@@ -217,12 +211,10 @@ describe('the layout editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add a category to Expenses' }));
     expect(screen.getByText('New category')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Delete ADVERTISEMENT' }));
-    /* The category row is gone (its header account 900-A002 now sits among the spares under its own name). */
     expect(screen.queryByLabelText('ADVERTISEMENT for HOUZS')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Rename ADVERTISEMENT' })).toBeNull();
     expect(rowOf('900-A014').textContent).toContain('ADVERTISEMENT - SHOWROOM');
     fireEvent.click(screen.getByRole('button', { name: 'Unplace 900-A001' }));
-    /* Back among the spares — and 900-A002, the deleted header, is a spare too. */
     const spares = screen.getAllByRole('button', { name: /^Place / }).map((b) => b.getAttribute('aria-label'));
     expect(spares).toEqual(['Place 900-A001', 'Place 900-A002', 'Place 900-H010']);
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -309,10 +301,8 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
     expect(screen.getByText('Direction', { selector: 'th' })).toBeTruthy();
     expect((screen.getByLabelText('Side of RECEIPTS') as HTMLSelectElement).value).toBe('in');
     expect((screen.getByLabelText('Side of PAYMENTS') as HTMLSelectElement).value).toBe('out');
-    /* A category deeper down follows its parent: no side of its own. */
     expect(screen.queryByLabelText('Side of CURRENT ASSETS')).toBeNull();
     expect(screen.getAllByLabelText('Direction of 300-0000').map((e) => (e as HTMLSelectElement).value)).toEqual(['in', 'out']);
-    /* A side shows its subtotal line, and names it in place beside its name (Rename). */
     expect(screen.getByText('Subtotal line: Total receipts')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Rename RECEIPTS' }));
     expect((screen.getByLabelText('Subtotal name of RECEIPTS') as HTMLInputElement).value).toBe('Total receipts');
@@ -323,7 +313,6 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Rename CURRENT ASSETS' }));
     expect((screen.getByLabelText('Subtotal name of CURRENT ASSETS') as HTMLInputElement).placeholder).toBe('Total CURRENT ASSETS');
     fireEvent.keyDown(screen.getByLabelText('Rename CURRENT ASSETS'), { key: 'Escape' });
-    /* 601-0003 reads Out only, 910-0000 nowhere: the In side lacks both, the Out side lacks 910-0000. */
     expect(screen.getByText(/Unassigned receipts/)).toBeTruthy();
     expect(screen.getByText(/Unassigned payments/)).toBeTruthy();
     expect(placeButtons()).toEqual(['Place 601-0003 as In', 'Place 910-0000 as In', 'Place 910-0000 as Out']);
@@ -360,7 +349,6 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
     drawRp();
     fireEvent.click(screen.getByRole('button', { name: 'Place 910-0000 as In' }));
     expect(placeButtons()).toEqual(['Place 601-0003 as In', 'Place 910-0000 as Out']);
-    /* The second 300-0000 line is the Out one; unplacing it frees its money out, its money in stays placed. */
     fireEvent.click(screen.getAllByRole('button', { name: 'Unplace 300-0000' })[1]!);
     expect(placeButtons()).toEqual(['Place 601-0003 as In', 'Place 300-0000 as Out', 'Place 910-0000 as Out']);
     fireEvent.click(screen.getByRole('button', { name: 'Add a subtotal to Accounts' }));
@@ -379,7 +367,6 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
     saveAsync.mockClear();
     drawRp();
     expect(screen.getByText('Settlement / Deposit', { selector: 'th' })).toBeTruthy();
-    /* A top group with nothing set is not split; one below follows the group above, which it names. */
     const top = screen.getByLabelText('Settlement / Deposit of RECEIPTS') as HTMLSelectElement;
     const below = () => (screen.getByLabelText('Settlement / Deposit of CURRENT ASSETS') as HTMLSelectElement).selectedOptions[0]!.textContent;
     expect([top.value, top.selectedOptions[0]!.textContent]).toEqual(['', 'Not split']);
@@ -387,7 +374,6 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
     fireEvent.change(top, { target: { value: 'deposit' } });
     expect(below()).toBe('As above (Deposit)');
     fireEvent.change(screen.getByLabelText('Settlement / Deposit of PAYMENTS'), { target: { value: 'parts' } });
-    /* Parts start at a third Settlement, two thirds Deposit, and are typed as whole numbers. */
     expect((screen.getByLabelText('Settlement parts of PAYMENTS') as HTMLInputElement).value).toBe('1');
     expect((screen.getByLabelText('Deposit parts of PAYMENTS') as HTMLInputElement).value).toBe('2');
     fireEvent.change(screen.getByLabelText('Deposit parts of PAYMENTS'), { target: { value: '3' } });
@@ -404,20 +390,16 @@ describe('the Cash Flow layout (owner 2026-09-18)', () => {
   test('an account line has its own Settlement / Deposit: As above names what it follows, its choice is saved on the line, As above clears it (owner 2026-11-25)', async () => {
     saveAsync.mockClear();
     drawRp();
-    /* 300-0000 sits twice: its In line under CURRENT ASSETS, its Out line under PAYMENTS. */
     const lines = () => screen.getAllByLabelText('Settlement / Deposit of 300-0000') as HTMLSelectElement[];
     expect(lines().map((x) => [x.value, x.selectedOptions[0]!.textContent])).toEqual([['', 'As above (not split)'], ['', 'As above (not split)']]);
     fireEvent.change(screen.getByLabelText('Settlement / Deposit of RECEIPTS'), { target: { value: 'deposit' } });
     fireEvent.change(screen.getByLabelText('Settlement / Deposit of PAYMENTS'), { target: { value: 'parts' } });
     expect(lines().map((x) => x.selectedOptions[0]!.textContent)).toEqual(['As above (Deposit)', 'As above (1 : 2)']);
-    /* The In line to Settlement, inside the all-Deposit RECEIPTS. */
     fireEvent.change(lines()[0]!, { target: { value: 'settlement' } });
     expect(lines()[0]!.value).toBe('settlement');
-    /* 601-0003 in parts: they start at 1 : 2 and are typed as whole numbers. */
     fireEvent.change(screen.getByLabelText('Settlement / Deposit of 601-0003'), { target: { value: 'parts' } });
     expect((screen.getByLabelText('Settlement parts of 601-0003') as HTMLInputElement).value).toBe('1');
     fireEvent.change(screen.getByLabelText('Deposit parts of 601-0003'), { target: { value: '5' } });
-    /* The Out line set, then back to As above: nothing stays on it. */
     fireEvent.change(lines()[1]!, { target: { value: 'deposit' } });
     fireEvent.change(lines()[1]!, { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));

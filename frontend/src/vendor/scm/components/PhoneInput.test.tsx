@@ -1,25 +1,8 @@
-// Guards the 2026-08-15 clipping fix: the country list is portalled to <body>
-// and positioned from the trigger's rect, instead of being absolutely
-// positioned inside a field whose card clips its overflow. Measured on prod's
-// New Sales Order before the fix: a 287px panel with 247px sliced off by
-// `SalesOrderNew.module.css .card { overflow: hidden }` — the search box
-// visible and not one country.
-//
-// WHAT THIS CANNOT PROVE. jsdom does no layout, so nothing here shows pixels
-// are no longer cut — that was measured in a browser. What IS mechanically
-// checkable is the property the clip depended on (the panel being a descendant
-// of the clipping ancestor) and the trap the portal introduces: the
-// document-level outside-click handler no longer sees the panel inside the
-// component's own subtree, so without a second containment test a mousedown on
-// a country closes the list before the click can pick it.
-//
-// Unmount is handled by the global afterEach(cleanup) in src/test-setup.ts.
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { PhoneInput } from './PhoneInput';
 
-/** The form's own clipping ancestor — the shape that caused the bug. */
 function renderPhone(value = '+60123456789') {
   const emitted: string[] = [];
   const view = render(
@@ -49,8 +32,6 @@ describe('PhoneInput country panel placement', () => {
   });
 
   test('the list scrolls inside the measured box rather than a fixed 240px', () => {
-    // The outer box is clamped to the room available; the rows flex inside it,
-    // so a cramped viewport shrinks the rows instead of hiding the search box.
     renderPhone();
     fireEvent.click(trigger());
     expect(panel().style.maxHeight).not.toBe('');
@@ -65,9 +46,6 @@ describe('PhoneInput country panel placement', () => {
 
 describe('PhoneInput behaviour the portal could have broken', () => {
   test('a mousedown inside the portalled panel does NOT close it', () => {
-    // The outside-click handler tests rootRef; the panel is no longer inside
-    // rootRef in the DOM, so it needs its own containment test or the pick
-    // below never lands.
     renderPhone();
     fireEvent.click(trigger());
     fireEvent.mouseDown(panel());
@@ -101,9 +79,6 @@ describe('PhoneInput behaviour the portal could have broken', () => {
   });
 
   test('the panel re-pins on a capture-phase scroll from a nested container', () => {
-    // The field sits in a scrolling card; those scroll events never reach
-    // window on the bubble path, so a bubble-only listener would let the panel
-    // drift away from the trigger.
     const nested = document.createElement('div');
     document.body.appendChild(nested);
     renderPhone();
@@ -123,8 +98,6 @@ describe('PhoneInput behaviour the portal could have broken', () => {
   });
 });
 
-// BUG-114: a full number pasted behind the +60 picker was stored with the
-// country code twice ("+6060192689927") and printed on the delivery sheet.
 describe('PhoneInput paste of a full Malaysian number', () => {
   const national = () => screen.getByRole('textbox') as HTMLInputElement;
 

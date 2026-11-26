@@ -18,7 +18,6 @@ const sb = fakeSb({
     notes: 'original', supplier_id: 'sup-1', purchase_location_id: 'loc-1',
     supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
   }],
-  // A live (non-cancelled) GRN makes po-1 a parent with a child.
   grns: [{ id: 'grn-1', purchase_order_id: 'po-1', status: 'DRAFT', company_id: 1 }],
   purchase_order_items: [],
   app_config: [],
@@ -35,7 +34,6 @@ const CALLER = {
 } as unknown as User;
 
 const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
-/* The header PATCH needs the version the editor loaded (sister review G6). */
 const withVersion = (body: Record<string, unknown>) => ({
   expectedUpdatedAt: (sb.tables.purchase_orders.find((r) => r.id === 'po-1') as Row | undefined)?.updated_at, ...body,
 });

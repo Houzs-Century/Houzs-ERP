@@ -24,8 +24,6 @@ const line = (over: Record<string, unknown>) => ({
   counted_by: null, counted_at: null, added_on_count: false, est_unit_cost_sen: 50_000, ...over,
 });
 
-/* ONE object for every render — a fresh one per call would re-fire the page's
-   [detail.data] effect forever. */
 const DETAIL = {
   isPending: false, error: null, refetch: () => Promise.resolve(),
   data: {
@@ -187,7 +185,6 @@ describe('Stock Take detail — round 1', () => {
 
   test('a costed line shows its value, not a cost box', () => {
     draw();
-    // MATT-A carries a lot cost (est_unit_cost_sen), so no hand-entry box.
     expect(screen.queryByLabelText('Unit cost (RM) for MATT-A')).toBeNull();
   });
 });

@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// MoneyOutErpParts — what the two ERP-only pages under Money out (Supplier
-// maintenance, Official invoices owed) share in the owner's redesign (batch 4
-// §5): the status tag and the counted views, in the design's look
-// (MoneyOutErp.module.css).
-// ----------------------------------------------------------------------------
 
 import type { ReactNode } from 'react';
 import css from './MoneyOutErp.module.css';

@@ -70,7 +70,6 @@ export const DepartmentPnlTab = () => {
   const [params, setParams] = useSearchParams();
   const plan = useDepartmentPlan();
   const views = useMemo(() => departmentChoices(plan.data), [plan.data]);
-  /* A department the address names waits for the plan; anything else is All. */
   const wanted = params.get('dv');
   const current = views.find((v) => v.value === wanted) ?? (plan.data || !wanted ? views[0]! : null);
   const setParam = (k: string, v: string | null) => setParams((prev) => {
@@ -86,7 +85,6 @@ export const DepartmentPnlTab = () => {
   const showPct = params.get('dpct') !== '0';
   const sheetView = kind === 'operation' && params.get('dop') === 'sheet';
 
-  /* Whole months: the range widens to its months' first and last days. */
   const from = r.usable ? monthStart(r.from) : monthStart(r.today);
   const to = r.usable ? monthEnd(r.to) : monthEnd(r.today);
   const period = from.slice(0, 7) === to.slice(0, 7) ? monthName(from) : `${monthName(from)} – ${monthName(to)}`;
@@ -125,7 +123,6 @@ export const DepartmentPnlTab = () => {
   );
 };
 
-/** The rates a unit's view shows: Operation's own Finance keeps here; Logistics' and Setup & dismantle's are the Logistics cost report's. */
 function UnitRates({ p }: { p: DepartmentUnit }) {
   const r = p.rates;
   return (
@@ -140,21 +137,17 @@ function UnitRates({ p }: { p: DepartmentUnit }) {
   );
 }
 
-/* ── A node of the P&L's tree as a grid row ───────────────────────────────── */
 type DetailOf = (keys: string[], title: string) => GridRow['detail'];
 function nodeRows(nodes: readonly DeptNode[], cellsOf: (n: DeptNode) => Record<string, number>, detailOf: DetailOf | null): GridRow[] {
   return nodes.map((n) => (n.children.length > 0
     ? { id: n.id, label: n.label, kids: nodeRows(n.children, cellsOf, detailOf), totalLabel: `Total ${n.label}`, cells: cellsOf(n), detail: detailOf?.(leafKeys(n), n.label) }
     : { id: n.id, label: n.label, cells: cellsOf(n), detail: detailOf?.(leafKeys(n), n.label) }));
 }
-/** The accounts under a node — an account's code; on G&A a team's team:<TEAM>. */
 const leafKeys = (n: DeptNode): string[] => (n.kind === 'account' ? [n.key ?? n.code ?? n.id] : n.children.flatMap(leafKeys));
 const withPct = (rows: GridRow[], base: Record<string, number>): GridRow[] =>
   rows.map((r) => ({ ...r, pct: pctOf(r.cells, base), ...(r.kids ? { kids: withPct(r.kids, base) } : {}) }));
 
-/* ── All departments: every department's own P&L, side by side ─────────────── */
 type AllColumn = { key: DeptColumnKey; label: string; view: DeptViewKind };
-/** All's columns: the departments in the company's order, Logistics' branch after Logistics. */
 const allColumns = (p: DepartmentsAll): AllColumn[] =>
   departmentChoices(p).filter((c): c is DeptChoice & { kind: DeptViewKind } => c.kind !== 'all').map((c) => ({ key: c.value as DeptColumnKey, label: c.label, view: c.kind }));
 const SUMMARY_ROWS: ReadonlyArray<{ key: keyof DeptSummary; label: string; kind?: GridRow['kind']; optional?: boolean }> = [
@@ -167,7 +160,6 @@ const SUMMARY_ROWS: ReadonlyArray<{ key: keyof DeptSummary; label: string; kind?
   { key: 'profitSen', label: 'PROFIT / (LOSS)', kind: 'final' },
 ];
 
-/** Where a column's figures come from, under its name. */
 function subOf(c: AllColumn, p: DepartmentsAll): string {
   const r = p.rates;
   if (c.view === 'ga') return `${rateText(r.gaBp)}% of sales`;
@@ -177,12 +169,10 @@ function subOf(c: AllColumn, p: DepartmentsAll): string {
   return c.key === p.selling ? BASIS_WORDS[p.basis].sales : 'as booked';
 }
 
-/** What the selling department pays, in words. */
 const paysText = (r: ChargeRates, sd: boolean, ga: boolean, op: boolean): string => [
   ga ? `G&A ${rateText(r.gaBp)}%` : null, op ? `Operation ${rateText(r.operationBp)}%` : null, sd ? `Setup & dismantle ${rateText(r.setupDismantleBp)}%` : null,
 ].filter(Boolean).join(', ');
 
-/** How one figure of All is arrived at, in a sentence. */
 function howText(c: AllColumn, row: keyof DeptSummary, p: DepartmentsAll): string {
   const r = p.rates;
   const sales = BASIS_WORDS[p.basis].sales;
@@ -215,7 +205,6 @@ function howText(c: AllColumn, row: keyof DeptSummary, p: DepartmentsAll): strin
   return `Other income booked for the ${c.label} department.`;
 }
 
-/** What a figure of All opens: where it comes from, and its department's own P&L. */
 function AllFigure({ c, row, how, onOpen, onClose }: { c: AllColumn; row: string; how: string; onOpen: (key: DeptColumnKey) => void; onClose: () => void }) {
   return (
     <div role="region" aria-label={`${c.label} · ${row}`} className={s.rates}>
@@ -277,7 +266,6 @@ function AllView({ p, period, onOpen }: { p: DepartmentsAll; period: string; onO
   );
 }
 
-/* ── G&A ──────────────────────────────────────────────────────────────────── */
 function GaView({ p, mode, showPct, period }: { p: DepartmentsGa; mode: Mode; showPct: boolean; period: string }) {
   const columns = useMemo(() => monthColumns(p.months, mode, showPct), [p.months, mode, showPct]);
   const words = BASIS_WORDS[p.basis];
@@ -356,12 +344,9 @@ function TeamsList({ p }: { p: DepartmentsGa }) {
   );
 }
 
-/* ── One department's own P&L (the Exhibition, the Showroom) ──────────────── */
-/** The rate each charge row is at. */
 const chargeRateOf = (r: ChargeRates, id: string): number => (id === 'charge:ga' ? r.gaBp : id === 'charge:operation' ? r.operationBp : r.setupDismantleBp);
 
 function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode; showPct: boolean; period: string }) {
-  /* Performance: sales and cost of sales are the orders' own; they open no ledger line. */
   const fromOrders = p.orders != null;
   const words = BASIS_WORDS[p.basis];
   const columns = useMemo(() => monthColumns(p.months, mode, showPct), [p.months, mode, showPct]);
@@ -447,12 +432,9 @@ function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode;
   );
 }
 
-/* ── Operation's sheet, by DO and region (the owner's "Operation PNL - Auto") ────────────────────────────────────────────────────────── */
 type OpRegionCol = DepartmentsOperation['regions'][number];
 type Scope = { months: string[]; regions: OpRegion[] };
 
-/** Single month = the sheet's regions across the top and a Total; By month = a Total, then
-    one column per month, or each month's regions and its total. The regions are the server's. */
 function opColumns(regions: readonly OpRegionCol[], months: readonly string[], mode: Mode, split: boolean, width: number): { columns: GridColumn[]; scopes: Map<string, Scope> } {
   const scopes = new Map<string, Scope>();
   const columns: GridColumn[] = [];
@@ -485,8 +467,6 @@ function OperationView({ p, mode, split, showPct, period }: { p: DepartmentsOper
   }, [p.lines]);
   const rows = useMemo<GridRow[]>(() => {
     const label = (k: string) => p.rows.find((x) => x.key === k)?.label ?? k;
-    /* A figure opens the lines its row adds up in its column's months and regions; the
-       results (Gross, Net) add up rows and have none. */
     const detailOf = (rowKeys: readonly string[], title: string): GridRow['detail'] => (colKey, close) => {
       const sc = scopes.get(colKey);
       if (!sc) return null;
@@ -567,7 +547,6 @@ function OperationView({ p, mode, split, showPct, period }: { p: DepartmentsOper
   );
 }
 
-/** A column of the sheet in words: its months, and its regions when not all of them. */
 const scopeText = (p: DepartmentsOperation, sc: Scope): string =>
   `${spanText(sc.months)}${sc.regions.length < p.regions.length ? ` · ${sc.regions.map((r) => regionNameOf(p, r)).join(', ')}` : ''}`;
 
@@ -673,8 +652,6 @@ function SpreadInput({ r }: { r: DepartmentsOperation['spreads'][number] }) {
   );
 }
 
-/** A rate Finance keeps: G&A's share, Operation's (of the sales, and on its sheet of the DOs' value),
-    merchandise's — each kept once, whichever view saves it. */
 function RateBox({ dept, bp, what }: { dept: RateKey; bp: number; what: ReactNode }) {
   const save = useSaveDepartmentRate();
   const [value, setValue] = useState(String(bp / 100));

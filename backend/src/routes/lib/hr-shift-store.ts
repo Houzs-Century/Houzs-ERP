@@ -31,13 +31,7 @@ export async function loadShiftGroups(db: Db, companyId: number): Promise<ShiftG
 }
 
 export type ShiftResolver = {
-  /** The day rules for an employee: the global rules with the employee's group
-   *  shift (base, or its delivery-day shift) in place. No group = global shift.
-   *  A grouped shift's standardWorkMin is the shift's own (end-start-lunch). */
   rulesFor: (workDate: string, employeeId: number) => AttendanceRules;
-  /** Whether the employee is in a shift group. When false, a caller that
-   *  overrides the standard day from the employee's working_hours_per_day keeps
-   *  doing so; when true, the group shift's hours are authoritative. */
   hasGroup: (employeeId: number) => boolean;
 };
 

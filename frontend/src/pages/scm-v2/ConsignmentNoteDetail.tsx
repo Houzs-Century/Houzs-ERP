@@ -1,21 +1,3 @@
-// ----------------------------------------------------------------------------
-// ConsignmentNoteDetail — full-page route at /scm/consignment-notes/:id.
-//
-// Editable clone of DeliveryOrderDetail (itself an SO clone). View→Edit gate;
-// editable Customer / Delivery Info / Emergency Contact / Delivery Address /
-// Line Items, plus a read-only Payments ledger. Reuses the shared SoLineCard +
-// PhoneInput + SalesOrderDetail.module.css UNCHANGED so the Note Detail reads
-// identically to the DO Detail.
-//
-// The DO-specific Sales-Invoice / Delivery-Return convert actions are DROPPED.
-// The backend `/consignment-notes` route mirrors `/delivery-orders-mfg` 1:1, so
-// the detail shape (deliveryOrder header + items + payments) is identical.
-//
-// NOTE on payments: the shared <PaymentsTable> saved-mode is hardwired to the
-// DO payment endpoints, so to keep this page pointed at /consignment-notes the
-// payments ledger renders inline via the consignment-note payment hooks. (The
-// New page DOES reuse PaymentsTable unchanged in draft mode.)
-// ----------------------------------------------------------------------------
 
 import {
   forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
@@ -119,13 +101,6 @@ type CnItem = {
   unit_price_sen: number;
   discount_sen: number;
   line_total_sen: number;
-  /* FINANCE-gated (CN_ITEM_FINANCE_KEYS server-side) — OMITTED from the detail
-     payload for a non-finance caller (canViewScmFinance), hence optional. This
-     page renders no cost/margin, so there is nothing to cut here. NOTE:
-     draftFromItem below collapses a missing unit_cost_sen to 0 and the save
-     echoes it back — the route's line PATCH therefore IGNORES a client cost
-     from a non-finance caller and keeps the stored one, which is what stops the
-     strip from wiping the line's cost basis (#632; see consignment-notes.ts). */
   unit_cost_sen?: number;
   line_cost_sen?: number;
   line_margin_sen?: number;
@@ -301,15 +276,6 @@ export const ConsignmentNoteDetail = () => {
     });
   };
 
-  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
-     until 2026-08-17, so the loading render called fewer hooks than the loaded
-     one and React threw #310 ("rendered more hooks than during the previous
-     render") the moment the query resolved — a blank "Something went wrong
-     loading this page." on a direct URL / refresh. Arriving from the list hid
-     it: react-query already had the detail cached, so the isPending branch
-     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
-     header; it can only ever be CALLED from the preview dialog, which does not
-     exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!header) return;
     return import('../../vendor/scm/lib/delivery-order-pdf')
@@ -355,7 +321,6 @@ export const ConsignmentNoteDetail = () => {
 
   return (
     <div className="space-y-4" style={isCancelled ? { filter: 'grayscale(0.7)' } : undefined}>
-      {/* ── Header ── */}
       <PageHeader back
         eyebrow="Supply Chain"
         title={`${header.do_number} — ${header.debtor_name}`}
@@ -428,7 +393,6 @@ export const ConsignmentNoteDetail = () => {
         </div>
       )}
 
-      {/* ── Customer / Delivery Info / Emergency / Address cards ── */}
       <CustomerCard
         ref={customerCardRef}
         header={header}
@@ -437,7 +401,6 @@ export const ConsignmentNoteDetail = () => {
         isEditing={isEditing}
       />
 
-      {/* ── Line items ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({items.length})</h2>
@@ -464,14 +427,6 @@ export const ConsignmentNoteDetail = () => {
                   onChange={cb?.onChange ?? ((patch) => patchEditingDraft(it.id, patch))}
                   onRemove={cb?.onRemove ?? (() => removeEditingLine(it.id))}
                   canRemove={!isLocked}
-                              /* Downstream document: the items were already specified on the
-                              originating order and their variants ride in with them, so they
-                              are NOT re-required here. Same rule DeliveryOrderNewV2 states
-                              for the DO. Verified 2026-08-13: this document's server does no
-                              variant enforcement at all (findIncompleteVariantLines appears
-                              0 times in its route), so the default `= true` was pure
-                              client-side invention - a red ring and a ` *` for a field the
-                              backend never asked for. */
                               variantsRequired={false}
                               specLockedReason={null}
                               lineDateLocked={false}
@@ -526,8 +481,6 @@ export const ConsignmentNoteDetail = () => {
                   </td>
                   <td>
                     {(() => {
-                      // Description 2 — live recompute first so detail matches list/PDF
-                      // (Commander 2026-06-18). Stored is only a fallback.
                       const desc2 = buildVariantSummary(it.item_group, it.variants)
                         || (it.description2 && it.description2.trim()) || '';
                       return desc2 ? <span>{desc2}</span> : <span className={styles.muted}>—</span>;
@@ -544,17 +497,10 @@ export const ConsignmentNoteDetail = () => {
         )}
       </section>
 
-      {/* PAYMENTS removed (Wei Siang 2026-06-06): a consignment is goods placed
-          on loan at the showroom, not a sale — no money is collected, so there
-          is no payments ledger. */}
     </div>
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Customer / Delivery Info / Emergency / Delivery Address — editable cards.
-   Mirrors DeliveryOrderDetail's CustomerCard (adapted to CN fields).
-   ════════════════════════════════════════════════════════════════════════ */
 
 type CustomerCardHandle = {
   save: (cb: { onSuccess: () => void; onError: (msg: string) => void }) => void;
@@ -573,9 +519,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 }, ref) => {
   const localities = useLocalities();
   const localityRows = useMemo(() => localities.data ?? [], [localities.data]);
-  /* `include` carries the salesperson already ON this document, so someone the
-     onlySales narrowing hides is still named. "(former staff)" below is then
-     only reachable for a row that genuinely is gone. */
   const staffQ = usePickableStaff({ onlySales: true, include: [header.salesperson_id] });
   const staffList = (staffQ.data ?? []).filter((s) => s.active);
 
@@ -623,9 +566,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   const set = <K extends keyof typeof form>(k: K, v: string) =>
     setForm((s) => ({ ...s, [k]: v }));
 
-  /* Shared address cascade, BOTH directions (address-cascade.ts). One setForm
-     per pick so the value just chosen survives — the State picker's own handler
-     resets the cascade, so a back-filled State must not route through it. */
   const { cities, postcodes } = useAddressCascade(localityRows, form.state, form.city);
   const onCityPick = (next: string) =>
     setForm((s) => ({ ...s, ...pickCity(localityRows, s, next) }));
@@ -669,7 +609,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 
   return (
     <>
-      {/* ── CUSTOMER ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Customer</h2></header>
         <div className={styles.cardBody}>
@@ -732,7 +671,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── DELIVERY INFO ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Delivery Info</h2></header>
         <div className={styles.cardBody}>
@@ -805,7 +743,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── EMERGENCY CONTACT ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Emergency Contact</h2>
@@ -844,7 +781,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── DELIVERY ADDRESS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Delivery Address</h2></header>
         <div className={styles.cardBody}>

@@ -50,20 +50,15 @@ const monthWindow = (raw: string | undefined): { from: string; to: string } | nu
   return { from, to };
 };
 
-/* ── GET /receipts[?month=YYYY-MM] — the unified money-in list ───────────── */
 export const listReceiptsHandler = async (c: any): Promise<Response> => {
   const win = monthWindow(c.req.query('month'));
   if (win === 'bad') return c.json({ error: 'bad_month', message: 'month must look like 2026-09, or be left out for every month.' }, 400);
-  /* ?kind= reads one kind alone (Debtor maintenance lists the debtor receipts —
-     the owner's Claude Design, batch 5 §4.3); left out, all three. */
   const kind = String(c.req.query('kind') ?? '').toUpperCase();
   if (kind && kind !== 'GENERAL' && kind !== 'DEBTOR' && kind !== 'CUSTOMER') {
     return c.json({ error: 'bad_kind', message: 'kind must be GENERAL, DEBTOR or CUSTOMER, or be left out for every kind.' }, 400);
   }
   const none = Promise.resolve({ data: [] as Row[], error: null });
   const sb = c.get('supabase');
-  /* No month asked for = the three reads are whole — paged, so a long history
-     is never cut at the server's 1000-row page. */
   const windowed = (q: any, col: string) => (win ? q.gte(col, win.from).lt(col, win.to) : q);
 
   const [general, debtor, customer] = await Promise.all([
@@ -81,9 +76,6 @@ export const listReceiptsHandler = async (c: any): Promise<Response> => {
   if (debtor.error) return c.json({ error: 'load_failed', reason: debtor.error.message }, 500);
   if (customer.error) return c.json({ error: 'load_failed', reason: customer.error.message }, 500);
 
-  /* What each receipt was FOR (the owner's Claude Design, batch 5 §2.3 c1): a
-     sundry receipt's first line, and the bills a debtor receipt knocks off —
-     read by the receipts listed, in this company. Reads only. */
   const generalRows = (general.data ?? []) as Row[];
   const debtorRows = (debtor.data ?? []) as Row[];
   const [firstLines, allocs] = await Promise.all([
@@ -111,8 +103,6 @@ export const listReceiptsHandler = async (c: any): Promise<Response> => {
     billsOf.set(k, [...(billsOf.get(k) ?? []), { billId: String(a.bill_id), no: billNoOf.get(String(a.bill_id)) || null, amountSen: Number(a.amount_sen ?? 0) }]);
   }
 
-  /* A customer receipt's number is its order's; the order's customer reference
-     rides along so the page's search finds the payment by it. */
   const customerRows = ((customer.data ?? []) as Row[]).filter((r) => Number(r.amount_sen ?? 0) >= 0);
   const refs = await readSoRefs(sb, customerRows.map((r) => r.so_doc_no), (q) => scopeToCompany(q, c));
   if (refs.error) console.error('[receipts] SO reference read failed; customer rows carry no SO reference:', refs.error);
@@ -128,11 +118,9 @@ export const listReceiptsHandler = async (c: any): Promise<Response> => {
       kind: 'DEBTOR' as const, id: r.id, number: r.receipt_number, date: r.receipt_date,
       payer: (r.debtor as Row | null)?.name ?? '(debtor)', payerCode: (r.debtor as Row | null)?.code ?? null, moneyAccount: r.bank_account_code,
       totalSen: Number(r.total_sen ?? 0), status: r.status, debtorId: r.debtor_id,
-      /* The four layers' marks — the list's stage (Draft, Prepared, Checked). */
       submittedAt: r.submitted_at ?? null, checkedAt: r.checked_at ?? null, approvedAt: r.approved_at ?? null,
       bills: billsOf.get(String(r.id)) ?? [],
     })),
-    /* Money that LEFT an order (a mirror row, negative) is no receipt. */
     ...customerRows.map((r) => ({
       kind: 'CUSTOMER' as const, id: r.id, number: r.so_doc_no,
       date: String(r.paid_at ?? '').slice(0, 10),
@@ -195,7 +183,6 @@ export const createReceiptHandler = async (c: any): Promise<Response> => {
   const receiptDate = dateOrNull(body.receiptDate) ?? todayMyt();
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
-  /* Every refusal above only read, so it released the form's Idempotency-Key. */
   writesFromHere(c);
   const receiptNumber = await mintMonthlyDocNo(sb, 'acc_receipts', 'receipt_number', `${companyDocPrefix(c)}OR-${docMonthTag(receiptDate)}`);
   const { data: receipt, error: insErr } = await sb.from('acc_receipts').insert({
@@ -245,7 +232,6 @@ export const createReceiptHandler = async (c: any): Promise<Response> => {
     lines: ruleLines,
   });
   if (!r.ok) {
-    /* Direct-post means BOTH or NEITHER — the receipt leaves with its journal. */
     await sb.from('acc_receipt_lines').delete().eq('company_id', coId).eq('receipt_id', receipt.id);
     await sb.from('acc_receipts').delete().eq('company_id', coId).eq('id', receipt.id);
     return c.json({ error: 'post_failed', reason: (r as { reason?: string }).reason ?? r.status }, 500);
@@ -279,7 +265,6 @@ export const voidReceiptHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/* ── GET /receipts/:id — the general receipt with its lines (the edit form's seed) */
 export const getReceiptHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const { data: receipt, error } = await scopeToCompany(
@@ -322,9 +307,6 @@ export const updateReceiptHandler = async (c: any): Promise<Response> => {
   if (receipt.status === 'CANCELLED') {
     return c.json({ error: 'receipt_cancelled', message: `${receipt.receipt_number} is void — raise it again instead.` }, 409);
   }
-  /* Snapshot BEFORE the update: a client that hands out live row references
-     (the test fake does) would otherwise show the edited date here, and the
-     contra must be dated as the OLD receipt was. */
   const oldDate = String(receipt.receipt_date).slice(0, 10);
 
   const payer = body.payerName !== undefined ? String(body.payerName ?? '').trim() : receipt.payer_name;
@@ -374,13 +356,8 @@ export const updateReceiptHandler = async (c: any): Promise<Response> => {
   }
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
-  /* The header, the lines and the ledger re-post commit together or not at all. Each used to commit on its own: a
-     failure part-way left a receipt whose lines, total and journal disagreed (lines deleted, or the old journal
-     reversed with no new one). */
   return runScmPgCommand(c, async (tx) => {
     const { data: upd, error: upErr } = await tx.from('acc_receipts').update({
-      /* The coercion sits at the write (tests/dateWriteCoercion.test.ts): a
-         missing or unreadable date keeps the receipt's own. */
       payer_name: payer, receipt_date: dateOrNull(body.receiptDate) ?? oldDate, bank_account_code: bank, total_sen: totalSen, notes,
     }).eq('company_id', coId).eq('id', receipt.id).neq('status', 'CANCELLED').select('id');
     if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
@@ -395,9 +372,6 @@ export const updateReceiptHandler = async (c: any): Promise<Response> => {
       if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
     }
 
-    /* The re-post: contra the entry the old receipt wrote, then book it as it
-       now reads — through the one gate, so numbering and the one-active-entry
-       rule hold exactly as on the first post. */
     const rev = await reverseJournal(tx, {
       companyId: coId,
       sourceType: 'RCT',
@@ -423,7 +397,6 @@ export const updateReceiptHandler = async (c: any): Promise<Response> => {
   });
 };
 
-/* ── Router ───────────────────────────────────────────────────────────────── */
 
 export const receipts = new Hono();
 /* The SCM bridge is PER ROUTER (scm/index.ts mounts no global one): it stashes

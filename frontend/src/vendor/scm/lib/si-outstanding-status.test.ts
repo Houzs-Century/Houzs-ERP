@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 import { siIsCancelled, siOwesNothing } from "./si-outstanding";
 import listSrc from "../../../pages/scm-v2/SalesInvoicesListV2.tsx?raw";
 
-/* The Sales Invoices list's Billed / Paid / Outstanding cards summed every row on screen, cancelled invoices
-   included, and the Outstanding column showed a cancelled invoice's full total as owing. */
 describe("which invoices count toward the money cards", () => {
   it("a cancelled or draft invoice owes nothing; only a cancelled one is worth nothing", () => {
     expect(siOwesNothing("CANCELLED")).toBe(true);

@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// DeliveryReturnDetailListing — Task #120 L2 page for Delivery Returns.
-// One row per delivery_return_items line, with the DR header denormalised.
-// "Outstanding" here means the return hasn't been settled
-// (status is not REFUNDED / CREDIT_NOTED / REJECTED).
-// ----------------------------------------------------------------------------
 
 import { useCallback } from 'react';
 import { fmtDateOrDash, fmtQty, fmtSen } from '../../vendor/shared/format';

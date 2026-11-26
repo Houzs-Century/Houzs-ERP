@@ -51,7 +51,6 @@ import { brandingCategoryNoun, houseSofaBrandName } from "../vendor/shared/so-br
 
 export type BrandTone = "success" | "neutral" | "warning" | "accent";
 
-/** The four groups, and the only place a Branding chip's colour is decided. */
 const TONE_BY_BUCKET: Record<"SOFA" | "BEDFRAME" | "MATTRESS" | "OTHER", BrandTone> = {
   SOFA: "success",
   BEDFRAME: "accent",
@@ -65,10 +64,6 @@ export function brandingToneForCategory(category: string | null | undefined): Br
   return TONE_BY_BUCKET[brandingCategoryNoun(category).bucket];
 }
 
-/* The house sofa brands name no furniture — "ZANOTTI" contains neither "sofa"
-   nor anything else the noun match would catch — so a Zanotti sofa would read
-   as OTHER and turn grey. Both companies' names are read from the one place
-   that owns them rather than re-typed here. */
 const SOFA_BRAND_WORDS = [houseSofaBrandName("HOUZS"), houseSofaBrandName("2990")]
   .filter((n): n is string => !!n)
   .map((n) => n.toUpperCase());

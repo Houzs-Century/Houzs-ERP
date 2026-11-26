@@ -1,6 +1,3 @@
-/* The ask-then-raise step behind every "Request cancellation" control (owner
- * 2026-09-08). The words are the decision: nothing is cancelled by the click,
- * the reason is mandatory, and the person is told what happens next. */
 import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

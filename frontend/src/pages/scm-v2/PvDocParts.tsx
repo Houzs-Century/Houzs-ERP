@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// PvDocParts — the payment voucher page's redesign pieces (the owner's Claude
-// Design, batch 4): the stage tag, the books line, the trail read inline, and
-// Add task with the voucher already linked. Every figure is the voucher's own;
-// nothing here posts.
-// ----------------------------------------------------------------------------
 
 import { History } from 'lucide-react';
 import { fmtDateTime, todayMY } from '../../vendor/shared/format';

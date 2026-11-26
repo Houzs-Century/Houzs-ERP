@@ -52,7 +52,6 @@ export function MobileInvitations() {
   const notify = useNotify();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  /** Row id with a mutation in flight; -1 = the bulk revoke. */
   const [busyId, setBusyId] = useState<number | null>(null);
 
   const q = useQuery({
@@ -65,7 +64,6 @@ export function MobileInvitations() {
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["mobile-invitations"] });
-    // Revoking also deletes the placeholder invited user — refresh the list.
     void qc.invalidateQueries({ queryKey: ["mobile-module"] });
   };
 

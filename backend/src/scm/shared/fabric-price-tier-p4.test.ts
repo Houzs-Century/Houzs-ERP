@@ -1,13 +1,9 @@
-// 2990-0024: supplier sofa lists (THL / Raffreka) price every module at four
-// grades: Fabric / Acacia / Half Leather / Full Leather. A sofa fabric set to
-// Price 4 must cost at the supplier's P4 cell, not fall back to P2.
 
 import { describe, it, expect } from 'vitest';
 import { computeMfgPoUnitCost } from './mfg-pricing';
 import { normalizeSofaTier } from './sofa-tier';
 import { fabricTierAddon } from './fabric-tier-addon';
 
-// 2377 (60cm) r1L from the THL list dated 22/10/2026: Acacia / HL / FL.
 const MATRIX = { '24': { P2: 280000, P3: 296000, P4: 394000 } };
 
 const poCost = (fabricTier: 'PRICE_2' | 'PRICE_3' | 'PRICE_4') => computeMfgPoUnitCost(

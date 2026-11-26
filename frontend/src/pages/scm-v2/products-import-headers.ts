@@ -23,22 +23,6 @@ import type { BatchImportRow, SeatHeightPrice } from '../../vendor/scm/lib/mfg-p
    importer since HC-0003 T5, lib/import-sheet.ts). */
 export { normalizeImportHeader };
 
-/* THE OTHER FILE ON THIS PAGE, and why it can never be imported.
- *
- * The grid's export writes what is ON SCREEN: a column per sofa SIZE, headed
- * with the bare size ("24", "26", "28"). It is not enough to alias those
- * headers, and aliasing them would be the DANGEROUS fix — the grid writes the
- * price for whichever tier was selected and carries NO tier column, so an
- * imported price would have no tier, and a price filed under the wrong tier is
- * worse than one not filed. The importer already refuses a priced row whose
- * tier it cannot read; this makes the refusal name the right button.
- *
- * DETECTED ON SHAPE, NOT ON ONE LABEL. Two facts together, neither of which the
- * round-trip export can produce: it has no `code` column at all, and at least
- * one header is a bare number. Keying on the grid's own code-column heading
- * would have been the obvious test and is the worse one — that spelling is
- * retired vocabulary (the catalogue's term is `item_code`), and a detector
- * pinned to one label breaks the day somebody renames a column header. */
 export function looksLikeGridExport(header: string[]): boolean {
   return !header.includes('code') && header.some((h) => /^\d+$/.test(h));
 }
@@ -62,18 +46,6 @@ export function looksLikeGridExport(header: string[]): boolean {
    than one not filed.
    -------------------------------------------------------------------------- */
 
-/** The grid's LABEL, exactly as a person reads it (lower-cased, spaces kept)
- *  -> the key the importer reads.
- *
- *  KEYED ON THE LABEL, NOT ON A NORMALISED COLUMN NAME, and deliberately: these
- *  are the UI's words, not this system's field names. Writing the code column's
- *  heading as one underscored token would spell a term the catalogue retired
- *  (`audit:vocabulary` refuses it, and it is right to — the field is spelled
- *  `item_code` here). Keeping the label in its own spelling says what it is: a
- *  foreign string being translated, not one of our names.
- *
- *  Grounded in `gridColumns` in Products.tsx, where each column's `getValue`
- *  names the field it renders — "Description" really is the product NAME. */
 const GRID_LABEL_TO_KEY: Record<string, string | undefined> = {
   'product code': 'code',
   description: 'name',
@@ -84,9 +56,6 @@ const GRID_LABEL_TO_KEY: Record<string, string | undefined> = {
   category: 'category',
 };
 
-/** A heading as a person reads it: lower-cased, runs of space collapsed, and
- *  underscores read as the spaces they stand in for — so both the label and a
- *  hand-typed `product_code` land on the same entry above. */
 function asLabel(h: string): string {
   return h.trim().toLowerCase().replace(/[\s_]+/g, ' ');
 }
@@ -113,7 +82,6 @@ export function gridSizeHeaderToKey(h: string): string | null {
 export function mapGridHeaders(header: string[]): string[] {
   return header.map((h) => {
     const key = GRID_LABEL_TO_KEY[asLabel(h)];
-    /* A sheet with its own `name` keeps `description` as the real field it is. */
     return (key && !header.includes(key) ? key : null) ?? gridSizeHeaderToKey(h) ?? h;
   });
 }
@@ -203,7 +171,6 @@ export function withSkuImportHeaders<T>(cols: Column<T>[]): Column<T>[] {
     const get = c.getValue;
     if (!key || !get) return c;
     if (size === null && !SKU_MONEY_KEYS.has(key)) return { ...c, exportLabel: key };
-    /* The grid's getValue is sen, with -1 for "no price" (it sorts last); neither leaves as a number. */
     const exportValue = (r: T) => { const v = get(r); return typeof v === 'number' && v >= 0 ? priceSheetRinggit(v) : ''; };
     return { ...c, exportLabel: key, exportValue };
   });
@@ -228,7 +195,6 @@ export function gridToSkuRecords(grid: string[][]): Array<Record<string, string 
       const key = header[c];
       if (!key) continue;
       const cell = (cells[c] ?? '').trim();
-      /* -1 is the grid's "no price", never a price — see isGridNoPrice. */
       if (fromGrid && isGridNoPrice(cell)) continue;
       obj[key] = cell;
     }
@@ -239,8 +205,6 @@ export function gridToSkuRecords(grid: string[][]): Array<Record<string, string 
 
 /** Parsed sheet rows -> the batch-import rows, grouped by code. Rows whose price or tier cannot be read are reported, never written. */
 export function buildSkuImportRows(parsed: Array<Record<string, string | undefined>>, sofaSizes: string[]): { rows: BatchImportRow[]; tierErrors: Array<{ code: string; reason: string }> } {
-  // Group rows by code — a sofa with PRICE_1 / PRICE_2 / PRICE_3 rows
-  // becomes ONE product carrying all its size × tier prices.
   const byCode = new Map<string, Array<Record<string, string | undefined>>>();
   for (const p of parsed) {
     const code = (p.code ?? '').trim();
@@ -250,13 +214,9 @@ export function buildSkuImportRows(parsed: Array<Record<string, string | undefin
   }
 
   const rows: BatchImportRow[] = [];
-  // SKUs skipped because a price row's tier couldn't be recognised — shown
-  // to the operator so a mislabelled price is never silently mis-filed.
   const tierErrors: Array<{ code: string; reason: string }> = [];
   for (const [code, group] of byCode) {
-    const first = group[0]; // never undefined: a code is only grouped with its first row
-    // A field is only carried when its cell is non-empty, so a blank cell
-    // never overwrites existing data on the SKU.
+    const first = group[0];
     const has = (v: string | undefined): v is string => v != null && v !== '';
     const out: BatchImportRow = {
       code,
@@ -269,18 +229,6 @@ export function buildSkuImportRows(parsed: Array<Record<string, string | undefin
     if (has(first.status))     out.status = first.status.toUpperCase();
     if (has(first.branding))   out.branding = first.branding;
 
-    // Money is read in RINGGIT (new export, e.g. 1535.00 → 153500 sen). A
-    // legacy `_sen` column is still honoured as a fallback so any file from
-    // an earlier export round-trips. Returns null when neither is present.
-    // A bad money cell skips the whole SKU (reported like tier errors)
-    // rather than ever writing a corrupted price.
-    /* This used to carry its OWN copy of the accept/reject rule (strip
-       "RM " and commas, then a regex). It was the right rule — it is where
-       the "parseFloat('1,535.00') is RM 1.00" hazard was first written
-       down — but a second copy of a money rule is how the two halves come
-       to disagree, so it now calls the shared parser. The shared parser is
-       strictly stricter: it also catches ambiguous comma grouping and more
-       than two decimal places, both of which this regex let through. */
     let moneyError: string | null = null;
     const senOf = (rm: string | undefined, sen: string | undefined): number | null => {
       if (has(rm)) {
@@ -291,11 +239,6 @@ export function buildSkuImportRows(parsed: Array<Record<string, string | undefin
         }
         return parsed.empty ? null : parsed.sen;
       }
-      /* Legacy `_sen` column — an integer count of sen, not ringgit. An
-         unreadable one used to return null, which this caller reads as
-         "the column wasn't filled in", so a corrupt legacy file imported
-         as a price-less SKU with nothing said. Report it like the ringgit
-         branch does. */
       if (has(sen)) {
         const n = Number(String(sen).trim());
         if (!Number.isFinite(n) || !Number.isInteger(n)) {
@@ -307,7 +250,6 @@ export function buildSkuImportRows(parsed: Array<Record<string, string | undefin
       return null;
     };
 
-    // base_price / price1 — take the first row that filled them.
     const baseRow = group.find((g) => has(g.base_price) || has(g.base_price_sen));
     if (baseRow) { const v = senOf(baseRow.base_price, baseRow.base_price_sen); if (v != null) out.base_price_sen = v; }
     const p1Row = group.find((g) => has(g.price1) || has(g.price1_sen));
@@ -315,10 +257,6 @@ export function buildSkuImportRows(parsed: Array<Record<string, string | undefin
     const m3Row = group.find((g) => has(g.unit_m3_milli));
     if (m3Row) out.unit_m3_milli = Number(m3Row.unit_m3_milli);
 
-    // Sofa per-size × per-tier prices, gathered across all of this code's
-    // tier rows. A row that carries any price MUST name a recognisable tier
-    // (P1/P2/P3) — otherwise the SKU is skipped with a clear reason so a
-    // price never lands in the wrong tier.
     const seat: SeatHeightPrice[] = [];
     let tierError: string | null = null;
     for (const g of group) {

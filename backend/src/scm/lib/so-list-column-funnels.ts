@@ -50,11 +50,8 @@ import { soFunnelRowsSql, type SqlEnv } from './so-funnel-values-sql';
 export const BLANK = '—';
 
 type Spec =
-  /** A text header column, matched exactly. Blank = NULL or ''. */
   | { kind: 'text'; col: string }
-  /** A date column. Blank = NULL. */
   | { kind: 'date'; col: string }
-  /** A number column. Blank = NULL; `zeroIsNull` when the cell shows 0 for NULL. */
   | { kind: 'number'; col: string; zeroIsNull: boolean }
   | { kind: 'doc_no' | 'debtor_code' | 'salesperson' | 'venue' | 'reference' | 'sales_location' };
 
@@ -106,7 +103,6 @@ export function readSoColumnFunnels(raw: string | undefined, canFinance: boolean
   const out: SoColumnFunnels = {};
   for (const [key, vals] of Object.entries(parsed as Record<string, unknown>)) {
     if (!(key in SO_COLUMN_FUNNELS) || (FINANCE.has(key) && !canFinance) || !Array.isArray(vals)) continue;
-    /* '' is the blank cell too (dataTableRows.filterKeyOf folds it into "—"). */
     const kept = [...new Set(vals
       .filter((v): v is string => typeof v === 'string' && !v.startsWith('\u0001'))
       .map((v) => (v === '' ? BLANK : v)))];
@@ -115,17 +111,12 @@ export function readSoColumnFunnels(raw: string | undefined, canFinance: boolean
   return Object.keys(out).length > 0 ? out : null;
 }
 
-/* A term that matches no order: doc_no is the key, never NULL. */
 const NOTHING = 'doc_no.is.null';
 const DATE_RE = /^\d{4}-\d{2}-\d{2}/;
-/* Case-insensitive equality for a book-spelled value: ilike with the PostgREST
-   grammar characters (and `"`) turned into the single-character wildcard, as
-   escapeForOr does for the search box — a superset at worst. */
 const ilikeExact = (v: string): string => v.trim().replace(/[,(){}"\\]/g, '_');
 const inList = (col: string, vals: readonly string[]): string => `${col}.in.(${vals.map(quote).join(',')})`;
 const blankText = (col: string): string[] => [`${col}.is.null`, `${col}.in.("")`];
 
-/** Header values whose AutoCount spelling is `v` (bookSpelling / bookSpellingOrOwn). */
 function reverseBook(map: Record<string, string>, v: string): string[] {
   return [v, ...Object.entries(map).filter(([, to]) => to === v).map(([from]) => from)];
 }
@@ -191,8 +182,6 @@ export async function resolveSoColumnFunnels(sb: Sb, c: CompanyScopeCtx, funnels
         const cands = [...new Set(plain.flatMap((v) => reverseBook(AGENT_MAP, v)))];
         for (const cand of cands) terms.push(`agent.ilike.${ilikeExact(cand)}`);
         if (cands.length) {
-          /* Staff ids only filter this company's orders, so the lookup by name
-             cannot reveal another company's rows. */
           const { data, error } = await sb.from('staff').select('id').filter('name', 'in', pgrestInList(cands));
           if (error) return fail(`salesperson funnel: ${(error as { message: string }).message}`);
           const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
@@ -224,7 +213,6 @@ function fail(reason: string): ColumnFunnelRead {
   return { ok: false, status: 500, body: { error: 'load_failed', reason } };
 }
 
-// ── Value lists ─────────────────────────────────────────────────────────────
 
 const VIEW_COLS = [
   'doc_no', 'so_date', 'status', 'local_total_sen', 'phone', 'email', 'debtor_code', 'agent', 'salesperson_id',
@@ -240,7 +228,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const str = (v: unknown): string => (v == null ? '' : String(v));
 const trimmedOrNull = (v: unknown): string | null => str(v).trim() || null;
 
-/** The grid's cell value for one server column (MfgSalesOrdersListV2 getValue). */
 function cellOf(key: string, r: ValueRow, ctx: { acDocNo: string | null; staffName: (id: unknown) => string | null }): string {
   const spec = SO_COLUMN_FUNNELS[key]!;
   const orNull = (v: string | number | null | undefined): string | null => (v == null ? null : String(v));
@@ -283,9 +270,6 @@ export async function buildSoFunnelValues(sb: Sb, c: CompanyScopeCtx, scopeIds: 
   const colList = [...VIEW_COLS, ...(canFinance ? SO_FINANCE_KEYS : [])];
   const cols = colList.join(', ');
   const scope = <Q>(q: Q): Q => scopeToCompany(applySoScope(q, scopeIds), c);
-  /* Warehouses start now (a PostgREST builder is lazy until awaited) so they
-     overlap the SQL. The two value reads are two SQL statements (no 1,000-row
-     paging); null = page through PostgREST exactly as before. */
   const whProm = Promise.resolve(scopeToCompany(sb.from('warehouses').select('id, code, name'), c) as PromiseLike<{ data: unknown[] | null; error: QueryError }>);
   const viaSql = env ? await soFunnelRowsSql<ValueRow, { doc_no: string; linked_ac_docno: string | null }>(env, colList, scope) : null;
   const [view, base, wh] = await Promise.all([

@@ -53,18 +53,8 @@ import { classifyAuditAuthor, type AuditAuthor } from '../shared/audit-author';
 export const changeLog = new Hono<{ Bindings: Env; Variables: Variables }>();
 changeLog.use('*', supabaseAuth);
 
-/* WHO MAY READ IT. This endpoint shows every change every colleague made to
-   every document in the company, which is a supervision surface and not an
-   operational one — so it is limited to the same two keys the AutoCount Sync
-   page carries, checked against the REAL caller inside the handler. That is
-   stricter than the coarse `scm.access` umbrella /api/scm/* already applies,
-   and it has to be. */
 const READ_KEYS = ['scm.changelog.read', 'settings.manage'] as const;
 
-/* The four document kinds the owner opened, plus the entity_audit_log values
-   that carry them. SO is absent because it lives in the other table entirely.
-   A closed map, not a free string: the entity_type column has no check
-   constraint, so an unknown key here would silently read nothing. */
 const ENTITY_DOC_TYPES = {
   PO: 'PURCHASE_ORDER',
   DO: 'DELIVERY_ORDER',
@@ -75,20 +65,9 @@ export type ChangeLogDocType = 'SO' | keyof typeof ENTITY_DOC_TYPES;
 
 const ALL_DOC_TYPES: ChangeLogDocType[] = ['SO', 'PO', 'DO', 'GRN'];
 
-/* A window, not a page. The question is "what happened since we opened", and a
-   default of everything-ever would read the whole trail on the first paint. */
 const DEFAULT_HOURS = 24 * 7;
 const MAX_HOURS = 24 * 120;
 
-/* Two ceilings, because they protect different things. ROW_CAP bounds what we
-   pull out of Postgres; DOC_CAP bounds what we hand the browser. A truncated
-   answer says so in the payload — a change log that quietly stops at 500 rows
-   is the "check that answers a different question".
-
-   ROW_CAP IS NOT THE TRUNCATION TEST, and never could be: PostgREST enforces its
-   own `db-max-rows` under whatever `.limit()` asks for, so the real ceiling is
-   the SERVER's and this number is only an upper bound on our appetite. The
-   `truncated` flag is computed from Content-Range instead — see the payload. */
 const ROW_CAP = 4000;
 const DOC_CAP = 400;
 
@@ -123,7 +102,6 @@ export type ChangeLogDocument = {
   entityId: string | null;
   lastChangeAt: string;
   changeCount: number;
-  /** Distinct people credited, newest first. Empty for a machine-only document. */
   people: string[];
   changes: ChangeLogChange[];
 };
@@ -140,9 +118,6 @@ function parseDocTypes(raw: string | undefined): ChangeLogDocType[] {
   if (!raw || raw === 'all') return ALL_DOC_TYPES;
   const asked = raw.split(',').map((s) => s.trim().toUpperCase());
   const kept = ALL_DOC_TYPES.filter((t) => asked.includes(t));
-  /* An unrecognised filter returns everything rather than nothing: an empty
-     list would render as "nobody changed anything", which is the single most
-     misleading answer this endpoint can give. */
   return kept.length > 0 ? kept : ALL_DOC_TYPES;
 }
 
@@ -152,9 +127,6 @@ function parseHours(raw: string | undefined): number {
   return Math.min(Math.floor(n), MAX_HOURS);
 }
 
-/** field_changes is jsonb and has held both shapes over the years. Anything
- *  that is not an array of objects renders as no fields rather than throwing —
- *  a history row with an unreadable diff is still evidence of WHO and WHEN. */
 function readFields(raw: unknown): ChangeLogChange['fields'] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -194,8 +166,6 @@ export const changeLogHandler = async (
 
   const sb = c.get('supabase');
   const rows: RawRow[] = [];
-  /* Did EITHER read stop short of the window it was asked for? Accumulated per
-     read, from the server's own exact total — see the `truncated` note below. */
   let readStoppedEarly = false;
   const stoppedEarly = (total: number | null | undefined, got: number): boolean =>
     (total ?? got) > got;
@@ -257,9 +227,6 @@ export const changeLogHandler = async (
       if (!key) continue;
       rows.push({
         id: String(r.id),
-        /* entity_doc_no is nullable — a create can record before its number is
-           minted. Falling back to the uuid keeps the row visible; dropping it
-           would hide the creation of a document from a change log. */
         doc_no: String(r.entity_doc_no ?? r.entity_id ?? ''),
         doc_type: key,
         entity_id: (r.entity_id as string | null) ?? null,
@@ -274,16 +241,10 @@ export const changeLogHandler = async (
     }
   }
 
-  /* The finance strip runs on the SAME blob shape both other audit readers use
-     — stripping the detail while leaving the history just moves the leak one
-     endpoint over (lib/finance-keys). It mutates in place. */
   if (!canViewScmFinance(c)) {
     stripAuditFinance(rows as unknown as Array<Record<string, unknown>>);
   }
 
-  /* Classify EVERY row before filtering, so the denominators are honest: the
-     owner is told how many machine changes there were even when he is looking
-     only at people. */
   let personRows = 0;
   let machineRows = 0;
   const classified = rows.map((r) => {
@@ -341,8 +302,6 @@ export const changeLogHandler = async (
     window: { since: sinceIso, until: until.toISOString(), hours },
     filters: { author, docTypes },
     totals: {
-      /* Both halves of the denominator, always — reporting only the filtered
-         number is how "50 staff actions" got printed for 0 staff actions. */
       changesByPerson: personRows,
       changesBySystem: machineRows,
       documents: documents.length,
@@ -369,10 +328,6 @@ export const changeLogHandler = async (
   });
 };
 
-/* The handler is EXPORTED and the route is a one-line registration, so
-   changeLogRoute.test.ts can mount it behind a fake supabase client — the
-   supabaseAuth bridge cannot run in that harness. Same shape as
-   routes/autocount-outbox.ts. */
 changeLog.get('/', changeLogHandler);
 
 export default changeLog;

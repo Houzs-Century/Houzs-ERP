@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// staff — SCM staff / salesperson directory (scm.staff).
-// Ported READ from 2990's apps/backend/src/lib/admin-queries.ts (useStaff), which
-// in 2990's reads the `staff` table DIRECTLY via the supabase client. Houzs has
-// no client-side supabase, so the vendored useStaff routes through this GET.
-//
-// GET /staff — list scm.staff rows (the SO Salesperson dropdown + PaymentsTable
-//              Collected-By picker source). Degrades to [] when the table is
-//              missing. Response is camelCased to the StaffRow shape the frontend
-//              expects (admin-queries.ts).
-//
-// HOUZS VENDOR: the whole /api/scm tree is owner-gated at the Houzs layer and the
-// auth bridge maps every caller to ONE seeded super_admin system staff row
-// (middleware/auth.ts), so this list is for picker population only — it is not a
-// per-user identity surface.
-// ----------------------------------------------------------------------------
 
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
@@ -35,14 +19,9 @@ export const staff = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 staff.use("*", supabaseAuth);
 
-// The columns every staff read selects. Shared by GET / (full roster, for
-// id -> name DISPLAY) and GET /pickable (company-scoped, for the salesperson
-// PICKERS) so the two can never drift on shape.
 const STAFF_COLUMNS =
   "id, staff_code, name, role, showroom_id, venue_id, showroom_warehouse_id, user_id, initials, color, active, email, phone";
 
-// Dual-read camelCase ?? snake_case — the PostgREST driver may camelCase result
-// columns; cover both so we never read undefined.
 function toStaffRow(r: Record<string, unknown>, positionSlug?: string | null) {
   return {
     id: r.id,
@@ -55,11 +34,6 @@ function toStaffRow(r: Record<string, unknown>, positionSlug?: string | null) {
     role: derivePosRole(positionSlug, r.role),
     showroomId: r.showroomId ?? r.showroom_id ?? null,
     venueId: r.venueId ?? r.venue_id ?? null,
-    /* SHOWROOM PARKING (migration 0148) — the warehouse this person is parked
-       under. Distinct from the legacy `showroomId`, which points at the vendored
-       2990 scm.showrooms table (empty in Houzs). userId is exposed so the
-       Members page, which is keyed by Houzs user id, can join to this row
-       without a second lookup. */
     showroomWarehouseId: r.showroomWarehouseId ?? r.showroom_warehouse_id ?? null,
     userId: r.userId ?? r.user_id ?? null,
     initials: r.initials ?? "",
@@ -70,14 +44,6 @@ function toStaffRow(r: Record<string, unknown>, positionSlug?: string | null) {
   };
 }
 
-/**
- * positions.slug per Houzs user id, for POS-role derivation (pos-staff-role.ts).
- * Same degrade contract as loadGrantsByUserId (now in lib/staffCompanyScope.ts):
- * an absent table
- * (pre-migration / D1 test mirror) or a read blip yields an EMPTY map — every
- * row then falls back to its stored scm.staff.role, which is exactly the
- * pre-derivation behaviour. Never throws the roster.
- */
 async function loadPositionSlugsByUserId(
   env: Env,
   userIds: number[],
@@ -100,15 +66,10 @@ async function loadPositionSlugsByUserId(
       map.set(uid, String(row.position_slug));
     }
   } catch {
-    // users / positions absent or transient error — empty map = stored roles.
   }
   return map;
 }
 
-/** Serialise rows with the POS role derived from each member's position. The
- *  single serialisation path for every staff read (GET / , /by-ids, /pickable)
- *  so the POS can never see a position-blind role from one endpoint and a
- *  derived one from another. */
 async function toStaffRowsWithDerivedRoles(
   env: Env,
   rows: Array<Record<string, unknown>>,
@@ -167,15 +128,6 @@ staff.get("/", async (c) => {
   return c.json({ staff: await toStaffRowsWithDerivedRoles(c.env, scoped) });
 });
 
-// GET /by-ids?ids=<uuid>,<uuid>,... — bulk name lookup for KNOWN IDs.
-//
-// The narrow companion to the scope tightening above. Any list/detail page
-// that renders "Salesperson: <name>" from an id it already holds passes those
-// ids here to resolve names; the server returns rows only for the specified
-// ids. No scope filter: the caller already knows the ids, so the payload is
-// exactly what they asked for — no enumeration of the roster, and no way to
-// widen from one id to another. Capped at 200 ids per call to keep the URL
-// bounded and prevent it from turning into an unbounded list endpoint.
 staff.get("/by-ids", async (c) => {
   const raw = (c.req.query("ids") ?? "").trim();
   if (!raw) return c.json({ staff: [] });
@@ -265,20 +217,10 @@ staff.get("/pickable", async (c) => {
   const rows = (data ?? []) as Array<Record<string, unknown>>;
   const { scoped, failClosed } = await scopeStaffRowsToActiveCompany(c, rows);
 
-  /* The ids this answer must hold whatever else it narrows away — see THE
-     ALWAYS-HOLDS RULE above. Resolved against `rows` (every ACTIVE staff row)
-     rather than `scoped`, because an id the screen already displays is one the
-     caller can see on the document regardless of which company owns the person.
-
-     FAIL-CLOSED STAYS CLOSED: when the company gate could not resolve an active
-     company it returns [], and a self/include union on top of [] would be a
-     hatch straight through the gate. No ids, no union. */
   const alwaysIds = failClosed
     ? new Set<string>()
     : alwaysPickableStaffIds(rows, Number(c.get("houzsUser")?.id) || null, includeIds);
 
-  /* EVERY exit from this handler goes through here, so no narrowing branch —
-     present or future — can be the one that forgets the rule. */
   const answer = async (narrowed: Array<Record<string, unknown>>) =>
     c.json({
       staff: await toStaffRowsWithDerivedRoles(
@@ -324,14 +266,12 @@ staff.get("/pickable", async (c) => {
       });
     }
   } catch {
-    // users / positions / departments absent (pre-migration / D1 test
-    // mirror) — degrade to no-filter rather than blanking the picker.
     return answer(scoped);
   }
 
   const salesOnly = scoped.filter((r) => {
     const uid = rowUserId(r);
-    if (uid == null) return false; // UNLINKED rows can't be resolved as sales
+    if (uid == null) return false;
     const meta = positionByUserId.get(uid);
     if (!meta) return false;
     return isSalesUser({
@@ -356,18 +296,8 @@ staff.get("/pickable", async (c) => {
    vendored 2990 scm.showrooms table, which is empty in Houzs and POS-specific;
    one showroom vocabulary, anchored to the warehouse that physically exists. */
 
-// GET /staff/showrooms — the parking picker's options: every warehouse flagged
-// as a Showroom. venueName is surfaced (not hidden behind the id) so whoever
-// parks a person can SEE which venue they are about to attribute that person's
-// orders to, and can tell a showroom with no venue set yet from one that is
-// ready — a flagged showroom with a blank venue resolves to nothing.
 staff.get("/showrooms", async (c) => {
   const supabase = c.get("supabase");
-  // Company-scoped: the parking picker must list ONLY the active company's
-  // showrooms. Without this a 2990 member's picker showed HOUZS showrooms
-  // (AKEMI SLEEP STUDIO / DUNLOPILLO SUITE), and mig 0186 (is_showroom synced
-  // from type='showroom') widened the leak by flagging more rows. warehouses is
-  // company-scoped since mig 0083.
   const cid = activeCompanyId(c);
   let q = supabase
     .from("warehouses")
@@ -391,17 +321,6 @@ staff.get("/showrooms", async (c) => {
   return c.json({ showrooms });
 });
 
-// PATCH /staff/by-user/:userId/showroom — park (or unpark) one person.
-//
-// Keyed by HOUZS USER ID, not scm.staff.id: the Members page is a list of Houzs
-// users, and migration 0066 syncs every non-disabled user into scm.staff with
-// user_id as the deterministic link. Making the caller resolve the staff uuid
-// first would put the SCM's internal identity into a Workspace page's contract.
-//
-// Gated on `users.manage` — parking someone under a showroom decides which venue
-// their sales attribute to, and therefore which fair's P&L and whose commission
-// they land in. That is the same class of authority as editing the person's
-// record, so it uses the same key rather than inventing a new one.
 staff.patch("/by-user/:userId/showroom", requireHouzsPerm("users.manage"), async (c) => {
   const supabase = c.get("supabase");
   const userId = Number(c.req.param("userId"));
@@ -411,27 +330,10 @@ staff.patch("/by-user/:userId/showroom", requireHouzsPerm("users.manage"), async
   try { body = (await c.req.json()) as Record<string, unknown>; }
   catch { return c.json({ error: "invalid_json" }, 400); }
 
-  /* null / "" / absent all mean UNPARK. An explicit unpark is a real decision
-     ("this person is not attached to a showroom"), and it resolves to an empty
-     venue rather than to some fallback — so it must be expressible. */
   const raw = body.showroomWarehouseId;
   const showroomWarehouseId =
     typeof raw === "string" && raw.trim() ? raw.trim() : null;
 
-  /* Verify the target is actually a flagged Showroom BEFORE parking anyone
-     under it. Without this check a plain stock warehouse could be parked
-     against, and it would resolve to nothing forever with no visible reason —
-     the person's orders would just silently carry no venue. Fail loudly here
-     instead, where someone is looking at the screen. */
-  /* ⚠️ THE TARGET PERSON, checked BEFORE the warehouse. Added 2026-08-18.
-     `showroom_warehouse_id` is a single column on a SHARED scm.staff row, so
-     "which company may write it" cannot come from a predicate on that table —
-     it comes from whether the PERSON belongs to the caller's company, which is
-     exactly what staffCompanyScope derives. Unchecked, a HOUZS admin holding
-     users.manage could re-park a 2990-only salesperson (and an UNPARK needs no
-     warehouse at all, so the warehouse check below could not stand in for it),
-     silently moving whose venue, fair P&L and commission their orders land in.
-     404 rather than 403: same reasoning as NOT_THIS_COMPANY. */
   {
     const { data: target, error: targetErr } = await supabase
       .from("staff")
@@ -451,27 +353,6 @@ staff.patch("/by-user/:userId/showroom", requireHouzsPerm("users.manage"), async
   }
 
   if (showroomWarehouseId) {
-    /* COMPANY SCOPE (deliberately NOT written as the checker's opt-out
-       annotation — that spelling on this handler is what hid the unscoped
-       write below from check-company-scope.mjs for as long as it existed. The
-       handler is now judged on its merits like any other.)
-
-       The WAREHOUSE is per-company (mig 0086 added
-       warehouses.company_id; 0087 made its code unique per company), so the
-       showroom must be one of THIS company's — an id-only check let a
-       salesperson be parked under the other company's showroom, and every
-       order they then wrote would carry that venue.
-
-       scm.staff itself is deliberately NOT company-stamped: mig 0089 lists it
-       under "shared / per-staff reference data" alongside currencies and
-       my_localities, and hr_salesperson_profiles is keyed
-       UNIQUE(company_id, staff_id) precisely because ONE staff row holds one
-       profile PER company. So the `.eq('user_id', userId)` update below takes
-       no company_id predicate — there is no such column to predicate on. That
-       was the true half of the note this comment used to carry; the false half
-       was reading it as "therefore nothing needs checking", which is what left
-       the write open until the target-person gate above was added. Two tables,
-       two different answers, in one handler. */
     const { data: wh, error: whErr } = await scopeToCompany(supabase
       .from("warehouses")
       .select("id, is_showroom")
@@ -496,10 +377,6 @@ staff.patch("/by-user/:userId/showroom", requireHouzsPerm("users.manage"), async
     .select("id, user_id, showroom_warehouse_id");
   if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
 
-  /* No staff row = this user was never synced into scm.staff (disabled, or
-     created before migration 0066 ran). Say so plainly rather than reporting a
-     success that stored nothing — a parking that silently did not happen is the
-     exact failure this feature cannot afford. */
   if (!data || (data as unknown[]).length === 0) {
     return c.json({
       error: "staff_unlinked",

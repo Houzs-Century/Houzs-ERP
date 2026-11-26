@@ -1,18 +1,3 @@
-// What this file pins: a month cannot be closed over work nobody has done, and
-// cannot be closed over a known problem SILENTLY.
-//
-// The two failures that matter are opposites, and both produce a document
-// somebody files:
-//
-//   • closing a month with movements still undecided freezes a figure nobody
-//     agreed to — no note can make an unfinished month finished, so this is
-//     refused outright rather than made noteable;
-//   • closing a month that does not reconcile is a real thing businesses do,
-//     and doing it without recording WHY leaves the next person with a closed
-//     month and no account of the difference inside it.
-//
-// Also pinned: the refusal a closed month gives names the month, who closed it
-// and when. "Locked" on its own tells an operator nothing about what to do.
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -38,8 +23,6 @@ describe('a month that tallies and is whole', () => {
     expect(mayLockMonth(req())).toEqual({ ok: true });
   });
 
-  /* An unpresented payment is an outstanding item, not a difference: the
-     books allowing for it reach the bank's closing, and that is what tallies. */
   it('closes with outstanding items in the books, as long as it tallies', () => {
     expect(mayLockMonth(req({ computedClosingSen: 93837, closingStatementSen: 93837 }))).toEqual({ ok: true });
   });
@@ -98,7 +81,6 @@ describe('a month that does not tally', () => {
     expect(!v.ok && v.error).toBe('inconsistent');
   });
 
-  /* No sentence buys a way past a month that does not tally. */
   it('has no reason escape', () => {
     const v = mayLockMonth({ ...req({ tallies: false, unexplainedSen: 100 }), note: 'known difference' } as LockRequest);
     expect(v.ok).toBe(false);
@@ -135,8 +117,6 @@ describe('the month a date belongs to', () => {
     expect(lockMonthOf('2026-09-30')).toBe('2026-09');
     expect(monthAsDate('2026-09')).toBe('2026-09-01');
     expect(monthFromDate('2026-09-01')).toBe('2026-09');
-    /* Postgres hands a DATE back with a time on some drivers; the reader must
-       not care. */
     expect(monthFromDate('2026-09-01T00:00:00+00:00')).toBe('2026-09');
   });
 });

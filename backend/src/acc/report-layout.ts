@@ -48,9 +48,6 @@ export type BlockDef = { key: string; title: string; sections: string[] };
 const sectionsOfType = (type: string): string[] => ACCOUNT_SECTIONS.filter((s) => s.type === type).map((s) => s.section);
 const ALL_SECTIONS: string[] = ACCOUNT_SECTIONS.map((s) => s.section);
 
-/* The blocks a report is made of — the arithmetic's own skeleton, never
-   editable. The layout arranges categories INSIDE a block; the sections say
-   which accounts' money a block reads. */
 export const REPORT_BLOCKS: Record<ReportKey, BlockDef[]> = {
   pnl: [
     { key: 'tradingIncome', title: 'Trading income', sections: ['SALES', 'SALES ADJUSTMENTS'] },
@@ -68,8 +65,6 @@ export const REPORT_BLOCKS: Record<ReportKey, BlockDef[]> = {
     { key: 'otherIncome', title: 'Other income', sections: ['OTHER INCOMES', 'EXTRA-ORDINARY INCOME'] },
     { key: 'expenses', title: 'Expenses', sections: ['EXPENSES'] },
   ],
-  /* One tree for both sides: a receipt and a payment on the same account
-     sit under the same category, whichever way the money moved. */
   rp: [
     { key: 'accounts', title: 'Accounts — receipts and payments', sections: ALL_SECTIONS },
   ],
@@ -101,24 +96,17 @@ export type SettleDeposit = { settlementSen: number; depositSen: number };
 export type LayoutAccount = {
   kind: 'account';
   code: string;
-  /** Cash Flow only: the line's direction (always set on a checked Cash Flow tree). */
   flow?: Flow;
-  /** Cash Flow only: the line's own Settlement / Deposit split; absent = its category's. */
   split?: CashSplit;
 };
 export type LayoutCategory = {
   kind: 'category';
   id: string;
   label: string;
-  /** The header account the category was born from (Reset finds it again). */
   code?: string;
-  /** Companies that UNTICKED the category — absent means every company shows it. */
   hiddenFor?: number[];
-  /** Cash Flow only: a TOP category's side (sub-categories follow their parent). */
   flow?: Side;
-  /** Cash Flow only: what the category's subtotal line prints ("Total Cash In"); absent = "Total <label>". */
   totalLabel?: string;
-  /** Cash Flow only: its Settlement / Deposit split; absent = the category above's. */
   split?: CashSplit;
   children: LayoutItem[];
 };
@@ -140,14 +128,11 @@ const bySectionThenCode = (sections: string[]) => (a: ChartAccount, b: ChartAcco
   ((SECTION_ORDER.get(sectionOf(a)) ?? sections.indexOf(sectionOf(a))) - (SECTION_ORDER.get(sectionOf(b)) ?? sections.indexOf(sectionOf(b))))
   || a.code.localeCompare(b.code);
 
-/* ── The chart's own tree, as a layout ──────────────────────────────────── */
 export function defaultLayout(report: ReportKey, accounts: ChartAccount[]): Layout {
   const blocks: Record<string, LayoutItem[]> = {};
   for (const block of REPORT_BLOCKS[report]) {
     const mine = accounts.filter((a) => block.sections.includes(sectionOf(a)));
     const codes = new Set(mine.map((a) => a.code));
-    /* A parent outside the block (another section, or gone) makes its child a
-       root here — the section, not the chart's parent line, files an account. */
     const under = new Map<string | null, ChartAccount[]>();
     for (const a of mine) {
       const parent = a.parentCode && codes.has(a.parentCode) && a.parentCode !== a.code ? a.parentCode : null;
@@ -165,8 +150,6 @@ export function defaultLayout(report: ReportKey, accounts: ChartAccount[]): Layo
     };
     const roots = under.get(null) ?? [];
     if (block.sections.length > 1) {
-      /* One category per section, in the chart's order, only where the
-         section has anything to show. */
       blocks[block.key] = block.sections
         .map((s) => ({ kind: 'category' as const, id: `sec:${s}`, label: s, children: roots.filter((a) => sectionOf(a) === s).map((a) => build(a, 1)) }))
         .filter((c) => c.children.length > 0);
@@ -178,12 +161,8 @@ export function defaultLayout(report: ReportKey, accounts: ChartAccount[]): Layo
   return { version: 1, blocks };
 }
 
-/* ── A tree somebody sent, checked and normalised ───────────────────────── */
 export type LayoutCheck = { ok: true; layout: Layout } | { ok: false; reason: string };
 
-/* A category id: the default tree names its section layer after the section
-   itself ("sec:SALES ADJUSTMENTS", "sec:APPROPRIATION A/C"), so spaces, dots
-   and slashes are in — a tree the chart built must always be savable. */
 const ID_RE = /^[A-Za-z0-9:_./ -]{1,64}$/;
 
 /* The Settlement / Deposit split, a category's or an account line's alike (owner 2026-11-09). */
@@ -197,8 +176,6 @@ const splitRefused = (who: string): string =>
   `${who}: the Settlement / Deposit split is two whole parts from 0 to ${SPLIT_MAX_PART}, not both 0.`;
 
 export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
-  /* A Cash Flow tree saved before directions existed is the old two-sided
-     report: read as RECEIPTS (In) over PAYMENTS (Out), never refused. */
   const raw = report === 'rp' ? upgradeCashFlowLayout(rawIn) : rawIn;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, reason: 'The layout must be an object.' };
   const top = raw as { version?: unknown; blocks?: unknown };
@@ -211,7 +188,6 @@ export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
   const cashFlow = report === 'rp';
   const ids = new Set<string>();
   const codes = new Set<string>();
-  /* Cash Flow: an account's money in and its money out are each placed at most once. */
   const inPlaced = new Set<string>();
   const outPlaced = new Set<string>();
   let count = 0;
@@ -276,8 +252,6 @@ export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
           if (typeof o.flow !== 'string' || !(SIDES as readonly string[]).includes(o.flow)) return `Cash Flow: ${label} must be In or Out.`;
           catSide = o.flow as Side;
         }
-        /* Any category, in any report and at any depth, may name its Total line (owner
-           2026-11-05: L5 with a subtotal under each); unnamed it prints "Total <name>". */
         const tl = typeof o.totalLabel === 'string' ? o.totalLabel.trim() : '';
         if (tl.length > LAYOUT_MAX_LABEL) return `Category ${id}: the subtotal name is longer than ${LAYOUT_MAX_LABEL} characters.`;
         if (tl) totalLabel = tl;
@@ -312,26 +286,15 @@ export function validateLayout(report: ReportKey, rawIn: unknown): LayoutCheck {
   return { ok: true, layout: { version: 1, blocks } };
 }
 
-/* ── The period's figures, arranged on the tree ─────────────────────────── */
 export type LaidLine = {
   code: string;
   name: string;
   amountSen: number;
-  /** The row's own key where one code carries several rows (a control
-      account by party, a transfer) — the code when absent. */
   key?: string;
-  /** What to print instead of "code · name". */
   label?: string;
-  /** A figure per money column (Receipts & Payments); amountSen is their total. */
   cells?: Record<string, number>;
-  /** Cash Flow: a sub-heading the line prints under where its account sits (lines of one code
-      sharing it print together under it). */
   group?: { id: string; label: string };
-  /** Cash Flow: the column the line's money goes to whatever its category says (a customer's
-      order payment: Deposit or Settlement by its kind). */
   splitTo?: SplitTo;
-  /** Cash Flow: the category, by id, the line prints directly under when no account of its own
-      places it (a payment of an opening bill read by its supplier's category); it carries no code. */
   category?: string;
 };
 export type LaidNode = {
@@ -339,19 +302,12 @@ export type LaidNode = {
   id: string;
   label: string;
   code?: string;
-  /** The row's key on a line (the drill-down's handle). */
   key?: string;
   amountSen: number;
-  /** % of the report's base (the P&L: sales; the Balance Sheet: total assets), one decimal; null when there is no base. */
   pct: number | null;
-  /** Per-column figures, summed on a category, where the lines carry them. */
   cells?: Record<string, number>;
-  /** Cash Flow: an account line's direction; a top category's or unassigned group's side. */
   flow?: Flow;
-  /** Cash Flow: what a top category's subtotal line prints. */
   totalLabel?: string;
-  /** Cash Flow: the figure in the Settlement and Deposit columns — on a line split by its
-      own parts or its category's, a group whose lines all split, a running subtotal over such groups. */
   sd?: SettleDeposit;
   children: LaidNode[];
 };
@@ -403,7 +359,6 @@ const sumCells = (nodes: LaidNode[]): Record<string, number> | undefined => {
   return any ? out : undefined;
 };
 
-/** The Settlement / Deposit of a group: its nodes' sum while every one of them splits. */
 const sumSd = (nodes: LaidNode[]): SettleDeposit | undefined => {
   if (nodes.length === 0 || nodes.some((n) => !n.sd)) return undefined;
   return nodes.reduce((a, n) => ({ settlementSen: a.settlementSen + n.sd!.settlementSen, depositSen: a.depositSen + n.sd!.depositSen }), { settlementSen: 0, depositSen: 0 });
@@ -458,7 +413,7 @@ export function layOutBlock(items: LayoutItem[], lines: LaidLine[], companyId: n
         out.push(...take(it.code));
         continue;
       }
-      if (it.kind === 'subtotal') continue; // Cash Flow only; laid by layOutCashFlow
+      if (it.kind === 'subtotal') continue;
       if (it.hiddenFor?.includes(companyId)) continue;
       /* A header that booked something itself (older than 父户不记账) prints
          first inside its own category. */
@@ -512,8 +467,6 @@ export const isCashFlowTyped = (items: unknown): boolean =>
     return o.kind === 'subtotal' || (o.kind === 'category' && (o.flow === 'in' || o.flow === 'out'));
   });
 
-/** Whether anything on a tree carries the new editor's marks — a direction,
-    a subtotal name, a subtotal line. A tree with none is from before them. */
 const hasDirections = (items: unknown): boolean =>
   Array.isArray(items) && items.some((it) => {
     if (!it || typeof it !== 'object') return false;
@@ -564,11 +517,8 @@ export function cashFlowHomes(items: LayoutItem[], companyId: number): { in: Map
 }
 
 export type CashFlowLaid = {
-  /** The top level: In/Out categories with their trees, subtotal lines, and the unassigned groups last. */
   nodes: LaidNode[];
-  /** Σ of the In categories (money in less what they show negative) — Total Cash In. */
   inSen: number;
-  /** Σ of the Out categories — Total Cash Out. inSen − outSen = receipts − payments, always. */
   outSen: number;
 };
 
@@ -608,7 +558,6 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
   const outByCategory = byCategory(payments);
   const inPlaced = new Set<string>();
   const outPlaced = new Set<string>();
-  /* The id carries the direction: one account's In line and Out line are two lines. */
   const leaf = (l: LaidLine, by: 1 | -1, flow: Flow, split?: CashSplit): LaidNode => {
     const node = laidLineNode({ ...l, amountSen: by * l.amountSen, cells: scaled(l.cells, by) }, null);
     node.id = `${flow}:${node.id}`;
@@ -618,14 +567,12 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     if (sd) node.sd = sd;
     return node;
   };
-  /* The lines placed by category rather than by an account: at the foot of the category, oriented to its side. */
   const takeHere = (id: string, side: Side, split: CashSplit | undefined): LaidNode[] =>
     ([['in', inByCategory, inPlaced], ['out', outByCategory, outPlaced]] as const).flatMap(([flow, by, placed]) => {
       const ls = (by.get(id) ?? []).filter((l) => !placed.has(keyOf(l)));
       for (const l of ls) placed.add(keyOf(l));
       return ls.map((l) => leaf(l, flow === side ? 1 : -1, flow, split));
     });
-  /* Lines of one code that share a group print under its sub-heading, in their order. */
   const grouped = (pairs: Array<{ line: LaidLine; node: LaidNode }>, flow: Flow, code: string): LaidNode[] => {
     const out: Array<LaidNode | { gid: string; label: string; kids: LaidNode[] }> = [];
     for (const { line, node } of pairs) {
@@ -637,7 +584,6 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     }
     return out.map((o) => ('gid' in o ? groupNode('category', o.gid, o.label, o.kids, null) : o));
   };
-  /* The lines an account line takes, oriented to its side, split by its own parts or its category's. */
   const take = (code: string, flow: Flow, side: Side, split: CashSplit | undefined): LaidNode[] => {
     if (flow === 'in' || flow === 'out') {
       const placed = flow === 'in' ? inPlaced : outPlaced;
@@ -645,7 +591,6 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
       for (const l of ls) placed.add(keyOf(l));
       return grouped(ls.map((l) => ({ line: l, node: leaf(l, flow === side ? 1 : -1, flow, split) })), flow, code);
     }
-    /* Net: in − out per row key, oriented to the side. */
     const ins = (inBy.get(code) ?? []).filter((l) => !inPlaced.has(keyOf(l)));
     const outs = (outBy.get(code) ?? []).filter((l) => !outPlaced.has(keyOf(l)));
     for (const l of ins) inPlaced.add(keyOf(l));
@@ -684,16 +629,15 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
     }
     return out;
   };
-  /* First pass: the tree, without % — the side totals are only known after. */
   type Top = { node: LaidNode; side: Side | null };
   const tops: Top[] = [];
   for (const it of items) {
-    if (it.kind === 'account') continue; // never on a checked tree
+    if (it.kind === 'account') continue;
     if (it.kind === 'subtotal') { tops.push({ node: { kind: 'subtotal', id: it.id, label: it.label, amountSen: 0, pct: null, children: [] }, side: null }); continue; }
     const side = it.flow ?? 'in';
     if (it.hiddenFor?.includes(companyId)) continue;
     const kids = [...walk(it.children, side, it.split), ...takeHere(it.id, side, it.split)];
-    if (kids.length === 0) continue; // nothing in it this period (the hidden own-account transfers)
+    if (kids.length === 0) continue;
     const node = groupNode('category', it.id, it.label, kids, null);
     node.flow = side;
     node.totalLabel = it.totalLabel ?? `Total ${it.label}`;
@@ -724,7 +668,6 @@ export function layOutCashFlow(items: LayoutItem[], receipts: LaidLine[], paymen
   };
   let running = 0;
   let runningCells: Record<string, number> | undefined;
-  /* The running Settlement / Deposit, while every group above splits; once one does not, no more. */
   let runningSd: SettleDeposit | null = { settlementSen: 0, depositSen: 0 };
   for (const t of tops) {
     if (t.side === null) {

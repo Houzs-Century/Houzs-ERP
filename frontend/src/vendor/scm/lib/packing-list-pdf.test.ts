@@ -1,25 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-/* The packing list sheet — what it DRAWS, and in what order.
- *
- * A PDF generator that compiles is not a sheet that says the right thing, and
- * nothing else in this repo can look at one. So the assertions are on the text
- * draws, captured through `doc.text` (which jspdf-autotable also paints its
- * cells through). Same technique as `stock-movement-pdf.test.ts`.
- *
- * Four things are worth a test here and the rest is layout:
- *
- *   1. THE SHEET RUNS N..1. This is the feature. The sections must come out in
- *      LOADING order — last delivery first — and the assertion below fails if
- *      anyone "fixes" the sheet to ascending.
- *   2. IT IS NUMBERED BY LOADING ORDER ONLY. The owner rejected printing the
- *      stop number beside it. So section 1 must NOT read "STOP 3".
- *   3. IT NEVER WRITES COMPANY DETAILS. The letterhead is `drawHeader`, which
- *      reads the branding the switcher sets; a hand-typed company name would
- *      put Houzs's address on a 2990 run.
- *   4. IT DOES NOT PRINT A VOLUME NOBODY STORED. `m3_milli: null` must produce
- *      no m³ figure at all, not "0.00 m³".
- */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   DEFAULT_BRANDING,
@@ -45,7 +25,6 @@ function captureTextDraws(doc: JsPdf): TextDraw[] {
   return draws;
 }
 
-/* Ordinary ASCII in the fixture: no CJK font fetch, no logo fetch, no network. */
 const setUpBranding = () => setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
 
 afterEach(() => {
@@ -113,19 +92,15 @@ describe('the packing list sheet', () => {
     const bravo = indexOfText(draws, 'Bravo Sdn Bhd');
     const charlie = indexOfText(draws, 'Charlie Sdn Bhd');
     expect(charlie).toBeGreaterThanOrEqual(0);
-    // Stop 3 (Charlie) is loaded first, so it is drawn first. Reverse the
-    // ordering back to ascending and this is the line that fails.
     expect(charlie).toBeLessThan(bravo);
     expect(bravo).toBeLessThan(alpha);
   });
 
   test('numbers the sections by LOADING order, and never prints the stop number beside it', async () => {
     const draws = await render(LIST);
-    // The FIRST section on the sheet is Charlie, and it is numbered 1.
     expect(draws.some((d) => d.text === '1 · Charlie Sdn Bhd')).toBe(true);
     expect(draws.some((d) => d.text === '2 · Bravo Sdn Bhd')).toBe(true);
     expect(draws.some((d) => d.text === '3 · Alpha Sdn Bhd')).toBe(true);
-    // The rejected two-number form: nothing on the sheet says STOP n.
     expect(draws.some((d) => /\bSTOP\s*\d/i.test(d.text))).toBe(false);
     expect(draws.some((d) => /LOAD FIRST/i.test(d.text))).toBe(false);
   });
@@ -144,7 +119,6 @@ describe('the packing list sheet', () => {
     expect(draws.some((d) => d.text === 'WXY 1234')).toBe(true);
     expect(draws.some((d) => d.text === 'Ah Meng')).toBe(true);
     expect(draws.some((d) => d.text === '6 units · 3.40 m³')).toBe(true);
-    // The combined "Stops / DOs" field the owner rejected.
     expect(draws.some((d) => /stops\s*\/\s*dos/i.test(d.text))).toBe(false);
   });
 
@@ -185,7 +159,6 @@ describe('the packing list sheet', () => {
     const draws = await render(LIST);
     expect(draws.some((d) => d.text === 'PACKING LIST')).toBe(true);
     expect(draws.some((d) => d.text === DEFAULT_BRANDING.companyName)).toBe(true);
-    // A hand-typed company name would survive a branding change; this one does not.
     setBrandingCache({ ...DEFAULT_BRANDING, companyName: 'Renamed Test Co', logoR2Key: '' }, 'HOUZS');
     const renamed = await (async () => {
       const [{ jsPDF }, { default: autoTable }, { renderPackingListInto }] = await Promise.all([
@@ -200,11 +173,6 @@ describe('the packing list sheet', () => {
     expect(renamed.some((d) => d.text === DEFAULT_BRANDING.companyName)).toBe(false);
   });
 
-  /* THE CAPTION MOVED WITH THE LINK (2026-08-26). It read "SCAN · OPEN THIS
-     RUN" while the code opened an authed page nobody holding the sheet could
-     reach. The code is public now and it RECORDS a step rather than opening a
-     view, so the caption says what the DO print's does — the same words on both
-     papers, because it is the same act. */
   test('draws the run QR and captions it, only when a URL was supplied', async () => {
     const url = `https://erp.example.test/d/${'a'.repeat(64)}`;
     const withQr = await render(LIST, url);
@@ -216,11 +184,6 @@ describe('the packing list sheet', () => {
 });
 
 describe('packingRunUrl', () => {
-  /* IT POINTED AT THE AUTHED PAGE UNTIL 2026-08-26. The sheet is carried by a
-     driver with no account, so the link has to open without one; the token is
-     the credential (mig 0329). The old assertions are rewritten rather than
-     deleted, because the property underneath them survives: the sheet's QR
-     addresses THIS run and nothing else. */
   test('points at the PUBLIC scan page for this run', async () => {
     const { packingRunUrl } = await import('./packing-list-pdf');
     const token = 'b'.repeat(64);
@@ -235,9 +198,6 @@ describe('packingRunUrl', () => {
       .toBe(`https://erp.example.test/d/${token}`);
   });
 
-  /* NO TOKEN DRAWS NO QR — never a fallback to the authed link. A sheet
-     carrying a link only office staff can open is worse than one carrying
-     none, because the driver finds out at the lorry. */
   test('an unarmed sheet gets no URL at all', async () => {
     const { packingRunUrl } = await import('./packing-list-pdf');
     expect(packingRunUrl('https://erp.example.test', null)).toBeNull();

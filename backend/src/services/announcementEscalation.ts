@@ -73,7 +73,6 @@ export async function escalatePending(
       source: "ack_escalation",
     });
   }
-  // The managers' bell slices just changed.
   if (byManager.size > 0) await bumpConfigVersion(env, "banner");
   try {
     // company-scope: ONE notice by primary key, already scoped by the caller (route: getScopedAnnouncement; cron: the whole table is its scope).
@@ -81,8 +80,6 @@ export async function escalatePending(
       .bind(new Date(now).toISOString(), ann.id)
       .run();
   } catch (e) {
-    // A mirror without the column (pre-migration window) still delivers the
-    // notices; only the "already escalated" memory is lost for that run.
     console.error("[announcements] escalated_at not recorded:", (e as Error).message);
   }
   return {
@@ -93,13 +90,9 @@ export async function escalatePending(
 }
 
 export type OverdueEscalationRun = {
-  /** Candidate rows read (old enough, active, human, not yet escalated). */
   scanned: number;
-  /** Notices escalated this run (stamped), whether or not anyone was notified. */
   escalated: number;
-  /** Supervisor notices posted in total. */
   supervisors: number;
-  /** Pending people who have no manager and so reached nobody. */
   unsupervised: number;
 };
 
@@ -122,8 +115,6 @@ export async function runOverdueEscalation(
     .all<AnnouncementRow>();
   const out: OverdueEscalationRun = { scanned: res.results.length, escalated: 0, supervisors: 0, unsupervised: 0 };
   for (const ann of res.results) {
-    // created_at passed the SQL cutoff; a scheduled notice went live later,
-    // so the window is re-checked against the instant it became readable.
     if (!deliverableNow(ann, now) || !announcementRequiresAck(ann) || !isOverdue(ann, now)) continue;
     const r = await escalatePending(env, ann, null, now);
     out.escalated += 1;

@@ -1,8 +1,3 @@
-/* HR · Overview dashboard. The month on-time chart and "most late" read from
- * the working-hours month read; the attention list surfaces only the items the
- * data actually backs (not punched in, unlinked accounts, OT, penalties, a draft
- * payroll). The working-hours days are dated in the CURRENT month so the chart
- * is never empty regardless of the run date. */
 import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { todayMY } from "../../vendor/shared/format";
@@ -20,8 +15,7 @@ const plusDays = (ymd: string, n: number): string => {
 
 const EMP = [
   { id: 1, name: "Faslie Anak", status: "ACTIVE", isOutsource: false, userId: 11, position: "Lorry Driver", workPermitExpiry: "", confirmDueOn: "" },
-  { id: 2, name: "Mohd Zaimir", status: "ACTIVE", isOutsource: false, userId: null, position: "Warehouse Crew", workPermitExpiry: "", confirmDueOn: "" }, // not linked
-  // Foreign worker with a permit lapsing in ~30 days and a confirmation due in ~45.
+  { id: 2, name: "Mohd Zaimir", status: "ACTIVE", isOutsource: false, userId: null, position: "Warehouse Crew", workPermitExpiry: "", confirmDueOn: "" },
   { id: 3, name: "Abd Khalid", status: "ACTIVE", isOutsource: true, userId: 13, position: "Warehouse Crew", workPermitExpiry: plusDays(TODAY, 30), confirmDueOn: plusDays(TODAY, 45) },
 ];
 
@@ -101,7 +95,6 @@ describe("HR Overview dashboard", () => {
   it("ranks the month's late employees", () => {
     show();
     expect(screen.getByText("Most late this month")).toBeTruthy();
-    // Mohd Zaimir had the only late day, so he appears in the ranking.
     expect(screen.getAllByText("Mohd Zaimir").length).toBeGreaterThanOrEqual(1);
   });
 
@@ -121,11 +114,9 @@ describe("HR Overview dashboard", () => {
 
   it("reveals a per-day name breakdown when a chart bar is hovered", () => {
     show();
-    // The hover card is not in the DOM until a bar is hovered.
     expect(screen.queryByText("On time")).toBeNull();
     expect(screen.queryByText("Faslie Anak")).toBeNull();
     fireEvent.mouseEnter(screen.getByTestId("chart-day-1"));
-    // The card lists who was on time / late / absent that day.
     expect(screen.getByText("On time")).toBeTruthy();
     expect(screen.getByText("Faslie Anak")).toBeTruthy();
     fireEvent.mouseLeave(screen.getByTestId("chart-day-1"));
@@ -134,9 +125,7 @@ describe("HR Overview dashboard", () => {
 
   it("flags a work permit expiring and lists the permit and confirmation dates in Coming up", () => {
     show();
-    // Needs attention: the foreign worker's permit lapses within the 90-day window.
     expect(screen.getByText(/work permits? expiring/i)).toBeTruthy();
-    // Coming up: both dated items appear beside the holiday.
     expect(screen.getByText(/Abd Khalid.*work permit/)).toBeTruthy();
     expect(screen.getByText(/Abd Khalid.*confirmation/)).toBeTruthy();
   });

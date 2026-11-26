@@ -50,35 +50,21 @@ export function roundRate6(raw: unknown): number {
 /** The purchase-invoice facts the decision needs. */
 export type PiRateFacts = {
   piId: string;
-  /** invoice_number, for the audit row and the caller's report. */
   docNo: string | null;
   currency: string | null;
-  /** The stored numeric(14,6); PostgREST hands numerics back as strings. */
   exchangeRate: string | number | null;
-  /** The GRN this invoice bills, i.e. what recostFromGrn is keyed to. */
   grnId: string | null;
 };
 
 export type RateAdoptionSkipReason =
-  /** The settle applied nothing (clamped to 0, DRAFT/CANCELLED PI, failed). */
   | 'nothing_applied'
-  /** An MYR invoice is rate 1 by definition — there is no rate to adopt. */
   | 'myr_invoice'
-  /** The voucher carries no usable rate of its own: an MYR voucher, or a foreign
-   *  rate of 1 / anything safeRate would fold to 1 — which is the SAME un-rated
-   *  hole this module exists to fill, not evidence of what was paid. */
   | 'voucher_rate_unusable'
-  /** The voucher and the invoice are denominated differently. An RMB payment says
-   *  nothing about a USD invoice's rate, and pv_allocations settles paid_sen at
-   *  FACE value, so the two are only comparable in one currency. */
   | 'currency_mismatch'
-  /** The invoice already carries this very rate — the write would be a no-op. */
   | 'already_at_this_rate';
 
 export type RateAdoptionPlan =
-  /** Write `rate` onto the invoice, then re-cost `grnId` if there is one. */
   | { action: 'adopt'; rate: number; oldRate: number; grnId: string | null }
-  /** The invoice carries a DELIBERATE rate that disagrees. Report, do not write. */
   | { action: 'report_mismatch'; piRate: number; pvRate: number }
   | { action: 'skip'; reason: RateAdoptionSkipReason };
 
@@ -102,8 +88,6 @@ export type RateAdoptionPlan =
  * a hole. Every other value is somebody's answer, and row 7 respects it.
  */
 export function planPvRateAdoption(input: {
-  /** settlePiPaidSen's appliedSen — what the database ACTUALLY moved, never
-   *  what the allocation asked for. No money applied ⇒ no evidence of payment. */
   appliedSen: number;
   pvCurrency: string | null;
   pvExchangeRate: string | number | null;
@@ -117,18 +101,6 @@ export function planPvRateAdoption(input: {
   const pvCurrency = normalizeCurrency(input.pvCurrency);
   const pvRateRaw = Number(input.pvExchangeRate);
   const pvRate = roundRate6(pvRateRaw);
-  /* An MYR voucher's rate is 1 by construction; a non-finite / non-positive foreign
-     rate folds to 1; and a foreign rate of EXACTLY 1 is the un-rated hole itself —
-     the currency master still reads 1.000000 for RMB, SGD and USD, so a foreign
-     voucher raised today defaults to precisely that. None of the three is evidence
-     of what was paid, so none may be written onto an invoice: adopting 1 would log a
-     "rate adopted" event that changed nothing and fire a pointless re-cost, and — far
-     worse — a PV at 1 reaching row 7 would report a MISMATCH against a rate somebody
-     had entered correctly, as though the real rate were the suspect one.
-     DELIBERATELY STRICTER THAN fx-guard.ts, which honours an operator-typed 1 at the
-     GRN/PI POST boundary. It can tell an operator's 1 from an unset master's 1
-     because it reads the raw master value before the two are flattened together;
-     here only the stored numeric survives, and its provenance is gone. */
   if (pvCurrency === MYR || !Number.isFinite(pvRateRaw) || pvRateRaw <= 0 || pvRate === 1) {
     return { action: 'skip', reason: 'voucher_rate_unusable' };
   }
@@ -169,6 +141,6 @@ export function isRateRetainedFromPv(input: {
   if (pvCurrency === MYR) return false;
   if (normalizeCurrency(input.piCurrency) !== pvCurrency) return false;
   const pvRate = roundRate6(input.pvExchangeRate);
-  if (pvRate === 1) return false; // a rate of 1 is the hole, never something we set
+  if (pvRate === 1) return false;
   return roundRate6(input.piExchangeRate) === pvRate;
 }

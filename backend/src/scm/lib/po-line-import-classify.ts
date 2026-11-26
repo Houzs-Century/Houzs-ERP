@@ -1,8 +1,3 @@
-/* PO line import — the decisions, with no database in them.
- *
- * routes/po-line-import.ts reads the rows this needs and hands them over; every
- * rule about what a row MEANS lives here so it can be tested row by row. The
- * columns and the parsing are the shared module's (po-line-import.ts, mirrored in the frontend). */
 import {
   PO_LINE_IMPORT_FIELDS,
   PO_LINE_IMPORT_MAX_LINE_CHANGES,
@@ -27,9 +22,6 @@ import {
 } from './po-line-import';
 import { poLineDescription2 } from './po-line-description2';
 
-/** What the exported file showed for a LINE field: Item Description 2 is the
- *  variant summary, else the stored text (po-line-description2.ts); every other
- *  line field is its stored column. */
 const lineFieldNow = (field: PoLineImportField, line: ImportLineRow): string | null =>
   field === 'description2'
     ? storedImportValue(field, poLineDescription2(line.item_group as string | null, line.variants, line.description2 as string | null))
@@ -53,14 +45,10 @@ export type ImportPoRow = {
 } & Record<string, unknown>;
 
 export type ImportWorld = {
-  /** Lines found IN the active company, by id. */
   lines: Map<string, ImportLineRow>;
-  /** Line ids that exist but belong to another company. */
   otherCompanyLineIds: Set<string>;
   pos: Map<string, ImportPoRow>;
-  /** The downstream-lock refusal per PO (a live Goods Receipt), or null when open. */
   poLocks: Map<string, string | null>;
-  /** Every line of each touched PO: the cascade overwrites all of them. */
   poLines: Map<string, ImportLineRow[]>;
 };
 
@@ -98,7 +86,6 @@ export function classifyPoLineImport(rows: PoLineImportRow[], world: ImportWorld
   const results: PoLineImportRowResult[] = [];
   const lineChanges: PoLineImportLineChange[] = [];
   const seen = new Set<string>();
-  /* poId -> field -> what every row of that PO says */
   const agg = new Map<string, Map<PoLineImportField, PoEntry[]>>();
   const pushAgg = (poId: string, field: PoLineImportField, e: PoEntry) => {
     let byField = agg.get(poId);
@@ -146,9 +133,6 @@ export function classifyPoLineImport(rows: PoLineImportRow[], world: ImportWorld
       if (!isPoLineImportField(field)) continue;
       const spec = poLineImportSpec(field);
       const parsed = parseImportValue(field, row.values[field] as PoLineImportCell);
-      /* An estimate date's cell is exported as the LINE's value, else the PO
-         header's (po-line-export-columns.ts poEstimateDeliveryDates); read it back
-         the same way, or an untouched file would look edited. */
       const current = spec.level === 'po'
         ? storedImportValue(field, line[spec.column]) ?? storedImportValue(field, po[spec.column])
         : lineFieldNow(field, line);
@@ -163,8 +147,6 @@ export function classifyPoLineImport(rows: PoLineImportRow[], world: ImportWorld
         changes.push({ field, old: current, new: parsed.value });
       }
     }
-    /* A rejected row still speaks for its PO's estimate dates, so a bad date on
-       one row cannot let a different date on another row through unchallenged. */
     for (const [field, e] of poLevel) pushAgg(po.id, field, e);
 
     if (invalid.length > 0) { reject('invalid_value', invalid.join('; '), itemCode); continue; }
@@ -241,8 +223,6 @@ export function parsePreviewBody(body: unknown): { ok: true; rows: PoLineImportR
   for (const [i, raw] of (b.rows as unknown[]).entries()) {
     const r = (raw ?? {}) as { rowNumber?: unknown; docNo?: unknown; lineId?: unknown; values?: unknown };
     const values: PoLineImportRow['values'] = {};
-    /* ONLY the six import fields survive. A qty / price / item column in the file,
-       edited or not, never gets past this line. */
     if (r.values && typeof r.values === 'object') {
       for (const [k, v] of Object.entries(r.values as Record<string, unknown>)) {
         if (!isPoLineImportField(k)) continue;
@@ -268,7 +248,6 @@ export function parseApplyBody(body: unknown): { ok: true; req: PoLineImportAppl
     };
   }
   const bad = (message: string) => ({ ok: false as const, error: 'invalid_change', message });
-  /* The STORED shape only: null, an ISO day, or trimmed non-blank text. */
   const valueOk = (field: PoLineImportField, v: unknown): v is string | null => {
     if (v === null) return true;
     if (typeof v !== 'string') return false;

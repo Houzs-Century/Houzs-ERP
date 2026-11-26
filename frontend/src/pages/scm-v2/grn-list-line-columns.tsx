@@ -25,9 +25,6 @@ export function grnLineColumns<T extends GrnGridRow>(): Record<string, GrnColumn
     lineSumColumn<T, GrnListLine>({
       key, label, linesOf, pick, exportFormat: "money", toExport: (sen) => senToRinggit(sen, 2), format: (sum) => fmtSen(sum), defaultHidden: hidden,
     });
-  /* AutoCount's line columns that hold no value in this ERP (Proj No, Tax Code,
-     line Tax, the Desc2 UDF): the column exists so the file has AutoCount's
-     shape, and every cell is blank. */
   const blank = (key: string, label: string) => text(key, label, () => null, { width: "90px" });
 
   return {
@@ -38,7 +35,6 @@ export function grnLineColumns<T extends GrnGridRow>(): Record<string, GrnColumn
     location: text("location", L.location, (l) => l.location, { width: "90px" }),
     proj_no: blank("proj_no", L.projNo),
     qty: qty("qty", L.qty, (l) => l.qty),
-    /* A unit price is a rate: RM on screen, up to four decimals in the file. */
     unit_price: {
       ...lineTextColumn<T, GrnListLine>({
         key: "unit_price", label: L.unitPrice, linesOf, width: "120px",
@@ -52,8 +48,6 @@ export function grnLineColumns<T extends GrnGridRow>(): Record<string, GrnColumn
     line_total: money("line_total", L.lineTotal, (l) => l.line_total_sen),
     tax_code: blank("tax_code", L.taxCode),
     line_tax: blank("line_tax", L.lineTax),
-    /* No tax on a receipt line in this ERP: Total (Ex) and Total (Inc) are the
-       line total. */
     total_ex: money("total_ex", L.totalEx, (l) => l.line_total_sen),
     total_inc: money("total_inc", L.totalInc, (l) => l.line_total_sen),
     desc2: blank("desc2", L.desc2),

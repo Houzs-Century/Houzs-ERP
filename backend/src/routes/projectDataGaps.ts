@@ -43,7 +43,6 @@ projectDataGaps.use("*", async (c, next) => {
 projectDataGaps.use("*", supabaseAuth);
 
 projectDataGaps.get("/", async (c) => {
-  /* The ERP went live on 1 Sep 2026 (owner): rental and chat reports before it are not books to chase. */
   const from = [todayMyt(-120), GO_LIVE].sort()[1]!;
   const to = todayMyt(-3);
   const COGS = "('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')";
@@ -119,9 +118,6 @@ projectDataGaps.get("/", async (c) => {
   ).bind(recent, from, to).all<NoteRow & { project_id: number }>();
   const notesOf = new Map<number, NoteRow[]>();
   for (const n of noteRows.results) notesOf.set(Number(n.project_id), [...(notesOf.get(Number(n.project_id)) ?? []), { ...n, id: Number(n.id) }]);
-  /* Per-event attendee emails — the per-event side of the save gate (owner
-     2026-10-30). Same shape as projectOverview.ts, so an attending rep's chat
-     counts in the data-gap scan too. */
   const attendeeRows = await c.env.DB.prepare(
     `SELECT psa.project_id, LOWER(TRIM(u.email)) AS email
        FROM project_sales_attendees psa
@@ -152,8 +148,6 @@ projectDataGaps.get("/", async (c) => {
       .select("doc_no, project_id, status, customer_so_no, ref, salesperson_id, local_total_sen, total_revenue_sen")
       .gte("so_date", since), c).order("doc_no").range(f, t));
     if (orders.error) return c.json({ error: "load_failed", reason: `orders for the sales report: ${orders.error.message}` }, 500);
-    /* A refunded bill is opened and cancelled, so its SO is the record (owner
-       2026-11-04): with no live order, a cancelled one settles the bill. */
     const index = indexOrdersByToken((orders.data ?? []).filter((o) => o.status !== "CANCELLED"));
     const cancelled = indexOrdersByToken((orders.data ?? []).filter((o) => o.status === "CANCELLED"));
     const booths = await c.env.DB.prepare(
@@ -167,7 +161,6 @@ projectDataGaps.get("/", async (c) => {
       for (const b of bills) {
         const m = matchBill(b.ref_token, pid, index);
         if (m.status === "opened" && !m.other_event) continue;
-        /* A binding, or another brand's booth of this fair: either event may hold the sale. */
         const held = index.get(b.ref_token)?.[0];
         if (m.other_event && ((held && isBinding(held)) || sameFair(boothOf(m.so_project_id), boothOf(pid)))) continue;
         if (m.other_event && m.so_project_id != null) otherIds.add(m.so_project_id);

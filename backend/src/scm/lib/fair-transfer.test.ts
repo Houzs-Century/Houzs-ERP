@@ -35,7 +35,6 @@ const FAIRS: Row[] = [
 const byIds = (binds: unknown[]) => FAIRS.filter((f) => binds.includes(f.id));
 const db = fakeDb([
   [/FROM project_activity a/, [{ id: 1, project_id: 307, note: '10/10\n1. HC13316 RM3388 Shawn', created_at: '2026-10-10 22:00:00', start_date: '2026-10-09', author_email: 'ummuaimanlm@gmail.com', author_position: 'Operation Executive' }]],
-  /* Only a LIVE fair may be moved to (archived / cancelled are filtered in SQL). */
   [/p\.archived_at IS NULL/, byIds],
   [/FROM projects p WHERE p\.id IN \(/, byIds],
 ]);
@@ -83,7 +82,6 @@ describe('transferOrdersToFairs', () => {
     });
     expect(results).toEqual([
       { docNo: 'HC-SO-2610-167', ok: true, projectId: 307, venue: 'IOIGECC', fairDate: '2026-10-10' },
-      /* Not in the report: no day of the fair to give it. */
       { docNo: 'HC-SO-2610-166', ok: true, projectId: 307, venue: 'IOIGECC', fairDate: null },
     ]);
     expect(tables.mfg_sales_orders!.map((o) => [o.doc_no, o.project_id, o.fair_match, o.venue, o.venue_source, o.fair_date])).toEqual([

@@ -1,50 +1,3 @@
-// ----------------------------------------------------------------------------
-// lorry-compliance — expiry thresholds, renewal cadence, and the "next service"
-// rules for the Fleet lorry detail. ONE module, imported by desktop and mobile
-// (the single-logic-layer rule), so a threshold can never mean 30 days on one
-// screen and 45 on the other.
-//
-// ── THE THRESHOLDS (chosen here, not handed down — see the report) ───────────
-// Uniform across all four tiles: EXPIRED or <=14 days = red, <=45 days = amber,
-// otherwise neutral. One rule for four dates because the operator's question is
-// always the same ("is this about to bite me?"), and four different threshold
-// pairs would be four things to remember for no gain. 45 days is the amber
-// because a road-tax or insurance renewal in Malaysia is an errand you want a
-// month-and-a-bit of warning on; 14 is the red because inside two weeks it has
-// stopped being a reminder and become a problem.
-//
-// ── THE CADENCE IS A LABEL, NOT A CALCULATION, AND THAT IS DELIBERATE ────────
-// Malaysian in-house goods vehicles: road tax and insurance renew ANNUALLY, and
-// a Puspakom inspection for a commercial goods vehicle is due EVERY 6 MONTHS.
-// That matches the owner's statement of the rule and this module follows it.
-// But the cadence is surfaced as TEXT on each tile and is never used to compute
-// the next expiry: the authoritative date is the one printed on the disc / cover
-// note / inspection report, which the operator types in. A computed "+12 months"
-// would silently disagree with the document after any early or late renewal, and
-// a compliance date that is confidently wrong is worse than one nobody filled in
-// — you would stop checking the real one. Encoding the cadence where it is
-// visible (the tile) rather than buried (a date formula) is the whole point.
-//
-// ── THE ODOMETER IS AS STALE AS THE LAST SERVICE, AND THE UI MUST SAY SO ─────
-// Odometer readings are entered on the SERVICE RECORD (owner option A), so the
-// only mileage figure the system has is the one written down at the last visit.
-// It follows that the system CANNOT know current mileage, and therefore cannot
-// honestly render "due in 3,000 km" — that number would silently assume the
-// lorry has not moved since the last service, which is the one thing it has
-// certainly not done.
-//
-// So: `tone` is driven by the DATE alone. The km target is reported as three
-// separate facts the reader can judge — the workshop's target, the reading it
-// was set against, and how old that reading is — and never as a countdown. This
-// module exposes `kmAfterReading` (target - reading) and NOT `kmRemaining`; the
-// name is load-bearing. If a future change adds a per-trip odometer (owner
-// option B), `readingAgeDays` becomes ~0 and a real countdown becomes possible;
-// until then, do not add one.
-//
-// This is the same class of bug as the costing card that reported a green 100%
-// margin off an empty cost table (see costing-enabled.ts): a confident number
-// computed from data that was never there.
-// ----------------------------------------------------------------------------
 
 import { todayMY } from './format';
 
@@ -105,8 +58,6 @@ export function toneForDays(days: number | null): ComplianceTone {
 
 export type ExpiryStatus = {
   tone: ComplianceTone;
-  /** null when nothing has been recorded — the tile shows "Not recorded", which
-   *  is a real state and must not be dressed up as "ok". */
   days: number | null;
   date: string | null;
 };
@@ -125,7 +76,6 @@ export function expiryPhrase(s: ExpiryStatus): string {
   return `${s.days} ${s.days === 1 ? 'day' : 'days'} left`;
 }
 
-// ── Next service ─────────────────────────────────────────────────────────────
 
 export type ServiceRecordLike = {
   service_date: string;
@@ -135,22 +85,13 @@ export type ServiceRecordLike = {
 };
 
 export type NextServiceView = {
-  /** Date-driven, and the ONLY thing that carries a colour. */
   tone: ComplianceTone;
   dueDate: string | null;
   daysToDue: number | null;
-  /** The workshop's km target, verbatim off the last record. */
   targetKm: number | null;
-  /** The odometer the target was set against, and when it was taken. Both are
-   *  rendered next to the target so the reader can see what it is relative to. */
   readingKm: number | null;
   readingDate: string | null;
-  /** How stale the reading is, in days. The UI shows this whenever a km target
-   *  exists — it is the difference between "3,000 km after a reading taken
-   *  yesterday" and "…taken 8 months ago", and the system cannot tell which. */
   readingAgeDays: number | null;
-  /** target - reading: km to run AFTER that reading. NOT km remaining. Named so
-   *  a caller cannot mistake it for a countdown. Null unless BOTH are present. */
   kmAfterReading: number | null;
 };
 
@@ -176,7 +117,6 @@ export function nextServiceView(
   const readingAge = readingDate ? daysUntil(readingDate, today) : null;
 
   return {
-    // No due DATE means no colour, even when a km target exists — see header.
     tone: toneForDays(daysToDue),
     dueDate,
     daysToDue,

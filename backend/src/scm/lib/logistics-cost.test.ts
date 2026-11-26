@@ -56,10 +56,9 @@ describe('plates and who took a DO', () => {
     expect(at(null, '099206 SINGAPORE')).toEqual({ code: 'SG', noState: false });
     expect(at('', null, '640419')).toEqual({ code: 'SG', noState: false });
     expect(at(null, 'Ayer Keroh', '75450')).toEqual({ code: 'KL', noState: true });
-    // September 2026: Singapore orders keyed with no state — SINGAPORE only on the order's third line.
     expect(at(null, null, null, 'BLK 511 woodlands Dr14 | #08-51 | 730511 SINGAPORE')).toEqual({ code: 'SG', noState: false });
-    expect(at('Selangor', null, null, 'No 3, Jalan Singapore')).toEqual({ code: 'KL', noState: false }); // a Malaysian state named wins
-    expect(at(null, null, null, 'Lot 100234, Jalan Kebun')).toEqual({ code: 'KL', noState: true });      // a long number in the lines is no postcode
+    expect(at('Selangor', null, null, 'No 3, Jalan Singapore')).toEqual({ code: 'KL', noState: false });
+    expect(at(null, null, null, 'Lot 100234, Jalan Kebun')).toEqual({ code: 'KL', noState: true });
   });
 
   test('a share is whole sen and adds back up', () => {
@@ -74,13 +73,13 @@ describe('the report', () => {
     from: '2026-10-01', to: '2026-10-31',
     dos: [
       DO('d1', '2026-10-05', 'Selangor', 100_000, { lorryId: 'L1' }),
-      DO('d2', '2026-10-05', 'Kuala Lumpur', 50_000, { plate: 'VRH 9058' }), // the same trip as d1
+      DO('d2', '2026-10-05', 'Kuala Lumpur', 50_000, { plate: 'VRH 9058' }),
       DO('d3', '2026-10-06', 'Penang', 80_000, { plate: 'vpc9058' }),
-      DO('d4', '2026-10-07', 'Penang', 20_000, { plate: 'W 1591 T' }),      // outside — the 3PL bills it
-      DO('d5', '2026-10-08', 'Selangor', 10_000),                            // nobody named, but billed
-      DO('d6', '2026-10-09', null, 5_000),                                   // nobody, nothing
-      DO('d7', '2026-10-10', 'Selangor', 7_000, { plate: 'ABC 123' }),       // a plate on no list
-      DO('d8', '2026-09-30', 'Selangor', 60_000, { lorryId: 'L1' }),         // September
+      DO('d4', '2026-10-07', 'Penang', 20_000, { plate: 'W 1591 T' }),
+      DO('d5', '2026-10-08', 'Selangor', 10_000),
+      DO('d6', '2026-10-09', null, 5_000),
+      DO('d7', '2026-10-10', 'Selangor', 7_000, { plate: 'ABC 123' }),
+      DO('d8', '2026-09-30', 'Selangor', 60_000, { lorryId: 'L1' }),
     ],
     lorries: LORRIES,
     charges: [{ doId: 'd4', billedSen: 30_000 }, { doId: 'd5', billedSen: 15_000 }, { doId: 'd8', billedSen: 999 }],
@@ -118,9 +117,7 @@ describe('the report', () => {
       { code: 'EM', name: 'SBH & SWK', dos: 0, valueSen: 0, ownSen: 0, threeplSen: 0, totalSen: 0 },
       { code: 'SG', name: 'SGD', dos: 0, valueSen: 0, ownSen: 0, threeplSen: 0, totalSen: 0 },
     ]);
-    /* The DO with no state is KL's "others" — and is counted as such. */
     expect(r.gaps.dosNoState).toBe(1);
-    /* September's DO and its charge are not October's. */
     expect(r.totals).toMatchObject({ dos: 7, ownSen: 90_000, threeplSen: 45_000, totalSen: 135_000, setupSen: 870_000, transportSen: 103_000 });
   });
 

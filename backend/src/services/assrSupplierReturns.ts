@@ -81,9 +81,6 @@ export function nextSupplierReturnRoundNo(
   return rows.reduce((m, r) => Math.max(m, r.round_no), 0) + 1;
 }
 
-/** Mint (or re-read — the registry is keyed by the trip) the trip's number and
- *  store it. Never throws: a trip must not fail to save because numbering did;
- *  listSupplierReturns retries any live trip still without one. */
 async function assignSupplierReturnRef(env: Env, roundId: number, createdBy: number | null): Promise<string | null> {
   try {
     const ref = await mintDocumentRef(env, {
@@ -120,9 +117,6 @@ export async function listSupplierReturns(env: Env, assrId: number) {
   return rows;
 }
 
-// Re-point the case's summary columns at the current (latest) round so the
-// Delivery board + HC Delivery sheet keep reading the trip in progress. Called
-// after every add / patch / archive — the ONE place the mirror is kept.
 async function reprojectLatestSupplierReturn(env: Env, assrId: number): Promise<void> {
   const rows = await env.DB.prepare(
     `SELECT round_no, pickup_at, returned_at
@@ -179,11 +173,6 @@ export async function openSupplierReturn(
     )
     .run();
 
-  // The new (empty) round is now current — mirror it (clears the case columns
-  // for the fresh trip). Reopen onto supplier pickup: transitionStage no-ops
-  // when already there and stamps closed_at only on ENTERING a terminal stage,
-  // never clears it, so a re-return on a completed/voided case clears the
-  // terminal marker itself.
   await reprojectLatestSupplierReturn(env, assrId);
   await transitionStage(env, assrId, "pending_supplier_pickup", userId, `Supplier return round ${roundNo}`, "app");
   if (before.closed_at) {
@@ -211,8 +200,6 @@ export async function openSupplierReturn(
   return round ?? null;
 }
 
-// Edit one trip's recorded fields. Re-mirrors so the case columns follow the
-// current trip when its dates change.
 export async function patchSupplierReturn(
   env: Env,
   assrId: number,
@@ -240,14 +227,6 @@ export async function patchSupplierReturn(
   return r.meta.changes > 0;
 }
 
-// A case that reached the supplier leg through the stage dropdown (or was
-// printed for the supplier) before anyone pressed "Add supplier return" had NO
-// trip, so no SVC-RTN number, and the Supplier Service Order printed without a
-// Return No. Seed trip #1 from the case's own supplier columns — only when the
-// case has never had a trip (a removed trip means ops meant it; don't revive).
-// Single guarded INSERT, so two concurrent prints can't both seed round 1. No
-// stage move and no activity row: this records the trip the case is already on.
-// Never throws — a print or stage change must not fail because of it.
 export async function ensureFirstSupplierReturn(env: Env, assrId: number, userId: number | null): Promise<void> {
   try {
     const r = await env.DB.prepare(
@@ -271,7 +250,6 @@ export async function ensureFirstSupplierReturn(env: Env, assrId: number, userId
   }
 }
 
-// Remove a mistakenly-recorded trip, then re-mirror onto the new current trip.
 export async function archiveSupplierReturn(
   env: Env,
   assrId: number,
@@ -301,9 +279,6 @@ export async function archiveSupplierReturn(
   return r.meta.changes > 0;
 }
 
-// ── Route handlers ────────────────────────────────────────────
-// Registered thin in routes/assr.ts under /:id/supplier-returns (service_cases.write,
-// inside the enforceCaseScope /:id guard). Kept here so the router stays small.
 type Ctx = Context<{ Bindings: Env }>;
 const uid = (c: Ctx): number => (c as unknown as { get?: (k: string) => number }).get?.("userId") ?? 0;
 

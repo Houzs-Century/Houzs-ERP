@@ -41,7 +41,6 @@ afterEach(() => { cleanup(); vi.mocked(authedFetch).mockClear(); });
 
 const DOC = "HC-SO-2608-010";
 
-/* Two events at MID VALLEY inside the four weeks behind 10 Aug. */
 const FAIRS = {
   date: "2026-08-10",
   running: [],
@@ -52,7 +51,6 @@ const FAIRS = {
   venues: [{ id: "1", name: "MID VALLEY" }],
 };
 
-/* Keyed on 10 Aug at MID VALLEY, linked to the MLE fair. */
 const header = {
   doc_no: DOC, status: "CONFIRMED", so_date: "2026-08-10", debtor_name: "Ada", phone: "+60123456789",
   email: "a@b.c", address1: "1 Jalan", customer_state: "Selangor", city: "Shah Alam", postcode: "40000",
@@ -101,7 +99,6 @@ describe("phone SO editor — the fair EVENT is recorded, not just the place", (
     await waitFor(() => expect(headerPatches()).toHaveLength(1));
     const body = headerPatches()[0]!;
     expect(body).toMatchObject({ fairVenue: "MID VALLEY", fairOrganizer: "REX", fairStart: "2026-07-24", fairEnd: "2026-07-26" });
-    /* Same venue, so the venue itself is not re-sent (it would drop the link). */
     expect(body).not.toHaveProperty("venue");
   });
 

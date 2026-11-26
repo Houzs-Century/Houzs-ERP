@@ -13,7 +13,6 @@ export function SearchScopeHint({
   searching?: boolean;
   countPending?: boolean;
   resultCount?: number;
-  /** Known upstream cap for client-side search (for example latest 500 rows). */
   loadedLimit?: number;
   term?: string;
   className?: string;

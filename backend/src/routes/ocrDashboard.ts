@@ -5,8 +5,6 @@ import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { mytMonth } from "../services/agent-console";
 import { loadOcrReport } from "../services/ocrStats";
 
-// GET /api/admin/ocr?month=YYYY-MM — how well the AI read scanned documents in
-// one month (MYT), for the active company. IT pages only. Read-only.
 const app = new Hono<{ Bindings: Env }>();
 app.use("*", requireItPages());
 

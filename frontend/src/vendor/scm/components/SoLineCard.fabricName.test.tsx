@@ -1,8 +1,3 @@
-/* DEV-61 (Adrian, 2026-10-08): the phone's fabric picker names the colour
- * ("GD526-16 — Ivory", and "BEETEX Chenille · Ivory" under each hit) while the
- * desktop SO line card showed the bare code only. The desktop picker now shows
- * both, from the same variants.colourLabel the phone reads and the same
- * fabric_library series the pick already stores as fabricLabel. */
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 

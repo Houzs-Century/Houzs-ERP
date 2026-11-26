@@ -46,8 +46,6 @@ export const Td = ({ children, colSpan }: { children: ReactNode; colSpan?: numbe
   <td colSpan={colSpan} style={{ padding: '6px 10px' }}>{children}</td>
 );
 
-/* `note` marks an option without removing it — an on-leave driver stays
-   selectable because the dispatcher has always had the final say. */
 export const AssignSelect = ({ label, value, onChange, options, placeholder }: {
   label: string; value: string | null; onChange: (v: string | null) => void;
   options: { id: string; label: string; note?: string }[]; placeholder: string;
@@ -70,9 +68,6 @@ export const AssignSelect = ({ label, value, onChange, options, placeholder }: {
   );
 };
 
-/* The CREW assignment card — Last Mile Delivery's "Propose crew" unit. One
-   proposed run with its editable lorry / driver / helper (crew-leave marked,
-   never hidden), the ordered stop table (ETA + windows) and per-run Apply. */
 export const AssignTripCard = ({ trip, eff, lorries, drivers, helpers, leaveRows, onOverride, onApply, applyBusy }: {
   trip: AssignedTrip;
   eff: { lorryId: string | null; driverId: string | null; helperId: string | null };
@@ -86,15 +81,12 @@ export const AssignTripCard = ({ trip, eff, lorries, drivers, helpers, leaveRows
 }) => {
   const seq = trip.sequence;
 
-  // Leave is per-DATE, and this card owns one date — so the marking is computed
-  // here, not at page level.
   const driverOpts = drivers.map((d) => ({
     id: d.id, label: d.name, note: crewLeaveLabel(findCrewLeave(leaveRows, 'driver', d.id, trip.date)),
   }));
   const helperOpts = helpers.map((h) => ({
     id: h.id, label: h.name, note: crewLeaveLabel(findCrewLeave(leaveRows, 'helper', h.id, trip.date)),
   }));
-  // The ordered rows to show: the sequenced route if present, else the plain stops.
   const rows = seq
     ? seq.sequence.map((s) => {
         const info = trip.stops.find((st) => st.ref === s.ref);
@@ -131,7 +123,6 @@ export const AssignTripCard = ({ trip, eff, lorries, drivers, helpers, leaveRows
         )}
       </div>
 
-      {/* Editable crew + lorry — the auto-assignment, all overridable. */}
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', padding: '10px 14px', borderTop: '1px solid var(--border, rgba(0,0,0,0.08))' }}>
         <AssignSelect label="Lorry" value={eff.lorryId} onChange={(v) => onOverride({ lorryId: v })}
           options={lorries.map((l) => ({ id: l.id, label: l.plate }))} placeholder="— pick a lorry —" />
@@ -153,7 +144,6 @@ export const AssignTripCard = ({ trip, eff, lorries, drivers, helpers, leaveRows
         </div>
       )}
 
-      {/* Ordered stops with ETA + delivery window. */}
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-12)' }}>
           <thead>
@@ -186,10 +176,6 @@ export const AssignTripCard = ({ trip, eff, lorries, drivers, helpers, leaveRows
   );
 };
 
-// A3 — the day's overflow: runs the own fleet could not cover. The dispatcher
-// picks a region 3PL carrier (an OUTSOURCE lorry) and captures the trip cost (the
-// seam Module C's rate-card will compute against), then assigns it via the same
-// schedule write-path — a 3PL trip does not consume an own-fleet slot.
 export const OverflowSection = ({ overflow, carriers, pick, onPick, onAssign, assigningKey }: {
   overflow: OverflowGroup[];
   carriers: ThreePlCarrier[];

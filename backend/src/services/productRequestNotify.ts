@@ -30,7 +30,6 @@ export type ProductRequestNotifyOpts = {
   companyId: number | string | null;
   requesterUserId: number | null;
   requesterName: string | null;
-  /** Already summarised, e.g. "Aurora (new) ×2; 5530-3S ×1". */
   products: string;
   lineCount: number;
 };

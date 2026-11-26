@@ -46,12 +46,9 @@ export async function readPageByPage(
 
 export type DeliveryOrderRead = {
   parsed: GrnExtracted | null;
-  // The model call failed outright (5xx, timeout, network): nothing was read and
-  // the scan must fail so it can be read again, never pass as "no lines".
   failed: boolean;
   errorMsg: string | null;
   claudeText: string;
-  // Set when the read stopped before the end of the document.
   partialNote: string | null;
 };
 

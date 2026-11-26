@@ -121,8 +121,6 @@ describe('planDeliveryDateSweep — headers', () => {
   });
 
   it('counts a document by its BOOK dates, so an overridden line still lets the header follow', () => {
-    /* The override protects that LINE, not the document: the book still says one
-       date for the whole document, and the header is a different field. */
     const { lines, headers: h } = planDeliveryDateSweep(
       book([['HC-SO-1', 1, '2026-09-19']]),
       [line({ id: 'a', line_delivery_date_overridden: true })],

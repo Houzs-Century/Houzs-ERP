@@ -1,31 +1,3 @@
-/**
- * Per-brand auto cost-line engine (mig 063).
- *
- * One row per project gets up to three derived cost lines —
- * transport, merchandise, commission — recomputed every time a
- * non-auto sales / cogs line changes. The lines are tagged
- * `auto_source` ('auto:transport' | 'auto:merchandise' |
- * 'auto:commission') so the UI can lock them and this service can
- * idempotently replace them.
- *
- * Wiring:
- *   - createLedgerLine / patchLedgerLine / archiveLedgerLine all call
- *     `recomputeAutoCostLines` after their non-auto writes complete.
- *     Auto-source writes do NOT trigger recursion.
- *   - The category breakdown SQL (/finance/by-project) groups by
- *     `category`, so auto rows naturally sum into the existing
- *     transport / commission / merchandise columns. No SQL changes.
- *
- * Boost rule (per brand, in `project_cost_rates`):
- *   commission_normal_pct applies unless BOTH gates pass:
- *     gp_pct ≥ boost_min_gp_pct  (skipped when NULL)
- *     sales  ≥ boost_min_sales   (skipped when NULL)
- *   When both pass, commission_boost_pct replaces normal.
- *
- * Skipping the engine: a project with no rate row for its brand gets
- * no auto lines (and any stale ones are archived). Same for projects
- * whose total sales is zero.
- */
 import type { Env } from "../types";
 
 interface RateRow {
@@ -38,11 +10,6 @@ interface RateRow {
 }
 
 interface AutoSpec {
-  // 2026-05-08 — transport now lands in `transport_fee` (rate-driven %
-  // of sales), leaving the new `transport_setup_dismantle` slug for
-  // the actual logistics cost humans enter manually. The auto_source
-  // tag keeps using `auto:transport` for stable identity across the
-  // existing backfill SQL — only the `category` slug changed.
   category: "transport_fee" | "merchandise" | "commission";
   source: "auto:transport" | "auto:merchandise" | "auto:commission";
   amount: number;
@@ -60,9 +27,6 @@ export async function recomputeAutoCostLines(
     .bind(projectId)
     .first<{ brand: string | null; archived_at: string | null }>();
 
-  // Archived projects keep their auto lines as historical record;
-  // deleting them on archive would break audit. New rates only kick
-  // in for live projects.
   if (!project || project.archived_at) {
     return;
   }
@@ -85,16 +49,6 @@ export async function recomputeAutoCostLines(
     return;
   }
 
-  // Sum non-auto lines only. Auto rows are excluded from the base
-  // because they're outputs of this function — counting them would
-  // create a feedback loop on commission (commission of commission).
-  //
-  // COGS is summed across the whole family — the legacy `cogs` slug plus the
-  // three product sub-categories (matt/sofa, bedframe, accessories) — so the GP
-  // used for the commission boost gate matches the "COGS Total" shown in the
-  // Financial Snapshot, which folds the same four categories together. Reading
-  // only `cogs` here would see 0 when COGS is entered split, inflate GP to
-  // ~100%, and wrongly trip the boost rate.
   const sums = await env.DB.prepare(
     `SELECT
        COALESCE(SUM(CASE WHEN kind='income' AND category='sales' THEN amount END), 0) AS sales,
@@ -106,11 +60,6 @@ export async function recomputeAutoCostLines(
   )
     .bind(projectId)
     .first<{ sales: number; cogs: number }>();
-  /* The bills keyed as sales entries are sales too, as the event P&L (eventPnlBatch.ts) and the
-     Total Sales rollup (syncFinanceRollup) count them. Read from the typed lines alone, a fair whose
-     sales are only its bills had its auto commission / transport / merchandise purged on the next
-     ledger edit — taking them out of Finance's P&L (2026-11-16: 8 June fairs, once their duplicate
-     typed sales line is archived). */
   const entries = await env.DB.prepare(
     `SELECT COALESCE(SUM(amount), 0) AS sales FROM sales_entries
       WHERE project_id = ? AND archived_at IS NULL AND status != 'void'`,
@@ -169,8 +118,6 @@ export async function recomputeAutoCostLines(
 }
 
 async function purgeAuto(env: Env, projectId: number): Promise<void> {
-  // Hard delete: auto rows are derived state, never user data, so we
-  // don't need an archived_at trail. Re-inserts on next recompute.
   await env.DB.prepare(
     `DELETE FROM project_finance_lines
        WHERE project_id = ? AND auto_source IS NOT NULL`,
@@ -185,10 +132,6 @@ async function upsertAutoLines(
   specs: AutoSpec[],
   userId: number,
 ): Promise<void> {
-  // Read existing auto rows in one shot, then update each in place if
-  // present and INSERT the rest. This keeps the line `id` stable
-  // across recomputes — useful for the activity log and any future
-  // attachment ties.
   const existing = await env.DB.prepare(
     `SELECT id, auto_source FROM project_finance_lines
       WHERE project_id = ? AND auto_source IS NOT NULL`,
@@ -212,10 +155,6 @@ async function upsertAutoLines(
         .run();
       bySource.delete(spec.source);
     } else {
-      // Stamp company_id from the parent project (mig 0170) so the
-      // /finance/pnl cost pull can filter by the active company —
-      // auto-recomputed cost lines went unscoped alongside manual ones
-      // until this fix.
       await env.DB.prepare(
         `INSERT INTO project_finance_lines
            (project_id, kind, category, description, amount,
@@ -236,9 +175,6 @@ async function upsertAutoLines(
     }
   }
 
-  // Anything left in bySource is an auto row whose rule disappeared
-  // (e.g. brand changed and the new brand has no rate card with that
-  // category). Hard-delete the remnants.
   if (bySource.size > 0) {
     const ids = [...bySource.values()];
     const placeholders = ids.map(() => "?").join(",");
@@ -255,6 +191,5 @@ function round2(n: number): number {
 }
 
 function formatPct(n: number): string {
-  // Trim trailing zeros so 14.0 → "14%", 13.5 → "13.5%".
   return `${Number.isInteger(n) ? n.toFixed(0) : String(n)}%`;
 }

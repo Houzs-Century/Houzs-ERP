@@ -1,6 +1,3 @@
-/* From-scratch PO: the supplier's flat cost is the price in force on the PO
-   date, from supplier_binding_price_history. No row on or before the date means
-   the current binding price (a binding with no history keeps working). Pure. */
 
 export type PriceHistoryRow = {
   item_code: string;

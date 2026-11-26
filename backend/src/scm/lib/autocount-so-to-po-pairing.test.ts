@@ -3,25 +3,6 @@ import { enqueuePoCreate } from './autocount-outbox';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
 import { fakeSb, type Row } from './fake-postgrest';
 
-/* WHICH QUANTITY GOES WITH WHICH SOURCE LINE on a /so-to-po — 2026-09-14.
- *
- * composeSoToPo zips `shape.dtlKeys` with the composed details BY INDEX, and the
- * host applies each Detail's Qty / UnitPrice / Location / DeliveryDate to the
- * purchase line it transferred from THAT Detail's DtlKey (AcSyncService.cs
- * SoToPo phase two, `qtyByKey` and `EditDetail(newKeyBySourceKey[srcKey])`).
- * The details are read in (created_at, id) order; the keys came from
- * readPoTransferFacts, which read the purchase lines with NO order at all.
- *
- * Production (probe run 34826755295) — HC-PO-2609-032 sent
- *   Details [{DtlKey 345768, Qty 2}, {DtlKey 345765, Qty 1}, {DtlKey 345764, Qty 1}]
- * where 345768 is the CROWN (SS+S) sales line (qty 1) and 345764 is STAR-(SS)
- * (qty 2): the purchase order in the book was told CROWN x2 and STAR (SS) x1,
- * each at the other's cost. HC-PO-2609-010, -068 and -086 carry the same reversal.
- *
- * The fixture inserts the purchase lines in the REVERSE of their (created_at, id)
- * order — which is exactly the order the unordered read came back in on
- * production — so an unordered read and an ordered one disagree.
- */
 const LINES: Row[] = [
   { id: 'pl-1', so: 'so-a', key: 345764, code: 'STAR-(SS)', qty: 2, price: 50_000 },
   { id: 'pl-2', so: 'so-b', key: 345765, code: 'STAR-(K)', qty: 1, price: 60_000 },
@@ -66,7 +47,6 @@ describe('/so-to-po pairs every source key with ITS OWN line', () => {
       const line = byKey.get(d.DtlKey)!;
       expect({ key: d.DtlKey, qty: d.Qty, price: d.UnitPrice }).toEqual({ key: line.key, qty: line.qty, price: line.price / 100 });
     }
-    /* And the key store's ids answer to the same order the keys were sent in. */
     const byId = new Map(LINES.map((l) => [l.id, l]));
     expect(payload.lineWriteback.ids.map((g) => byId.get(g[0])!.key)).toEqual(payload.body.DtlKeys);
   });

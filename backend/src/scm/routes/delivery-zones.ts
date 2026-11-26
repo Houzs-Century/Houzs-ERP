@@ -1,27 +1,3 @@
-// ----------------------------------------------------------------------------
-// /delivery-zones — Fleet Module A1: postcode -> zone map admin, the AUTO-PROPOSE
-// delivery-date action, and reversible day locks.
-//
-// THREE surfaces, one router:
-//   1. CRUD over scm.delivery_zone_postcodes (mig 0205) — the company-editable
-//      postcode-prefix -> area-zone map. Ships empty; until the owner customises
-//      (or runs seed-delivery-zones.mjs) classification falls back to the in-code
-//      DEFAULT_ZONE_PREFIX_MAP (zone-classify.ts), so the map always resolves.
-//   2. POST /propose — the auto-propose action. Takes the PENDING_SCHEDULE orders
-//      the dispatcher picked (their SO doc numbers) + a depot warehouse, derives
-//      each order's ZONE (postcode) + SET count (SO lines), and PACKS them into
-//      lorry-days under each lorry's capacity ceiling (first-ceiling-wins; far
-//      zones dedicated + accumulate). Returns a REVERSIBLE, DISPLAY-ONLY proposal
-//      grouped day -> group -> lorry. Writes NOTHING; it is not a scheduler. The
-//      owner reviews it and the established schedule write-path (PATCH
-//      /delivery-planning/so/:id/schedule -> amended_delivery_date) persists the
-//      accepted dates. We never touch customer_delivery_date.
-//   3. Day locks (scm.delivery_day_locks) — freeze / unfreeze a (warehouse, date)
-//      proposed schedule. Reversible: unlock = DELETE.
-//
-// Mounted at '/delivery-zones' in scm/index.ts behind
-// scmAreaGuard('scm.transportation.drivers') — same area as the rest of TMS.
-// ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -58,9 +34,6 @@ import { pgrestIn } from '../lib/pgrest-in-list';
 export const deliveryZones = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryZones.use('*', supabaseAuth);
 
-/* Exported for the Delivery Planning /geo read (Option B side map), which
-   derives each day-pin's zone through the SAME company map + default fallback
-   this router owns — one zone rule, two readers. */
 export const MAP_COLS = 'id, zone, prefix_start, prefix_end, label, is_active, created_at, updated_at';
 
 export type MapRow = {
@@ -102,7 +75,6 @@ export function toPrefixMap(rows: MapRow[]): { map: ZonePrefixRule[]; usingDefau
   };
 }
 
-// ── GET / — the company's zone map (falls back to the default, flagged). ──────
 deliveryZones.get('/', async (c) => {
   const sb = c.get('supabase');
   const { data, error } = await paginateAll<MapRow>((from, to) =>
@@ -116,7 +88,6 @@ deliveryZones.get('/', async (c) => {
   return c.json({
     zones: rows.map(mapOut),
     usingDefault,
-    // The in-code default, so the editor can offer "load the default map".
     defaultMap: DEFAULT_ZONE_PREFIX_MAP.map((r) => ({ zone: r.zone, prefixStart: r.prefixStart, prefixEnd: r.prefixEnd })),
     knownZones: [...ZONE_SET],
   });
@@ -131,7 +102,6 @@ const zoneCreateSchema = z.object({
   isActive: z.boolean().optional(),
 }).refine((v) => v.prefixStart <= v.prefixEnd, { message: 'prefixStart must be <= prefixEnd' });
 
-// ── POST / — add a zone rule. ─────────────────────────────────────────────────
 deliveryZones.post('/', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -157,14 +127,6 @@ deliveryZones.post('/', async (c) => {
   }).select(MAP_COLS).single();
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_rule', reason: 'That exact zone + prefix range already exists.' }, 409);
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
@@ -179,7 +141,6 @@ const zonePatchSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
-// ── PATCH /:id — edit a zone rule. STRICT company scope. ──────────────────────
 deliveryZones.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -206,8 +167,6 @@ deliveryZones.patch('/:id', async (c) => {
   updates.updated_at = new Date().toISOString();
 
   const sb = c.get('supabase');
-  // A range flip (start > end) trips the table CHECK, a 500. When the edit sends
-  // only one end, check it against the stored other end for a clean 400.
   if (p.prefixStart !== undefined || p.prefixEnd !== undefined) {
     let stored = { prefixStart: p.prefixStart ?? 0, prefixEnd: p.prefixEnd ?? 99 };
     if (p.prefixStart === undefined || p.prefixEnd === undefined) {
@@ -237,7 +196,6 @@ deliveryZones.patch('/:id', async (c) => {
   return c.json({ zone: mapOut(data as MapRow) });
 });
 
-// ── DELETE /:id — remove a zone rule. STRICT company scope. ────────────────────
 deliveryZones.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -255,7 +213,6 @@ deliveryZones.delete('/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── The auto-propose action ───────────────────────────────────────────────────
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const proposeSchema = z.object({
@@ -266,7 +223,6 @@ const proposeSchema = z.object({
   defaultMaxRevenueSen: z.number().int().min(1).optional(),
 });
 
-/** Malaysian "today" (UTC+8) as YYYY-MM-DD — the default proposal start date. */
 function todayMY(): string {
   return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
@@ -282,9 +238,6 @@ function normCategory(raw: string): SetLineCategory {
   return 'OTHERS';
 }
 
-/** The columns the packer + the A2 sequencer both read off an SO header. The
- *  A1 packer uses postcode + revenue; A2 additionally geocodes (state/country)
- *  and reads the residence rule by building_type. One superset select serves both. */
 const SO_PACK_COLS = 'doc_no, debtor_name, address1, address2, postcode, customer_state, customer_country, building_type, local_total_sen';
 
 interface PackContext {
@@ -297,8 +250,6 @@ interface PackContext {
   soByDoc: Map<string, Record<string, unknown>>;
 }
 
-/** Load + pack — the SHARED core of `/propose` (A1) and `/sequence-assign` (A2),
- *  so the two can never disagree about which orders group onto which lorry-day. */
 async function loadAndPack(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   c: any,
@@ -307,14 +258,11 @@ async function loadAndPack(
   const sb = c.get('supabase');
   const { soDocNos, depotWarehouseId, startDate, defaultMaxSets, defaultMaxRevenueSen } = params;
 
-  // 1. Company zone map (falls back to the in-code default when unset).
   const { data: mapRows } = await paginateAll<MapRow>((from, to) =>
-    /* A fixed order: when two rules of the same width overlap, the same one wins on every read. */
     scopeToCompany(sb.from('delivery_zone_postcodes').select(MAP_COLS), c).order('id').range(from, to),
   );
   const { map: zoneMap, usingDefault } = toPrefixMap(mapRows ?? []);
 
-  // 2. Load the selected SOs (address + revenue + geocode/window inputs).
   const { data: soRows, error: soErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders').select(SO_PACK_COLS).in('doc_no', soDocNos),
     c,
@@ -325,7 +273,6 @@ async function loadAndPack(
     soByDoc.set(String((r.docNo ?? r.doc_no) as string), r);
   }
 
-  // 3. Line items for those SOs (set count + which warehouse holds the stock).
   const { data: itemRows } = await paginateAll<{
     doc_no: string; item_group: string | null; item_code: string | null;
     qty: number | null; cancelled: boolean | null; warehouse_id: string | null;
@@ -365,17 +312,11 @@ async function loadAndPack(
     linesByDoc.set(dn, arr);
   }
 
-  // 4. Depot lorries — active, in-house, optionally filtered to the depot.
-  // WS3: region gating is LENIENT — a lorry pinned to this depot OR not pinned to
-  // any region (warehouse_id NULL) is eligible. Gating only bites once a lorry is
-  // given a home warehouse, matching the owner's model and mirroring the 3PL
-  // carrier filter below; a strict .eq would hide every not-yet-configured lorry.
   let lq = sb.from('lorries')
     .select('id, plate, active, is_internal, warehouse_id, max_sets, max_revenue_sen, capacity_layer')
     .eq('active', true)
     .eq('is_internal', true)
     .order('plate');
-  // A lorry serving several warehouses is eligible at each of them; none set = any.
   if (depotWarehouseId) lq = lq.or(`warehouse_ids.eq.{},warehouse_ids.cs.{${depotWarehouseId}}`);
   const { data: lorryRows, error: lorryErr } = await lq;
   if (lorryErr) return { ok: false, status: 500, error: 'load_failed', reason: lorryErr.message };
@@ -394,7 +335,6 @@ async function loadAndPack(
     };
   });
 
-  // 5. Build pack orders; unzoned orders (no postcode / unmapped) are reported.
   const orders: PackOrder[] = [];
   const unzoned: Array<{ ref: string; debtorName: string | null; reason: string }> = [];
   const enrich = new Map<string, { debtorName: string | null; sets: number; revenueSen: number; zone: string }>();
@@ -423,7 +363,6 @@ async function loadAndPack(
     enrich.set(docNo, { debtorName, sets: sc.sets, revenueSen, zone: zr.zone });
   }
 
-  // Fuller-first fill: pack the biggest orders first (sets, then revenue).
   orders.sort((a, b) => (b.sets - a.sets) || (b.revenueSen - a.revenueSen) || a.ref.localeCompare(b.ref));
 
   const result = packProposals({
@@ -469,24 +408,6 @@ deliveryZones.post('/propose', async (c) => {
   });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
-   POST /sequence-assign — Fleet Module A2. Takes a locked day's zone-packed
-   groups (re-derived through the SAME A1 packer) and turns each into an ordered,
-   crewed trip:
-     1. SEQUENCE  — order each group's stops via the Phase-3 nearest-neighbour
-        sequencer (propose-route.ts), depot = the warehouse origin, with per-stop
-        arrival / start / finish times + ETA offsets. Reuses buildSequenceProposal.
-     2. ASSIGN    — greedy lorry + driver + helper from the depot's AVAILABLE
-        fleet (assignFleet). A lorry Module B (fleet-status) has grounded —
-        BREAKDOWN / COMPLIANCE_BLOCKED / OUT_OF_SERVICE / a maintenance window —
-        is EXCLUDED. Capacity fit + day-load balancing folded in.
-     3. WINDOWS   — each stop carries its residence-rule delivery window.
-   DISPLAY-ONLY. Writes NOTHING — everything is overridable on screen, and the
-   established schedule write-path (PATCH /delivery-planning/so/:id/schedule)
-   persists the accepted date + lorry + driver + helper + sequence. Google is
-   hard-gated on GOOGLE_MAPS_API_KEY: unset -> the trips still come back crewed
-   and grouped, just without a computed route (the plain order is kept).
-   ─────────────────────────────────────────────────────────────────────────*/
 const sequenceAssignSchema = z.object({
   soDocNos: z.array(z.string().trim().min(1)).min(1).max(2000),
   depotWarehouseId: z.string().uuid().nullable().optional(),
@@ -494,7 +415,6 @@ const sequenceAssignSchema = z.object({
   departTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'departTime must be HH:MM').optional(),
   defaultMaxSets: z.number().int().min(1).max(1000).optional(),
   defaultMaxRevenueSen: z.number().int().min(1).optional(),
-  // A3: own-fleet trips per lorry per day before the rest spill to 3PL overflow.
   maxTripsPerLorryPerDay: z.number().int().min(1).max(20).optional(),
 });
 
@@ -513,12 +433,10 @@ deliveryZones.post('/sequence-assign', async (c) => {
   const defaultMaxSets = parsed.data.defaultMaxSets ?? 10;
   const defaultMaxRevenueSen = parsed.data.defaultMaxRevenueSen ?? 3_000_000;
 
-  // 1. Pack (A1) — the SAME grouping the review screen shows.
   const packed = await loadAndPack(c, { soDocNos, depotWarehouseId: depotWarehouseId ?? null, startDate, defaultMaxSets, defaultMaxRevenueSen });
   if (!packed.ok) return c.json({ error: packed.error, reason: packed.reason }, packed.status);
   const { ctx } = packed;
 
-  // 2. Turn each packed lorry-trip into a crew-able GROUP.
   const groups: AssignGroup[] = [];
   for (const day of ctx.result.days) {
     day.lorries.forEach((l, idx) => {
@@ -533,10 +451,8 @@ deliveryZones.post('/sequence-assign', async (c) => {
       });
     });
   }
-  // Biggest-first, so the fuller trips get first pick of the fleet.
   groups.sort((a, b) => (b.sets - a.sets) || (b.revenueSen - a.revenueSen) || a.key.localeCompare(b.key));
 
-  // 3. Available fleet (Module B) + crew rosters.
   const today = todayMY();
   const availLorries = await loadAvailableLorries(sb, { depotWarehouseId: depotWarehouseId ?? null, today });
   const { data: driverRows } = await sb.from('drivers').select('id, name, vehicle').eq('active', true);
@@ -548,17 +464,11 @@ deliveryZones.post('/sequence-assign', async (c) => {
     id: String(h.id), name: String(h.name ?? ''),
   }));
 
-  // A3: driver leave over the planning window (the packed group dates), so a
-  // driver on leave is not auto-crewed onto a trip that falls on a leave day.
   const groupDates = groups.map((g) => g.date).filter((d) => ISO_DATE.test(d));
   const leaveFrom = groupDates.length ? groupDates.reduce((m, d) => (d < m ? d : m), groupDates[0]) : startDate;
   const leaveTo = groupDates.length ? groupDates.reduce((m, d) => (d > m ? d : m), groupDates[0]) : startDate;
   const { ranges: driverLeave, excludedDrivers, helperRanges: helperLeave, excludedHelpers } = await loadDriverLeave(sb, { from: leaveFrom, to: leaveTo });
 
-  // A3: the region's 3PL carriers — OUTSOURCE / non-internal lorries the
-  // dispatcher can assign overflow trips to. Depot-scoped when a depot is picked,
-  // plus any carrier not pinned to a warehouse (a shared 3PL). Reuses
-  // scm.lorries (type='OUTSOURCE', is_internal=false) — no parallel carrier master.
   const { data: carrierRows } = await sb.from('lorries')
     .select('id, plate, warehouse_id, type')
     .eq('active', true).eq('is_internal', false).order('plate');
@@ -584,7 +494,6 @@ deliveryZones.post('/sequence-assign', async (c) => {
     helperLeave,
   });
 
-  // 4. Residence rules — building_type -> service duration + window.
   const { data: ruleRows } = await scopeToAllowedCompanies(
     sb.from('delivery_residence_rules')
       .select('building_type, service_duration_minutes, earliest_delivery_time, latest_delivery_time, is_active'),
@@ -604,7 +513,6 @@ deliveryZones.post('/sequence-assign', async (c) => {
   const ruleFor = (buildingType: string | null) =>
     ruleByType.get((buildingType ?? '').trim().toLowerCase()) ?? { service: DEFAULT_SERVICE_MIN, earliest: null, latest: null };
 
-  // 5. Geocode the depot once (cache-first), then sequence each assigned trip.
   const configured = !!c.env.GOOGLE_MAPS_API_KEY;
   let depotOut: { warehouseId: string | null; address: string; lat: number; lng: number } | null = null;
   if (configured && depotWarehouseId) {
@@ -622,8 +530,6 @@ deliveryZones.post('/sequence-assign', async (c) => {
     }
   }
 
-  // Build the per-stop window/service info for every referenced order, geocoding
-  // cache-first (only when Google is configured + the depot resolved).
   const stopInfo = (docNo: string) => {
     const row = ctx.soByDoc.get(docNo);
     const debtorName = ((row?.debtorName ?? row?.debtor_name) ?? null) as string | null;
@@ -663,7 +569,6 @@ deliveryZones.post('/sequence-assign', async (c) => {
     } else if (!depotOut) {
       routeReason = 'depot could not be geocoded — set the warehouse address to sequence the route';
     } else {
-      // Geocode this trip's stops (cache-first), preserving order.
       const geocoded: Array<{ ref: string; lat: number; lng: number; svc: number; earliest: number | null; latest: number | null }> = [];
       for (const s of stops) {
         if (!s.address.trim()) { ungeocoded.push(s.ref); continue; }
@@ -719,9 +624,6 @@ deliveryZones.post('/sequence-assign', async (c) => {
     dispatchableCount: availLorries.filter((l) => l.dispatchable).length,
     trips,
     excludedLorries: assigned.excludedLorries,
-    // A3/WS2: drivers and helpers withheld from the auto-pick because they are on
-    // leave, and the groups the own fleet could not cover (3PL-assignment
-    // candidates) plus the region's available 3PL carriers.
     excludedDrivers,
     excludedHelpers,
     overflow: assigned.overflow,
@@ -733,7 +635,6 @@ deliveryZones.post('/sequence-assign', async (c) => {
   });
 });
 
-// ── Day locks ─────────────────────────────────────────────────────────────────
 
 const LOCK_COLS = 'id, warehouse_id, delivery_date, notes, locked_by, locked_at';
 function lockOut(r: Record<string, unknown>) {
@@ -747,7 +648,6 @@ function lockOut(r: Record<string, unknown>) {
   };
 }
 
-// GET /locks?warehouseId=&from=&to= — the locked days for a depot / range.
 deliveryZones.get('/locks', async (c) => {
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
@@ -768,8 +668,6 @@ const lockSchema = z.object({
   notes: z.string().trim().max(500).nullable().optional(),
 });
 
-// POST /locks — lock a (warehouse, date). Idempotent: re-locking the same day
-// returns the existing lock rather than a 409.
 deliveryZones.post('/locks', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -782,9 +680,6 @@ deliveryZones.post('/locks', async (c) => {
 
   const sb = c.get('supabase');
   const row = { company_id: co.companyId, warehouse_id: p.warehouseId ?? null, delivery_date: p.deliveryDate, notes: p.notes ?? null, locked_by: user?.id ?? null };
-  /* An all-warehouse lock has a NULL warehouse, which the (company, warehouse, date)
-     unique key never matches, so upsert added a second one each time. Update the
-     existing all-warehouse lock of that day instead. */
   let existingId: string | null = null;
   if (row.warehouse_id == null) {
     const { data: found, error: findErr } = await scopeToCompany(sb.from('delivery_day_locks').select('id'), c)
@@ -802,7 +697,6 @@ deliveryZones.post('/locks', async (c) => {
   return c.json({ lock: lockOut(data as Record<string, unknown>) }, 201);
 });
 
-// DELETE /locks/:id — unlock (reversible). STRICT company scope.
 deliveryZones.delete('/locks/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);

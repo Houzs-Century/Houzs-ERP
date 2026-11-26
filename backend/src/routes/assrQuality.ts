@@ -28,14 +28,12 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
   const qf = c.req.query("from") ?? ""; const qt = c.req.query("to") ?? "";
   const from = ISO.test(qf) ? qf : `${today.slice(0, 7)}-01`;
   const to = ISO.test(qt) && qt >= from ? qt : today;
-  /* Supplier figures: at least the three months up to the period end. */
   const threeMonths = new Date(Date.parse(`${to}T00:00:00Z`) - 89 * 86400000).toISOString().slice(0, 10);
   const rateFrom = from < threeMonths ? from : threeMonths;
   const since = new Date(Date.parse(`${to}T00:00:00Z`) - 730 * 86400000).toISOString().slice(0, 10);
   const scope = await assrVisibilityScope(c);
   const filter = overviewFilter(c);
   const vis = withOverviewFilter(scope, filter)("c.");
-  /* The filter choices come from the unfiltered cases, so a picked supplier does not empty its own list. */
   const all = scope("c.");
   const co = allowedCompaniesSql(c, "c.company_id");
 
@@ -47,7 +45,6 @@ app.get("/", requirePermission("service_cases.read"), async (c) => {
   ).bind(since, ...vis.binds).all<{ id: number; stage: string; opened_at: string; closed_at: string | null; creditor_code: string | null; assr_no: string | null; customer_name: string | null; complaint_issue: string | null; issue_category: string | null }>();
   const cases: QCase[] = rows.results.map((r) => ({ id: Number(r.id), stage: String(r.stage), openedAt: String(r.opened_at), closedAt: r.closed_at ? String(r.closed_at) : null, creditor: r.creditor_code || null, assrNo: r.assr_no, customer: r.customer_name, complaint: r.complaint_issue, issueCategory: r.issue_category }));
 
-  /* Ids are integers read from the table just above, so inlining them is safe. */
   const itemsByCase = new Map<number, number>();
   const history: QStageRow[] = [];
   for (let i = 0; i < cases.length; i += 500) {

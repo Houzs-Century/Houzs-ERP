@@ -1,8 +1,3 @@
-// Pending Item Ready (Operation Dept 2026-11-09): supplier DOs, QC inspection,
-// the current supplier return trip and the QC report in one stage. The trip is
-// read here and edited in Pickup / Return; the QC Result is that trip's own
-// qc_result, so it is never typed twice. Kept out of ServiceCases.tsx, which is
-// at its size ceiling.
 import { useState, type ReactElement, type ReactNode } from "react";
 import { ArrowLeftRight, FileText, Image, Search } from "lucide-react";
 import { api } from "../../api/client";

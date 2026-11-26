@@ -1,5 +1,3 @@
-/* Render tests for the lorry card — the office board's centrepiece (owner-approved
-   redesign 2026-11-18). Pure presentational (props in, no network/context). */
 import { describe, expect, test } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { ComponentProps } from 'react';
@@ -120,7 +118,7 @@ describe('exactly one status pill per stop', () => {
       doc({ soDocNo: 'DP:1', rowType: 'dp', amountSen: 0, order: order({ row_type: 'dp', dp_job_type: 'SETUP' }) }),
     ] };
     renderCard({ run: r, visibleDocs: r.docs });
-    expect(screen.getAllByText(/^RM/)).toHaveLength(2); // header total + the delivery row
+    expect(screen.getAllByText(/^RM/)).toHaveLength(2);
   });
 });
 

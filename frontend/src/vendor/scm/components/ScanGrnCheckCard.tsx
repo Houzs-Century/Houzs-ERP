@@ -39,8 +39,6 @@ type Props = {
 /** In the open list an option also says its PO and what is owed. */
 export const skuOption = (o: SkuOption) => (o.detail ? `${o.label} · ${o.detail}` : o.label);
 
-/** The racks of the row's warehouse, as on the GRN page. A rack read off the paper
- *  stays shown until it is changed, even if it is not one of them. */
 const WH_TONES = [styles.wh0, styles.wh1, styles.wh2, styles.wh3, styles.wh4, styles.wh5, styles.wh6, styles.wh7];
 
 const rackShort = (rack: string): string => rack.replace(/^\s*rack\s*/i, '');

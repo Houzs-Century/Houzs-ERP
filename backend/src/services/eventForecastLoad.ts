@@ -65,7 +65,6 @@ export async function findLastEvent(db: Db, current: BaselineCandidate): Promise
   return pickLastEvent(current, res.results.map((r) => ({ ...r, id: Number(r.id), company_id: Number(r.company_id) })));
 }
 
-/* ── The Expo Map reference ──────────────────────────────────────────────── */
 
 export type ExpoMapFile = { id: number; file_name: string; r2_key: string; item_title: string };
 const isExpoItem = (title: string | null, section: string | null): boolean =>
@@ -97,11 +96,9 @@ export async function readExpoMapFiles(db: Db, projectId: number): Promise<ExpoM
     .map((r) => ({ id: Number(r.id), file_name: r.file_name, r2_key: r.r2_key, item_title: r.item_title }));
 }
 
-/* ── The event page ──────────────────────────────────────────────────────── */
 
 export type DetailForecast = ForecastLayers & {
   last_event: { id: number; code: string | null; name: string | null; start_date: string | null } | null;
-  /** Why the last event's figures could not be read; null when they were. */
   last_event_error: string | null;
 };
 /** The last event's Expo Map files, shown until this event's Filled Floorplan has a file.
@@ -120,7 +117,6 @@ export async function loadDetailLayers(
   project: BaselineCandidate & { end_date: string | null },
   pnl: EventPnl | null,
   booksRows: readonly string[],
-  /** The event's own checklist rows, sections and task attachments, as the page read them. */
   own: { checklist: readonly unknown[]; sections: readonly unknown[]; attachments: readonly unknown[] },
   costCategories: readonly string[],
 ): Promise<{ forecast: DetailForecast | null; expoMap: LastEventExpoMap | null }> {

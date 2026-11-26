@@ -1,32 +1,3 @@
-// ----------------------------------------------------------------------------
-// autocountArchive — CLEARING A FINISHED DOCUMENT off the AutoCount Sync page,
-// and putting it back.
-//
-// WHY IT EXISTS AT ALL. The owner asked twice for three old test documents to
-// stop appearing on System · AutoCount Sync. Measured against production on
-// 2026-09-08, those three documents WERE the page: the whole queue for Houzs
-// Century is 32 rows over HC-SO-013361, HC-SO-013393 and HC-SO-013394, every one
-// an old write-back test, every one in the account book, under the green banner
-// "Everything is in AutoCount. Nothing is waiting and nothing was refused."
-//
-// NOTHING IS DELETED AND NOTHING IS REWRITTEN, and both halves are load-bearing.
-// The queue is the audit trail of what the ERP told AutoCount and its own table
-// comment forbids deleting a row. And the obvious cheap alternative — writing a
-// marker onto the row's reason — is worse than doing nothing: the re-queue
-// marker is matched as a PREFIX, so a second marker in front of it would stop a
-// settled row reading as Replaced and push it back onto Not accepted, which is
-// the opposite of what was asked. The server keeps this on a column of its own
-// for exactly that reason.
-//
-// WHY A SEPARATE FILE FROM autocountOutbox.ts. The 2,000-line cap, and nothing
-// else — the same reason autocountRegister.ts is separate, stated in its own
-// header. All three are ONE layer: imported by both surfaces and by nothing but
-// them.
-//
-// PRESENTATION ONLY. Every rule about WHETHER a document may be cleared is the
-// server's (scm/lib/autocount-outbox-archive.ts); `acDocCanArchive` below is a
-// hint that keeps a knowably-useless button off a row, never a gate.
-// ----------------------------------------------------------------------------
 
 import { api } from "../api/client";
 import type {
@@ -51,13 +22,10 @@ export interface AcArchiveResult {
   archived?: boolean;
   restored?: boolean;
   code: string;
-  /** The server's own sentence. Rendered verbatim, never rewritten here. */
   message: string;
   doc_type?: string;
   doc_no?: string;
-  /** How many sends moved. */
   rows: number;
-  /** How many sends are the REASON one did not. */
   blocked: number;
 }
 
@@ -109,8 +77,6 @@ export function acShelfNote(r: AcArchiveResult): AcRequeueNote {
     quote: null,
     quoteTechnical: null,
     ancestors: [],
-    /* Nothing about the document's REFUSAL changed — taking a finished document
-       off a list is not a claim about AutoCount. */
     clearsReason: false,
   };
 }
@@ -133,11 +99,6 @@ export function acShelfFailedNote(text: string, e: unknown): AcRequeueNote {
   };
 }
 
-/* "CLEAR", NOT "ARCHIVE" OR "HIDE". The reader of this page is deciding whether
-   pressing it destroys anything, and "archive" is a word people associate with
-   putting things beyond reach. "Clear" says what it does to the LIST, which is
-   the only thing it touches. The Cleared tab is where the document goes, so the
-   word is the same in both places. */
 export const AC_ARCHIVE_LABEL = "Clear";
 export const AC_ARCHIVE_BUSY_LABEL = "Clearing";
 export const AC_RESTORE_LABEL = "Put back";

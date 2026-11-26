@@ -1,6 +1,3 @@
-// Bank statement reconciliation — the hooks behind the layer-4 screen
-// (accounting phase 4). Transport only, like settlement-queries: every rule
-// lives on the server, so the page cannot drift from what actually posts.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
@@ -11,15 +8,11 @@ import { retryUnlessClientError } from '../../lib/retryPolicy';
 export type BankAccountSetup = {
   account_code: string;
   bank_code: string;
-  /** The bank as people say it ("Maybank") and the account's own name off the
-      chart — the Bank statements cards print both. Optional only for the
-      minute a newer screen reads an older server. */
   bank_name?: string;
   account_name?: string | null;
   account_no: string | null;
   statement_format: string;
   is_active: boolean;
-  /** Enough of a column map to read anything at all. */
   ready: boolean;
 };
 
@@ -38,7 +31,6 @@ export type BankStatement = {
   status: string;
   uploaded_by: string | null;
   created_at: string;
-  /** Derived on the server, never stored: how much is still undecided. */
   open_count?: number;
   open_sen?: number;
   open_payout_count?: number;
@@ -56,9 +48,7 @@ export type BankQrSales = {
   fileName: string | null;
   tradingDate: string | null;
   sales: Array<{ docNo: string | null; amountSen: number; jeNo: string | null }>;
-  /** QR lines nobody has linked to a sale yet. */
   waiting: Array<{ lineNo: number; txnDate: string; grossSen: number }>;
-  /** What to match the credit to — only when ready. */
   jeNos: string[];
   ready: boolean;
   clue: string;
@@ -85,10 +75,8 @@ export type BankEntryCandidate = {
   sourceDocNo: string | null;
   debitSen: number;
   creditSen: number;
-  /** Signed the way the statement signs it: positive is money in. */
   amountSen: number;
   daysApart: number;
-  /** Who was paid / who paid, off the entry. */
   partyName?: string | null;
   /** The document a person holds — OR · SO, the PV number, "HLB payout dd/mm/yyyy" (docs/bugs/0918). */
   reference?: string | null;
@@ -102,20 +90,13 @@ export type BankLine = {
   booked_on: string;
   description: string;
   reference: string | null;
-  /** Signed: positive is money in. */
   amount_sen: number;
-  /** What the bank took back out of a credit it split. 0 otherwise. */
   charge_sen: number;
   kind: BankLineKind;
   acquirer_code: string | null;
   trading_date: string | null;
   merchant_no: string | null;
-  /** Which merchant statement the matcher decided this settles. A suggestion —
-      a person still confirms it — but the RIGHT suggestion, not the first
-      candidate of that acquirer. */
   matched_batch_id: number | null;
-  /** When SEVERAL statements add up to it: what each one takes. Public Bank
-      pays three trading days with one advice, so this is ordinary. */
   split: Array<{ batchId: number; amountSen: number }> | null;
   state: 'OPEN' | 'POSTED' | 'IGNORED';
   posted_je_no: string | null;
@@ -123,7 +104,6 @@ export type BankLine = {
   matches: Array<{ je_no: string; amount_sen: number; match_reason: string | null }>;
   candidates: BankCandidate[];
   entryCandidates: BankEntryCandidate[];
-  /** On a DuitNow QR credit only (kind QR). */
   qr_sales?: BankQrSales;
 };
 
@@ -141,8 +121,6 @@ export type Reconciliation = {
   bankNotInBooks: { count: number; sen: number };
   booksNotOnBank: { count: number; sen: number };
   unmatchedJeNos: string[];
-  /** Earlier periods' entries still not on any statement — what the
-      brought-forward is made of. */
   carried: { count: number; sen: number };
   carriedJeNos: string[];
   clearedFromBeforeSen?: number;
@@ -206,28 +184,18 @@ export const useBankStatement = (id: number | null) => useQuery({
   retryDelay: 800,
 });
 
-/* A bank movement changes the LEDGER, so everything downstream of the ledger is
-   stale after one — the settlement side included, since booking a credit here
-   writes a receipt there. */
 export const invalidateAfterBankPosting = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['bank-statement'] });
   void qc.invalidateQueries({ queryKey: ['bank-statements'] });
-  /* The month is the same movements counted a second way, so a decision on one
-     of them is a decision about its month too — and the month view is where
-     the owner works. Missing these leaves a line settled on one screen and
-     still waiting on the other. */
   void qc.invalidateQueries({ queryKey: ['bank-month'] });
   void qc.invalidateQueries({ queryKey: ['bank-months'] });
   void qc.invalidateQueries({ queryKey: ['settlement-batch'] });
   void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
   void qc.invalidateQueries({ queryKey: ['settlement-in-transit'] });
   void qc.invalidateQueries({ queryKey: ['account-balances'] });
-  /* Finance's To do counts the open lines; it moves with them. */
   void qc.invalidateQueries({ queryKey: ['finance-todo'] });
   void qc.invalidateQueries({ queryKey: ['control-check'] });
   void qc.invalidateQueries({ queryKey: ['daily-bank'] });
-  /* Card payments a movement takes in, or gives back on Undo, leave or rejoin
-     these lists (acc/bank-card-settle). */
   void qc.invalidateQueries({ queryKey: ['bank-card-payments'] });
   void qc.invalidateQueries({ queryKey: ['settlement-watchlist'] });
   void qc.invalidateQueries({ queryKey: ['unmatched-payments'] });
@@ -252,11 +220,8 @@ export type BankCardPayment = {
 export type BankCardPayments = {
   from: string;
   to: string;
-  /** Where a difference goes — the account the company's merchants book their charges to. */
   feeAccount: { code: string; name: string | null } | null;
-  /** Why there is no such account, when there is none. */
   feeProblem: string | null;
-  /** The most a difference may be, as a percentage of the card payments ticked. */
   maxChargePct: number;
   payments: BankCardPayment[];
 };
@@ -293,8 +258,6 @@ export const useUploadBankStatement = () => {
     }) =>
       authedFetch<{
         ok: boolean; statementId: number; lines: number; joinedPairs: number; skippedLines: number;
-        /** Movements this account had already recorded from an earlier upload —
-            settled on arrival, nothing left to press. */
         alreadyRecorded: number;
         /** Matched by amount and name on the way in (docs/bugs/0814). */
         autoMatched: number;
@@ -308,8 +271,6 @@ export const useUploadBankStatement = () => {
       void qc.invalidateQueries({ queryKey: ['bank-statements'] });
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
-    /* No writeFailedAs: a refused statement says WHY, and the page shows the
-       server's own sentence verbatim (§2.14). */
   });
 };
 
@@ -319,8 +280,6 @@ export const useBookBankReceipt = () => {
   return useMutation({
     mutationFn: ({ lineId, allocations, charge }: {
       lineId: number;
-      /** One entry for the ordinary payout, several when one credit pays
-          several statements. The shares must add up to the credit. */
       allocations: Array<{ batchId: number; amountSen: number }>;
       /** What the acquirer KEPT off this credit, named against one of those
           statements (owner 2026-09-30: GHL's RM 54, no advice to book it on). */
@@ -392,7 +351,6 @@ export type BankRule = {
   trading_date_pattern: string | null; merchant_pattern: string | null;
   sort_order: number; is_active: boolean;
 };
-/* ── Which accounts take a statement, and how each file reads (2026-09-08) ─── */
 
 /** One heading, or the several a bank has used for the same column. */
 export type BankHeading = string | string[];
@@ -484,11 +442,8 @@ export type BankMonth = {
   periodTo: string | null;
   openingBalanceSen: number | null;
   closingBalanceSen: number | null;
-  /** Opening known, closing known, and no break between the files. */
   complete: boolean;
   gapCount: number;
-  /** Null means open. Named rather than a bare flag: an operator who finds a
-      month he cannot work needs the name, not a padlock. */
   locked: { lockedBy: string | null; lockedAt: string } | null;
 };
 
@@ -507,7 +462,6 @@ export type BankBalanceSource = {
   fileName: string | null;
   on: string;
   typed?: { month: string; by: string | null; at: string; note: string | null };
-  /** An opening carried from the previous month's printed closing: the month that closed there. */
   carried?: { month: string };
 };
 
@@ -539,8 +493,6 @@ export type BankMonthAssembly = {
   spanningIds: number[];
   breaks: BankChainBreak[];
   gaps: string[];
-  /** Opening known, closing known (printed or typed), no break between them,
-      and a typed figure agreeing with the movements. */
   complete: boolean;
 };
 
@@ -563,9 +515,6 @@ export type BankMonthDetail = {
   statements: Array<BankStatement & { spanning: boolean }>;
   lines: Array<BankLine & { file_name: string | null }>;
   unmatchedEntries: LedgerEntry[];
-  /** This month's movements still to decide that an earlier file of the
-      account already recorded, and the files carrying them (owner
-      2026-10-14). Optional only for the minute a newer screen reads an older server. */
   repeats?: { count: number; statementIds: number[] };
 };
 

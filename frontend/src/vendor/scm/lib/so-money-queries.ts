@@ -37,19 +37,15 @@ export type OrderMoney = {
   cancelled: boolean;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: MoneyPayment[];
-  /** The money in the pool: booked here plus brought over from AutoCount. */
   bookedSen: number;
-  /** The part of it brought over from AutoCount (optional against an older server). */
   importedSen?: number;
   refunds: MoneyRefund[];
   refundedSen: number;
-  /** The refund requests on the order, and what the waiting ones hold (optional against an older server). */
   refundRequests?: MoneyRefundRequest[];
   requestedSen?: number;
   conversions: MoneyConversion[];
   convertedSen: number;
   remainingSen: number;
-  /** The order's total; the fraction a live order keeps (0 once cancelled); what must stay; what may move. */
   totalSen: number;
   keepFraction: number;
   keepSen: number;
@@ -60,7 +56,6 @@ export type OrderMoney = {
 export type ConvertSource = {
   docNo: string; customer: string | null; status: string | null; cancelledOn: string | null;
   remainingSen: number; bookedSen: number;
-  /** What may move to another order: the remaining, less the floor a live order keeps. */
   movableSen: number; keepSen: number;
 };
 
@@ -123,8 +118,6 @@ const trimAsk = (a: RefundAsk): RefundAsk => ({
 });
 type Raised = { id: string; requestNo: string };
 
-/** What a raised refund request makes stale: the order's money, the lists of
-    orders with money, the refund source PV New reads, and the requests. */
 const afterRefundAsked = (qc: ReturnType<typeof useQueryClient>, docNos: string[]) => {
   for (const d of docNos) void qc.invalidateQueries({ queryKey: ORDER_MONEY_KEY(d) });
   void qc.invalidateQueries({ queryKey: ['pv-refund-source'] });
@@ -184,7 +177,6 @@ export const useRequestRefund = (docNo: string) => {
   });
 };
 
-/* ── The converted row's vocabulary on the desktop ─────────────────────── */
 
 /** A picker that lists the customer's own orders takes another order by
     number — any customer's (owner 2026-09-16: 可能多张、不同顾客). The listed

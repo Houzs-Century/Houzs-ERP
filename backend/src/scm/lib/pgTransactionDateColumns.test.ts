@@ -1,8 +1,3 @@
-/* postgres.js parses a `date` column (OID 1082) into a JS Date; PostgREST
- * returns "YYYY-MM-DD". Code written for PostgREST then did
- * String(cost_day).slice(0, 10) inside the transaction and got "Tue Nov 24",
- * so a sofa set changed twice after its opening day was costed on the wrong day
- * (so-set-change-cost.ts). The shim now returns date columns as PostgREST does. */
 import { describe, expect, test } from 'vitest';
 import { pgTransactionSupabase } from './pg-supabase-transaction';
 

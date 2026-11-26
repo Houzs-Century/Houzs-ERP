@@ -97,14 +97,14 @@ describe('the Collection tab', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Balance' }));
     expect(grid().getByText('Balance due')).toBeTruthy();
     const scarlett = rowOf(/^Scarlett Chong Kar Yin/);
-    expect(within(scarlett).getAllByText('1,500.00')).toHaveLength(2);   // deposit and balance due, both 1,500
-    expect(within(scarlett).getByText('1,000.00')).toBeTruthy();   // balance paid
+    expect(within(scarlett).getAllByText('1,500.00')).toHaveLength(2);
+    expect(within(scarlett).getByText('1,000.00')).toBeTruthy();
     expect(within(scarlett).getByText('66.7%')).toBeTruthy();
-    expect(within(scarlett).getByText('500.00')).toBeTruthy();     // outstanding
+    expect(within(scarlett).getByText('500.00')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Show the orders of Scarlett Chong Kar Yin'));
     expect(screen.getByText('SO-2')).toBeTruthy();
-    expect(screen.getByText(/2990-SI-2607-004/)).toBeTruthy();    // the final invoice it is measured against
-    expect(screen.queryByText('SO-1')).toBeNull();                 // not delivered
+    expect(screen.getByText(/2990-SI-2607-004/)).toBeTruthy();
+    expect(screen.queryByText('SO-1')).toBeNull();
     const tiles = collectionTiles(report, 'balance', 'July');
     expect(tiles.map((t) => [t.label, t.value, t.sub])).toEqual([
       ['Delivered orders', '2', 'Delivered or invoiced'],

@@ -1,5 +1,3 @@
-/* The crew's shared pending photos for one stop go to the /delivery-jobs
-   stop-photo routes, always naming the stop. */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 const { authedFetch } = vi.hoisted(() => ({ authedFetch: vi.fn() }));

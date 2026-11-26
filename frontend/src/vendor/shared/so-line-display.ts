@@ -1,34 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-line-display — CUSTOMER-FACING display folding of SO lines.
-//
-// Loo 2026-06-05: on customer-facing surfaces (POS SalesOrderPrint, Backend
-// sales-order-pdf, POS order drawer) a configured sofa should read as ONE line
-// per Model with the combined price ("SOFA BOOQIT — MYR 3,115.00"), while the
-// persisted per-module SKU lines (P3 sofa split, so-sofa-split.ts) stay
-// untouched and keep driving Backend SO Details, reports, DO picking and
-// inventory. This module is a pure RENDER-TIME fold — it never mutates lines.
-//
-// Grouping key: variants.buildKey (written by the SO create path per build,
-// e.g. "build-1"). In-group order is the LEFT-TO-RIGHT walk of the build's
-// persisted geometry (variants x/y/rot — Loo 2026-06-12: compartment codes
-// always read leftmost arm → rightmost arm, so SOs booked before the create
-// path ordered its lines still display correctly), falling back to
-// variants.cellIndex when geometry is missing. Lines without a buildKey
-// (legacy pre-P3 SOs, services, bedframes, mattresses) pass through 1:1 —
-// legacy multi-row sofas CANNOT be grouped reliably (SO-2606-010 holds
-// three different Models as separate single-module purchases), so we never
-// guess.
-//
-// Money: the P3 split floors every share and puts the rounding residue on the
-// last line, so summing unit_price_sen / total_sen across a buildKey group
-// reconstructs the build total EXACTLY (discount is netted on the lead line's
-// total already).
-//
-// PWP notes (same ask): pwp_codes always intended the unused voucher to print
-// on the SO (schema.ts: "printed on the SO, redeemable cross-order") — this is
-// the render half. The reward line carries variants.pwpCode/pwpTriggerLabel;
-// the trigger line is matched via pwp_codes.trigger_item_code at print time.
-// ----------------------------------------------------------------------------
 
 import { orderSofaCellsLeftToRight, type Rot } from './sofa-build';
 
@@ -43,8 +12,6 @@ export interface RawSoDisplayLine {
   discount_sen?: number | null;
   total_sen?: number | null;
   variants?: unknown;
-  /** Per-line operator remark (mfg_sales_order_items.remark). Optional —
-   *  legacy callers that don't select it simply fold without remarks. */
   remark?: string | null;
 }
 
@@ -53,21 +20,15 @@ export interface RawSoDisplayLine {
 export interface SoDisplayGroup<T extends RawSoDisplayLine> {
   kind: 'single' | 'sofa-build';
   lines: T[];
-  /** Folded presentation — only for kind 'sofa-build'. */
   display?: {
-    /** Model token, e.g. 'BOOQIT' (item_code prefix before the module code). */
     itemCode: string;
-    /** 'SOFA BOOQIT' — module suffix dropped. */
     description: string;
-    /** '1B(LHF) + CNR + 2A(RHF)' — module codes in left-to-right walk order. */
     composition: string | null;
-    /** Shared per-line variant summary (e.g. 'EZ-003 / SEAT 28 / LEG 4"'). */
     description2: string | null;
     qty: number;
     unitPriceSen: number;
     discountSen: number;
     totalSen: number;
-    /** First non-empty remark in display order across the group; null if none. */
     remark: string | null;
   };
 }
@@ -89,23 +50,14 @@ const readCellIndex = (line: RawSoDisplayLine): number => {
   return typeof idx === 'number' && Number.isFinite(idx) ? idx : Number.MAX_SAFE_INTEGER;
 };
 
-/** Model token from a module SKU: everything before the LAST '-'.
- *  'BOOQIT-2A(RHF)' → 'BOOQIT'. Compartment codes are parens-vocabulary
- *  (1A(LHF) — the dash vocabulary was eliminated 2026-06-04) so the module
- *  suffix itself never contains '-'. */
 const modelTokenOf = (itemCode: string): string | null => {
   const idx = itemCode.lastIndexOf('-');
   return idx > 0 ? itemCode.slice(0, idx) : null;
 };
 
-/** Module code = the suffix after the last '-'. */
 const moduleCodeOf = (itemCode: string): string =>
   itemCode.slice(itemCode.lastIndexOf('-') + 1);
 
-/** Composition = the module codes joined in the lines' (already left-to-right)
- *  order. The stored variants.summary first segment is only a fallback — it
- *  snapshots whatever order the POS topbar had at add time, which on
- *  pre-2026-06-12 orders is the canvas/Quick-Pick slot order, not the walk. */
 const compositionOf = <T extends RawSoDisplayLine>(lines: T[]): string | null => {
   const codes = lines.map((l) => moduleCodeOf(l.item_code)).filter(Boolean);
   if (codes.length > 0) return codes.join(' + ');
@@ -118,11 +70,6 @@ const compositionOf = <T extends RawSoDisplayLine>(lines: T[]): string | null =>
   return null;
 };
 
-/** Left-to-right order for one buildKey group's lines: rebuild each line's
- *  cell from the geometry the P3 split persisted on variants (x/y/rot +
- *  module code from the SKU suffix) and run the shared walk. Any line
- *  missing geometry → the whole group falls back to cellIndex order (which
- *  the create path also writes left-to-right since 2026-06-12). */
 const orderSofaGroupLines = <T extends RawSoDisplayLine>(group: T[]): T[] => {
   const byCellIndex = [...group].sort((a, b) => readCellIndex(a) - readCellIndex(b));
   const wrapped: Array<{ row: T; moduleId: string; x: number; y: number; rot: Rot }> = [];
@@ -135,8 +82,6 @@ const orderSofaGroupLines = <T extends RawSoDisplayLine>(group: T[]): T[] => {
     if (x === null || y === null || !moduleId) return byCellIndex;
     wrapped.push({ row: l, moduleId, x, y, rot });
   }
-  // Coerce like the create-side split (String(depth)) — variants.depth is
-  // string today but the API accepts numeric depth in raw payloads.
   const d = readVariants(byCellIndex[0]!)?.depth;
   const depth =
     typeof d === 'string' && d.trim() !== '' ? d
@@ -171,9 +116,6 @@ export function groupSoLinesForDisplay<T extends RawSoDisplayLine>(
     const key = readBuildKey(line);
     const group = key ? byKey.get(key) : null;
 
-    // Fold only real multi-module builds where every line is one unit and the
-    // Model token is consistent — anything irregular stays per-SKU (honest
-    // fallback; never guess a grouping the data doesn't support).
     const models = group?.map((l) => modelTokenOf(l.item_code)) ?? [];
     const model = models[0] ?? null;
     const foldable =
@@ -199,9 +141,6 @@ export function groupSoLinesForDisplay<T extends RawSoDisplayLine>(
         description2: lead.description2 ?? null,
         qty: 1,
         unitPriceSen: ordered.reduce((s, l) => s + Number(l.unit_price_sen ?? 0), 0),
-        /* Summed, not lead-read: the discount is persisted on the CREATE
-           path's first line, which the left-to-right walk may no longer put
-           first. Only one line ever carries it, so Σ === the build figure. */
         discountSen: ordered.reduce((s, l) => s + Number(l.discount_sen ?? 0), 0),
         totalSen: ordered.reduce((s, l) => s + Number(l.total_sen ?? 0), 0),
         remark: ordered.find((l) => typeof l.remark === 'string' && l.remark.trim() !== '')?.remark ?? null,
@@ -226,15 +165,6 @@ export function groupSoLinesForDisplay<T extends RawSoDisplayLine>(
 // the OLDER ones and belong in front. STABLE, so lines that share a value (all
 // NULL, on an untouched historical document) keep the order they arrived in.
 
-/** The stored position, or null for a line that has none.
- *
- *  Read off the row rather than declared as a constraint: the backend hands
- *  this rows typed `Record<string, unknown>` (PostgREST without generated
- *  types) and the frontend hands it a named `PoItem`, and no single interface
- *  accepts both — a `{ line_no?: ... }` constraint is a WEAK TYPE, which the
- *  compiler refuses against an index-signature row as "no properties in
- *  common". Same shape as `readCellIndex` above, and the guard is the contract:
- *  anything that is not a finite number is no position at all. */
 const readLineNo = (line: unknown): number | null => {
   const v = (line as { line_no?: unknown } | null | undefined)?.line_no;
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
@@ -254,12 +184,6 @@ export const sortLinesByStoredLineNo = <T>(lines: readonly T[]): T[] =>
     })
     .map((e) => e.l);
 
-// ───────────────────── SO line ORDER rules (Loo 2026-06-12) ─────────────────
-// Priority lines: the MAINS — sofa, mattress, bedframe — lead every SO line
-// listing; accessories follow; SERVICE rows close the document. Within a rank
-// the stored order is preserved (stable sort). Shared so the CREATE path (the
-// persisted row order), the Backend SO PDF and the POS customer print all
-// rank identically.
 
 export const soLineGroupRank = (itemGroup: string | null | undefined): number => {
   const g = (itemGroup ?? '').toLowerCase();
@@ -306,22 +230,18 @@ export const orderSofaModuleRowsWithinBuilds = <T extends RawSoDisplayLine>(line
   return out;
 };
 
-// ─────────────────────────────── PWP notes ──────────────────────────────────
 
 /** pwp_codes row as returned by GET /mfg-sales-orders/:docNo (codes whose
  *  source_doc_no = this SO — i.e. vouchers THIS order's trigger items issued). */
 export interface SoPwpCodeRow {
   code: string;
-  status: string; // RESERVED | USED | AVAILABLE | VOID (issuing order cancelled)
+  status: string;
   trigger_item_code?: string | null;
   redeemed_doc_no?: string | null;
-  /** The POS cart line that earned this code — groups codes into per-trigger-line
-   *  batches for display allocation. Null on legacy codes. */
   cart_line_key?: string | null;
 }
 
 export interface SoPwpNote {
-  /** 'used' renders accented (voucher consumed), 'unused' renders muted. */
   tone: 'used' | 'unused';
   text: string;
 }
@@ -344,8 +264,6 @@ export function pwpRewardNote(variants: unknown): SoPwpNote | null {
 
 const pwpTriggerNoteOf = (cd: SoPwpCodeRow): SoPwpNote => {
   if (cd.status === 'USED') return { tone: 'used', text: `PWP: ${cd.code}` };
-  /* A voided voucher must never read as "not redeemed yet" — the order that
-     issued it was cancelled, so it is dead, not pending (2026-07-29). */
   if (cd.status === 'VOID') {
     return { tone: 'unused', text: `PWP voucher issued: ${cd.code} · voided (order cancelled)` };
   }
@@ -388,7 +306,6 @@ export function allocatePwpTriggerNotes(
   const out: SoPwpNote[][] = lineItemCodes.map(() => []);
   if (!codes || codes.length === 0) return out;
 
-  // Batch by trigger SKU + earning cart line, preserving code order.
   const batches = new Map<string, { trigger: string; rows: SoPwpCodeRow[] }>();
   for (const cd of codes) {
     const trigger = cd.trigger_item_code ?? '';
@@ -399,18 +316,12 @@ export function allocatePwpTriggerNotes(
     batches.set(key, batch);
   }
 
-  // k-th batch of a trigger → k-th line carrying that SKU (overflow → last).
   const nextOrdinal = new Map<string, number>();
   for (const { trigger, rows } of batches.values()) {
     const matching: number[] = [];
     lineItemCodes.forEach((codesOfLine, i) => {
       if (codesOfLine.includes(trigger)) matching.push(i);
     });
-    /* No line carries the trigger SKU (SO-2606-008, Loo 2026-06-12) — the
-       voucher is real and redeemable, so it must still print rather than
-       silently vanish. Happens when the stamped trigger drifted from the
-       booked lines (the pre-fix create path stamped the POS sofa ANCHOR SKU,
-       which the per-module split never books). Fall back to the first line. */
     if (matching.length === 0) {
       if (out.length > 0) out[0]!.push(...rows.map(pwpTriggerNoteOf));
       continue;

@@ -1,7 +1,3 @@
-// Pure-mapper coverage for amendment-pdf-map.ts — proves the SO and PO amendment
-// detail shapes fold into the shared AmendmentPdfInput the way the owner's
-// before/after change table expects: one row per changed field, ADD/REMOVE as a
-// single tinted row, and the revision old -> new pair.
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +20,6 @@ describe('poAmendmentToPdfInput', () => {
     expect(out.partyLabel).toBe('Supplier');
     expect(out.partyName).toBe('Acme Supplier');
     expect(out.docNo).toBe('PO-2607-001');
-    // Not yet applied (REQUESTED) → revision 1 -> 2.
     expect(out.revisionFrom).toBe(1);
     expect(out.revisionTo).toBe(2);
     const fields = out.changes.map((r) => r.field);
@@ -37,7 +32,6 @@ describe('poAmendmentToPdfInput', () => {
     const cost = out.changes.find((r) => r.field === 'Unit cost')!;
     expect(cost.before).toBe('RM 10.00');
     expect(cost.after).toBe('RM 12.00');
-    // Routing: qty -> Production / Design (processing); cost -> Finance (delivery/commercial).
     expect(qty.department).toContain('Production');
     expect(cost.department).toBe('Finance');
     expect(out.routing?.isMixed).toBe(true);
@@ -70,7 +64,6 @@ describe('poAmendmentToPdfInput', () => {
       ],
       purchaseOrder: { po_number: 'PO-1', revision: 2 },
     });
-    // APPROVED → applied → revision 1 -> 2.
     expect(out.revisionFrom).toBe(1);
     expect(out.revisionTo).toBe(2);
     const add = out.changes.find((r) => r.kind === 'ADD')!;
@@ -94,23 +87,18 @@ describe('soAmendmentToPdfInput', () => {
     expect(out.kind).toBe('SO');
     expect(out.partyLabel).toBe('Customer');
     expect(out.docNo).toBe('SO-9');
-    // SO_APPROVED is applied → 1 -> 2.
     expect(out.revisionFrom).toBe(1);
     expect(out.revisionTo).toBe(2);
     const spec = out.changes.find((r) => r.field === 'Spec')!;
     expect(spec.before).toBe('SF-100');
     expect(spec.after).toBe('SF-200');
     expect(out.approvedBy).toBe('Boss');
-    // A SKU/spec swap is a processing change owned by Production / Design.
     expect(spec.department).toBe('Production / Design');
     expect(out.routing?.typeLabels).toEqual(['Processing']);
     expect(out.routing?.isMixed).toBe(false);
   });
 });
 
-/* mig 0317 — the delivery-fee reduction. The discount is the request (the unit
-   stays derived), so the printed document must carry it as its own row: a page
-   showing only "Qty 1 · RM 250.00" on both sides reads as no change at all. */
 describe('soAmendmentToPdfInput — the discount row (mig 0317)', () => {
   const base = {
     amendment: { amendment_no: '2990-SO-2608-020/A2', status: 'REQUESTED', reason: null, created_at: '2026-08-21', requested_by_name: 'YH' },
@@ -161,12 +149,6 @@ describe('soAmendmentToPdfInput — the discount row (mig 0317)', () => {
   });
 });
 
-/* THE PRINTED STATUS. `amendment-pdf.ts` draws `input.status` verbatim into the
-   header's Status row, so what the mapper puts here is exactly what lands on
-   paper. Until 2026-08-26 the four callers each hand-wrote
-   `applied ? "Approved" : "Requested"` and a REJECTED amendment therefore
-   printed **Requested** — the word that says nobody has decided yet — on a
-   document handed to a supplier or filed as the decision record. */
 describe('the amendment document prints the status the amendment lists show', () => {
   const so = (status: string) => soAmendmentToPdfInput({
     amendment: { amendment_no: 'SO-1/A1', status, created_at: '2026-08-20' },
@@ -196,9 +178,6 @@ describe('the amendment document prints the status the amendment lists show', ()
     expect(po('APPROVED')).toBe('Approved');
   });
 
-  /* No caller may hand the document its own word again: the input shape no
-     longer carries one, so this is the compiler's job, and the assertion here
-     is that the mapper does NOT read one off the detail object. */
   it('ignores a status word supplied by the caller', () => {
     const withLegacyWord = {
       amendment: { amendment_no: 'SO-1/A1', status: 'REJECTED', created_at: '2026-08-20' },
@@ -209,16 +188,6 @@ describe('the amendment document prints the status the amendment lists show', ()
   });
 });
 
-/* THE PREVIEW AND THE DOCUMENT MUST NOT DISAGREE. `PrintPreviewModal` shows a
-   Status row on the screen the operator presses Print from, and all four
-   amendment surfaces hand-wrote the SAME `applied ? "Approved" : "Requested"`
-   there too — so fixing only the PDF would have made the preview say Requested
-   over a document saying Rejected, which is this whole class again one screen
-   later. Both now call amendmentPrintedStatus.
-
-   A source scan, because the four surfaces are page components in the suite
-   that cannot render on this machine, and because it covers a FIFTH surface
-   nobody has written yet. */
 describe('no amendment surface hand-writes the printed status', () => {
   const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
   const SURFACES = [
@@ -227,7 +196,6 @@ describe('no amendment surface hand-writes the printed status', () => {
     'mobile/MobileSODetail.tsx',
     'mobile/MobilePoAmendmentDetail.tsx',
   ];
-  /* `? "Approved" : "Requested"`, however the ternary is spaced or wrapped. */
   const HAND_WRITTEN = /\?\s*"Approved"\s*:\s*"Requested"/s;
 
   it('the matcher fires on the expression this change removed', () => {

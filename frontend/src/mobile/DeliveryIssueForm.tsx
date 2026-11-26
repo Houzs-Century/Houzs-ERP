@@ -12,10 +12,6 @@ import { fmtDateTime } from "@2990s/shared";
 
 export const EMPTY_ISSUE_DRAFT: DeliveryIssueDraft = { kinds: [], note: "", photos: [] };
 
-/* "Delivered with issue" — the crew ticks what went wrong, adds a note and
-   photos. Controlled: MobilePOD and MobileJobStop own the draft and send it
-   (vendor/scm/lib/delivery-issue-queries.ts) after the delivery itself is saved,
-   so a problem never blocks the delivery. */
 export function DeliveryIssueForm({ value, onChange, disabled }: {
   value: DeliveryIssueDraft; onChange: (d: DeliveryIssueDraft) => void; disabled: boolean;
 }) {

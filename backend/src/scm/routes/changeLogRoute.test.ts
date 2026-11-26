@@ -40,7 +40,6 @@ const soRow = (over: Row = {}): Row => ({
   ...over,
 });
 
-/** The allocation cron, exactly as so-stock-allocation.ts:998 writes it. */
 const cronRow = (over: Row = {}): Row => soRow({
   actor_id: null,
   actor_name_snapshot: 'system (auto-allocate)',
@@ -71,9 +70,6 @@ function harness(opts: {
   entity?: Row[];
   companyId?: number | undefined;
   perms?: string[];
-  /* PostgREST's own response ceiling. Left off, the fake has none — which is
-     the state every other case here wants. The truncation suite passes one,
-     because a ceiling is the ONLY thing that makes a short read happen. */
   maxRows?: number;
 }) {
   const sb = fakeSb({
@@ -132,8 +128,6 @@ describe('the split between a person and the system', () => {
     expect(status).toBe(200);
     expect(body.totals?.changesByPerson).toBe(1);
     expect(body.totals?.changesBySystem).toBe(3);
-    /* The person view shows ONE document, and the system's three are not in it —
-       but the reader is still told there were three. */
     expect(docs(body)).toHaveLength(1);
     expect(docs(body)[0].people).toEqual(['Wei Siang']);
   });
@@ -144,8 +138,6 @@ describe('the split between a person and the system', () => {
     expect(body.totals?.changesByPerson).toBe(1);
     expect(body.totals?.changesBySystem).toBe(3);
     expect(docs(body)).toHaveLength(1);
-    /* A machine-only document credits nobody, so the page can say so rather than
-       showing a blank name. */
     expect(docs(body)[0].people).toEqual([]);
     expect(docs(body)[0].changes[0].author).toBe('machine');
   });
@@ -263,15 +255,6 @@ describe('the window', () => {
   });
 });
 
-/* THE WARNING THAT MUST NEVER BE SILENT — frontend/src/lib/changeLog.ts's own
-   words for `clTruncationNote`, the banner telling the owner every count above
-   is a floor. It was silent, always: `truncated` was `rows.length >= ROW_CAP`
-   with ROW_CAP 4,000, and `rows` is the SUM of two reads that PostgREST caps
-   at `db-max-rows` each. At the 1,000 this repo assumes the sum tops out at
-   2,000, so the comparison could not be true however much the window held.
-
-   Only the POSITIVE case was ever missing. The suite above already asserted
-   the negative, which is why nothing went red for it. */
 describe('a read that stopped early SAYS so', () => {
   const many = (n: number, make: (i: number) => Row) =>
     Array.from({ length: n }, (_, i) => make(i));
@@ -295,9 +278,6 @@ describe('a read that stopped early SAYS so', () => {
   });
 
   it('stays false at exactly the ceiling with nothing behind it', async () => {
-    /* The boundary the old test got wrong in the other direction. A read that
-       returns every matching row is complete even when that number equals the
-       ceiling — Content-Range says so, and a `>=` against a cap could not. */
     const app = harness({
       so: many(1_000, (i) => soRow({ so_doc_no: `HC-SO-${String(i).padStart(6, '0')}` })),
       maxRows: 1_000,

@@ -205,8 +205,6 @@ function DetailState({
   if (isLoading) {
     return <div className="py-10 text-center text-[12px] text-ink-muted">Loading amendment…</div>;
   }
-  /* A refusal must reach the reader — an empty drawer would read as "this
-     amendment changes nothing". */
   if (error || !ready) {
     return (
       <div className="rounded-lg border border-err/40 bg-err/10 px-4 py-3 text-[12.5px] text-err">
@@ -238,7 +236,6 @@ function Summary({
   requestedBy: string | null | undefined;
   createdAt: string | null | undefined;
   reason: string | null | undefined;
-  /** Option B (2026-09-15): the requester's doubt about the approver, SO rows only. */
   laneFlagNote?: string | null;
   resolution: "REJECTED" | "WITHDRAWN" | null;
   rejectionReason: string | null;

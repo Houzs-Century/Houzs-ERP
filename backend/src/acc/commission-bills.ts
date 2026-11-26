@@ -25,10 +25,7 @@ const MONTH_NO: Record<string, number> = {
   OCT: 10, OCTOBER: 10, NOV: 11, NOVEMBER: 11, DEC: 12, DECEMBER: 12,
 };
 const NAME = '(JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER|SEPT|JAN|FEB|MAR|APR|JUN|JUL|AUG|SEP|OCT|NOV|DEC)';
-/* OCT'26 · OCT’ 26 · AUG26 · SEPT2026 · SEP 2026 — a two-digit year only when
-   it is joined to the month (or after an apostrophe), so "SEP 30" is a day. */
 const MONTH_YEAR = new RegExp(`(?<![A-Z])${NAME}(?:\\s*['’]\\s?(\\d{2})(?!\\d)|(\\d{2})(?!\\d)|\\s*(\\d{4})(?!\\d))`);
-/* SEP 1 – SEP 30, 2026: the first month, the year at the end. */
 const DAY_RANGE = new RegExp(`(?<![A-Z])${NAME}\\s+\\d{1,2}\\s*[–—-]\\s*${NAME}\\s+\\d{1,2},?\\s*(\\d{4})(?!\\d)`);
 
 /** The month a commission bill's text names, or null when it names none. */
@@ -37,7 +34,6 @@ export function billMonthOf(text: string | null | undefined): Ym | null {
   const pad = (n: number): string => String(n).padStart(2, '0');
   const hit = MONTH_YEAR.exec(t);
   if (hit) {
-    /* A group that did not take part is undefined at run time, whatever the array's type says. */
     const m: Array<string | undefined> = [...hit];
     const mo = MONTH_NO[m[1] ?? ''];
     const yy = m[2] ?? m[3];
@@ -58,12 +54,10 @@ export type PrepaidLedgerLine = PrepaidLine & {
   jeNo: string;
   sourceType: string;
   notes: string | null;
-  /** The line named no month — read as its entry's month. */
   monthGuessed: boolean;
 };
 
 type Row = Record<string, unknown>;
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Db = Parameters<typeof resolveRoles>[0];
 
 /** Every line on the prepaid account the books count, but the release's own. */

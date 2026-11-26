@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { deliveryProgressBreakdown, messageStatusBreakdown, ordersOfSlice, topWithOther, NO_MESSAGE_STATUS } from "./logisticStatus";
 import type { PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 
-/** Only the three fields the breakdowns read; the rest is irrelevant here. */
 const o = (
   delivery_state: PlanningOrder["delivery_state"],
   delivery_message_status: string | null,
@@ -18,7 +17,6 @@ describe("deliveryProgressBreakdown", () => {
       o("DELIVERED", null, 250),
     ];
     const r = deliveryProgressBreakdown(rows, () => true);
-    // Pending Schedule has no rows, so it is dropped; order follows DELIVERY_STATES.
     expect(r.map((s) => s.key)).toEqual(["PENDING_DELIVERY", "OVERDUE", "DELIVERED"]);
     expect(r[0]).toMatchObject({ count: 2, sen: 200, pct: 50 });
     expect(r[1]).toMatchObject({ count: 1, pct: 25 });

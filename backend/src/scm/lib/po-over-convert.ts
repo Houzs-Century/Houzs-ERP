@@ -1,20 +1,4 @@
-// ----------------------------------------------------------------------------
-// po-over-convert — the remaining-qty cap for SO-sourced lines on the generic
-// PO-create path (POST /mfg-purchase-orders).
-//
-// The desktop "create new PO from SO" flow feeds picked SO lines through the
-// generic create (New-PO-form), which — unlike /from-sos (convertSosToPosCore,
-// which keeps 2990's cap) — had no server-side check that a line orders no more
-// than the source SO still needs. This is the shared, testable core of that cap;
-// see BUG-HISTORY 2026-07-24 and docs/2990-parity-allocation-costing.md.
-//
-// Manual lines (no soItemId) contribute nothing, so a purely-manual PO never
-// trips the cap. MRP never routes through the generic create, so there is no
-// fromMrp case here.
-// ----------------------------------------------------------------------------
 
-/* A company-1 bound line's cap also counts MRP-origin purchase orders; re-exported
-   so the PO router (over its size ceiling) keeps one import line. */
 export { loadBoundOrderedQty, boundAwarePicked, isBoundForCompany } from './bound-line-ordered';
 
 export type OverConvertOffender = { soItemId: string; requested: number; remaining: number };
@@ -64,22 +48,6 @@ export function findOverConvertOffender(
   return null;
 }
 
-/* ── SO-link remaining-qty cap (LINE level) ─────────────────────────────────
-   soLinkTargetRefusal above proves a bind is POINTED at a legitimate SO line;
-   it says nothing about HOW MUCH that line may order. The batch paths all cap
-   it — /from-sos via `!fromMrp && p.qty > remaining`, the generic create via
-   findOverConvertOffender, /:id/convert-from-so by deriving qty server-side as
-   the unpicked remainder — but add-line and line-edit did not, so an operator
-   could append (or edit up to) any qty against an SO line that was already
-   fully converted. That is the same double-ordering the F1 audit closed on
-   /:id/convert-from-so in 2026-06-10, reachable through the two paths that
-   accept an operator-supplied qty.
-
-   Repeat conversion stays legal — the business splits one SO across several POs
-   on purpose. The ceiling is what is capped, never the second conversion.
-
-   Overridable with confirmOverConvert, the SAME escape hatch the generic create
-   documents, so a deliberate over-order is still one explicit flag away. */
 export async function soLineOverConvertRefusal(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client is untyped
   sb: any,
@@ -93,10 +61,8 @@ export async function soLineOverConvertRefusal(
     .select('id, qty, po_qty_picked')
     .eq('id', soItemId)
     .maybeSingle();
-  if (error) throw new Error(`so_line_read_failed: ${error.message}`); // a failed read must not lift the cap
+  if (error) throw new Error(`so_line_read_failed: ${error.message}`);
   const row = data as { qty: number; po_qty_picked: number } | null;
-  /* Unknown / cross-company line: soLinkTargetRefusal already refused it with a
-     404 before we get here, so there is nothing left to cap. */
   if (!row) return null;
   const remaining = soLineHeadroom(row, ownCurrentQty);
   const requested = Math.max(0, Number(requestedQty ?? 0));
