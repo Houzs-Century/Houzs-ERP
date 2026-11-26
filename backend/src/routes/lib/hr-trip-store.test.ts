@@ -89,6 +89,12 @@ describe("planningRowOf", () => {
     expect(planningRowOf({ ...base, stop_type: "SUPPLIER_PICKUP", dp_supplier_name: "DORSETTLOFT SDN. BHD." }, who).job_type).toBe("SUPPLIER");
     expect(planningRowOf({ ...base, stop_type: "SUPPLIER_PICKUP", dp_supplier_name: null }, who).job_type).toBe("SUPPLIER");
   });
+
+  test("a delivery to Singapore is a Transfer item, never a commissioned delivery", () => {
+    expect(planningRowOf({ ...base, do_number: "HC-DO-1", do_state: "West" }, who).job_type).toBe("TRANSFER");
+    expect(planningRowOf({ ...base, do_number: "HC-DO-1", do_state: "", dp_state: "Central" }, who).job_type).toBe("TRANSFER");
+    expect(planningRowOf({ ...base, do_number: "HC-DO-1", do_state: "Johor" }, who).job_type).toBe("DELIVERY_ORDER");
+  });
 });
 
 describe("project Setup / Dismantle from the Projects module", () => {
@@ -252,5 +258,17 @@ describe("delivery orders our lorries ran (Last Mile reaches them through the DO
     };
     expect(pay({})).toEqual([[3, 1200000]]);
     expect(pay({ h2: null, h2_name: null })).toEqual([[2, 1200000]]);
+  });
+
+  test("a Singapore delivery is a Transfer item (RM15, no commission), not a commissioned delivery", () => {
+    const jt = (p: Partial<PlanningDo>) => rowsOf([{ ...doBase, ...p }], new Set())[0]?.job_type;
+    expect(jt({ do_state: "West", do_postcode: "642682" })).toBe("TRANSFER");
+    expect(jt({ do_state: "Singapore" })).toBe("TRANSFER");
+    expect(jt({ do_state: "", do_postcode: "138632" })).toBe("TRANSFER");
+    expect(jt({})).toBe("DELIVERY_ORDER");
+    const rows = rowsOf([{ ...doBase, do_state: "West" }], new Set()).map((r) => tripRowOf({ ...r, id: 1, hr_edited: false } as unknown as Parameters<typeof tripRowOf>[0]));
+    const out = computeTripMonth({ rows, rates: DEFAULT_TRIP_RATES, employeeOf: (x) => x.employeeId, missedDaysOf: () => 0, punches: new Map() });
+    expect(out.pay.get(11)?.commission.baseSen).toBe(0);
+    expect(out.pay.get(11)?.jobAllowanceSen).toBe(1500);
   });
 });
