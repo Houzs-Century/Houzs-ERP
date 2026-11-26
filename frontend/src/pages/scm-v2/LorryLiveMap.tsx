@@ -10,6 +10,7 @@ import { Link } from 'react-router-dom';
 import { fmtSen } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import { useMemo } from 'react';
+import { LorryKmDaily } from './LorryKmDaily';
 import { LiveTripMap, type LiveMarker, type LiveTrail } from '../../vendor/scm/components/LiveTripMap';
 import { useLorryRoadTracks } from '../../vendor/scm/lib/lorry-road-track';
 import { todayMY } from '../../vendor/shared/format';
@@ -139,6 +140,7 @@ export function LorryLiveMap({ embedded }: { embedded: boolean }) {
             </div>
           </>
         )}
+        <LorryKmDaily />
       </div>
     </div>
   );

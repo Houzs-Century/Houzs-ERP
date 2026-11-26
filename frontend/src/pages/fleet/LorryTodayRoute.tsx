@@ -1,5 +1,7 @@
-// Where this lorry is now and its route today (owner, 2026-10-15: clicking a
-// lorry should show where it is and its whole route).
+// Where this lorry is now and its route on a chosen day (owner, 2026-10-15: clicking a
+// lorry should show where it is and its whole route). The day is the `day` URL param
+// (default today); a past day is history: no live position, no polling, with a playback
+// bar over the day's fixes and the real delivery points (POD GPS) as orange pins.
 //
 // Three facts, three sources:
 //   - where it is: the lorry's GPS tracker (Velocity, scm.lorry_positions, a fix
@@ -8,8 +10,8 @@
 //   - where it went: today's tracker fixes in order — the route actually driven,
 //     with the km it adds up to.
 //   - where it is meant to go: today's planned stops (GET /trips/day).
-import { Link } from "react-router-dom";
-import { useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 import { useFleetDay } from "../../vendor/scm/lib/fleet-day-queries";
 import { useActiveTripLocations } from "../../vendor/scm/lib/trip-locations-queries";
 import { useLorryPositions, useLorryTrack, useLorryKmCost } from "../../vendor/scm/lib/lorries-queries";
@@ -23,14 +25,24 @@ const MAPS_KEY = (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined
 
 const hm = (t: string | null) => (t ? t.slice(0, 5) : null);
 
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
-  const date = todayMY();
+  const today = todayMY();
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("day");
+  const date = asked && DAY_RE.test(asked) && asked <= today ? asked : today;
+  const isToday = date === today;
+  const setDay = (d: string) => setParams((p) => { const n = new URLSearchParams(p); if (d && d !== today) n.set("day", d); else n.delete("day"); return n; }, { replace: true });
+  const [idx, setIdx] = useState<number | null>(null);
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => { setIdx(null); setPlaying(false); }, [date]);
   const day = useFleetDay({ date });
   const runs = useMemo(
     () => (day.data?.trips ?? []).filter((t) => t.lorry?.id === lorryId && String(t.status).toUpperCase() !== "CANCELLED"),
     [day.data, lorryId],
   );
-  const live = runs.some((t) => String(t.status).toUpperCase() === "IN_PROGRESS");
+  const live = isToday && runs.some((t) => String(t.status).toUpperCase() === "IN_PROGRESS");
   const positions = useLorryPositions();
   const tracker = (positions.data ?? []).find((p) => p.lorry_id === lorryId) ?? null;
   const trackQ = useLorryTrack(lorryId, date);
@@ -49,7 +61,7 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
       .at(0) ?? null;
   }, [phones.data, runs]);
 
-  const position = tracker
+  const position = !isToday ? null : tracker
     ? { lat: tracker.lat, lng: tracker.lng, at: tracker.recorded_at, source: "GPS tracker", street: tracker.street, speed: tracker.speed_kmh }
     : phoneFix
       ? { lat: phoneFix.lat, lng: phoneFix.lng, at: phoneFix.recordedAt, source: "driver phone", street: null, speed: null }
@@ -61,24 +73,43 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
     .map((s, i) => ({ ref: s.id, lat: s.lat as number, lng: s.lng as number, order: i + 1, label: s.customer_name ?? s.stop_type }));
   const roadTrack = useLorryRoadTrack(lorryId, date);
   const driven = drivenPath(roadTrack.data, track?.fixes ?? []);
+  const fixes = track?.fixes ?? [];
+  const last = fixes.length - 1;
+  const playhead = idx != null && fixes[Math.min(idx, last)] ? fixes[Math.min(idx, last)]! : null;
+  useEffect(() => {
+    if (!playing) return;
+    const t = setInterval(() => setIdx((i) => Math.min((i ?? -1) + 1, last)), 400);
+    return () => clearInterval(t);
+  }, [playing, last]);
+  useEffect(() => { if (playing && idx != null && idx >= last) setPlaying(false); }, [playing, idx, last]);
+  const drops = track?.drops ?? [];
+  const dropPoints: RoutePoint[] = drops.map((d, i) => ({ ref: d.ref, lat: d.lat, lng: d.lng, order: i + 1, label: d.label }));
+  const dayWord = isToday ? "today" : date;
 
   /* A failed read used to look exactly like "no run today / no position yet". */
-  const failed = [day.isError && "today's runs", positions.isError && "the GPS position", trackQ.isError && "today's track"].filter(Boolean);
+  const failed = [day.isError && `${isToday ? "today's" : date} runs`, isToday && positions.isError && "the GPS position", trackQ.isError && `${isToday ? "today's" : date} track`].filter(Boolean);
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-muted">Day
+          <input type="date" value={date} max={today} onChange={(e) => setDay(e.target.value)}
+            className="h-[34px] rounded-lg border border-[#d9d3c6] bg-surface px-2 text-[13px] font-normal text-ink" />
+        </label>
+        {!isToday && <button type="button" className={BTN_SEC} onClick={() => setDay(today)}>Today</button>}
+      </div>
       {failed.length > 0 && (
         <p role="alert" className="rounded-[10px] bg-err-bg px-3 py-2.5 text-[13px] font-semibold text-err">Could not load {failed.join(", ")}. What shows below may be incomplete.</p>
       )}
       <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-        <Tile label="Now" value={position ? `${position.street ?? `${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}`}` : "No position yet"}
+        {isToday && <Tile label="Now" value={position ? `${position.street ?? `${position.lat.toFixed(5)}, ${position.lng.toFixed(5)}`}` : "No position yet"}
           hint={position
             ? `${fmtTime(position.at)} · ${position.source}${position.speed != null ? ` · ${Math.round(position.speed)} km/h` : ""}`
-            : "Shows once the GPS tracker reports, or the driver taps On the way"} />
-        <Tile label="Driven today" value={track ? `${track.km.toFixed(1)} km` : "No track yet"}
-          hint={kmCost?.cost_sen != null ? `running cost ${fmtSen(kmCost.cost_sen)}` : "set RM/km in Vehicle details to see the cost"} />
-        <Tile label="Today's run" value={runs.length ? runs.map((t) => t.trip_no ?? "Run").join(", ") : "No run today"}
+            : "Shows once the GPS tracker reports, or the driver taps On the way"} />}
+        <Tile label={`Driven ${dayWord}`} value={track ? `${track.km.toFixed(1)} km` : "No track yet"}
+          hint={!isToday ? "straight line between GPS fixes" : kmCost?.cost_sen != null ? `running cost ${fmtSen(kmCost.cost_sen)}` : "set RM/km in Vehicle details to see the cost"} />
+        <Tile label={isToday ? "Today's run" : "Run"} value={runs.length ? runs.map((t) => t.trip_no ?? "Run").join(", ") : isToday ? "No run today" : "No run that day"}
           hint={runs.length ? `${runs[0]?.driver?.name ?? "no driver"} · ${stops.length} stop${stops.length === 1 ? "" : "s"}` : "Runs are planned in Delivery Time Arrangement"} />
-        <Tile label="Google km · Google time today" value={roadToday ? `${fmtKm(roadToday.distanceM)} · ${fmtDrive(roadToday.durationS)}` : road.isError ? "Could not load" : "Not worked out yet"}
+        <Tile label={`Google km · Google time ${dayWord}`} value={roadToday ? `${fmtKm(roadToday.distanceM)} · ${fmtDrive(roadToday.durationS)}` : road.isError ? "Could not load" : "Not worked out yet"}
           hint={roadMonth.d ? `this month ${fmtKm(roadMonth.m)} · ${fmtDrive(roadMonth.s)} over ${roadMonth.d} day${roadMonth.d === 1 ? "" : "s"}` : "from its warehouse and back, worked out on Last Mile"} />
       </div>
 
@@ -88,14 +119,39 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
           depot={runs[0]?.depot ?? null}
           stops={points}
           track={driven.path}
-          vehicle={position ? { lat: position.lat, lng: position.lng, label: "Lorry now" } : null}
+          drops={dropPoints}
+          vehicle={playhead ? { lat: playhead.lat, lng: playhead.lng, label: `Playback ${fmtTime(playhead.recorded_at)}` } : position ? { lat: position.lat, lng: position.lng, label: "Lorry now" } : null}
         />
       ) : (
         <p className="rounded-xl border border-dashed border-[#d9d3c6] px-3 py-2.5 text-[13px] text-ink-muted">
           The map needs VITE_GOOGLE_MAPS_API_KEY. The facts and stop list still work.
         </p>
       )}
-      {MAPS_KEY && <p className="text-[12px] text-ink-muted">Grey line: where it drove today{driven.byRoad ? ", along the roads" : ", joined straight between GPS fixes"}. Blue: today&apos;s planned stops. Dark marker: where it is now.</p>}
+      {fixes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#d9d3c6] bg-surface px-3 py-2">
+          <button type="button" className={BTN_SEC} aria-label={playing ? "Pause playback" : "Play the day"}
+            onClick={() => { if (playing) setPlaying(false); else { if (idx == null || idx >= last) setIdx(0); setPlaying(true); } }}>
+            {playing ? "Pause" : "Play"}
+          </button>
+          <input type="range" min={0} max={last} value={Math.min(idx ?? 0, last)} aria-label="Playback position"
+            onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="min-w-[160px] flex-1" />
+          <span className="text-[12.5px] tabular-nums text-ink-muted">
+            {playhead ? `${fmtTime(playhead.recorded_at)} MYT${playhead.speed_kmh != null ? ` · ${Math.round(playhead.speed_kmh)} km/h` : ""}` : `${fixes.length} fixes`}
+          </span>
+        </div>
+      )}
+      {MAPS_KEY && <p className="text-[12px] text-ink-muted">Grey line: where it drove {dayWord}{driven.byRoad ? ", along the roads" : ", joined straight between GPS fixes"}. Blue: planned stops. Orange: where it delivered.{isToday ? " Dark marker: where it is now." : ""}</p>}
+      {drops.length > 0 && (
+        <ol className="flex flex-col gap-2">
+          {drops.map((d, i) => (
+            <li key={d.ref} className="flex items-start gap-2.5 text-[13px]">
+              <span className="grid h-6 w-6 flex-none place-items-center rounded-full bg-[#ea580c] text-[12px] font-bold text-white">{i + 1}</span>
+              <span className="min-w-0 flex-1 font-semibold text-ink">{d.label}</span>
+              <span className="flex-none text-[12px] tabular-nums text-ink-muted">{fmtTime(d.at)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
 
       {stops.length > 0 && (
         <ol className="flex flex-col gap-2">
@@ -115,7 +171,7 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
         </ol>
       )}
       {runs.length > 0 && (
-        <Link to={`/scm/fleet-day?date=${date}&trip=${runs[0]?.id ?? ""}`} className={BTN_SEC}>Open today&apos;s run in Last Mile</Link>
+        <Link to={`/scm/fleet-day?date=${date}&trip=${runs[0]?.id ?? ""}`} className={BTN_SEC}>Open {isToday ? "today's" : "this day's"} run in Last Mile</Link>
       )}
     </div>
   );

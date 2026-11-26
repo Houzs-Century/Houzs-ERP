@@ -14,7 +14,7 @@
    company-scope: the shared fleet's runs, read whole like lorry-day-runs.ts. */
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { chunkIn, paginateAll } from './paginate-all';
-import { kmFromFixes, myDayWindow, type Fix } from './lorry-km';
+import { kmFromFixes, myDayWindow, oneTracker, type Fix } from './lorry-km';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema-parameterised scm client, same alias as geocode.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
@@ -129,10 +129,10 @@ export async function loadDayStats(sb: SupabaseClient, from: string, to: string)
   /* GPS km per lorry and Malaysia day; a lorry-day with no fix stays null. */
   const winFrom = myDayWindow(from)?.from;
   const winTo = myDayWindow(to)?.to;
-  const fixesBy = new Map<string, Fix[]>();
+  const fixesBy = new Map<string, Array<Fix & { device_id: string | null }>>();
   if (winFrom && winTo) {
-    const fixes = await need('fixes', paginateAll<Fix & { lorry_id: string }>((lo, hi) =>
-      sb.from('lorry_positions').select('lorry_id, lat, lng, recorded_at')
+    const fixes = await need('fixes', paginateAll<Fix & { lorry_id: string; device_id: string | null }>((lo, hi) =>
+      sb.from('lorry_positions').select('lorry_id, device_id, lat, lng, recorded_at')
         .gte('recorded_at', winFrom).lt('recorded_at', winTo).order('recorded_at').order('id').range(lo, hi)));
     for (const f of fixes) {
       const k = `${f.lorry_id}|${myDate(f.recorded_at)}`;
@@ -147,7 +147,7 @@ export async function loadDayStats(sb: SupabaseClient, from: string, to: string)
     const legs = r.legs ?? [];
     const stats = stopStats(legs, (ref) => stamps.get(ref) ?? null);
     const fx = fixesBy.get(`${r.lorry_id}|${date}`);
-    days.push(dayStat({ date, lorryId: r.lorry_id, distanceM: Number(r.distance_m), durationS: Number(r.duration_s), legs }, stats, fx?.length ? kmFromFixes(fx) : null));
+    days.push(dayStat({ date, lorryId: r.lorry_id, distanceM: Number(r.distance_m), durationS: Number(r.duration_s), legs }, stats, fx?.length ? kmFromFixes(oneTracker(fx)) : null));
     for (const s of stats) onSiteRows.push({ lorryId: r.lorry_id, buildingType: buildingOf.get(s.ref) ?? null, onSiteS: s.onSiteS });
   }
   return { days, onSite: onSiteByBuilding(onSiteRows) };

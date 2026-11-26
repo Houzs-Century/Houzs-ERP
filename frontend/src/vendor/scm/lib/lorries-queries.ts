@@ -8,6 +8,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch, API_URL, humanApiError } from './authed-fetch';
+import { todayMY } from '../../shared/format';
 // See authed-fetch.ts's import note: the token may be in sessionStorage, so the
 // read must come from the shared accessor, never an inlined localStorage hit.
 import { readAuthToken } from '../../../lib/authToken';
@@ -386,6 +387,8 @@ export type LorryTrack = {
   date: string;
   km: number;
   fixes: Array<{ lat: number; lng: number; recorded_at: string; speed_kmh: number | null; street: string | null }>;
+  /* Where the day's DOs / jobs were actually delivered (POD GPS), in time order. */
+  drops: Array<{ kind: 'do' | 'job'; ref: string; label: string; lat: number; lng: number; at: string }>;
 };
 
 export function useLorryTrack(lorryId: string, date: string) {
@@ -393,6 +396,16 @@ export function useLorryTrack(lorryId: string, date: string) {
     queryKey: ['lorries', 'track', lorryId, date],
     queryFn: () => authedFetch<LorryTrack>(`/lorries/${encodeURIComponent(lorryId)}/track?date=${date}`),
     enabled: !!lorryId,
-    refetchInterval: 5 * 60_000,
+    refetchInterval: date === todayMY() ? 5 * 60_000 : (false as const),
+  });
+}
+
+/* Km per lorry per Malaysia day (GET /lorries/km-daily); null = no fixes that day. */
+export type LorryKmDaily = { days: string[]; lorries: Array<{ id: string; plate: string; km: Array<number | null> }> };
+
+export function useLorryKmDaily(from: string, to: string) {
+  return useQuery({
+    queryKey: ['lorries', 'km-daily', from, to],
+    queryFn: () => authedFetch<LorryKmDaily>(`/lorries/km-daily?from=${from}&to=${to}`),
   });
 }

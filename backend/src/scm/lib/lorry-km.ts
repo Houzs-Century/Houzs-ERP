@@ -47,3 +47,22 @@ export function myDayWindow(date: string): { from: string; to: string } | null {
   if (Number.isNaN(start) || new Date(start + 8 * 3_600_000).toISOString().slice(0, 10) !== date) return null;
   return { from: new Date(start).toISOString(), to: new Date(start + 86_400_000).toISOString() };
 }
+
+/** One lorry-day's fixes from ONE tracker. A lorry fed by two trackers (Velocity +
+ *  iTrack) has interleaved fixes that zig-zag the path and inflate km, so keep the
+ *  device with the most fixes (tie: the one whose newest fix is latest). A null
+ *  device_id counts as its own device. Input order is kept. */
+export function oneTracker<T extends { device_id: string | null; recorded_at: string }>(fixes: T[]): T[] {
+  const stat = new Map<string | null, { n: number; last: number }>();
+  for (const f of fixes) {
+    const s = stat.get(f.device_id) ?? { n: 0, last: -Infinity };
+    s.n++;
+    s.last = Math.max(s.last, Date.parse(f.recorded_at) || 0);
+    stat.set(f.device_id, s);
+  }
+  if (stat.size < 2) return fixes;
+  let best: string | null = null;
+  let bs = { n: -1, last: -Infinity };
+  for (const [id, s] of stat) if (s.n > bs.n || (s.n === bs.n && s.last > bs.last)) { best = id; bs = s; }
+  return fixes.filter((f) => f.device_id === best);
+}

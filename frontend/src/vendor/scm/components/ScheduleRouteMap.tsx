@@ -33,7 +33,7 @@ export type RoutePoint = {
 /** Where the lorry is now (Fleet Health's lorry page) — a dark marker on top. */
 export type RouteVehicle = { lat: number; lng: number; label: string };
 
-function RouteOverlay({ depot, stops, vehicle, track }: { depot: { lat: number; lng: number } | null; stops: RoutePoint[]; vehicle: RouteVehicle | null; track: Array<{ lat: number; lng: number }> }) {
+function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: number; lng: number } | null; stops: RoutePoint[]; vehicle: RouteVehicle | null; track: Array<{ lat: number; lng: number }>; drops: RoutePoint[] }) {
   const map = useMap();
   const objectsRef = useRef<Array<{ setMap: (m: google.maps.Map | null) => void }>>([]);
 
@@ -89,6 +89,20 @@ function RouteOverlay({ depot, stops, vehicle, track }: { depot: { lat: number; 
       objectsRef.current.push(marker);
     }
 
+    /* Where deliveries actually happened (POD GPS): orange, not part of the planned line. */
+    for (const s of drops) {
+      const p = { lat: s.lat, lng: s.lng };
+      bounds.extend(p);
+      objectsRef.current.push(new google.maps.Marker({
+        position: p,
+        map,
+        title: `${s.order}. ${s.label}`,
+        zIndex: 1500,
+        label: { text: String(s.order), color: "#ffffff", fontWeight: "bold", fontSize: "12px" },
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 12, fillColor: "#ea580c", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      }));
+    }
+
     if (depot && stops.length > 0) path.push({ lat: depot.lat, lng: depot.lng });
 
     /* The route actually driven (GPS fixes) — grey under the planned blue line. */
@@ -140,12 +154,13 @@ function RouteOverlay({ depot, stops, vehicle, track }: { depot: { lat: number; 
       for (const o of objectsRef.current) o.setMap(null);
       objectsRef.current = [];
     };
-  }, [map, depot, stops, vehicle, track]);
+  }, [map, depot, stops, vehicle, track, drops]);
 
   return null;
 }
 
 const NO_TRACK: Array<{ lat: number; lng: number }> = [];
+const NO_DROPS: RoutePoint[] = [];
 
 export function ScheduleRouteMap({
   apiKey,
@@ -153,12 +168,14 @@ export function ScheduleRouteMap({
   stops,
   vehicle = null,
   track = NO_TRACK,
+  drops = NO_DROPS,
 }: {
   apiKey: string;
   depot: { lat: number; lng: number } | null;
   stops: RoutePoint[];
   vehicle?: RouteVehicle | null;
   track?: Array<{ lat: number; lng: number }>;
+  drops?: RoutePoint[];
 }) {
   const [failed, setFailed] = useState(false);
 
@@ -183,7 +200,7 @@ export function ScheduleRouteMap({
           disableDefaultUI={false}
           style={{ width: "100%", height: 320 }}
         >
-          <RouteOverlay depot={depot} stops={stops} vehicle={vehicle} track={track} />
+          <RouteOverlay depot={depot} stops={stops} vehicle={vehicle} track={track} drops={drops} />
         </Map>
       </APIProvider>
     </div>

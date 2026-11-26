@@ -218,7 +218,7 @@ function PanelOverlay({
       const marker = new google.maps.Marker({
         position: { lat: v.lat, lng: v.lng },
         map,
-        title: `${v.label} · last position ${at}${v.lorryId ? ' · click for Fleet Health' : ''}`,
+        title: `${v.label} · ${v.source === 'gps' ? 'Tracker' : 'Phone'} fix ${at} (${Math.max(0, Math.round((Date.now() - Date.parse(v.recordedAt)) / 60_000))} min ago)${v.lorryId ? ' · click for Fleet Health' : ''}`,
         zIndex: 4000,
         label: { text: v.label, color: '#111827', fontWeight: 'bold', fontSize: '11px' },
         icon: {
