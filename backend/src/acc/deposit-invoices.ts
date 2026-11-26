@@ -40,6 +40,7 @@ import { absorbsOrderDeposit } from '../scm/lib/si-order-deposit';
 import { todayMyt } from '../scm/lib/my-time';
 import { CREDIT_NOTE_HEADER, cancelCreditNote, insertCreditNote, postCreditNote } from './credit-notes';
 import { refundedByInvoice } from './deposit-refunds';
+import { depositCostPct, depositCostSen } from './deposit-cost';
 import { SO_NOT_AN_ORDER } from '../scm/shared/so-deliverable-states';
 import { fmtSen } from '../scm/shared/format';
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
@@ -47,13 +48,14 @@ import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
 
-export const DI_COLS = 'id, company_id, di_number, payment_source, payment_id, so_doc_no, party_code, party_name, invoice_date, amount_sen, method, status, je_no, credit_note_id, cancel_reason, created_at, created_by, cancelled_at, cancelled_by';
+export const DI_COLS = 'id, company_id, di_number, payment_source, payment_id, so_doc_no, party_code, party_name, invoice_date, amount_sen, cost_sen, method, status, je_no, credit_note_id, cancel_reason, created_at, created_by, cancelled_at, cancelled_by';
 
 export type DepositInvoiceSettings = { enabled: boolean; fromDate: string | null };
 
 export type DepositInvoiceRow = {
   id: string; company_id: number; di_number: string; payment_source: string; payment_id: string; so_doc_no: string;
-  party_code: string | null; party_name: string | null; invoice_date: string; amount_sen: number; method: string | null;
+  party_code: string | null; party_name: string | null; invoice_date: string; amount_sen: number;
+  cost_sen: number | null; method: string | null;
   status: 'ISSUED' | 'CANCELLED'; je_no: string | null; credit_note_id: string | null; cancel_reason: string | null;
   created_at: string; created_by: string | null; cancelled_at: string | null; cancelled_by: string | null;
 };
@@ -249,26 +251,76 @@ export async function issueDepositInvoice(
   };
 }
 
-/** Post one issued invoice's journal (Dr AR party / Cr DEPOSIT_INCOME) through
-    the one gate — keyed (DI, di_number), so a second post echoes — and record
-    the number on the invoice. */
+/** Post one issued invoice's journal (Dr AR party / Cr DEPOSIT_INCOME, and the
+    deposit's cost where the company books one: Dr DEPOSIT_COST / Cr
+    DEPOSIT_COST_ACCRUAL) through the one gate — keyed (DI, di_number), so a
+    second post echoes — and record the number and the cost on the invoice. */
 export async function postDepositInvoice(
   sb: Db,
   di: { id: string; companyId: number; diNumber: string; soDocNo: string; partyCode: string | null; partyName: string | null; amountSen: number; invoiceDate: string },
 ): Promise<{ ok: true; jeNo: string; status: 'posted' | 'already_posted' } | { ok: false; reason: string }> {
   const roles = await resolveRoles(sb, di.companyId);
+  const pct = await depositCostPct(sb, di.companyId);
+  if (!pct.ok) return { ok: false, reason: `deposit cost: ${pct.reason}` };
+  const costSen = depositCostSen(di.amountSen, pct.pct);
   const r = await postJournal(sb, {
     companyId: di.companyId,
     entryDate: di.invoiceDate,
     sourceType: 'DI',
     sourceDocNo: di.diNumber,
     narration: `Deposit invoice ${di.diNumber} — ${di.soDocNo}${di.partyName ? ` — ${di.partyName}` : ''}`,
-    lines: depositInvoiceLines(roles, { diNumber: di.diNumber, docNo: di.soDocNo, customerCode: di.partyCode, customerName: di.partyName }, di.amountSen),
+    lines: depositInvoiceLines(roles, { diNumber: di.diNumber, docNo: di.soDocNo, customerCode: di.partyCode, customerName: di.partyName }, di.amountSen, costSen),
   });
   if (!r.ok) return { ok: false, reason: `${r.status}${r.reason ? `: ${r.reason}` : ''}` };
-  const { error } = await sb.from('acc_deposit_invoices').update({ je_no: r.jeNo }).eq('id', di.id);
+  const recorded = r.status === 'already_posted' ? { je_no: r.jeNo } : { je_no: r.jeNo, cost_sen: costSen };
+  const { error } = await sb.from('acc_deposit_invoices').update(recorded).eq('company_id', di.companyId).eq('id', di.id);
   if (error) return { ok: false, reason: `posted as ${r.jeNo} but the invoice did not record it: ${error.message}` };
   return { ok: true, jeNo: r.jeNo, status: r.status === 'already_posted' ? 'already_posted' : 'posted' };
+}
+
+/**
+ * Post a deposit invoice's entry again with the cost its company now books —
+ * the back-fill for invoices posted before (scripts/backfill-deposit-invoice-cost.mjs).
+ * The old entry is reversed on its own day, so the pair stays out of the
+ * month; the new one is posted and the cost recorded. An invoice a note
+ * already stands against is left alone: that note released nothing, and
+ * booking the cost now would leave it booked for good. Resumable: an
+ * invoice whose old entry was reversed before a cut-off is posted.
+ */
+export async function repostDepositInvoiceCost(
+  sb: Db,
+  p: { companyId: number; diNumber: string },
+): Promise<
+  | { ok: true; status: 'reposted'; oldJeNo: string | null; jeNo: string; costSen: number }
+  | { ok: true; status: 'not_needed' | 'noted'; why: string }
+  | { ok: false; reason: string }
+> {
+  const { data, error } = await sb.from('acc_deposit_invoices')
+    .select(DI_COLS).eq('company_id', p.companyId).eq('di_number', p.diNumber).maybeSingle();
+  if (error) return { ok: false, reason: `${p.diNumber}: ${error.message}` };
+  const di = data as DepositInvoiceRow | null;
+  if (!di) return { ok: false, reason: `${p.diNumber}: no such deposit invoice` };
+  if (di.status === 'CANCELLED') return { ok: true, status: 'not_needed', why: 'cancelled' };
+  if (Number(di.cost_sen ?? 0) > 0) return { ok: true, status: 'not_needed', why: 'its cost is already recorded' };
+  const { data: noted, error: nErr } = await sb.from('acc_credit_notes')
+    .select('note_number').eq('company_id', p.companyId).eq('kind', 'CN').eq('source_doc_no', di.di_number).neq('status', 'CANCELLED');
+  if (nErr) return { ok: false, reason: `${p.diNumber}: notes: ${nErr.message}` };
+  if (((noted ?? []) as unknown[]).length > 0) return { ok: true, status: 'noted', why: `a note stands against it (${((noted ?? []) as Array<{ note_number: string }>).map((n) => n.note_number).join(', ')})` };
+  const pct = await depositCostPct(sb, p.companyId);
+  if (!pct.ok) return { ok: false, reason: `deposit cost: ${pct.reason}` };
+  if (pct.pct == null) return { ok: false, reason: `company ${p.companyId} books no deposit cost` };
+  const oldJeNo = di.je_no;
+  const rev = await reverseJournal(sb, {
+    sourceType: 'DI', sourceDocNo: di.di_number, companyId: p.companyId, onOriginalDate: true,
+    narration: (orig) => `Deposit invoice ${di.di_number} posted again with its cost — reverses ${orig.je_no}`,
+  });
+  if (!rev.ok) return { ok: false, reason: `${p.diNumber}: old entry not reversed: ${rev.status}${rev.reason ? `: ${rev.reason}` : ''}` };
+  const posted = await postDepositInvoice(sb, {
+    id: di.id, companyId: p.companyId, diNumber: di.di_number, soDocNo: di.so_doc_no, partyCode: di.party_code, partyName: di.party_name,
+    amountSen: Number(di.amount_sen), invoiceDate: dayOf(di.invoice_date) ?? String(di.invoice_date).slice(0, 10),
+  });
+  if (!posted.ok) return { ok: false, reason: `${p.diNumber}: old entry reversed, new one not posted: ${posted.reason}` };
+  return { ok: true, status: 'reposted', oldJeNo, jeNo: posted.jeNo, costSen: depositCostSen(Number(di.amount_sen), pct.pct) };
 }
 
 

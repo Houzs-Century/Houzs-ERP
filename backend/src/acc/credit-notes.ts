@@ -24,6 +24,7 @@ import { docMonthTag, mintMonthlyDocNo } from '../scm/lib/doc-no';
 import { todayMyt } from '../scm/lib/my-time';
 import { removeAllAllocations } from './credit-note-allocations';
 import { autoCountCostSen, isAutoCountDepositNote } from './autocount-deposit-note';
+import { depositCostRelease } from './deposit-cost';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
@@ -198,6 +199,19 @@ export async function postCreditNote(
       ruleLines.push(
         { accountCode: roles.AUTOCOUNT_COST_ACCRUAL, debitSen: costSen, creditSen: 0, partyType: null, partyCode: null, partyName: null, notes: why },
         { accountCode: roles.AUTOCOUNT_DEPOSIT_COST, debitSen: 0, creditSen: costSen, partyType: null, partyCode: null, partyName: null, notes: why },
+      );
+    }
+  } else if (kind === 'CN') {
+    const release = await depositCostRelease(sb, {
+      companyId: p.companyId, noteId: String(note.id), sourceDocNo: note.source_doc_no == null ? null : String(note.source_doc_no),
+      thisSen: lines.reduce((t, l) => t + l.amountSen, 0),
+    });
+    if (!release.ok) return { ok: false, status: 'deposit_cost_read_failed', reason: release.reason };
+    if (release.sen > 0) {
+      const why = `Cost booked on deposit invoice ${String(note.source_doc_no)}, released by ${String(note.note_number)}`;
+      ruleLines.push(
+        { accountCode: roles.DEPOSIT_COST_ACCRUAL, debitSen: release.sen, creditSen: 0, partyType: null, partyCode: null, partyName: null, notes: why },
+        { accountCode: roles.DEPOSIT_COST, debitSen: 0, creditSen: release.sen, partyType: null, partyCode: null, partyName: null, notes: why },
       );
     }
   }
