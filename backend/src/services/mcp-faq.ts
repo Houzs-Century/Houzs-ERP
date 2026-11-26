@@ -169,7 +169,7 @@ export function summariseSupplierLateness(received: readonly Obj[], open: readon
   return {
     from: since,
     to: today,
-    note: "A delivery is late when the PO was fully received after its original expected date. avgDaysLate is over the late ones only. openPosPastDate = POs still not received and past the supplier's latest date.",
+    note: "A delivery counts as late when the PO's received date (received_at, stamped when its last goods arrived) is after its original expected date. avgDaysLate is over the late ones only. openPosPastDate = POs still not received and past the supplier's latest date.",
     receivedPosInWindow: counted,
     lateDeliveries: suppliers.reduce((n, s) => n + s.lateDeliveries, 0),
     suppliers: suppliers.slice(0, 15),
