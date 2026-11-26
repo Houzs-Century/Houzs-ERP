@@ -2,16 +2,16 @@
 /* Put the delivery crew onto ONE delivery order the Last Mile board cannot reach.
 
    WHY. HC-DO-2610-331 (SO HC-SO-002170, customer M RAVI A/L S MUTUSAMY, Rawang,
-   a RM 9,639 delivery on 2026-10-23) was run by MOHD ZAIMIR's VNB9058 that day,
+   a RM 9,639 delivery on 2026-10-23) was run by MOHD ZAIMIR's VRM9058 that day,
    but it carries NO crew record (scm.delivery_order_crew is empty for it), so
    Trip Pay credits nobody for it. It also never surfaces on the fleet-day Crew
    modal — its SO is an old (2024) order, and the board buckets a DO by its SO's
    delivery date, so this 2026-10-23 DO is not drawn on the 2026-10-23 board and
    the normal "assign crew" screen can't open it. The crew is therefore written
-   here, as the dispatcher recorded it (owner, 2026-11-26: "挂到 VNB 那趟").
+   here, as the dispatcher recorded it (owner, 2026-11-26: driver ZAIMIR, VRM9058).
 
    WHAT IT WRITES. Exactly one row into scm.delivery_order_crew for this DO:
-   driver = MOHD ZAIMIR BIN MOHD SHARANI (VNB9058), helpers = SOWKAT ALI and
+   driver = MOHD ZAIMIR BIN MOHD SHARANI (VRM9058), helpers = SOWKAT ALI and
    MD NAYIEM HOSSAIN. The _id foreign keys AND the text snapshot columns
    (name / ic / contact / plate) are both filled from the master tables by id,
    the same shape the fleet-day Crew modal writes, so Trip Pay resolves the
@@ -22,7 +22,7 @@
    status counts as delivered (LOADED does — do-shipped-states.ts), it has a run
    date (so_due_date 2026-10-23, in the 23rd–22nd trip month), it is not
    drop-shipped, not 3PL-billed, its crew names an INTERNAL lorry, and it sits on
-   no live trip stop. This DO meets all of them once the crew row names VNB9058;
+   no live trip stop. This DO meets all of them once the crew row names VRM9058;
    the script asserts each precondition before it writes.
 
    REFUSES, never guesses: the DO missing, not HC-SO-002170, not company 1,
@@ -60,7 +60,7 @@ const EXPECT_SO = 'HC-SO-002170';
 const DRIVER_ID = '63a70b65-3063-4220-8a2a-dd5378d45c73';   // MOHD ZAIMIR BIN MOHD SHARANI
 const HELPER_1_ID = 'b1a1a4a4-f68b-40a8-9de9-18c5b03edcf6'; // SOWKAT ALI
 const HELPER_2_ID = '6ba5377b-61f5-44c9-a6aa-c6d54f24ab8e'; // MD NAYIEM HOSSAIN
-const LORRY_ID = 'f93d9a18-eea7-4fdb-9df4-916c9bdbd757';    // VNB9058
+const LORRY_ID = '640be0f6-a84c-496a-8f0b-64054472d573';    // VRM9058
 // Same actor the fleet-day Crew endpoint stamps on delivery_order_crew.assigned_by.
 const ASSIGNED_BY = '00000000-0000-4000-8000-000000000001';
 
