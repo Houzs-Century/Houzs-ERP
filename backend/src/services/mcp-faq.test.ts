@@ -78,6 +78,13 @@ describe("FAQ quick answers (pure)", () => {
     expect(s).toMatchObject({ totalRm: 300, pastDueRm: 200, dueThisWeekRm: 100, aged: { "0-30": 100, "90+": 200 } });
     expect(s.dueThisWeek).toEqual([{ party: "Acme", doc: "PI1", dueDate: "2026-11-28", openRm: 100 }]);
     expect((s as unknown as { bySupplier: unknown[] }).bySupplier).toHaveLength(1);
+    const withAdvance = summariseAging(
+      { asOf: today, totals: { balanceSen: 5000, cells: [10000, 0, 0, 0, 0], unappliedSen: -5000 }, rows: [{ name: "Acme", balanceSen: 5000, cells: [10000, 0, 0, 0, 0], unappliedSen: -5000, items: [] }] },
+      today,
+      "supplier",
+    );
+    expect(withAdvance).toMatchObject({ totalRm: 50, aged: { "0-30": 100 }, unappliedRm: -50 });
+    expect((withAdvance as unknown as { bySupplier: { unappliedRm: number }[] }).bySupplier[0].unappliedRm).toBe(-50);
     expect(summariseUnbilled({ totals: { rows: 1, unbilled_sen: 990 }, buckets: [{ label: "0-30 days", rows: 1, unbilled_sen: 990 }], rows: [{ do_number: "DO1", age_days: 3, unbilled_sen: 990 }] })).toMatchObject({ deliveryOrders: 1, unbilledRm: 9.9 });
   });
 
