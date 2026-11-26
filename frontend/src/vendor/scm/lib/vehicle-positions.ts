@@ -21,7 +21,7 @@ export type VehiclePosition = {
   source: "phone" | "gps";
 };
 
-type RunOfLorry = { id: string; lorry: { id: string; plate: string } | null; driver?: { name: string } | null };
+type RunOfLorry = { id: string; status: string; lorry: { id: string; plate: string } | null; driver?: { name: string } | null };
 
 /** A tracker fix older than this loses to the phone (trackers report every 5 min). */
 export const TRACKER_FRESH_MS = 15 * 60_000;
@@ -29,7 +29,7 @@ export const TRACKER_FRESH_MS = 15 * 60_000;
 /** One marker per lorry (per run when it has no lorry). Per run: a fresh tracker fix wins, else the
  *  newest phone fix, else a stale tracker fix (so the office sees where it was). A run with no fix at
  *  all has no marker, never a guessed position. */
-export function vehiclePositionsFrom(locations: TripLocation[], runs: RunOfLorry[], trackers: LorryPosition[], now: number): VehiclePosition[] {
+export function vehiclePositionsFrom(locations: TripLocation[], runs: RunOfLorry[], trackers: LorryPosition[], now: number, isToday: boolean): VehiclePosition[] {
   const runById = new Map(runs.map((r) => [r.id, r]));
   const trackerByLorry = new Map(trackers.map((t) => [t.lorry_id, t]));
   const newest = new Map<string, TripLocation>();
@@ -40,7 +40,8 @@ export function vehiclePositionsFrom(locations: TripLocation[], runs: RunOfLorry
   }
   const out = new Map<string, VehiclePosition>();
   for (const run of runs) {
-    const t = run.lorry ? trackerByLorry.get(run.lorry.id) ?? null : null;
+    // Tracker fixes are latest-only: valid for today's running runs, never a past day's.
+    const t = isToday && run.status.toUpperCase() === "IN_PROGRESS" && run.lorry ? trackerByLorry.get(run.lorry.id) ?? null : null;
     const p = newest.get(run.id) ?? null;
     const fresh = t != null && now - Date.parse(t.recorded_at) <= TRACKER_FRESH_MS;
     const base = { key: run.lorry?.id ?? run.id, lorryId: run.lorry?.id ?? null, tripId: run.id, label: run.lorry?.plate ?? run.driver?.name ?? "Lorry" };
@@ -49,13 +50,14 @@ export function vehiclePositionsFrom(locations: TripLocation[], runs: RunOfLorry
       : p
         ? { ...base, lat: p.lat, lng: p.lng, recordedAt: p.recordedAt, source: "phone" }
         : null;
-    if (v && !out.has(v.key)) out.set(v.key, v);
+    const cur = v ? out.get(v.key) : undefined;
+    if (v && (!cur || v.recordedAt > cur.recordedAt)) out.set(v.key, v);
   }
   return [...out.values()];
 }
 
-export function useVehiclePositions(runs: RunOfLorry[], enabled: boolean): VehiclePosition[] {
+export function useVehiclePositions(runs: RunOfLorry[], enabled: boolean, isToday: boolean): VehiclePosition[] {
   const q = useActiveTripLocations(enabled);
   const trackers = useLorryPositions();
-  return useMemo(() => vehiclePositionsFrom(q.data?.locations ?? [], runs, trackers.data ?? [], Date.now()), [q.data, trackers.data, runs]);
+  return useMemo(() => vehiclePositionsFrom(q.data?.locations ?? [], runs, trackers.data ?? [], Date.now(), isToday), [q.data, trackers.data, runs, isToday]);
 }

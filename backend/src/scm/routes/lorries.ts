@@ -513,8 +513,7 @@ lorries.get('/:id/track', async (c) => {
   const fixes = oneTracker(data ?? []).map(({ device_id: _d, ...f }) => f);
   // Fixes are a unified fleet; the drop points are DO / job data and filtered by the caller's companies.
   const { drops, error: dErr } = await loadDrops(c.get('supabase'), c, c.req.param('id'), date);
-  if (dErr) return c.json({ error: 'load_failed', reason: dErr }, 500);
-  return c.json({ date, km: kmFromFixes(fixes), fixes, drops });
+  return c.json({ date, km: kmFromFixes(fixes), fixes, drops, dropsError: dErr });
 });
 
 // The same day's fixes drawn along the roads (owner 2026-11-10), for the live map and

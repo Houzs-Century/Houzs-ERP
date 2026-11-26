@@ -67,13 +67,13 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
       ? { lat: phoneFix.lat, lng: phoneFix.lng, at: phoneFix.recordedAt, source: "driver phone", street: null, speed: null }
       : null;
 
-  const stops = runs.flatMap((t) => t.stops);
-  const points: RoutePoint[] = stops
+  const stops = useMemo(() => runs.flatMap((t) => t.stops), [runs]);
+  const points: RoutePoint[] = useMemo(() => stops
     .filter((s) => s.lat != null && s.lng != null)
-    .map((s, i) => ({ ref: s.id, lat: s.lat as number, lng: s.lng as number, order: i + 1, label: s.customer_name ?? s.stop_type }));
+    .map((s, i) => ({ ref: s.id, lat: s.lat as number, lng: s.lng as number, order: i + 1, label: s.customer_name ?? s.stop_type })), [stops]);
   const roadTrack = useLorryRoadTrack(lorryId, date);
-  const driven = drivenPath(roadTrack.data, track?.fixes ?? []);
-  const fixes = track?.fixes ?? [];
+  const fixes = useMemo(() => track?.fixes ?? [], [track]);
+  const driven = useMemo(() => drivenPath(roadTrack.data, fixes), [roadTrack.data, fixes]);
   const last = fixes.length - 1;
   const playhead = idx != null && fixes[Math.min(idx, last)] ? fixes[Math.min(idx, last)]! : null;
   useEffect(() => {
@@ -82,8 +82,8 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
     return () => clearInterval(t);
   }, [playing, last]);
   useEffect(() => { if (playing && idx != null && idx >= last) setPlaying(false); }, [playing, idx, last]);
-  const drops = track?.drops ?? [];
-  const dropPoints: RoutePoint[] = drops.map((d, i) => ({ ref: d.ref, lat: d.lat, lng: d.lng, order: i + 1, label: d.label }));
+  const drops = useMemo(() => track?.drops ?? [], [track]);
+  const dropPoints: RoutePoint[] = useMemo(() => drops.map((d, i) => ({ ref: d.ref, lat: d.lat, lng: d.lng, order: i + 1, label: d.label })), [drops]);
   const dayWord = isToday ? "today" : date;
 
   /* A failed read used to look exactly like "no run today / no position yet". */
@@ -127,6 +127,7 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
           The map needs VITE_GOOGLE_MAPS_API_KEY. The facts and stop list still work.
         </p>
       )}
+      {track?.dropsError && <p className="text-[12.5px] text-err">Drop points could not load: {track.dropsError}</p>}
       {fixes.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#d9d3c6] bg-surface px-3 py-2">
           <button type="button" className={BTN_SEC} aria-label={playing ? "Pause playback" : "Play the day"}

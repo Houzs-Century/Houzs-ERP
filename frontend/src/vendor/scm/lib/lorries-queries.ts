@@ -389,6 +389,7 @@ export type LorryTrack = {
   fixes: Array<{ lat: number; lng: number; recorded_at: string; speed_kmh: number | null; street: string | null }>;
   /* Where the day's DOs / jobs were actually delivered (POD GPS), in time order. */
   drops: Array<{ kind: 'do' | 'job'; ref: string; label: string; lat: number; lng: number; at: string }>;
+  dropsError: string | null;
 };
 
 export function useLorryTrack(lorryId: string, date: string) {

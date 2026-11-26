@@ -36,6 +36,26 @@ export type RouteVehicle = { lat: number; lng: number; label: string };
 function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: number; lng: number } | null; stops: RoutePoint[]; vehicle: RouteVehicle | null; track: Array<{ lat: number; lng: number }>; drops: RoutePoint[] }) {
   const map = useMap();
   const objectsRef = useRef<Array<{ setMap: (m: google.maps.Map | null) => void }>>([]);
+  const vehicleRef = useRef(vehicle);
+  vehicleRef.current = vehicle;
+  const markerRef = useRef<google.maps.Marker | null>(null);
+
+  /* Moves the one vehicle marker; never refits the map, so playback does not re-zoom. */
+  useEffect(() => {
+    if (!map || typeof google === "undefined") return;
+    if (!vehicle) { markerRef.current?.setMap(null); markerRef.current = null; return; }
+    const v = { lat: vehicle.lat, lng: vehicle.lng };
+    if (!markerRef.current) {
+      markerRef.current = new google.maps.Marker({
+        position: v, map, title: vehicle.label, zIndex: 2000,
+        icon: { path: "M -11 -7 L 5 -7 L 5 -3 L 9 -3 L 12 1 L 12 6 L -11 6 Z", scale: 1.4, fillColor: "#111827", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      });
+    } else {
+      markerRef.current.setPosition(v);
+      markerRef.current.setTitle(vehicle.label);
+    }
+  }, [map, vehicle]);
+  useEffect(() => () => { markerRef.current?.setMap(null); markerRef.current = null; }, []);
 
   useEffect(() => {
     if (!map || typeof google === "undefined") return;
@@ -113,24 +133,8 @@ function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: n
       }));
     }
 
-    if (vehicle) {
-      const v = { lat: vehicle.lat, lng: vehicle.lng };
-      bounds.extend(v);
-      objectsRef.current.push(new google.maps.Marker({
-        position: v,
-        map,
-        title: vehicle.label,
-        zIndex: 2000,
-        icon: {
-          path: "M -11 -7 L 5 -7 L 5 -3 L 9 -3 L 12 1 L 12 6 L -11 6 Z",
-          scale: 1.4,
-          fillColor: "#111827",
-          fillOpacity: 1,
-          strokeColor: "#ffffff",
-          strokeWeight: 2,
-        },
-      }));
-    }
+    /* The vehicle marker has its own effect (it moves on playback); it only frames the first fit. */
+    if (vehicleRef.current) bounds.extend({ lat: vehicleRef.current.lat, lng: vehicleRef.current.lng });
 
     if (path.length >= 2) {
       const line = new google.maps.Polyline({
@@ -154,7 +158,7 @@ function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: n
       for (const o of objectsRef.current) o.setMap(null);
       objectsRef.current = [];
     };
-  }, [map, depot, stops, vehicle, track, drops]);
+  }, [map, depot, stops, track, drops]);
 
   return null;
 }
