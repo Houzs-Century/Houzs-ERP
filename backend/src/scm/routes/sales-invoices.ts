@@ -59,6 +59,7 @@ import { SI_STATUS_BUCKETS } from '../lib/si-status-buckets';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
 import { buildItemRow, createSalesInvoiceFromDoLines, migratedRefusalForDeliveries, nextSiNumber, recomputeTotals, recordSiCreate } from '../lib/si-from-do';
 import { releaseDepositInvoicesBestEffort } from '../../acc/deposit-invoices';
+import { releaseAutoCountDepositBestEffort } from '../../acc/autocount-deposits';
 import { releaseSalesInvoiceKnockOffs } from '../../acc/credit-note-si';
 import { siCreditNotesSen } from '../lib/si-credit-notes';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -1952,6 +1953,12 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
     });
     /* The credit notes knocked off it get their credit back: a cancelled invoice owes nothing. */
     await releaseSalesInvoiceKnockOffs(sb, { companyId: auditCompanyId ?? null, siId: id });
+    /* The AutoCount deposit note goes back to DEFERRED REVENUE with it, and onto
+       the order's next live invoice if there is one (owner 2026-11-25). */
+    await releaseAutoCountDepositBestEffort(sb, {
+      companyId: auditCompanyId ?? null, siId: id, siNumber: d.invoice_number,
+      actor: String((c.get('houzsUser') as { name?: string } | undefined)?.name ?? '') || null,
+    });
 
     /* A SEPARATE row from the CANCEL above, not a duplicate of it: that was a
        document-status event, this is the AR/GL contra, and a cancel whose

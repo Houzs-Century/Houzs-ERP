@@ -36,6 +36,12 @@ describe('a note as a row', () => {
     expect(noteItem(cn({ status: 'CANCELLED' }))).toMatchObject({ status: 'cancelled', cancelled: true });
   });
 
+  test('an AutoCount deposit note knocks nothing off and names the invoice it was raised at, as a close-out does', () => {
+    const x = noteItem(cn({ status: 'POSTED', source_doc_no: 'AUTOCOUNT DEPOSIT', depositPaper: 'autocount', sales_invoice_number: 'HC-SI-2611-007' }));
+    expect(x).toMatchObject({ knocks: null, closesInvoice: 'HC-SI-2611-007', reference: 'HC-SO-2611-004 · AUTOCOUNT DEPOSIT' });
+    expect(noteItem(cn({ status: 'CANCELLED', depositPaper: 'autocount', sales_invoice_number: 'HC-SI-2611-007' })).closesInvoice).toBeNull();
+  });
+
   test('an other debtor’s debit note is a bill: debit side, posted, opening the bill page', () => {
     const x = debitBillItem(odn);
     expect(x).toMatchObject({ source: 'bill', kindWord: 'DN', side: 'debit', otherDebtor: true, status: 'posted', reference: 'Damaged booth', party: 'OLD DEBTOR' });

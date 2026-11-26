@@ -69,6 +69,8 @@ import {
   resolveAccessToken,
   validRedirectUri,
 } from "../services/mcp-store";
+import { answerCacheKey, cachedAnswer, RATE_LIMITED_NOTE, rateLimitRefusal } from "../services/mcp-ratelimit";
+import { CACHEABLE_TOOLS, isRound3Tool, mcpXlsxDownload, ROUND3_INSTRUCTIONS, ROUND3_TOOLS, runRound3Tool } from "../services/mcp-round3";
 
 type HonoEnv = { Bindings: Env };
 const app = new Hono<HonoEnv>();
@@ -235,6 +237,7 @@ Everything is limited to what this person may see and do in the ERP. Reading is 
 ANSWER FAST: use a quick answer first. It is one call and already summarised.
 - Sales (a month, quarter or year; vs the same days of the previous period; by showroom, brand, salesperson, state; daily; top models; trend): sales_summary {period: "YYYY-MM" | "YYYY-Qn" | "YYYY"} or {from, to}.
 - Deliveries (delivery orders and amount; vs the same days of the previous period; by region and lorry; daily; open process gaps such as delivery orders not closed or delivered but still owing): delivery_summary {period} or {from, to}.
+${ROUND3_INSTRUCTIONS}
 - One document, customer or supplier by number or name, or the status of an order: search {query}, then fetch {id} for the full record.
 - The chain of a document (sales order -> delivery orders -> invoices -> payments, and purchase orders -> goods received -> purchase invoices, or backwards from any of them): document_flow {number_or_id}.
 - A document's PDF / printout: get_pdf {type, id} (ids from search).
@@ -394,6 +397,7 @@ export const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { confirmationId: { type: "string" } }, required: ["confirmationId"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  ...ROUND3_TOOLS,
 ];
 
 async function innerCall(c: Context<HonoEnv>, token: string, pathWithQuery: string, company: string | null, write: { actionId: string; method: string; body: unknown } | null): Promise<Response> {
@@ -776,15 +780,27 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
   const company = companyArg(args);
   const tag = company ? `[${company}] ` : "";
   try {
-    if (name === "sales_summary" || name === "delivery_summary") {
+    // Per-person limits (services/mcp-ratelimit.ts); a refusal is a normal tool result, never a 500.
+    const overLimit = await rateLimitRefusal(c.env.DB, id.user.id, t0);
+    const cacheKey = CACHEABLE_TOOLS.has(name) ? answerCacheKey(id.user.id, company, name, args) : "";
+    if (overLimit) {
+      result = text(overLimit, true);
+      status = 429;
+      note = RATE_LIMITED_NOTE;
+    } else if (isRound3Tool(name)) {
+      const run = () => runRound3Tool({ read: (p, q) => readValue(c, token, p, q, company), origin: originOf(c), userId: id.user.id, bucket: c.env.POD_BUCKET, now: t0 }, name, args);
+      const o = cacheKey ? await cachedAnswer(cacheKey, t0, run) : await run();
+      ({ result, status, note } = o);
+      target = tag + o.target + ("cached" in o ? " (cached)" : "");
+    } else if (name === "sales_summary" || name === "delivery_summary") {
       const w = resolveWindow(args, myToday());
       if (!w) {
         result = text(BAD_WINDOW, true);
         status = 400;
       } else {
-        const o = name === "sales_summary" ? await salesSummary(c, token, w, company) : await deliverySummary(c, token, w, company);
+        const o = await cachedAnswer(cacheKey, t0, () => (name === "sales_summary" ? salesSummary(c, token, w, company) : deliverySummary(c, token, w, company)));
         ({ result, status, note } = o);
-        target = tag + o.target;
+        target = tag + o.target + ("cached" in o ? " (cached)" : "");
       }
     } else if (name === "search" || name === "fetch") {
       const o = name === "search" ? await searchTool(c, token, String(args.query ?? args.q ?? "").trim(), company) : await fetchTool(c, token, args.id, company);
@@ -936,6 +952,9 @@ app.get("/export/:key", async (c) => {
     headers: { ...common, "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "sandbox allow-scripts allow-modals allow-popups" },
   });
 });
+
+// An export_excel file (services/mcp-round3.ts), same 15-minute key rule as /export.
+app.route("/xlsx", mcpXlsxDownload);
 
 // Stateless server: no server-initiated stream.
 app.get("/", (c) => c.json({ error: "Use POST (MCP Streamable HTTP)." }, 405, { Allow: "POST" }));
