@@ -106,7 +106,8 @@ export function DrillPanel({ title, sub, rows, ledger, onClose }: { title: strin
 const entryRow = (e: DeptEntry): DrillRow => ({
   id: e.id, day: e.day, month: e.month, row: null, region: null, ref: e.ref,
   account: `${e.accountCode}${e.accountName ? ` · ${e.accountName}` : ''}`, text: e.text,
-  how: e.source === 'bill' ? `The commission bill for ${monthName(`${e.month}-01`)}, in place of the monthly release` : null,
+  how: e.source === 'bill' ? `The commission bill for ${monthName(`${e.month}-01`)}, in place of the monthly release`
+    : e.source === 'rate' ? `${monthName(`${e.month}-01`)}: at its rate, in place of what was booked` : null,
   sen: e.sen,
 });
 

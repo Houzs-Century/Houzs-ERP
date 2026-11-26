@@ -176,6 +176,8 @@ export const PERFORMANCE_MONTHS_MAX = 24;
 export type PerformanceMonth = {
   month: string; from: string; to: string;
   salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null;
+  /** Sales less the service group's: what the Department P&L's rates are of. */
+  salesExServiceSen: number;
   otherIncomeSen: number; expensesSen: number; netSen: number; netPct: number | null;
   /** The month's orders, its product groups' sales and cost, and its commission bills — the
       Department P&L's Exhibition reads them (owner 2026-11-25), so the two reports agree. */
@@ -249,6 +251,7 @@ export async function buildPerformanceMonths(companyId: number, from: string, to
     out.push({
       month: m.month, from: m.from, to: m.to,
       salesSen: p.totals.salesSen, cogsSen: p.totals.cogsSen, gpSen: p.totals.gpSen, gpPct: p.totals.gpPct,
+      salesExServiceSen: p.totals.salesExServiceSen,
       otherIncomeSen: p.otherIncomeSen, expensesSen: p.operatingExpense.amountSen + p.otherExpensesSen,
       netSen: p.netSen, netPct: p.netPct,
       orders: p.orders,

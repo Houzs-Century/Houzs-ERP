@@ -50,16 +50,16 @@ export function ShiftsTab() {
   ];
 
   const columns: HrCol<ShiftGroup>[] = [
-    { key: "name", label: "Shift", render: (g) => <span className="font-semibold text-ink">{g.name}</span> },
-    { key: "code", label: "Code", render: (g) => <span className="font-mono text-[11px] text-accent">{codeOf(g.name)}</span> },
-    { key: "hours", label: "Hours (06:00 – 22:00)", render: (g) => (
+    { key: "name", label: "Shift", getValue: (g) => g.name, render: (g) => <span className="font-semibold text-ink">{g.name}</span> },
+    { key: "code", label: "Code", getValue: (g) => codeOf(g.name), render: (g) => <span className="font-mono text-[11px] text-accent">{codeOf(g.name)}</span> },
+    { key: "hours", label: "Hours (06:00 – 22:00)", getValue: (g) => g.startMin, render: (g) => (
       <span className="flex items-center gap-2"><TimeSpan startMin={g.startMin} endMin={g.endMin} /><span className="w-[86px] shrink-0 font-mono text-[11px] text-ink-secondary">{minToHhmm(g.startMin)}–{minToHhmm(g.endMin)}</span></span>
     ) },
-    { key: "delivery", label: "Delivery day", render: (g) => (g.deliveryStartMin != null && g.deliveryEndMin != null
+    { key: "delivery", label: "Delivery day", getValue: (g) => g.deliveryStartMin ?? -1, render: (g) => (g.deliveryStartMin != null && g.deliveryEndMin != null
       ? <span className="flex items-center gap-2"><TimeSpan startMin={g.deliveryStartMin} endMin={g.deliveryEndMin} tone="bg-accent" /><span className="w-[86px] shrink-0 font-mono text-[11px] text-ink-secondary">{minToHhmm(g.deliveryStartMin)}–{minToHhmm(g.deliveryEndMin)}</span></span>
       : <span className="text-ink-muted">same as shift</span>) },
-    { key: "assigned", label: "Assigned", align: "right", render: (g) => <span className="font-semibold text-ink">{countOf(g.id)}</span> },
-    { key: "status", label: "Status", align: "center", render: (g) => (g.active ? <Tag tone="ok">Active</Tag> : <Tag tone="muted">Archived</Tag>) },
+    { key: "assigned", label: "Assigned", align: "right", filterType: "number", getValue: (g) => countOf(g.id), render: (g) => <span className="font-semibold text-ink">{countOf(g.id)}</span> },
+    { key: "status", label: "Status", align: "center", getValue: (g) => (g.active ? "Active" : "Archived"), render: (g) => (g.active ? <Tag tone="ok">Active</Tag> : <Tag tone="muted">Archived</Tag>) },
   ];
 
   const noGroups = groups.length === 0;

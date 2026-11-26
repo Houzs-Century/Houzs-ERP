@@ -1,16 +1,16 @@
-/* HR · Punch Sites (step-2 re-skin). Where a phone punch counts as on site, and
- * the two punch-rule switches (selfie / on-site) that turn a soft check into a
- * hard block. New design; real /api/hr/punch-sites, add/edit via a modal, rules
- * toggled inline. (Ported from the old PunchSitesTab; parseCoords kept.) */
+/* HR · Punch Sites. Where a phone punch counts as on site, and the two punch-rule
+ * switches (selfie / on-site) that turn a soft check into a hard block. The list
+ * is the SYSTEM DataTable (search / per-column sort + funnel / Columns / freeze /
+ * export) via HrTablePage, like every other HR page; the punch-rule card rides
+ * above it, add/edit is a modal. (parseCoords kept for the modal.) */
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
 import { MapPin } from "lucide-react";
 import { api } from "../../api/client";
 import { useToast } from "../../hooks/useToast";
 import { Toggle, errText } from "../pos-admin/posAdminUi";
-import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
-import { Tag } from "./HrTablePage";
-import { HR, savePunchSettings, usePunchSites, type PunchSettings } from "./hrApi";
+import { hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
+import { HrTablePage, Tag, type HrCol } from "./HrTablePage";
+import { HR, savePunchSettings, usePunchSites, type PunchSettings, type PunchSiteOut } from "./hrApi";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
@@ -25,6 +25,20 @@ export function parseCoords(s: string): { lat: number; lng: number } | null {
   const lng = Number(m[2]);
   return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
 }
+
+const columns: HrCol<PunchSiteOut>[] = [
+  { key: "name", label: "Site", getValue: (s) => s.name, render: (s) => <span className="font-semibold text-ink">{s.name}</span> },
+  {
+    key: "location", label: "Location", getValue: (s) => `${s.lat}, ${s.lng}`,
+    render: (s) => (
+      <a href={`https://www.google.com/maps?q=${s.lat},${s.lng}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 font-mono text-[11px] text-accent hover:underline">
+        <MapPin size={11} /> {s.lat.toFixed(5)}, {s.lng.toFixed(5)}
+      </a>
+    ),
+  },
+  { key: "radius", label: "Radius", align: "right", filterType: "number", getValue: (s) => s.radiusM, render: (s) => <span className="font-mono">{s.radiusM} m</span> },
+  { key: "status", label: "Status", getValue: (s) => (s.active ? "Active" : "Inactive"), render: (s) => (s.active ? <Tag tone="ok">Active</Tag> : <Tag tone="muted">Inactive</Tag>) },
+];
 
 export function PunchSitesTab() {
   const toast = useToast();
@@ -56,90 +70,48 @@ export function PunchSitesTab() {
     }
   }
 
+  const rulesCard = (
+    <div className="rounded-xl border border-border bg-surface p-4">
+      <div className="text-[13px] font-bold text-ink">Punch rules</div>
+      <div className="mt-0.5 text-[11px] text-ink-muted">Off: the selfie and location are kept as evidence only. On: a punch missing it is refused on the phone.</div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="rounded-lg border border-border-subtle bg-surface-2 px-3 py-2.5">
+          <Toggle checked={gates.requireSelfie} onChange={(v) => void setGate({ requireSelfie: v })} disabled={!canManage || savingGates} label="Require a photo" hint="A clock in / out without a selfie is refused." />
+        </div>
+        <div className="rounded-lg border border-border-subtle bg-surface-2 px-3 py-2.5">
+          <Toggle checked={gates.requireOnSite} onChange={(v) => void setGate({ requireOnSite: v })} disabled={!canManage || savingGates} label="Require being on site" hint="A clock in / out outside every active site (or with location off) is refused." />
+        </div>
+      </div>
+      {gates.requireOnSite && !hasSite && (
+        <div className="mt-2 rounded-md bg-err-bg px-2.5 py-1.5 text-[11px] font-semibold text-err">No active punch site yet, so this would refuse every punch. Add a site first.</div>
+      )}
+    </div>
+  );
+
   return (
     <>
-      <HrPageHeader
+      <HrTablePage<PunchSiteOut>
         title="Punch Sites"
         subtitle="Where a phone punch counts as on site"
         actions={canManage ? <button type="button" className={hrPrimaryBtn} onClick={() => setDraft(blank)}>+ Add site</button> : undefined}
+        topSection={rulesCard}
+        stats={[
+          { label: "Sites", value: () => sites.length, sub: "all locations", bar: "bg-primary" },
+          { label: "Active", value: () => active, sub: "checked for punches", bar: "bg-synced" },
+          { label: "Selfie required", value: () => (gates.requireSelfie ? "On" : "Off"), sub: "phone punch gate", bar: "bg-accent" },
+          { label: "On-site required", value: () => (gates.requireOnSite ? "On" : "Off"), sub: "phone punch gate", bar: "bg-time" },
+        ]}
+        rows={sites}
+        columns={columns}
+        searchPlaceholder="Search sites"
+        onRowClick={canManage ? (s) => setDraft({ id: s.id, name: s.name, coords: `${s.lat}, ${s.lng}`, radiusM: String(s.radiusM), active: s.active }) : undefined}
+        loading={q.loading && !q.data}
+        error={q.error}
+        emptyLabel="No punch sites yet. Add each warehouse or showroom where staff punch in."
+        footer={() => <><span className="font-semibold text-ink">{sites.length}</span> sites · {active} active</>}
       />
-      <div className="flex min-h-0 flex-1 flex-col gap-3 px-6 py-4">
-        {/* Punch rules */}
-        <div className="rounded-xl border border-border bg-surface p-4">
-          <div className="text-[13px] font-bold text-ink">Punch rules</div>
-          <div className="mt-0.5 text-[11px] text-ink-muted">Off: the selfie and location are kept as evidence only. On: a punch missing it is refused on the phone.</div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-lg border border-border-subtle bg-surface-2 px-3 py-2.5">
-              <Toggle checked={gates.requireSelfie} onChange={(v) => void setGate({ requireSelfie: v })} disabled={!canManage || savingGates} label="Require a photo" hint="A clock in / out without a selfie is refused." />
-            </div>
-            <div className="rounded-lg border border-border-subtle bg-surface-2 px-3 py-2.5">
-              <Toggle checked={gates.requireOnSite} onChange={(v) => void setGate({ requireOnSite: v })} disabled={!canManage || savingGates} label="Require being on site" hint="A clock in / out outside every active site (or with location off) is refused." />
-            </div>
-          </div>
-          {gates.requireOnSite && !hasSite && (
-            <div className="mt-2 rounded-md bg-err-bg px-2.5 py-1.5 text-[11px] font-semibold text-err">No active punch site yet, so this would refuse every punch. Add a site first.</div>
-          )}
-        </div>
-
-        {/* stat cards */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Stat bar="bg-primary" label="Sites" value={sites.length} sub="all locations" />
-          <Stat bar="bg-synced" label="Active" value={active} sub="checked for punches" />
-          <Stat bar="bg-accent" label="Selfie required" value={gates.requireSelfie ? "On" : "Off"} sub="phone punch gate" />
-          <Stat bar="bg-time" label="On-site required" value={gates.requireOnSite ? "On" : "Off"} sub="phone punch gate" />
-        </div>
-
-        {/* table */}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-surface">
-          <div className="thin-scroll min-h-0 flex-1 overflow-auto">
-            <table className="w-full border-separate border-spacing-0 text-[12px]">
-              <thead>
-                <tr className="text-[10px] font-bold uppercase tracking-wide text-ink-muted">
-                  <th className="sticky top-0 z-10 border-b border-border-subtle bg-surface-2 px-4 py-2 text-left">Site</th>
-                  <th className="sticky top-0 z-10 border-b border-border-subtle bg-surface-2 px-3 py-2 text-left">Location</th>
-                  <th className="sticky top-0 z-10 border-b border-border-subtle bg-surface-2 px-3 py-2 text-right">Radius</th>
-                  <th className="sticky top-0 z-10 border-b border-border-subtle bg-surface-2 px-3 py-2 text-left">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sites.map((s) => (
-                  <tr key={s.id} className={cx("hover:bg-row-hover", canManage && "cursor-pointer")} onClick={canManage ? () => setDraft({ id: s.id, name: s.name, coords: `${s.lat}, ${s.lng}`, radiusM: String(s.radiusM), active: s.active }) : undefined}>
-                    <td className="border-b border-border-subtle px-4 py-2 font-semibold text-ink">{s.name}</td>
-                    <td className="border-b border-border-subtle px-3 py-2">
-                      <a href={`https://www.google.com/maps?q=${s.lat},${s.lng}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 font-mono text-[11px] text-accent hover:underline">
-                        <MapPin size={11} /> {s.lat.toFixed(5)}, {s.lng.toFixed(5)}
-                      </a>
-                    </td>
-                    <td className="border-b border-border-subtle px-3 py-2 text-right font-mono">{s.radiusM} m</td>
-                    <td className="border-b border-border-subtle px-3 py-2">{s.active ? <Tag tone="ok">Active</Tag> : <Tag tone="muted">Inactive</Tag>}</td>
-                  </tr>
-                ))}
-                {q.loading && !q.data && <tr><td colSpan={4} className="px-4 py-10 text-center text-[12px] text-ink-muted">Loading…</td></tr>}
-                {q.error && <tr><td colSpan={4} className="px-4 py-10 text-center text-[12px] text-err">{q.error}</td></tr>}
-                {q.data && sites.length === 0 && <tr><td colSpan={4} className="px-4 py-10 text-center text-[12px] text-ink-muted">No punch sites yet. Add each warehouse or showroom where staff punch in.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex items-center justify-between border-t border-border-subtle px-4 py-2 text-[11px]">
-            <span className="text-ink-muted"><span className="font-semibold text-ink">{sites.length}</span> sites · {active} active</span>
-          </div>
-        </div>
-      </div>
       {draft && canManage && <SiteModal draft={draft} onClose={() => setDraft(null)} onDone={() => { setDraft(null); q.reload(); }} />}
     </>
-  );
-}
-
-function Stat({ bar, label, value, sub }: { bar: string; label: string; value: ReactNode; sub: string }) {
-  return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface">
-      <div className={cx("h-[3px] w-full", bar)} />
-      <div className="px-3.5 py-3">
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">{label}</div>
-        <div className="mt-1 text-[22px] font-bold leading-none text-ink">{value}</div>
-        <div className="mt-1.5 text-[11px] text-ink-muted">{sub}</div>
-      </div>
-    </div>
   );
 }
 

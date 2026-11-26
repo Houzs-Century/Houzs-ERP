@@ -44,12 +44,12 @@ export function AllowancesPage() {
   }
 
   const columns: HrCol<Allowance>[] = [
-    { key: "emp", label: "Employee", render: (a) => <span><span className="font-mono text-[11px] font-semibold text-accent">{a.empNo}</span> <span className="text-ink">{a.name}</span></span> },
-    { key: "kind", label: "Type", render: (a) => (a.kind === "BACKPAY" ? <Tag tone="warn">{a.label}</Tag> : <span className="text-ink-secondary">{a.label}</span>) },
-    { key: "amount", label: "Amount", align: "right", render: (a, show) => <span className={"font-money " + (a.kind === "BACKPAY" ? "text-err" : "text-ink")}>{a.kind === "BACKPAY" ? `-${mask(fmtSen(a.amountSen), show)}` : mask(fmtSen(a.amountSen), show)}</span> },
-    { key: "months", label: "Months", render: (a) => <span className="font-mono text-[11px] text-ink-secondary">{monthsLabel(a)}</span> },
-    { key: "note", label: "Note", render: (a) => <span className="text-ink-secondary">{a.note || "—"}</span> },
-    { key: "actions", label: "", align: "right", render: (a) => (canManage ? (
+    { key: "emp", label: "Employee", getValue: (a) => `${a.name} ${a.empNo}`, render: (a) => <span><span className="font-mono text-[11px] font-semibold text-accent">{a.empNo}</span> <span className="text-ink">{a.name}</span></span> },
+    { key: "kind", label: "Type", getValue: (a) => a.label, render: (a) => (a.kind === "BACKPAY" ? <Tag tone="warn">{a.label}</Tag> : <span className="text-ink-secondary">{a.label}</span>) },
+    { key: "amount", label: "Amount", align: "right", filterType: "number", getValue: (a) => ((a.kind === "BACKPAY" ? -1 : 1) * a.amountSen) / 100, render: (a, show) => <span className={"font-money " + (a.kind === "BACKPAY" ? "text-err" : "text-ink")}>{a.kind === "BACKPAY" ? `-${mask(fmtSen(a.amountSen), show)}` : mask(fmtSen(a.amountSen), show)}</span> },
+    { key: "months", label: "Months", getValue: (a) => monthsLabel(a), render: (a) => <span className="font-mono text-[11px] text-ink-secondary">{monthsLabel(a)}</span> },
+    { key: "note", label: "Note", getValue: (a) => a.note ?? "", render: (a) => <span className="text-ink-secondary">{a.note || "—"}</span> },
+    { key: "actions", label: "", align: "right", disableSort: true, render: (a) => (canManage ? (
       <span className="inline-flex gap-1.5">
         <button type="button" onClick={() => setEditing(a)} className="rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink-secondary hover:border-primary/40 hover:text-primary">Edit</button>
         <button type="button" onClick={() => void remove(a)} className="rounded-md border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink-secondary hover:border-err/40 hover:text-err">Remove</button>
