@@ -24,7 +24,8 @@ import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
 import { audit } from "../services/audit";
 import { ATTENDANCE_STATUSES, instantOnWorkDate, type AttendanceStatus } from "../scm/shared/hr-attendance";
-import { asDate, attendanceView, correctionTimes, type AttendanceRow } from "./lib/hr-attendance-view";
+import { asDate, attendanceView, correctionTimes, segmentSummaryColumns, type AttendanceRow } from "./lib/hr-attendance-view";
+import { MAX_PUNCH_PAIRS, type PunchMark, type Segment } from "./lib/hr-attendance-segments";
 import { loadAttendanceSettings, loadSites, rulesResolver } from "./lib/hr-attendance-store";
 import { shiftRulesResolver } from "./lib/hr-shift-store";
 import { scopedEmployeeIds } from "./lib/hr-confirmer-scope";
@@ -35,6 +36,24 @@ type Ctx = Context<{ Bindings: Env }>;
 export const hrAttendance = new Hono<{ Bindings: Env }>();
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/* An HR correction's up to 4 clock pairs (each "HH:MM" on the work date) into
+ * MANUAL segments. A blank pair is skipped; a clock-out needs a clock-in; only
+ * the last pair may be left open (no clock-out). */
+function segmentsFromPairs(date: string, pairs: ReadonlyArray<{ clockIn: unknown; clockOut: unknown }>): { ok: true; segments: Segment[] } | { ok: false; message: string } {
+  const mark = (min: number): PunchMark => ({ at: instantOnWorkDate(date, min).toISOString(), source: "MANUAL", lat: null, lng: null, accuracyM: null, geo: null, siteId: null, distanceM: null, photoKey: null });
+  const segs: Segment[] = [];
+  for (const p of pairs) {
+    const t = correctionTimes(date, typeof p.clockIn === "string" ? p.clockIn : "", typeof p.clockOut === "string" ? p.clockOut : "");
+    if (!t.ok) return { ok: false, message: t.message };
+    if (t.inMin == null && t.outMin == null) continue;
+    if (t.inMin == null) return { ok: false, message: "A clock-out needs a clock-in." };
+    segs.push({ in: mark(t.inMin), out: t.outMin != null ? mark(t.outMin) : null });
+  }
+  if (segs.length > MAX_PUNCH_PAIRS) return { ok: false, message: `At most ${MAX_PUNCH_PAIRS} clock pairs a day.` };
+  for (let i = 0; i < segs.length - 1; i++) if (segs[i].out == null) return { ok: false, message: "Each clock pair except the last needs a clock-out." };
+  return { ok: true, segments: segs };
+}
 const FORBIDDEN = { error: "forbidden", message: "You don't have permission to change HR records." } as const;
 
 function canManage(c: Ctx): boolean {
@@ -111,9 +130,12 @@ hrAttendance.put("/attendance", async (c) => {
   const notes = typeof body.notes === "string" && body.notes.trim() ? body.notes.trim().slice(0, 500) : null;
   if (!Number.isInteger(employeeId) || employeeId <= 0) return c.json({ error: "validation_failed", message: "Pick the employee." }, 400);
   if (!status) return c.json({ error: "validation_failed", message: "Pick a status." }, 400);
-  const times = correctionTimes(date, typeof body.clockIn === "string" ? body.clockIn : "", typeof body.clockOut === "string" ? body.clockOut : "");
-  if (!times.ok) return c.json({ error: "validation_failed", message: times.message }, 400);
-  if (status === "PRESENT" && times.inMin == null) return c.json({ error: "validation_failed", message: "Present needs a clock-in time." }, 400);
+  // Up to 4 clock pairs (actual clocking); a single clockIn/clockOut is still accepted.
+  const rawPairs = Array.isArray(body.pairs) && body.pairs.length ? (body.pairs as Array<{ clockIn: unknown; clockOut: unknown }>) : [{ clockIn: body.clockIn, clockOut: body.clockOut }];
+  const built = segmentsFromPairs(date, rawPairs);
+  if (!built.ok) return c.json({ error: "validation_failed", message: built.message }, 400);
+  const segments = built.segments;
+  if (status === "PRESENT" && segments.length === 0) return c.json({ error: "validation_failed", message: "Present needs a clock-in time." }, 400);
   if (date > todayMyt()) return c.json({ error: "validation_failed", message: "That date has not happened yet." }, 400);
 
   const db = getDb(c.env);
@@ -132,30 +154,25 @@ hrAttendance.put("/attendance", async (c) => {
       .where(and(eq(hr_attendance.company_id, co.companyId), eq(hr_attendance.employee_id, employeeId), eq(hr_attendance.work_date, date)))
       .limit(1)
   ).at(0);
-  const inAt = times.inMin != null ? instantOnWorkDate(date, times.inMin).toISOString() : null;
-  const outAt = times.outMin != null ? instantOnWorkDate(date, times.outMin).toISOString() : null;
-  const same = (a: string | null, b: string | null) => (a && b ? asDate(a).getTime() === new Date(b).getTime() : a === b);
   const by = c.get("user").id;
   const now = new Date().toISOString();
-  /* A phone punch HR leaves untouched keeps its source, selfie and GPS; a
-     time HR changes becomes MANUAL, and the evidence of the phone punch it
-     replaced stays on the row for the record. */
-  const values = {
-    status,
-    clock_in_at: inAt,
-    clock_out_at: outAt,
-    in_source: inAt == null ? null : existing && same(existing.clock_in_at, inAt) ? existing.in_source : "MANUAL",
-    out_source: outAt == null ? null : existing && same(existing.clock_out_at, outAt) ? existing.out_source : "MANUAL",
-    notes,
-    updated_at: now,
-    updated_by: by,
-  };
+  /* HR's correction is the record: the day's segments (clock 1-4) and summary are
+     replaced with the typed MANUAL times. clock_in_at / clock_out_at stay the
+     first in and last out, so the OT / dock maths are unchanged. */
+  const cols = segmentSummaryColumns(segments);
+  /* But don't collapse a phone-multi-punched day when HR only edits the status or
+     note: with no explicit pairs and the single pair matching the stored first in
+     / last out, keep the recorded segments and their evidence as they are. */
+  const sameInstant = (a: string | null, b: string | null) => (a && b ? asDate(a).getTime() === new Date(b).getTime() : a === b);
+  const sentPairs = Array.isArray(body.pairs) && body.pairs.length > 0;
+  const keepStored = !sentPairs && existing != null && sameInstant(existing.clock_in_at, cols.clock_in_at) && sameInstant(existing.clock_out_at, cols.clock_out_at);
+  const values = keepStored ? { status, notes, updated_at: now, updated_by: by } : { status, ...cols, notes, updated_at: now, updated_by: by };
   const attendanceId = existing
     ? (await db.update(hr_attendance).set(values).where(eq(hr_attendance.id, existing.id)).returning({ id: hr_attendance.id }))[0].id
     : (await db.insert(hr_attendance).values({ ...values, company_id: co.companyId, employee_id: employeeId, work_date: date }).returning({ id: hr_attendance.id }))[0].id;
-  /* The day's Working Hours follow the corrected punch; a day with no times
-     (leave, absent) loses its AUTO hours and so its dock. HR-typed hours stay. */
-  if (inAt && outAt) {
+  /* The day's Working Hours follow the corrected punch; a day with no closed pair
+     (leave, absent, or still open) loses its AUTO hours and so its dock. */
+  if (cols.clock_in_at && cols.clock_out_at) {
     await syncDayFromPunch(db, co.companyId, attendanceId);
   } else {
     await db.delete(hr_working_hours).where(and(eq(hr_working_hours.attendance_id, attendanceId), eq(hr_working_hours.source, "AUTO")));
@@ -165,7 +182,7 @@ hrAttendance.put("/attendance", async (c) => {
     action: "hr.attendance.set",
     entityType: "hr_employee",
     entityId: employeeId,
-    summary: `${emp.emp_no} ${date}: ${status}${inAt ? ` ${String(body.clockIn)}` : ""}${outAt ? ` to ${String(body.clockOut)}` : ""}`,
+    summary: `${emp.emp_no} ${date}: ${status}${segments.length ? ` (${segments.length} clock pair${segments.length === 1 ? "" : "s"})` : ""}`,
     meta: { before: existing ? { status: existing.status, clock_in_at: existing.clock_in_at, clock_out_at: existing.clock_out_at, notes: existing.notes } : null },
   });
   return c.json({ ok: true });

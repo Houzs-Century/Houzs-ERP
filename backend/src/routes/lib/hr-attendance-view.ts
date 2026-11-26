@@ -15,6 +15,7 @@ import {
   type PunchSource,
 } from "../../scm/shared/hr-attendance";
 import { hhmmToMin } from "../../scm/shared/hr-pay-rules";
+import { daySummary, normalizeSegments, type PunchMark, type Segment } from "./hr-attendance-segments";
 
 export type AttendanceRow = {
   id: number;
@@ -40,6 +41,7 @@ export type AttendanceRow = {
   out_distance_m: number | null;
   out_photo_key: string | null;
   notes: string | null;
+  segments: unknown;
 };
 
 export type PunchSide = {
@@ -54,6 +56,9 @@ export type PunchSide = {
   accuracyM: number | null;
   hasPhoto: boolean;
 };
+
+/** One clock pair of the day, shaped for the phone / tab. */
+export type ViewSegment = { in: PunchSide; out: PunchSide | null };
 
 export type AttendanceView = {
   id: number;
@@ -70,6 +75,8 @@ export type AttendanceView = {
   /** Minutes on site so far (open punch) or in total (closed), lunch not deducted. */
   spanMin: number | null;
   notes: string | null;
+  /** Each clock pair of the day (clock 1-4), for display. */
+  segments: ViewSegment[];
 };
 
 /** Postgres hands timestamptz back as "2026-10-22 08:01:00.12+08" (a bare
@@ -94,6 +101,83 @@ function side(row: AttendanceRow, which: "in" | "out", siteNames: ReadonlyMap<nu
   };
 }
 
+/** A stored punch mark shaped for the phone / tab, like side() but from a segment. */
+function markSide(mark: PunchMark, workDate: string, siteNames: ReadonlyMap<number, string>): PunchSide {
+  return {
+    at: asDate(mark.at).toISOString(),
+    clock: workClock(minutesFromWorkDate(workDate, asDate(mark.at))),
+    source: mark.source,
+    geo: mark.geo,
+    siteName: mark.siteId != null ? siteNames.get(mark.siteId) ?? null : null,
+    distanceM: mark.distanceM,
+    lat: mark.lat,
+    lng: mark.lng,
+    accuracyM: mark.accuracyM,
+    hasPhoto: !!mark.photoKey,
+  };
+}
+
+/** The hr_attendance summary columns for a day's segments: the FIRST clock-in and
+ *  the LAST clock-out (null while open), plus the segments. Every existing reader
+ *  and the OT / dock maths keep reading clock_in_at / clock_out_at, unchanged. */
+export function segmentSummaryColumns(segments: Segment[]) {
+  const { firstIn, lastOut } = daySummary(segments);
+  return {
+    segments,
+    clock_in_at: firstIn ? firstIn.at : null,
+    in_source: firstIn ? firstIn.source : null,
+    in_lat: firstIn ? firstIn.lat : null,
+    in_lng: firstIn ? firstIn.lng : null,
+    in_accuracy_m: firstIn ? firstIn.accuracyM : null,
+    in_geo: firstIn ? firstIn.geo : null,
+    in_site_id: firstIn ? firstIn.siteId : null,
+    in_distance_m: firstIn ? firstIn.distanceM : null,
+    in_photo_key: firstIn ? firstIn.photoKey : null,
+    clock_out_at: lastOut ? lastOut.at : null,
+    out_source: lastOut ? lastOut.source : null,
+    out_lat: lastOut ? lastOut.lat : null,
+    out_lng: lastOut ? lastOut.lng : null,
+    out_accuracy_m: lastOut ? lastOut.accuracyM : null,
+    out_geo: lastOut ? lastOut.geo : null,
+    out_site_id: lastOut ? lastOut.siteId : null,
+    out_distance_m: lastOut ? lastOut.distanceM : null,
+    out_photo_key: lastOut ? lastOut.photoKey : null,
+  };
+}
+
+/** The day's clock pairs: the stored segments, or — for a row from before actual
+ *  clocking — the single clock_in/out pair synthesised from the summary columns. */
+export function rowSegments(row: AttendanceRow): Segment[] {
+  const stored = normalizeSegments(row.segments);
+  if (stored.length) return stored;
+  if (!row.clock_in_at) return [];
+  const inMark: PunchMark = {
+    at: asDate(row.clock_in_at).toISOString(),
+    source: row.in_source as PunchMark["source"],
+    lat: row.in_lat,
+    lng: row.in_lng,
+    accuracyM: row.in_accuracy_m,
+    geo: row.in_geo as PunchMark["geo"],
+    siteId: row.in_site_id,
+    distanceM: row.in_distance_m,
+    photoKey: row.in_photo_key,
+  };
+  const outMark: PunchMark | null = row.clock_out_at
+    ? {
+        at: asDate(row.clock_out_at).toISOString(),
+        source: row.out_source as PunchMark["source"],
+        lat: row.out_lat,
+        lng: row.out_lng,
+        accuracyM: row.out_accuracy_m,
+        geo: row.out_geo as PunchMark["geo"],
+        siteId: row.out_site_id,
+        distanceM: row.out_distance_m,
+        photoKey: row.out_photo_key,
+      }
+    : null;
+  return [{ in: inMark, out: outMark }];
+}
+
 export function attendanceView(row: AttendanceRow, rules: AttendanceRules, siteNames: ReadonlyMap<number, string>, now: Date): AttendanceView {
   const inMin = row.clock_in_at ? minutesFromWorkDate(row.work_date, asDate(row.clock_in_at)) : null;
   const outMin = row.clock_out_at ? minutesFromWorkDate(row.work_date, asDate(row.clock_out_at)) : null;
@@ -115,6 +199,7 @@ export function attendanceView(row: AttendanceRow, rules: AttendanceRules, siteN
     shortfallMin: open || !day ? 0 : day.shortfallMin,
     spanMin: inMin != null ? Math.max(0, (outMin ?? minutesFromWorkDate(row.work_date, now)) - inMin) : null,
     notes: row.notes,
+    segments: rowSegments(row).map((s) => ({ in: markSide(s.in, row.work_date, siteNames), out: s.out ? markSide(s.out, row.work_date, siteNames) : null })),
   };
 }
 
