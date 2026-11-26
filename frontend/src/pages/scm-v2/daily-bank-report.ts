@@ -112,11 +112,13 @@ export const boardTotalsLine = (board: DailyBankBoard): string =>
 
 /* ── The colours a row wears — the sample's: received green, pending orange ── */
 
+/* On white, its greys neutral (owner 2026-11-25: 要白色 background，看起来还是米色): the warm
+   greys of the bank rows, the lines and the dark bar read as beige. */
 export const DB_COLORS = {
-  ink: '#221F20', soft: '#6F6A63', green: '#2F5D4F', red: '#B8331F', orange: '#B76B00', grey: '#8A857E',
-  band: '#E4F0E9', sectionBg: '#EDE8E2', bar: '#2B2320', barText: '#F6F1EA', rule: '#DDD7CF',
+  ink: '#202124', soft: '#5F6368', green: '#2F5D4F', red: '#B8331F', orange: '#B76B00', grey: '#80868B',
+  band: '#E4F0E9', sectionBg: '#F1F3F4', bar: '#202124', barText: '#FFFFFF', rule: '#E0E3E7',
   /* The cash book's picture draws its lines to be seen (owner 2026-11-23: 线条). */
-  line: '#B3AA9F',
+  line: '#BDC1C6',
 } as const;
 
 export const rowColor = (k: DailyBankRowKind): string => {
@@ -137,38 +139,81 @@ export const balanceColor = (r: DailyBankRow): string => {
 
 /* ── The PNG the owner sends to WhatsApp — drawn, not captured ─────────────── */
 
-/** The board drawn onto a canvas as the table: the totals, the dark bar, a section per bank. */
+/** A bank with nothing but its balance today: no money in or out, nothing waiting for approval. */
+const isQuietSection = (sec: DailyBankSection): boolean =>
+  sec.code !== null && sec.rows.every((r) => r.kind === 'bf' || r.kind === 'available');
+
+/** What a quiet bank's one line says between its name and its balance. */
+export const QUIET_BANK_NOTE = 'No movement today · nothing pending';
+
+/** The board drawn onto a canvas as the table: the totals, the dark bar, a section per bank.
+    Owner 2026-11-25 (这个0 不要有dash，然后可以优化一下): every word and figure in the page's
+    sans, whose 0 has no stroke through it; a party or description too long for its column
+    wraps onto a second line; a quiet bank is one line. */
 export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
   const sections = dailyBankSections(board);
   const W = 980;
   const P = 24;
   const rowH = 24;
+  const lineH = 14; // what a wrapped second line adds to its row
   /* Column right edges / left edges, the table's six. */
-  const X = { who: P + 8, doc: P + 210, desc: P + 360, rec: W - P - 250, pay: W - P - 130, bal: W - P - 8 };
-  const rowsCount = sections.reduce((s, sec) => s + sec.rows.length + 2, 0);
-  const H = P * 2 + 60 + 40 + rowsCount * rowH + 40;
+  const X = { who: P + 8, doc: P + 236, desc: P + 360, rec: W - P - 250, pay: W - P - 130, bal: W - P - 8 };
+  const whoW = X.doc - X.who - 24; // a line's party, after its "· "
+  const descW = X.rec - X.desc - 100;
   const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+
+  const font = (size: number, bold = false) => `${bold ? '700' : '400'} ${size}px 'IBM Plex Sans', system-ui, sans-serif`;
+  const fit = (s: string, maxW: number): string => {
+    if (ctx.measureText(s).width <= maxW) return s;
+    let cut = s;
+    while (cut.length > 1 && ctx.measureText(`${cut}…`).width > maxW) cut = cut.slice(0, -1);
+    return `${cut}…`;
+  };
+  /* At most two lines: the words that fit, then the rest, cut short if it still runs over. */
+  const wrap = (t: string, maxW: number, size: number): string[] => {
+    ctx.font = font(size);
+    if (ctx.measureText(t).width <= maxW) return [t];
+    const words = t.split(' ');
+    let first = '';
+    let n = 0;
+    for (const w of words) {
+      const next = first ? `${first} ${w}` : w;
+      if (ctx.measureText(next).width > maxW) break;
+      first = next;
+      n += 1;
+    }
+    const rest = words.slice(n).join(' ');
+    if (n === 0) return [fit(t, maxW)];
+    return rest ? [first, fit(rest, maxW)] : [first];
+  };
+  const text = (t: string, x: number, y: number, o: { size?: number; bold?: boolean; color?: string; right?: boolean; maxW?: number } = {}) => {
+    ctx.font = font(o.size ?? 12.5, o.bold);
+    ctx.fillStyle = o.color ?? DB_COLORS.ink;
+    ctx.textAlign = o.right ? 'right' : 'left';
+    ctx.fillText(o.maxW ? fit(t, o.maxW) : t, x, y);
+  };
+
+  /* Laid out before the canvas is sized: a wrapped row is taller, a quiet bank shorter. */
+  const laid = sections.map((sec) => ({
+    sec,
+    quiet: isQuietSection(sec),
+    rows: sec.rows.map((r) => {
+      const detail = isDetailRow(r.kind);
+      const who = detail && r.who ? wrap(r.who, whoW, 12) : [r.who];
+      const desc = detail && r.description ? wrap(r.description, descW, 11.5) : [r.description];
+      return { r, who, desc, h: rowH + (Math.max(who.length, desc.length) - 1) * lineH };
+    }),
+  }));
+  const body = laid.reduce((s, l) => s + (l.quiet ? rowH : 2 * rowH + l.rows.reduce((t, x) => t + x.h, 0)) + 6, 0);
+  const H = P + 70 + body + 24 + P;
   const scale = 2; // crisp on phone screens
   canvas.width = W * scale;
   canvas.height = H * scale;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return canvas;
   ctx.scale(scale, scale);
-  ctx.fillStyle = '#FBF8F3';
+  ctx.fillStyle = '#FFFFFF'; // owner 2026-11-25: background 颜色可以换成白色
   ctx.fillRect(0, 0, W, H);
-
-  const font = (size: number, bold = false, mono = false) => `${bold ? '700' : '400'} ${size}px ${mono ? 'ui-monospace, Menlo, monospace' : 'system-ui, sans-serif'}`;
-  const text = (t: string, x: number, y: number, o: { size?: number; bold?: boolean; color?: string; right?: boolean; mono?: boolean; maxW?: number } = {}) => {
-    ctx.font = font(o.size ?? 12.5, o.bold, o.mono);
-    ctx.fillStyle = o.color ?? DB_COLORS.ink;
-    ctx.textAlign = o.right ? 'right' : 'left';
-    let s = t;
-    if (o.maxW && ctx.measureText(s).width > o.maxW) {
-      while (s.length > 1 && ctx.measureText(`${s}…`).width > o.maxW) s = s.slice(0, -1);
-      s = `${s}…`;
-    }
-    ctx.fillText(s, x, y);
-  };
 
   let y = P + 14;
   text(boardTotalsLine(board), P, y, { size: 13, bold: true, color: DB_COLORS.green });
@@ -183,42 +228,48 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
      row, and a frame round each bank (owner 2026-11-23: 线条). The original keeps
      its faint rules. */
   const ruled = board.book === 'cashbook';
-  const lineUnder = (at: number) => {
+  const lineUnder = (at: number, h: number) => {
     ctx.fillStyle = ruled ? DB_COLORS.line : DB_COLORS.rule;
-    ctx.fillRect(P, at + rowH - 1, W - 2 * P, 1);
+    ctx.fillRect(P, at + h - 1, W - 2 * P, 1);
   };
-  for (const sec of sections) {
+  for (const { sec, quiet, rows } of laid) {
     const top = y;
     ctx.fillStyle = DB_COLORS.sectionBg;
     ctx.fillRect(P, y, W - 2 * P, rowH);
     text(sec.code ? `${sec.title}  ·  ${sec.code}` : sec.title, X.who, y + 16, { size: 13, bold: true });
     if (sec.bankBalanceSen != null) {
-      text(`Bank Balance  ${fmtSenPlain(sec.bankBalanceSen)}`, X.bal, y + 16, { size: 13, bold: true, mono: true, right: true, color: sec.bankBalanceSen < 0 ? DB_COLORS.red : DB_COLORS.ink });
+      const balance = `Bank Balance  ${fmtSenPlain(sec.bankBalanceSen)}`;
+      text(balance, X.bal, y + 16, { size: 13, bold: true, right: true, color: sec.bankBalanceSen < 0 ? DB_COLORS.red : DB_COLORS.ink });
+      /* Its balance is all a quiet bank has to say: B/F and Available would repeat it. */
+      if (quiet) text(QUIET_BANK_NOTE, X.bal - ctx.measureText(balance).width - 24, y + 16, { size: 11.5, color: DB_COLORS.soft, right: true });
     }
     y += rowH;
-    const heads = DAILY_BANK_HEAD;
-    text(heads[0], X.who, y + 16, { size: 10, bold: true, color: DB_COLORS.soft });
-    text(heads[1], X.doc, y + 16, { size: 10, bold: true, color: DB_COLORS.soft });
-    text(heads[2], X.desc, y + 16, { size: 10, bold: true, color: DB_COLORS.soft });
-    text(heads[3], X.rec, y + 16, { size: 10, bold: true, color: DB_COLORS.soft, right: true });
-    text(heads[4], X.pay, y + 16, { size: 10, bold: true, color: DB_COLORS.soft, right: true });
-    text(heads[5], X.bal, y + 16, { size: 10, bold: true, color: DB_COLORS.soft, right: true });
-    if (ruled) lineUnder(y);
-    y += rowH;
-    for (const r of sec.rows) {
-      if (r.kind === 'available') { ctx.fillStyle = DB_COLORS.band; ctx.fillRect(P, y, W - 2 * P, rowH); }
+    if (!quiet) {
+      const heads = DAILY_BANK_HEAD;
+      text(heads[0], X.who, y + 16, { size: 10, bold: true, color: DB_COLORS.soft });
+      text(heads[1], X.doc, y + 16, { size: 10, bold: true, color: DB_COLORS.soft });
+      text(heads[2], X.desc, y + 16, { size: 10, bold: true, color: DB_COLORS.soft });
+      text(heads[3], X.rec, y + 16, { size: 10, bold: true, color: DB_COLORS.soft, right: true });
+      text(heads[4], X.pay, y + 16, { size: 10, bold: true, color: DB_COLORS.soft, right: true });
+      text(heads[5], X.bal, y + 16, { size: 10, bold: true, color: DB_COLORS.soft, right: true });
+      if (ruled) lineUnder(y, rowH);
+      y += rowH;
+    }
+    for (const { r, who, desc, h } of quiet ? [] : rows) {
+      if (r.kind === 'available') { ctx.fillStyle = DB_COLORS.band; ctx.fillRect(P, y, W - 2 * P, h); }
       const color = rowColor(r.kind);
       const detail = isDetailRow(r.kind);
       const strong = r.kind === 'available' || r.kind === 'withTransit';
-      /* A group's own words run across the empty number and description columns; a line's party keeps to its column. */
-      text(detail ? `· ${r.who}` : r.who, detail ? X.who + 8 : X.who, y + 16, { size: 12, bold: strong, color, maxW: detail ? X.doc - X.who - 12 : X.rec - X.who - 110 });
-      if (r.doc) text(r.doc, X.doc, y + 16, { size: 10.5, color: DB_COLORS.soft, mono: true, maxW: X.desc - X.doc - 8 });
-      if (r.description) text(r.description, X.desc, y + 16, { size: 11.5, color: detail ? DB_COLORS.soft : color, maxW: X.rec - X.desc - 110 });
-      if (r.receivedSen != null) text(cellMoney(r.receivedSen), X.rec, y + 16, { size: 12, mono: true, color: DB_COLORS.green, bold: r.kind === 'receivedHead', right: true });
-      if (r.paymentSen != null) text(cellMoney(r.paymentSen), X.pay, y + 16, { size: 12, mono: true, color, bold: r.kind === 'paidHead' || r.kind === 'pendingHead', right: true });
-      if (r.balanceSen != null) text(cellMoney(r.balanceSen), X.bal, y + 16, { size: 12, mono: true, color: balanceColor(r), bold: strong || r.kind === 'bf' || r.kind === 'transitHead', right: true });
-      lineUnder(y);
-      y += rowH;
+      /* A group's own words run across the empty number and description columns; a line's party keeps to its column, on two lines when it must. */
+      if (detail) who.forEach((line, i) => { if (line) text(i === 0 ? `· ${line}` : line, X.who + (i === 0 ? 8 : 17), y + 16 + i * lineH, { size: 12, color }); });
+      else text(r.who, X.who, y + 16, { size: 12, bold: strong, color, maxW: X.rec - X.who - 110 });
+      if (r.doc) text(r.doc, X.doc, y + 16, { size: 10.5, color: DB_COLORS.soft, maxW: X.desc - X.doc - 8 });
+      if (r.description) desc.forEach((line, i) => { text(line, X.desc, y + 16 + i * lineH, { size: 11.5, color: detail ? DB_COLORS.soft : color, maxW: descW }); });
+      if (r.receivedSen != null) text(cellMoney(r.receivedSen), X.rec, y + 16, { size: 12, color: DB_COLORS.green, bold: r.kind === 'receivedHead', right: true });
+      if (r.paymentSen != null) text(cellMoney(r.paymentSen), X.pay, y + 16, { size: 12, color, bold: r.kind === 'paidHead' || r.kind === 'pendingHead', right: true });
+      if (r.balanceSen != null) text(cellMoney(r.balanceSen), X.bal, y + 16, { size: 12, color: balanceColor(r), bold: strong || r.kind === 'bf' || r.kind === 'transitHead', right: true });
+      lineUnder(y, h);
+      y += h;
     }
     if (ruled) {
       ctx.strokeStyle = DB_COLORS.line;

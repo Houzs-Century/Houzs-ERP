@@ -1,1 +1,3654 @@
-{"plan":{"departments":[{"key":"exhibition","label":"Exhibition","view":"dept","basis":"orders"},{"key":"operation","label":"Operation","view":"operation","basis":null},{"key":"logistics","label":"Logistics","view":"logistics","basis":null},{"key":"ga","label":"G&A","view":"ga","basis":null}],"selling":"exhibition"},"all":{"from":"2026-09-01","to":"2026-10-31","departments":[{"key":"exhibition","label":"Exhibition","view":"dept","basis":"orders"},{"key":"operation","label":"Operation","view":"operation","basis":null},{"key":"logistics","label":"Logistics","view":"logistics","basis":null},{"key":"ga","label":"G&A","view":"ga","basis":null}],"selling":"exhibition","gaShareBp":800,"summary":{"exhibition":{"incomeSen":430000000,"costSen":179000000,"grossSen":251000000,"otherIncomeSen":0,"expensesSen":183400000,"profitSen":67600000},"operation":{"incomeSen":33150000,"costSen":13200000,"grossSen":19950000,"otherIncomeSen":0,"expensesSen":19863190,"profitSen":86810},"logistics":{"incomeSen":15100000,"costSen":0,"grossSen":15100000,"otherIncomeSen":0,"expensesSen":14000000,"profitSen":1100000},"ga":{"incomeSen":34400000,"costSen":0,"grossSen":34400000,"otherIncomeSen":0,"expensesSen":25311416,"profitSen":9088584}},"total":{"incomeSen":512650000,"costSen":192200000,"grossSen":320450000,"otherIncomeSen":0,"expensesSen":242574606,"profitSen":77875394},"unassigned":{"label":"No department yet","lines":[{"code":"900-U014","name":"UPKEEP OF LORI - VRH 9058","amountSen":20000}]},"logisticsProblem":null},"ga":{"from":"2026-09-01","to":"2026-10-31","months":["2026-09","2026-10"],"shareBp":800,"perMonth":[{"month":"2026-09","salesSen":200000000,"shareSen":16000000,"expenseSen":12655708,"surplusSen":3344292},{"month":"2026-10","salesSen":230000000,"shareSen":18400000,"expenseSen":12655708,"surplusSen":5744292}],"tree":[{"kind":"category","id":"pl:showroom","label":"Showrooms expense","amountSen":5200000,"pct":null,"children":[{"kind":"account","id":"acc:900-R009","label":"900-R009 · SHOW ROOM (KELANA JAYA)","code":"900-R009","key":"900-R009","amountSen":4400000,"pct":null,"children":[],"cells":{"2026-10":2200000,"2026-09":2200000}},{"kind":"account","id":"acc:900-W005","label":"900-W005 · WATER & ELECTRICITY - SHOWROOM","code":"900-W005","key":"900-W005","amountSen":800000,"pct":null,"children":[],"cells":{"2026-10":400000,"2026-09":400000}}],"cells":{"2026-10":2600000,"2026-09":2600000}},{"kind":"category","id":"pl:general","label":"Administrative expense","amountSen":12111416,"pct":null,"children":[{"kind":"category","id":"pl:general:salary","label":"Salary & related","amountSen":10140000,"pct":null,"children":[{"kind":"account","id":"acc:900-D100","label":"900-D100 · DIRECTOR REMUNERATION","code":"900-D100","key":"900-D100","amountSen":4600000,"pct":null,"children":[],"cells":{"2026-09":2300000,"2026-10":2300000}},{"kind":"account","id":"acc:team:FINANCE","label":"Finance team · salary, EPF, SOCSO, EIS, allowance","code":"900-S100","key":"team:FINANCE","amountSen":1640000,"pct":null,"children":[],"cells":{"2026-09":820000,"2026-10":820000}},{"kind":"account","id":"acc:team:IT","label":"IT team · salary, EPF, SOCSO, EIS, allowance","code":"900-S100","key":"team:IT","amountSen":2000000,"pct":null,"children":[],"cells":{"2026-09":1000000,"2026-10":1000000}},{"kind":"account","id":"acc:team:MANAGEMENT","label":"Management team · salary, EPF, SOCSO, EIS, allowance","code":"900-S100","key":"team:MANAGEMENT","amountSen":1200000,"pct":null,"children":[],"cells":{"2026-09":600000,"2026-10":600000}},{"kind":"account","id":"acc:team:OTHER","label":"Other staff · salary, EPF, SOCSO, EIS, allowance","code":"900-S100","key":"team:OTHER","amountSen":700000,"pct":null,"children":[],"cells":{"2026-09":350000,"2026-10":350000}}],"cells":{"2026-09":5070000,"2026-10":5070000}},{"kind":"category","id":"pl:general:rental","label":"Rental - office & others","amountSen":600000,"pct":null,"children":[{"kind":"account","id":"acc:900-R044","label":"900-R044 · RENTAL - OFFICE E-28-02","code":"900-R044","key":"900-R044","amountSen":600000,"pct":null,"children":[],"cells":{"2026-09":300000,"2026-10":300000}}],"cells":{"2026-09":300000,"2026-10":300000}},{"kind":"category","id":"pl:general:marketing","label":"Advertising & marketing","amountSen":651416,"pct":null,"children":[{"kind":"account","id":"acc:900-M001","label":"900-M001 · MARKETING FEES","code":"900-M001","key":"900-M001","amountSen":600000,"pct":null,"children":[],"cells":{"2026-09":300000,"2026-10":300000}},{"kind":"account","id":"acc:900-A004","label":"900-A004 · ADVERTISEMENT - MANAGEMENT FEES","code":"900-A004","key":"900-A004","amountSen":51416,"pct":null,"children":[],"cells":{"2026-09":25708,"2026-10":25708}}],"cells":{"2026-09":325708,"2026-10":325708}},{"kind":"category","id":"pl:general:professional","label":"Professional & statutory","amountSen":320000,"pct":null,"children":[{"kind":"account","id":"acc:900-P003","label":"900-P003 · PROFESSIONAL FEE","code":"900-P003","key":"900-P003","amountSen":320000,"pct":null,"children":[],"cells":{"2026-09":160000,"2026-10":160000}}],"cells":{"2026-09":160000,"2026-10":160000}},{"kind":"category","id":"pl:general:office","label":"Office & admin","amountSen":400000,"pct":null,"children":[{"kind":"account","id":"acc:900-P001","label":"900-P001 · PRINTING & STATIONERY","code":"900-P001","key":"900-P001","amountSen":120000,"pct":null,"children":[],"cells":{"2026-09":60000,"2026-10":60000}},{"kind":"account","id":"acc:900-W002","label":"900-W002 · WEBSITE & SYSTEM EXPENSES","code":"900-W002","key":"900-W002","amountSen":180000,"pct":null,"children":[],"cells":{"2026-09":90000,"2026-10":90000}},{"kind":"account","id":"acc:946-0000","label":"946-0000 · Cash Over/Short","code":"946-0000","key":"946-0000","amountSen":100000,"pct":null,"children":[],"cells":{"2026-09":50000,"2026-10":50000}}],"cells":{"2026-09":200000,"2026-10":200000}}],"cells":{"2026-09":6055708,"2026-10":6055708}},{"kind":"category","id":"pl:finance","label":"Finance cost","amountSen":8000000,"pct":null,"children":[{"kind":"account","id":"acc:900-T009","label":"900-T009 · TERMINAL INTEREST CHARGES","code":"900-T009","key":"900-T009","amountSen":8000000,"pct":null,"children":[],"cells":{"2026-09":4000000,"2026-10":4000000}}],"cells":{"2026-09":4000000,"2026-10":4000000}}],"teams":[{"team":"FINANCE","label":"Finance team","lines":[{"lineId":"g21","day":"2026-09-30","accountCode":"900-S100","notes":"FINANCE - SALARY","amountSen":820000},{"lineId":"g63","day":"2026-10-30","accountCode":"900-S100","notes":"FINANCE - SALARY","amountSen":820000}]},{"team":"IT","label":"IT team","lines":[{"lineId":"g19","day":"2026-09-30","accountCode":"900-S100","notes":"IT SALARY","amountSen":900000},{"lineId":"g29","day":"2026-09-30","accountCode":"900-S200","notes":"IT EPF","amountSen":100000},{"lineId":"g61","day":"2026-10-30","accountCode":"900-S100","notes":"IT SALARY","amountSen":900000},{"lineId":"g71","day":"2026-10-30","accountCode":"900-S200","notes":"IT EPF","amountSen":100000}]},{"team":"MANAGEMENT","label":"Management team","lines":[{"lineId":"g20","day":"2026-09-30","accountCode":"900-S100","notes":"MANAGEMENT SALARY","amountSen":600000},{"lineId":"g62","day":"2026-10-30","accountCode":"900-S100","notes":"MANAGEMENT SALARY","amountSen":600000}]},{"team":"OTHER","label":"Other staff","lines":[{"lineId":"g22","day":"2026-09-30","accountCode":"900-S100","notes":"OTHER SALARY","amountSen":350000},{"lineId":"g64","day":"2026-10-30","accountCode":"900-S100","notes":"OTHER SALARY","amountSen":350000}]}]},"operation":{"from":"2026-09-01","to":"2026-10-31","months":["2026-09","2026-10"],"incomeBp":700,"perMonth":[{"month":"2026-09","rows":{"do_value":{"PG":45000000,"KL":170000000,"EM":15000000},"do_income":{"PG":3150000,"KL":11900000,"EM":1050000},"income_warehouse":{"PG":0,"KL":0,"EM":0},"income_2990":{"PG":0,"KL":700000,"EM":0},"income_other":{"PG":0,"KL":0,"EM":0},"logistic_expense":{"PG":-1350000,"KL":-5100000,"EM":-450000},"gross":{"PG":1800000,"KL":7500000,"EM":600000},"manpower_logistic":{"PG":195652,"KL":739131,"EM":65217},"manpower_operation":{"PG":436304,"KL":1648261,"EM":145435},"manpower_procurement":{"PG":0,"KL":0,"EM":0},"manpower_storekeeper":{"PG":315870,"KL":702174,"EM":61956},"recruitment":{"PG":0,"KL":63595,"EM":0},"accommodation":{"PG":0,"KL":120000,"EM":0},"rental":{"PG":1900000,"KL":2750000,"EM":180000},"expenses":{"PG":0,"KL":250000,"EM":0},"parttime":{"PG":0,"KL":0,"EM":0},"upkeep":{"PG":0,"KL":0,"EM":0},"insurance":{"PG":0,"KL":100000,"EM":0},"utilities":{"PG":70000,"KL":170000,"EM":0},"telephone":{"PG":0,"KL":18000,"EM":0},"total_expense":{"PG":2917826,"KL":6561161,"EM":452608},"net":{"PG":-1117826,"KL":938839,"EM":147392},"logistics_net":{"PG":-450000,"KL":-550000,"EM":450000},"sd_net":{"PG":0,"KL":0,"EM":0},"net_after":{"PG":-1567826,"KL":388839,"EM":597392}},"dos":{"PG":1,"KL":1,"EM":1}},{"month":"2026-10","rows":{"do_value":{"PG":40000000,"KL":150000000,"EM":20000000},"do_income":{"PG":2800000,"KL":10500000,"EM":1400000},"income_warehouse":{"PG":0,"KL":550000,"EM":0},"income_2990":{"PG":0,"KL":1100000,"EM":0},"income_other":{"PG":0,"KL":0,"EM":0},"logistic_expense":{"PG":-1200000,"KL":-4500000,"EM":-600000},"gross":{"PG":1600000,"KL":7650000,"EM":800000},"manpower_logistic":{"PG":190476,"KL":714286,"EM":95238},"manpower_operation":{"PG":424761,"KL":1592858,"EM":212381},"manpower_procurement":{"PG":0,"KL":0,"EM":0},"manpower_storekeeper":{"PG":310952,"KL":678572,"EM":90476},"recruitment":{"PG":0,"KL":63595,"EM":0},"accommodation":{"PG":0,"KL":120000,"EM":0},"rental":{"PG":1900000,"KL":2750000,"EM":180000},"expenses":{"PG":0,"KL":250000,"EM":0},"parttime":{"PG":0,"KL":0,"EM":0},"upkeep":{"PG":0,"KL":0,"EM":0},"insurance":{"PG":0,"KL":100000,"EM":0},"utilities":{"PG":70000,"KL":170000,"EM":0},"telephone":{"PG":0,"KL":18000,"EM":0},"total_expense":{"PG":2896189,"KL":6457311,"EM":578095},"net":{"PG":-1296189,"KL":1192689,"EM":221905},"logistics_net":{"PG":-600000,"KL":-1150000,"EM":600000},"sd_net":{"PG":0,"KL":0,"EM":0},"net_after":{"PG":-1896189,"KL":42689,"EM":821905}},"dos":{"PG":1,"KL":1,"EM":1}}],"lines":[{"id":"do_value:2026-09:PG","row":"do_value","month":"2026-09","cells":{"PG":45000000,"KL":0,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"dos","count":1}},{"id":"do_value:2026-09:KL","row":"do_value","month":"2026-09","cells":{"PG":0,"KL":170000000,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"dos","count":1}},{"id":"do_value:2026-09:EM","row":"do_value","month":"2026-09","cells":{"PG":0,"KL":0,"EM":15000000},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"dos","count":1}},{"id":"do_value:2026-10:PG","row":"do_value","month":"2026-10","cells":{"PG":40000000,"KL":0,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"dos","count":1}},{"id":"do_value:2026-10:KL","row":"do_value","month":"2026-10","cells":{"PG":0,"KL":150000000,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"dos","count":1}},{"id":"do_value:2026-10:EM","row":"do_value","month":"2026-10","cells":{"PG":0,"KL":0,"EM":20000000},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"dos","count":1}},{"id":"do_income:2026-09:PG","row":"do_income","month":"2026-09","cells":{"PG":3150000,"KL":0,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"rate","baseSen":45000000,"bp":700}},{"id":"do_income:2026-09:KL","row":"do_income","month":"2026-09","cells":{"PG":0,"KL":11900000,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"rate","baseSen":170000000,"bp":700}},{"id":"do_income:2026-09:EM","row":"do_income","month":"2026-09","cells":{"PG":0,"KL":0,"EM":1050000},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"rate","baseSen":15000000,"bp":700}},{"id":"do_income:2026-10:PG","row":"do_income","month":"2026-10","cells":{"PG":2800000,"KL":0,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"rate","baseSen":40000000,"bp":700}},{"id":"do_income:2026-10:KL","row":"do_income","month":"2026-10","cells":{"PG":0,"KL":10500000,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"rate","baseSen":150000000,"bp":700}},{"id":"do_income:2026-10:EM","row":"do_income","month":"2026-10","cells":{"PG":0,"KL":0,"EM":1400000},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"rate","baseSen":20000000,"bp":700}},{"id":"bill:bl3","row":"income_warehouse","month":"2026-10","cells":{"PG":0,"KL":550000,"EM":0},"src":"bill","day":"2026-10-31","ref":"HC-ODB-2610-009","accountCode":"599-0000","accountName":"ADDITIONAL INCOME","text":"WAREHOUSE CHARGES - OCT'26","party":"A TENANT SDN BHD","how":null},{"id":"bill:bl1","row":"income_2990","month":"2026-09","cells":{"PG":0,"KL":700000,"EM":0},"src":"bill","day":"2026-10-23","ref":"HC-ODB-2610-001","accountCode":"599-0000","accountName":"ADDITIONAL INCOME","text":"OPERATION CHARGES - SEP'26","party":"2990 HOME SDN BHD","how":null},{"id":"bill:bl2","row":"income_2990","month":"2026-10","cells":{"PG":0,"KL":1100000,"EM":0},"src":"bill","day":"2026-11-13","ref":"HC-ODB-2611-004","accountCode":"599-0000","accountName":"ADDITIONAL INCOME","text":"OPERATION CHARGES - OCT'26","party":"2990 HOME SDN BHD","how":null},{"id":"logistic_expense:2026-09:PG","row":"logistic_expense","month":"2026-09","cells":{"PG":-1350000,"KL":0,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"transport","baseSen":45000000}},{"id":"logistic_expense:2026-09:KL","row":"logistic_expense","month":"2026-09","cells":{"PG":0,"KL":-5100000,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"transport","baseSen":170000000}},{"id":"logistic_expense:2026-09:EM","row":"logistic_expense","month":"2026-09","cells":{"PG":0,"KL":0,"EM":-450000},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"transport","baseSen":15000000}},{"id":"logistic_expense:2026-10:PG","row":"logistic_expense","month":"2026-10","cells":{"PG":-1200000,"KL":0,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"transport","baseSen":40000000}},{"id":"logistic_expense:2026-10:KL","row":"logistic_expense","month":"2026-10","cells":{"PG":0,"KL":-4500000,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"transport","baseSen":150000000}},{"id":"logistic_expense:2026-10:EM","row":"logistic_expense","month":"2026-10","cells":{"PG":0,"KL":0,"EM":-600000},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"transport","baseSen":20000000}},{"id":"gl:g23","row":"manpower_logistic","month":"2026-09","cells":{"PG":195652,"KL":739131,"EM":65217},"src":"ledger","day":"2026-09-30","ref":"JE-23","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","text":"LOGISTIC (ADMIN) SALARY","party":null,"how":{"kind":"shared","wholeSen":1000000}},{"id":"gl:g65","row":"manpower_logistic","month":"2026-10","cells":{"PG":190476,"KL":714286,"EM":95238},"src":"ledger","day":"2026-10-30","ref":"JE-65","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","text":"LOGISTIC (ADMIN) SALARY","party":null,"how":{"kind":"shared","wholeSen":1000000}},{"id":"gl:g24","row":"manpower_operation","month":"2026-09","cells":{"PG":391304,"KL":1478261,"EM":130435},"src":"ledger","day":"2026-09-30","ref":"JE-24","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","text":"WAREHOUSE OPERATIONS SALARY","party":null,"how":{"kind":"shared","wholeSen":2000000}},{"id":"gl:g30","row":"manpower_operation","month":"2026-09","cells":{"PG":45000,"KL":170000,"EM":15000},"src":"ledger","day":"2026-09-30","ref":"JE-30","accountCode":"900-S200","accountName":"E'YER EPF","text":"WAREHOUSE OPERATIONS EPF","party":null,"how":{"kind":"shared","wholeSen":230000}},{"id":"gl:g66","row":"manpower_operation","month":"2026-10","cells":{"PG":380952,"KL":1428572,"EM":190476},"src":"ledger","day":"2026-10-30","ref":"JE-66","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","text":"WAREHOUSE OPERATIONS SALARY","party":null,"how":{"kind":"shared","wholeSen":2000000}},{"id":"gl:g72","row":"manpower_operation","month":"2026-10","cells":{"PG":43809,"KL":164286,"EM":21905},"src":"ledger","day":"2026-10-30","ref":"JE-72","accountCode":"900-S200","accountName":"E'YER EPF","text":"WAREHOUSE OPERATIONS EPF","party":null,"how":{"kind":"shared","wholeSen":230000}},{"id":"gl:g25","row":"manpower_storekeeper","month":"2026-09","cells":{"PG":185870,"KL":702174,"EM":61956},"src":"ledger","day":"2026-09-30","ref":"JE-25","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","text":"OPERATION STOREKEEPER SALARY","party":null,"how":{"kind":"shared","wholeSen":950000}},{"id":"gl:g26","row":"manpower_storekeeper","month":"2026-09","cells":{"PG":130000,"KL":0,"EM":0},"src":"ledger","day":"2026-09-30","ref":"JE-26","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","text":"OPERATION STOREKEEPER PG SALARY","party":null,"how":null},{"id":"gl:g67","row":"manpower_storekeeper","month":"2026-10","cells":{"PG":180952,"KL":678572,"EM":90476},"src":"ledger","day":"2026-10-30","ref":"JE-67","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","text":"OPERATION STOREKEEPER SALARY","party":null,"how":{"kind":"shared","wholeSen":950000}},{"id":"gl:g68","row":"manpower_storekeeper","month":"2026-10","cells":{"PG":130000,"KL":0,"EM":0},"src":"ledger","day":"2026-10-30","ref":"JE-68","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","text":"OPERATION STOREKEEPER PG SALARY","party":null,"how":null},{"id":"gl:g901","row":"recruitment","month":"2026-09","cells":{"PG":0,"KL":63595,"EM":0},"src":"ledger","day":"2026-09-07","ref":"JE-901","accountCode":"900-A004","accountName":"ADVERTISEMENT - MANAGEMENT FEES","text":"WAREHOUSE ASSISTANT - JOB AD","party":null,"how":null},{"id":"gl:g910","row":"recruitment","month":"2026-10","cells":{"PG":0,"KL":63595,"EM":0},"src":"ledger","day":"2026-10-07","ref":"JE-910","accountCode":"900-A004","accountName":"ADVERTISEMENT - MANAGEMENT FEES","text":"WAREHOUSE ASSISTANT - JOB AD","party":null,"how":null},{"id":"gl:g902","row":"accommodation","month":"2026-09","cells":{"PG":0,"KL":120000,"EM":0},"src":"ledger","day":"2026-09-07","ref":"JE-902","accountCode":"900-H004","accountName":"HOSTEL - WAREHOUSE STAFF","text":null,"party":null,"how":null},{"id":"gl:g911","row":"accommodation","month":"2026-10","cells":{"PG":0,"KL":120000,"EM":0},"src":"ledger","day":"2026-10-07","ref":"JE-911","accountCode":"900-H004","accountName":"HOSTEL - WAREHOUSE STAFF","text":null,"party":null,"how":null},{"id":"gl:g903","row":"rental","month":"2026-09","cells":{"PG":1900000,"KL":0,"EM":0},"src":"ledger","day":"2026-09-07","ref":"JE-903","accountCode":"900-R004","accountName":"WAREHOUSE - (PENANG)","text":null,"party":null,"how":null},{"id":"gl:g904","row":"rental","month":"2026-09","cells":{"PG":0,"KL":2750000,"EM":0},"src":"ledger","day":"2026-09-07","ref":"JE-904","accountCode":"900-R005","accountName":"WAREHOUSE - (BELAKONG)","text":null,"party":null,"how":null},{"id":"gl:g905","row":"rental","month":"2026-09","cells":{"PG":0,"KL":0,"EM":180000},"src":"ledger","day":"2026-09-07","ref":"JE-905","accountCode":"900-R046","accountName":"WAREHOUSE - (SABAH/SARAWAK) OUTSOURCE","text":null,"party":null,"how":null},{"id":"gl:g912","row":"rental","month":"2026-10","cells":{"PG":1900000,"KL":0,"EM":0},"src":"ledger","day":"2026-10-07","ref":"JE-912","accountCode":"900-R004","accountName":"WAREHOUSE - (PENANG)","text":null,"party":null,"how":null},{"id":"gl:g913","row":"rental","month":"2026-10","cells":{"PG":0,"KL":2750000,"EM":0},"src":"ledger","day":"2026-10-07","ref":"JE-913","accountCode":"900-R005","accountName":"WAREHOUSE - (BELAKONG)","text":null,"party":null,"how":null},{"id":"gl:g914","row":"rental","month":"2026-10","cells":{"PG":0,"KL":0,"EM":180000},"src":"ledger","day":"2026-10-07","ref":"JE-914","accountCode":"900-R046","accountName":"WAREHOUSE - (SABAH/SARAWAK) OUTSOURCE","text":null,"party":null,"how":null},{"id":"gl:g906","row":"expenses","month":"2026-09","cells":{"PG":0,"KL":250000,"EM":0},"src":"ledger","day":"2026-09-07","ref":"JE-906","accountCode":"900-E013","accountName":"EXPENSES OF WAREHOUSE","text":null,"party":null,"how":null},{"id":"gl:g915","row":"expenses","month":"2026-10","cells":{"PG":0,"KL":250000,"EM":0},"src":"ledger","day":"2026-10-07","ref":"JE-915","accountCode":"900-E013","accountName":"EXPENSES OF WAREHOUSE","text":null,"party":null,"how":null},{"id":"gl:g85:2026-09","row":"insurance","month":"2026-09","cells":{"PG":0,"KL":100000,"EM":0},"src":"ledger","day":"2026-08-15","ref":"JE-85","accountCode":"900-I005","accountName":"INSURANCE - WAREHOUSE","text":null,"party":null,"how":{"kind":"spread","wholeSen":1200000,"part":2,"months":12}},{"id":"gl:g85:2026-10","row":"insurance","month":"2026-10","cells":{"PG":0,"KL":100000,"EM":0},"src":"ledger","day":"2026-08-15","ref":"JE-85","accountCode":"900-I005","accountName":"INSURANCE - WAREHOUSE","text":null,"party":null,"how":{"kind":"spread","wholeSen":1200000,"part":3,"months":12}},{"id":"gl:g907","row":"utilities","month":"2026-09","cells":{"PG":70000,"KL":0,"EM":0},"src":"ledger","day":"2026-09-07","ref":"JE-907","accountCode":"900-W008","accountName":"WATER & ELECTRICITY - WH PENANG","text":null,"party":null,"how":null},{"id":"gl:g908","row":"utilities","month":"2026-09","cells":{"PG":0,"KL":170000,"EM":0},"src":"ledger","day":"2026-09-07","ref":"JE-908","accountCode":"900-W007","accountName":"WATER & ELECTRICITY - WH BALAKONG","text":null,"party":null,"how":null},{"id":"gl:g916","row":"utilities","month":"2026-10","cells":{"PG":70000,"KL":0,"EM":0},"src":"ledger","day":"2026-10-07","ref":"JE-916","accountCode":"900-W008","accountName":"WATER & ELECTRICITY - WH PENANG","text":null,"party":null,"how":null},{"id":"gl:g917","row":"utilities","month":"2026-10","cells":{"PG":0,"KL":170000,"EM":0},"src":"ledger","day":"2026-10-07","ref":"JE-917","accountCode":"900-W007","accountName":"WATER & ELECTRICITY - WH BALAKONG","text":null,"party":null,"how":null},{"id":"gl:g909","row":"telephone","month":"2026-09","cells":{"PG":0,"KL":18000,"EM":0},"src":"ledger","day":"2026-09-07","ref":"JE-909","accountCode":"900-T013","accountName":"TELEPHONE - WAREHOUSE","text":null,"party":null,"how":null},{"id":"gl:g918","row":"telephone","month":"2026-10","cells":{"PG":0,"KL":18000,"EM":0},"src":"ledger","day":"2026-10-07","ref":"JE-918","accountCode":"900-T013","accountName":"TELEPHONE - WAREHOUSE","text":null,"party":null,"how":null},{"id":"logistics_net:2026-09:PG","row":"logistics_net","month":"2026-09","cells":{"PG":-450000,"KL":0,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"logistics","netSen":-450000,"fairIncomeSen":0}},{"id":"logistics_net:2026-09:KL","row":"logistics_net","month":"2026-09","cells":{"PG":0,"KL":-550000,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"logistics","netSen":-550000,"fairIncomeSen":0}},{"id":"logistics_net:2026-09:EM","row":"logistics_net","month":"2026-09","cells":{"PG":0,"KL":0,"EM":450000},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"logistics","netSen":450000,"fairIncomeSen":0}},{"id":"logistics_net:2026-10:PG","row":"logistics_net","month":"2026-10","cells":{"PG":-600000,"KL":0,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"logistics","netSen":-600000,"fairIncomeSen":0}},{"id":"logistics_net:2026-10:KL","row":"logistics_net","month":"2026-10","cells":{"PG":0,"KL":-1150000,"EM":0},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"logistics","netSen":-1150000,"fairIncomeSen":0}},{"id":"logistics_net:2026-10:EM","row":"logistics_net","month":"2026-10","cells":{"PG":0,"KL":0,"EM":600000},"src":"figure","day":null,"ref":null,"accountCode":null,"accountName":null,"text":null,"party":null,"how":{"kind":"logistics","netSen":600000,"fairIncomeSen":0}}],"income":[{"lineId":"bl1","billNo":"HC-ODB-2610-001","billDate":"2026-10-23","debtorName":"2990 HOME SDN BHD","description":"OPERATION CHARGES - SEP'26","accountCode":"599-0000","accountName":"ADDITIONAL INCOME","amountSen":700000,"month":"2026-09","key":"income_2990","region":"KL"},{"lineId":"bl3","billNo":"HC-ODB-2610-009","billDate":"2026-10-31","debtorName":"A TENANT SDN BHD","description":"WAREHOUSE CHARGES - OCT'26","accountCode":"599-0000","accountName":"ADDITIONAL INCOME","amountSen":550000,"month":"2026-10","key":"income_warehouse","region":"KL"},{"lineId":"bl2","billNo":"HC-ODB-2611-004","billDate":"2026-11-13","debtorName":"2990 HOME SDN BHD","description":"OPERATION CHARGES - OCT'26","accountCode":"599-0000","accountName":"ADDITIONAL INCOME","amountSen":1100000,"month":"2026-10","key":"income_2990","region":"KL"}],"manpower":[{"lineId":"g23","day":"2026-09-30","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","notes":"LOGISTIC (ADMIN) SALARY","amountSen":1000000,"row":"manpower_logistic","region":null,"cells":{"PG":195652,"KL":739131,"EM":65217}},{"lineId":"g24","day":"2026-09-30","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","notes":"WAREHOUSE OPERATIONS SALARY","amountSen":2000000,"row":"manpower_operation","region":null,"cells":{"PG":391304,"KL":1478261,"EM":130435}},{"lineId":"g25","day":"2026-09-30","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","notes":"OPERATION STOREKEEPER SALARY","amountSen":950000,"row":"manpower_storekeeper","region":null,"cells":{"PG":185870,"KL":702174,"EM":61956}},{"lineId":"g26","day":"2026-09-30","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","notes":"OPERATION STOREKEEPER PG SALARY","amountSen":130000,"row":"manpower_storekeeper","region":"PG","cells":{"PG":130000,"KL":0,"EM":0}},{"lineId":"g30","day":"2026-09-30","accountCode":"900-S200","accountName":"E'YER EPF","notes":"WAREHOUSE OPERATIONS EPF","amountSen":230000,"row":"manpower_operation","region":null,"cells":{"PG":45000,"KL":170000,"EM":15000}},{"lineId":"g65","day":"2026-10-30","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","notes":"LOGISTIC (ADMIN) SALARY","amountSen":1000000,"row":"manpower_logistic","region":null,"cells":{"PG":190476,"KL":714286,"EM":95238}},{"lineId":"g66","day":"2026-10-30","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","notes":"WAREHOUSE OPERATIONS SALARY","amountSen":2000000,"row":"manpower_operation","region":null,"cells":{"PG":380952,"KL":1428572,"EM":190476}},{"lineId":"g67","day":"2026-10-30","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","notes":"OPERATION STOREKEEPER SALARY","amountSen":950000,"row":"manpower_storekeeper","region":null,"cells":{"PG":180952,"KL":678572,"EM":90476}},{"lineId":"g68","day":"2026-10-30","accountCode":"900-S100","accountName":"STAFF SALARIES & OVERTIME","notes":"OPERATION STOREKEEPER PG SALARY","amountSen":130000,"row":"manpower_storekeeper","region":"PG","cells":{"PG":130000,"KL":0,"EM":0}},{"lineId":"g72","day":"2026-10-30","accountCode":"900-S200","accountName":"E'YER EPF","notes":"WAREHOUSE OPERATIONS EPF","amountSen":230000,"row":"manpower_operation","region":null,"cells":{"PG":43809,"KL":164286,"EM":21905}}],"spreads":[{"lineId":"g85","kind":"insurance","accountCode":"900-I005","accountName":"INSURANCE - WAREHOUSE","day":"2026-08-15","docNo":"JE-85","notes":null,"amountSen":1200000,"region":"KL","months":12,"isDefault":true,"perMonthSen":100000,"inRangeSen":200000,"lastMonth":"2027-07"}],"rows":[{"key":"do_value","label":"Delivery Order","kind":"strong","group":"head"},{"key":"do_income","label":"7% Income from Delivery Order","kind":"line","group":"gross"},{"key":"income_warehouse","label":"Income:- Warehouse income","kind":"line","group":"gross"},{"key":"income_2990","label":"Income:- 2990 income","kind":"line","group":"gross"},{"key":"income_other","label":"Income:- Other operation charges","kind":"line","group":"gross","optional":true},{"key":"logistic_expense","label":"(-) Logistic Expense","kind":"line","group":"gross"},{"key":"gross","label":"Gross Profit / (Loss)","kind":"strong","group":"result"},{"key":"manpower_logistic","label":"Warehouse Manpower - Logistic","kind":"line","group":"expense"},{"key":"manpower_operation","label":"Warehouse Manpower - Operation","kind":"line","group":"expense"},{"key":"manpower_procurement","label":"Warehouse Manpower - Procurement","kind":"line","group":"expense"},{"key":"manpower_storekeeper","label":"Warehouse Manpower - Storekeeper","kind":"line","group":"expense"},{"key":"recruitment","label":"Recruitment (job ads)","kind":"line","group":"expense","optional":true},{"key":"accommodation","label":"Accommodation Cost","kind":"line","group":"expense"},{"key":"rental","label":"Rental Warehouse","kind":"line","group":"expense"},{"key":"expenses","label":"Expenses of Warehouse","kind":"line","group":"expense"},{"key":"parttime","label":"Part Time Worker / Wages","kind":"line","group":"expense"},{"key":"upkeep","label":"Upkeep of Warehouse","kind":"line","group":"expense"},{"key":"insurance","label":"Insurance Warehouse","kind":"line","group":"expense"},{"key":"utilities","label":"Water & Electricity","kind":"line","group":"expense"},{"key":"telephone","label":"Telephone & Internet","kind":"line","group":"expense"},{"key":"total_expense","label":"Total Warehouse Expenses","kind":"strong","group":"expense_total"},{"key":"net","label":"Net Profit / (Loss)","kind":"strong","group":"result"},{"key":"logistics_net","label":"Profit / (Loss) From Logistics","kind":"line","group":"result"},{"key":"sd_net","label":"Profit / (Loss) From Setup/Dismantle","kind":"line","group":"result"},{"key":"net_after","label":"Net Profit / (Loss) After Logistics & Setup/Dismantle","kind":"final","group":"result"}],"regions":[{"code":"PG","name":"Penang"},{"code":"KL","name":"KL"},{"code":"EM","name":"SBH & SWK"}],"logisticsIncomeBp":300,"logisticsProblem":"the fairs are not reachable from here"},"exhibition":{"from":"2026-09-01","to":"2026-10-31","label":"Exhibition","dept":"exhibition","months":["2026-09","2026-10"],"perMonth":[{"month":"2026-09","salesSen":200000000,"costOfSalesSen":83000000,"grossSen":117000000,"otherIncomeSen":0,"expensesSen":84000000,"taxationSen":0,"netSen":33000000},{"month":"2026-10","salesSen":230000000,"costOfSalesSen":96000000,"grossSen":134000000,"otherIncomeSen":0,"expensesSen":99400000,"taxationSen":0,"netSen":34600000}],"tree":{"tradingIncome":[{"kind":"account","id":"order:bedframe","key":"order:bedframe","label":"Bedframe","pct":null,"children":[],"cells":{"2026-09":80000000,"2026-10":90000000},"amountSen":170000000},{"kind":"account","id":"order:mattress","key":"order:mattress","label":"Mattress","pct":null,"children":[],"cells":{"2026-09":70000000,"2026-10":80000000},"amountSen":150000000},{"kind":"account","id":"order:sofa","key":"order:sofa","label":"Sofa","pct":null,"children":[],"cells":{"2026-09":45000000,"2026-10":55000000},"amountSen":100000000},{"kind":"account","id":"order:service","key":"order:service","label":"Service / transport income","pct":null,"children":[],"cells":{"2026-09":5000000,"2026-10":5000000},"amountSen":10000000}],"costOfSales":[{"kind":"account","id":"order:bedframe","key":"order:bedframe","label":"Bedframe","pct":null,"children":[],"cells":{"2026-09":32000000,"2026-10":36000000},"amountSen":68000000},{"kind":"account","id":"order:mattress","key":"order:mattress","label":"Mattress","pct":null,"children":[],"cells":{"2026-09":28000000,"2026-10":32000000},"amountSen":60000000},{"kind":"account","id":"order:sofa","key":"order:sofa","label":"Sofa","pct":null,"children":[],"cells":{"2026-09":23000000,"2026-10":28000000},"amountSen":51000000}],"otherIncome":[],"expenses":[{"kind":"category","id":"pl:exh","label":"Exhibition & roadshow expense","amountSen":123200000,"pct":null,"children":[{"kind":"account","id":"acc:900-R032","label":"900-R032 · RENTAL - EXHIBITION","code":"900-R032","key":"900-R032","amountSen":99000000,"pct":null,"children":[],"cells":{"2026-09":45000000,"2026-10":54000000}},{"kind":"account","id":"acc:900-B003","label":"900-B003 · BOOTH SET UP","code":"900-B003","key":"900-B003","amountSen":24200000,"pct":null,"children":[],"cells":{"2026-09":11000000,"2026-10":13200000}}],"cells":{"2026-09":56000000,"2026-10":67200000}},{"kind":"category","id":"pl:general:commission","label":"Commission","amountSen":60200000,"pct":null,"cells":{"2026-09":28000000,"2026-10":32200000},"children":[{"kind":"account","id":"acc:900-C003","label":"900-C003 COMMISSION ( EVENT ) — the commission bills for Sep 2026, Oct 2026, in place of the monthly release","code":"900-C003","key":"900-C003","amountSen":60200000,"pct":null,"children":[],"cells":{"2026-09":28000000,"2026-10":32200000}}]}],"taxation":[]},"basis":"orders","orders":{"counted":40,"notDelivered":9}},"logistics":{"from":"2026-09-01","to":"2026-10-31","months":["2026-09","2026-10"],"doIncomeBp":300,"fairIncomeBp":100,"fairsProblem":null,"tripsProblem":null,"dos":{"PG":18,"KL":47,"EM":0,"SG":0,"total":65},"rows":[{"key":"do_value","label":"Delivery Order","sen":{"PG":130000000,"KL":310000000,"EM":0,"SG":0},"totalSen":440000000},{"key":"do_income","label":"Transport Income (3% of DO)","sen":{"PG":3900000,"KL":9300000,"EM":0,"SG":0},"totalSen":13200000},{"key":"ti_houzs","label":"Transport Income (Houzs)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"ti_conts","label":"Transport Income (The Conts)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"ti_hookka","label":"Transport Income (Hookka)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"sd_income","label":"Set/Dismantle Income (In-house)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"fair_income","label":"Transport Income (1% of fair sales)","sen":{"PG":0,"KL":400000,"EM":0,"SG":0},"totalSen":400000},{"key":"ti_2990","label":"Transport Income (2990)","sen":{"PG":0,"KL":1500000,"EM":0,"SG":0},"totalSen":1500000},{"key":"total_income","label":"TOTAL INCOME","sen":{"PG":3900000,"KL":11200000,"EM":0,"SG":0},"totalSen":15100000},{"key":"outsource","label":"Outsource Expense","sen":{"PG":6200000,"KL":0,"EM":0,"SG":0},"totalSen":6200000},{"key":"petrol","label":"Petrol Cost","sen":{"PG":0,"KL":4800000,"EM":0,"SG":0},"totalSen":4800000},{"key":"upkeep","label":"Upkeep Cost","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"instalment","label":"Lorry Installment Cost","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"roadtax","label":"RoadTax & Insurance Cost","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"manpower","label":"Manpower Cost","sen":{"PG":0,"KL":3000000,"EM":0,"SG":0},"totalSen":3000000},{"key":"inhouse_total","label":"Total In-house Expenses","sen":{"PG":0,"KL":7800000,"EM":0,"SG":0},"totalSen":7800000},{"key":"total_expense","label":"TOTAL EXPENSE","sen":{"PG":6200000,"KL":7800000,"EM":0,"SG":0},"totalSen":14000000},{"key":"net","label":"NET PROFIT","sen":{"PG":-2300000,"KL":3400000,"EM":0,"SG":0},"totalSen":1100000}],"perMonth":[{"month":"2026-09","rows":[{"key":"do_value","label":"Delivery Order","sen":{"PG":70000000,"KL":160000000,"EM":0,"SG":0},"totalSen":230000000},{"key":"do_income","label":"Transport Income (3% of DO)","sen":{"PG":2100000,"KL":4800000,"EM":0,"SG":0},"totalSen":6900000},{"key":"ti_houzs","label":"Transport Income (Houzs)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"ti_conts","label":"Transport Income (The Conts)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"ti_hookka","label":"Transport Income (Hookka)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"sd_income","label":"Set/Dismantle Income (In-house)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"fair_income","label":"Transport Income (1% of fair sales)","sen":{"PG":0,"KL":200000,"EM":0,"SG":0},"totalSen":200000},{"key":"ti_2990","label":"Transport Income (2990)","sen":{"PG":0,"KL":700000,"EM":0,"SG":0},"totalSen":700000},{"key":"total_income","label":"TOTAL INCOME","sen":{"PG":2100000,"KL":5700000,"EM":0,"SG":0},"totalSen":7800000},{"key":"outsource","label":"Outsource Expense","sen":{"PG":3000000,"KL":0,"EM":0,"SG":0},"totalSen":3000000},{"key":"petrol","label":"Petrol Cost","sen":{"PG":0,"KL":2500000,"EM":0,"SG":0},"totalSen":2500000},{"key":"upkeep","label":"Upkeep Cost","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"instalment","label":"Lorry Installment Cost","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"roadtax","label":"RoadTax & Insurance Cost","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"manpower","label":"Manpower Cost","sen":{"PG":0,"KL":1500000,"EM":0,"SG":0},"totalSen":1500000},{"key":"inhouse_total","label":"Total In-house Expenses","sen":{"PG":0,"KL":4000000,"EM":0,"SG":0},"totalSen":4000000},{"key":"total_expense","label":"TOTAL EXPENSE","sen":{"PG":3000000,"KL":4000000,"EM":0,"SG":0},"totalSen":7000000},{"key":"net","label":"NET PROFIT","sen":{"PG":-900000,"KL":1700000,"EM":0,"SG":0},"totalSen":800000}],"dos":{"PG":10,"KL":25,"EM":0,"SG":0,"total":35},"costTotalSen":7000000,"fairs":[],"noFair":{"lines":0,"sen":0}},{"month":"2026-10","rows":[{"key":"do_value","label":"Delivery Order","sen":{"PG":60000000,"KL":150000000,"EM":0,"SG":0},"totalSen":210000000},{"key":"do_income","label":"Transport Income (3% of DO)","sen":{"PG":1800000,"KL":4500000,"EM":0,"SG":0},"totalSen":6300000},{"key":"ti_houzs","label":"Transport Income (Houzs)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"ti_conts","label":"Transport Income (The Conts)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"ti_hookka","label":"Transport Income (Hookka)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"sd_income","label":"Set/Dismantle Income (In-house)","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"fair_income","label":"Transport Income (1% of fair sales)","sen":{"PG":0,"KL":200000,"EM":0,"SG":0},"totalSen":200000},{"key":"ti_2990","label":"Transport Income (2990)","sen":{"PG":0,"KL":800000,"EM":0,"SG":0},"totalSen":800000},{"key":"total_income","label":"TOTAL INCOME","sen":{"PG":1800000,"KL":5500000,"EM":0,"SG":0},"totalSen":7300000},{"key":"outsource","label":"Outsource Expense","sen":{"PG":3200000,"KL":0,"EM":0,"SG":0},"totalSen":3200000},{"key":"petrol","label":"Petrol Cost","sen":{"PG":0,"KL":2300000,"EM":0,"SG":0},"totalSen":2300000},{"key":"upkeep","label":"Upkeep Cost","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"instalment","label":"Lorry Installment Cost","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"roadtax","label":"RoadTax & Insurance Cost","sen":{"PG":0,"KL":0,"EM":0,"SG":0},"totalSen":0},{"key":"manpower","label":"Manpower Cost","sen":{"PG":0,"KL":1500000,"EM":0,"SG":0},"totalSen":1500000},{"key":"inhouse_total","label":"Total In-house Expenses","sen":{"PG":0,"KL":3800000,"EM":0,"SG":0},"totalSen":3800000},{"key":"total_expense","label":"TOTAL EXPENSE","sen":{"PG":3200000,"KL":3800000,"EM":0,"SG":0},"totalSen":7000000},{"key":"net","label":"NET PROFIT","sen":{"PG":-1400000,"KL":1700000,"EM":0,"SG":0},"totalSen":300000}],"dos":{"PG":8,"KL":22,"EM":0,"SG":0,"total":30},"costTotalSen":7000000,"fairs":[],"noFair":{"lines":0,"sen":0}}],"income":[],"trips":[],"spreads":[],"ownTrips":0,"inHousePerTripSen":null,"areaRates":[]}}
+{
+  "plan": {
+    "departments": [
+      {
+        "key": "exhibition",
+        "label": "Exhibition",
+        "view": "dept"
+      },
+      {
+        "key": "operation",
+        "label": "Operation",
+        "view": "operation"
+      },
+      {
+        "key": "logistics",
+        "label": "Logistics",
+        "view": "logistics"
+      },
+      {
+        "key": "ga",
+        "label": "G&A",
+        "view": "ga"
+      }
+    ],
+    "selling": "exhibition",
+    "branches": [
+      {
+        "key": "setupDismantle",
+        "label": "Setup & dismantle",
+        "under": "logistics"
+      }
+    ]
+  },
+  "all": {
+    "from": "2026-09-01",
+    "to": "2026-10-31",
+    "basis": "performance",
+    "departments": [
+      {
+        "key": "exhibition",
+        "label": "Exhibition",
+        "view": "dept"
+      },
+      {
+        "key": "operation",
+        "label": "Operation",
+        "view": "operation"
+      },
+      {
+        "key": "logistics",
+        "label": "Logistics",
+        "view": "logistics"
+      },
+      {
+        "key": "ga",
+        "label": "G&A",
+        "view": "ga"
+      }
+    ],
+    "selling": "exhibition",
+    "branches": [
+      {
+        "key": "setupDismantle",
+        "label": "Setup & dismantle",
+        "under": "logistics"
+      }
+    ],
+    "rates": {
+      "gaBp": 800,
+      "operationBp": 700,
+      "logisticsBp": 300,
+      "setupDismantleBp": 100,
+      "merchandiseBp": 200
+    },
+    "summary": {
+      "exhibition": {
+        "incomeSen": 430000000,
+        "costSen": 179000000,
+        "grossSen": 251000000,
+        "otherIncomeSen": 0,
+        "expensesSen": 183400000,
+        "chargesSen": 67200000,
+        "profitSen": 400000
+      },
+      "operation": {
+        "incomeSen": 31750000,
+        "costSen": 0,
+        "grossSen": 31750000,
+        "otherIncomeSen": 0,
+        "expensesSen": 19863190,
+        "chargesSen": 12600000,
+        "profitSen": -713190
+      },
+      "logistics": {
+        "incomeSen": 14100000,
+        "costSen": 0,
+        "grossSen": 14100000,
+        "otherIncomeSen": 0,
+        "expensesSen": 13500000,
+        "chargesSen": 0,
+        "profitSen": 600000
+      },
+      "setupDismantle": {
+        "incomeSen": 4200000,
+        "costSen": 0,
+        "grossSen": 4200000,
+        "otherIncomeSen": 0,
+        "expensesSen": 3300000,
+        "chargesSen": 0,
+        "profitSen": 900000
+      },
+      "ga": {
+        "incomeSen": 33600000,
+        "costSen": 0,
+        "grossSen": 33600000,
+        "otherIncomeSen": 0,
+        "expensesSen": 25311416,
+        "chargesSen": 0,
+        "profitSen": 8288584
+      }
+    },
+    "total": {
+      "incomeSen": 513650000,
+      "costSen": 179000000,
+      "grossSen": 334650000,
+      "otherIncomeSen": 0,
+      "expensesSen": 245374606,
+      "chargesSen": 79800000,
+      "profitSen": 9475394
+    },
+    "unassigned": {
+      "label": "No department yet",
+      "lines": [
+        {
+          "code": "900-U014",
+          "name": "UPKEEP OF LORI - VRH 9058",
+          "amountSen": 20000
+        }
+      ]
+    },
+    "logisticsProblem": null
+  },
+  "ga": {
+    "from": "2026-09-01",
+    "to": "2026-10-31",
+    "months": [
+      "2026-09",
+      "2026-10"
+    ],
+    "shareBp": 800,
+    "perMonth": [
+      {
+        "month": "2026-09",
+        "salesSen": 195000000,
+        "shareSen": 15600000,
+        "expenseSen": 12655708,
+        "surplusSen": 2944292
+      },
+      {
+        "month": "2026-10",
+        "salesSen": 225000000,
+        "shareSen": 18000000,
+        "expenseSen": 12655708,
+        "surplusSen": 5344292
+      }
+    ],
+    "tree": [
+      {
+        "kind": "category",
+        "id": "pl:showroom",
+        "label": "Showrooms expense",
+        "amountSen": 5200000,
+        "pct": null,
+        "children": [
+          {
+            "kind": "account",
+            "id": "acc:900-R009",
+            "label": "900-R009 · SHOW ROOM (KELANA JAYA)",
+            "code": "900-R009",
+            "key": "900-R009",
+            "amountSen": 4400000,
+            "pct": null,
+            "children": [],
+            "cells": {
+              "2026-10": 2200000,
+              "2026-09": 2200000
+            }
+          },
+          {
+            "kind": "account",
+            "id": "acc:900-W005",
+            "label": "900-W005 · WATER & ELECTRICITY - SHOWROOM",
+            "code": "900-W005",
+            "key": "900-W005",
+            "amountSen": 800000,
+            "pct": null,
+            "children": [],
+            "cells": {
+              "2026-10": 400000,
+              "2026-09": 400000
+            }
+          }
+        ],
+        "cells": {
+          "2026-10": 2600000,
+          "2026-09": 2600000
+        }
+      },
+      {
+        "kind": "category",
+        "id": "pl:general",
+        "label": "Administrative expense",
+        "amountSen": 12111416,
+        "pct": null,
+        "children": [
+          {
+            "kind": "category",
+            "id": "pl:general:salary",
+            "label": "Salary & related",
+            "amountSen": 10140000,
+            "pct": null,
+            "children": [
+              {
+                "kind": "account",
+                "id": "acc:900-D100",
+                "label": "900-D100 · DIRECTOR REMUNERATION",
+                "code": "900-D100",
+                "key": "900-D100",
+                "amountSen": 4600000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 2300000,
+                  "2026-10": 2300000
+                }
+              },
+              {
+                "kind": "account",
+                "id": "acc:team:FINANCE",
+                "label": "Finance team · salary, EPF, SOCSO, EIS, allowance",
+                "code": "900-S100",
+                "key": "team:FINANCE",
+                "amountSen": 1640000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 820000,
+                  "2026-10": 820000
+                }
+              },
+              {
+                "kind": "account",
+                "id": "acc:team:IT",
+                "label": "IT team · salary, EPF, SOCSO, EIS, allowance",
+                "code": "900-S100",
+                "key": "team:IT",
+                "amountSen": 2000000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 1000000,
+                  "2026-10": 1000000
+                }
+              },
+              {
+                "kind": "account",
+                "id": "acc:team:MANAGEMENT",
+                "label": "Management team · salary, EPF, SOCSO, EIS, allowance",
+                "code": "900-S100",
+                "key": "team:MANAGEMENT",
+                "amountSen": 1200000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 600000,
+                  "2026-10": 600000
+                }
+              },
+              {
+                "kind": "account",
+                "id": "acc:team:OTHER",
+                "label": "Other staff · salary, EPF, SOCSO, EIS, allowance",
+                "code": "900-S100",
+                "key": "team:OTHER",
+                "amountSen": 700000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 350000,
+                  "2026-10": 350000
+                }
+              }
+            ],
+            "cells": {
+              "2026-09": 5070000,
+              "2026-10": 5070000
+            }
+          },
+          {
+            "kind": "category",
+            "id": "pl:general:rental",
+            "label": "Rental - office & others",
+            "amountSen": 600000,
+            "pct": null,
+            "children": [
+              {
+                "kind": "account",
+                "id": "acc:900-R044",
+                "label": "900-R044 · RENTAL - OFFICE E-28-02",
+                "code": "900-R044",
+                "key": "900-R044",
+                "amountSen": 600000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 300000,
+                  "2026-10": 300000
+                }
+              }
+            ],
+            "cells": {
+              "2026-09": 300000,
+              "2026-10": 300000
+            }
+          },
+          {
+            "kind": "category",
+            "id": "pl:general:marketing",
+            "label": "Advertising & marketing",
+            "amountSen": 651416,
+            "pct": null,
+            "children": [
+              {
+                "kind": "account",
+                "id": "acc:900-M001",
+                "label": "900-M001 · MARKETING FEES",
+                "code": "900-M001",
+                "key": "900-M001",
+                "amountSen": 600000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 300000,
+                  "2026-10": 300000
+                }
+              },
+              {
+                "kind": "account",
+                "id": "acc:900-A004",
+                "label": "900-A004 · ADVERTISEMENT - MANAGEMENT FEES",
+                "code": "900-A004",
+                "key": "900-A004",
+                "amountSen": 51416,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 25708,
+                  "2026-10": 25708
+                }
+              }
+            ],
+            "cells": {
+              "2026-09": 325708,
+              "2026-10": 325708
+            }
+          },
+          {
+            "kind": "category",
+            "id": "pl:general:professional",
+            "label": "Professional & statutory",
+            "amountSen": 320000,
+            "pct": null,
+            "children": [
+              {
+                "kind": "account",
+                "id": "acc:900-P003",
+                "label": "900-P003 · PROFESSIONAL FEE",
+                "code": "900-P003",
+                "key": "900-P003",
+                "amountSen": 320000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 160000,
+                  "2026-10": 160000
+                }
+              }
+            ],
+            "cells": {
+              "2026-09": 160000,
+              "2026-10": 160000
+            }
+          },
+          {
+            "kind": "category",
+            "id": "pl:general:office",
+            "label": "Office & admin",
+            "amountSen": 400000,
+            "pct": null,
+            "children": [
+              {
+                "kind": "account",
+                "id": "acc:900-P001",
+                "label": "900-P001 · PRINTING & STATIONERY",
+                "code": "900-P001",
+                "key": "900-P001",
+                "amountSen": 120000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 60000,
+                  "2026-10": 60000
+                }
+              },
+              {
+                "kind": "account",
+                "id": "acc:900-W002",
+                "label": "900-W002 · WEBSITE & SYSTEM EXPENSES",
+                "code": "900-W002",
+                "key": "900-W002",
+                "amountSen": 180000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 90000,
+                  "2026-10": 90000
+                }
+              },
+              {
+                "kind": "account",
+                "id": "acc:946-0000",
+                "label": "946-0000 · Cash Over/Short",
+                "code": "946-0000",
+                "key": "946-0000",
+                "amountSen": 100000,
+                "pct": null,
+                "children": [],
+                "cells": {
+                  "2026-09": 50000,
+                  "2026-10": 50000
+                }
+              }
+            ],
+            "cells": {
+              "2026-09": 200000,
+              "2026-10": 200000
+            }
+          }
+        ],
+        "cells": {
+          "2026-09": 6055708,
+          "2026-10": 6055708
+        }
+      },
+      {
+        "kind": "category",
+        "id": "pl:finance",
+        "label": "Finance cost",
+        "amountSen": 8000000,
+        "pct": null,
+        "children": [
+          {
+            "kind": "account",
+            "id": "acc:900-T009",
+            "label": "900-T009 · TERMINAL INTEREST CHARGES",
+            "code": "900-T009",
+            "key": "900-T009",
+            "amountSen": 8000000,
+            "pct": null,
+            "children": [],
+            "cells": {
+              "2026-09": 4000000,
+              "2026-10": 4000000
+            }
+          }
+        ],
+        "cells": {
+          "2026-09": 4000000,
+          "2026-10": 4000000
+        }
+      }
+    ],
+    "teams": [
+      {
+        "team": "FINANCE",
+        "label": "Finance team",
+        "lines": [
+          {
+            "lineId": "g21",
+            "day": "2026-09-30",
+            "accountCode": "900-S100",
+            "notes": "FINANCE - SALARY",
+            "amountSen": 820000
+          },
+          {
+            "lineId": "g63",
+            "day": "2026-10-30",
+            "accountCode": "900-S100",
+            "notes": "FINANCE - SALARY",
+            "amountSen": 820000
+          }
+        ]
+      },
+      {
+        "team": "IT",
+        "label": "IT team",
+        "lines": [
+          {
+            "lineId": "g19",
+            "day": "2026-09-30",
+            "accountCode": "900-S100",
+            "notes": "IT SALARY",
+            "amountSen": 900000
+          },
+          {
+            "lineId": "g29",
+            "day": "2026-09-30",
+            "accountCode": "900-S200",
+            "notes": "IT EPF",
+            "amountSen": 100000
+          },
+          {
+            "lineId": "g61",
+            "day": "2026-10-30",
+            "accountCode": "900-S100",
+            "notes": "IT SALARY",
+            "amountSen": 900000
+          },
+          {
+            "lineId": "g71",
+            "day": "2026-10-30",
+            "accountCode": "900-S200",
+            "notes": "IT EPF",
+            "amountSen": 100000
+          }
+        ]
+      },
+      {
+        "team": "MANAGEMENT",
+        "label": "Management team",
+        "lines": [
+          {
+            "lineId": "g20",
+            "day": "2026-09-30",
+            "accountCode": "900-S100",
+            "notes": "MANAGEMENT SALARY",
+            "amountSen": 600000
+          },
+          {
+            "lineId": "g62",
+            "day": "2026-10-30",
+            "accountCode": "900-S100",
+            "notes": "MANAGEMENT SALARY",
+            "amountSen": 600000
+          }
+        ]
+      },
+      {
+        "team": "OTHER",
+        "label": "Other staff",
+        "lines": [
+          {
+            "lineId": "g22",
+            "day": "2026-09-30",
+            "accountCode": "900-S100",
+            "notes": "OTHER SALARY",
+            "amountSen": 350000
+          },
+          {
+            "lineId": "g64",
+            "day": "2026-10-30",
+            "accountCode": "900-S100",
+            "notes": "OTHER SALARY",
+            "amountSen": 350000
+          }
+        ]
+      }
+    ],
+    "basis": "performance"
+  },
+  "operation": {
+    "from": "2026-09-01",
+    "to": "2026-10-31",
+    "months": [
+      "2026-09",
+      "2026-10"
+    ],
+    "incomeBp": 700,
+    "perMonth": [
+      {
+        "month": "2026-09",
+        "rows": {
+          "do_value": {
+            "PG": 45000000,
+            "KL": 170000000,
+            "EM": 15000000
+          },
+          "do_income": {
+            "PG": 3150000,
+            "KL": 11900000,
+            "EM": 1050000
+          },
+          "income_warehouse": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "income_2990": {
+            "PG": 0,
+            "KL": 700000,
+            "EM": 0
+          },
+          "income_other": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "logistic_expense": {
+            "PG": -1350000,
+            "KL": -5100000,
+            "EM": -450000
+          },
+          "gross": {
+            "PG": 1800000,
+            "KL": 7500000,
+            "EM": 600000
+          },
+          "manpower_logistic": {
+            "PG": 195652,
+            "KL": 739131,
+            "EM": 65217
+          },
+          "manpower_operation": {
+            "PG": 436304,
+            "KL": 1648261,
+            "EM": 145435
+          },
+          "manpower_procurement": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "manpower_storekeeper": {
+            "PG": 315870,
+            "KL": 702174,
+            "EM": 61956
+          },
+          "recruitment": {
+            "PG": 0,
+            "KL": 63595,
+            "EM": 0
+          },
+          "accommodation": {
+            "PG": 0,
+            "KL": 120000,
+            "EM": 0
+          },
+          "rental": {
+            "PG": 1900000,
+            "KL": 2750000,
+            "EM": 180000
+          },
+          "expenses": {
+            "PG": 0,
+            "KL": 250000,
+            "EM": 0
+          },
+          "parttime": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "upkeep": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "insurance": {
+            "PG": 0,
+            "KL": 100000,
+            "EM": 0
+          },
+          "utilities": {
+            "PG": 70000,
+            "KL": 170000,
+            "EM": 0
+          },
+          "telephone": {
+            "PG": 0,
+            "KL": 18000,
+            "EM": 0
+          },
+          "total_expense": {
+            "PG": 2917826,
+            "KL": 6561161,
+            "EM": 452608
+          },
+          "net": {
+            "PG": -1117826,
+            "KL": 938839,
+            "EM": 147392
+          },
+          "logistics_net": {
+            "PG": -450000,
+            "KL": -550000,
+            "EM": 450000
+          },
+          "sd_net": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "net_after": {
+            "PG": -1567826,
+            "KL": 388839,
+            "EM": 597392
+          }
+        },
+        "dos": {
+          "PG": 1,
+          "KL": 1,
+          "EM": 1
+        }
+      },
+      {
+        "month": "2026-10",
+        "rows": {
+          "do_value": {
+            "PG": 40000000,
+            "KL": 150000000,
+            "EM": 20000000
+          },
+          "do_income": {
+            "PG": 2800000,
+            "KL": 10500000,
+            "EM": 1400000
+          },
+          "income_warehouse": {
+            "PG": 0,
+            "KL": 550000,
+            "EM": 0
+          },
+          "income_2990": {
+            "PG": 0,
+            "KL": 1100000,
+            "EM": 0
+          },
+          "income_other": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "logistic_expense": {
+            "PG": -1200000,
+            "KL": -4500000,
+            "EM": -600000
+          },
+          "gross": {
+            "PG": 1600000,
+            "KL": 7650000,
+            "EM": 800000
+          },
+          "manpower_logistic": {
+            "PG": 190476,
+            "KL": 714286,
+            "EM": 95238
+          },
+          "manpower_operation": {
+            "PG": 424761,
+            "KL": 1592858,
+            "EM": 212381
+          },
+          "manpower_procurement": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "manpower_storekeeper": {
+            "PG": 310952,
+            "KL": 678572,
+            "EM": 90476
+          },
+          "recruitment": {
+            "PG": 0,
+            "KL": 63595,
+            "EM": 0
+          },
+          "accommodation": {
+            "PG": 0,
+            "KL": 120000,
+            "EM": 0
+          },
+          "rental": {
+            "PG": 1900000,
+            "KL": 2750000,
+            "EM": 180000
+          },
+          "expenses": {
+            "PG": 0,
+            "KL": 250000,
+            "EM": 0
+          },
+          "parttime": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "upkeep": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "insurance": {
+            "PG": 0,
+            "KL": 100000,
+            "EM": 0
+          },
+          "utilities": {
+            "PG": 70000,
+            "KL": 170000,
+            "EM": 0
+          },
+          "telephone": {
+            "PG": 0,
+            "KL": 18000,
+            "EM": 0
+          },
+          "total_expense": {
+            "PG": 2896189,
+            "KL": 6457311,
+            "EM": 578095
+          },
+          "net": {
+            "PG": -1296189,
+            "KL": 1192689,
+            "EM": 221905
+          },
+          "logistics_net": {
+            "PG": -600000,
+            "KL": -1150000,
+            "EM": 600000
+          },
+          "sd_net": {
+            "PG": 0,
+            "KL": 0,
+            "EM": 0
+          },
+          "net_after": {
+            "PG": -1896189,
+            "KL": 42689,
+            "EM": 821905
+          }
+        },
+        "dos": {
+          "PG": 1,
+          "KL": 1,
+          "EM": 1
+        }
+      }
+    ],
+    "lines": [
+      {
+        "id": "do_value:2026-09:PG",
+        "row": "do_value",
+        "month": "2026-09",
+        "cells": {
+          "PG": 45000000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "dos",
+          "count": 1
+        }
+      },
+      {
+        "id": "do_value:2026-09:KL",
+        "row": "do_value",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 170000000,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "dos",
+          "count": 1
+        }
+      },
+      {
+        "id": "do_value:2026-09:EM",
+        "row": "do_value",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": 15000000
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "dos",
+          "count": 1
+        }
+      },
+      {
+        "id": "do_value:2026-10:PG",
+        "row": "do_value",
+        "month": "2026-10",
+        "cells": {
+          "PG": 40000000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "dos",
+          "count": 1
+        }
+      },
+      {
+        "id": "do_value:2026-10:KL",
+        "row": "do_value",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 150000000,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "dos",
+          "count": 1
+        }
+      },
+      {
+        "id": "do_value:2026-10:EM",
+        "row": "do_value",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": 20000000
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "dos",
+          "count": 1
+        }
+      },
+      {
+        "id": "do_income:2026-09:PG",
+        "row": "do_income",
+        "month": "2026-09",
+        "cells": {
+          "PG": 3150000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "rate",
+          "baseSen": 45000000,
+          "bp": 700
+        }
+      },
+      {
+        "id": "do_income:2026-09:KL",
+        "row": "do_income",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 11900000,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "rate",
+          "baseSen": 170000000,
+          "bp": 700
+        }
+      },
+      {
+        "id": "do_income:2026-09:EM",
+        "row": "do_income",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": 1050000
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "rate",
+          "baseSen": 15000000,
+          "bp": 700
+        }
+      },
+      {
+        "id": "do_income:2026-10:PG",
+        "row": "do_income",
+        "month": "2026-10",
+        "cells": {
+          "PG": 2800000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "rate",
+          "baseSen": 40000000,
+          "bp": 700
+        }
+      },
+      {
+        "id": "do_income:2026-10:KL",
+        "row": "do_income",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 10500000,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "rate",
+          "baseSen": 150000000,
+          "bp": 700
+        }
+      },
+      {
+        "id": "do_income:2026-10:EM",
+        "row": "do_income",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": 1400000
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "rate",
+          "baseSen": 20000000,
+          "bp": 700
+        }
+      },
+      {
+        "id": "bill:bl3",
+        "row": "income_warehouse",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 550000,
+          "EM": 0
+        },
+        "src": "bill",
+        "day": "2026-10-31",
+        "ref": "HC-ODB-2610-009",
+        "accountCode": "599-0000",
+        "accountName": "ADDITIONAL INCOME",
+        "text": "WAREHOUSE CHARGES - OCT'26",
+        "party": "A TENANT SDN BHD",
+        "how": null
+      },
+      {
+        "id": "bill:bl1",
+        "row": "income_2990",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 700000,
+          "EM": 0
+        },
+        "src": "bill",
+        "day": "2026-10-23",
+        "ref": "HC-ODB-2610-001",
+        "accountCode": "599-0000",
+        "accountName": "ADDITIONAL INCOME",
+        "text": "OPERATION CHARGES - SEP'26",
+        "party": "2990 HOME SDN BHD",
+        "how": null
+      },
+      {
+        "id": "bill:bl2",
+        "row": "income_2990",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 1100000,
+          "EM": 0
+        },
+        "src": "bill",
+        "day": "2026-11-13",
+        "ref": "HC-ODB-2611-004",
+        "accountCode": "599-0000",
+        "accountName": "ADDITIONAL INCOME",
+        "text": "OPERATION CHARGES - OCT'26",
+        "party": "2990 HOME SDN BHD",
+        "how": null
+      },
+      {
+        "id": "logistic_expense:2026-09:PG",
+        "row": "logistic_expense",
+        "month": "2026-09",
+        "cells": {
+          "PG": -1350000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "transport",
+          "baseSen": 45000000
+        }
+      },
+      {
+        "id": "logistic_expense:2026-09:KL",
+        "row": "logistic_expense",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": -5100000,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "transport",
+          "baseSen": 170000000
+        }
+      },
+      {
+        "id": "logistic_expense:2026-09:EM",
+        "row": "logistic_expense",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": -450000
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "transport",
+          "baseSen": 15000000
+        }
+      },
+      {
+        "id": "logistic_expense:2026-10:PG",
+        "row": "logistic_expense",
+        "month": "2026-10",
+        "cells": {
+          "PG": -1200000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "transport",
+          "baseSen": 40000000
+        }
+      },
+      {
+        "id": "logistic_expense:2026-10:KL",
+        "row": "logistic_expense",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": -4500000,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "transport",
+          "baseSen": 150000000
+        }
+      },
+      {
+        "id": "logistic_expense:2026-10:EM",
+        "row": "logistic_expense",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": -600000
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "transport",
+          "baseSen": 20000000
+        }
+      },
+      {
+        "id": "gl:g23",
+        "row": "manpower_logistic",
+        "month": "2026-09",
+        "cells": {
+          "PG": 195652,
+          "KL": 739131,
+          "EM": 65217
+        },
+        "src": "ledger",
+        "day": "2026-09-30",
+        "ref": "JE-23",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "LOGISTIC (ADMIN) SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 1000000
+        }
+      },
+      {
+        "id": "gl:g65",
+        "row": "manpower_logistic",
+        "month": "2026-10",
+        "cells": {
+          "PG": 190476,
+          "KL": 714286,
+          "EM": 95238
+        },
+        "src": "ledger",
+        "day": "2026-10-30",
+        "ref": "JE-65",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "LOGISTIC (ADMIN) SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 1000000
+        }
+      },
+      {
+        "id": "gl:g24",
+        "row": "manpower_operation",
+        "month": "2026-09",
+        "cells": {
+          "PG": 391304,
+          "KL": 1478261,
+          "EM": 130435
+        },
+        "src": "ledger",
+        "day": "2026-09-30",
+        "ref": "JE-24",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "WAREHOUSE OPERATIONS SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 2000000
+        }
+      },
+      {
+        "id": "gl:g30",
+        "row": "manpower_operation",
+        "month": "2026-09",
+        "cells": {
+          "PG": 45000,
+          "KL": 170000,
+          "EM": 15000
+        },
+        "src": "ledger",
+        "day": "2026-09-30",
+        "ref": "JE-30",
+        "accountCode": "900-S200",
+        "accountName": "E'YER EPF",
+        "text": "WAREHOUSE OPERATIONS EPF",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 230000
+        }
+      },
+      {
+        "id": "gl:g66",
+        "row": "manpower_operation",
+        "month": "2026-10",
+        "cells": {
+          "PG": 380952,
+          "KL": 1428572,
+          "EM": 190476
+        },
+        "src": "ledger",
+        "day": "2026-10-30",
+        "ref": "JE-66",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "WAREHOUSE OPERATIONS SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 2000000
+        }
+      },
+      {
+        "id": "gl:g72",
+        "row": "manpower_operation",
+        "month": "2026-10",
+        "cells": {
+          "PG": 43809,
+          "KL": 164286,
+          "EM": 21905
+        },
+        "src": "ledger",
+        "day": "2026-10-30",
+        "ref": "JE-72",
+        "accountCode": "900-S200",
+        "accountName": "E'YER EPF",
+        "text": "WAREHOUSE OPERATIONS EPF",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 230000
+        }
+      },
+      {
+        "id": "gl:g25",
+        "row": "manpower_storekeeper",
+        "month": "2026-09",
+        "cells": {
+          "PG": 185870,
+          "KL": 702174,
+          "EM": 61956
+        },
+        "src": "ledger",
+        "day": "2026-09-30",
+        "ref": "JE-25",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "OPERATION STOREKEEPER SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 950000
+        }
+      },
+      {
+        "id": "gl:g26",
+        "row": "manpower_storekeeper",
+        "month": "2026-09",
+        "cells": {
+          "PG": 130000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-30",
+        "ref": "JE-26",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "OPERATION STOREKEEPER PG SALARY",
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g67",
+        "row": "manpower_storekeeper",
+        "month": "2026-10",
+        "cells": {
+          "PG": 180952,
+          "KL": 678572,
+          "EM": 90476
+        },
+        "src": "ledger",
+        "day": "2026-10-30",
+        "ref": "JE-67",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "OPERATION STOREKEEPER SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 950000
+        }
+      },
+      {
+        "id": "gl:g68",
+        "row": "manpower_storekeeper",
+        "month": "2026-10",
+        "cells": {
+          "PG": 130000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-30",
+        "ref": "JE-68",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "OPERATION STOREKEEPER PG SALARY",
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g901",
+        "row": "recruitment",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 63595,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-901",
+        "accountCode": "900-A004",
+        "accountName": "ADVERTISEMENT - MANAGEMENT FEES",
+        "text": "WAREHOUSE ASSISTANT - JOB AD",
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g910",
+        "row": "recruitment",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 63595,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-910",
+        "accountCode": "900-A004",
+        "accountName": "ADVERTISEMENT - MANAGEMENT FEES",
+        "text": "WAREHOUSE ASSISTANT - JOB AD",
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g902",
+        "row": "accommodation",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 120000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-902",
+        "accountCode": "900-H004",
+        "accountName": "HOSTEL - WAREHOUSE STAFF",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g911",
+        "row": "accommodation",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 120000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-911",
+        "accountCode": "900-H004",
+        "accountName": "HOSTEL - WAREHOUSE STAFF",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g903",
+        "row": "rental",
+        "month": "2026-09",
+        "cells": {
+          "PG": 1900000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-903",
+        "accountCode": "900-R004",
+        "accountName": "WAREHOUSE - (PENANG)",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g904",
+        "row": "rental",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 2750000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-904",
+        "accountCode": "900-R005",
+        "accountName": "WAREHOUSE - (BELAKONG)",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g905",
+        "row": "rental",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": 180000
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-905",
+        "accountCode": "900-R046",
+        "accountName": "WAREHOUSE - (SABAH/SARAWAK) OUTSOURCE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g912",
+        "row": "rental",
+        "month": "2026-10",
+        "cells": {
+          "PG": 1900000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-912",
+        "accountCode": "900-R004",
+        "accountName": "WAREHOUSE - (PENANG)",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g913",
+        "row": "rental",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 2750000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-913",
+        "accountCode": "900-R005",
+        "accountName": "WAREHOUSE - (BELAKONG)",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g914",
+        "row": "rental",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": 180000
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-914",
+        "accountCode": "900-R046",
+        "accountName": "WAREHOUSE - (SABAH/SARAWAK) OUTSOURCE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g906",
+        "row": "expenses",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 250000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-906",
+        "accountCode": "900-E013",
+        "accountName": "EXPENSES OF WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g915",
+        "row": "expenses",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 250000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-915",
+        "accountCode": "900-E013",
+        "accountName": "EXPENSES OF WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g85:2026-09",
+        "row": "insurance",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 100000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-08-15",
+        "ref": "JE-85",
+        "accountCode": "900-I005",
+        "accountName": "INSURANCE - WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "spread",
+          "wholeSen": 1200000,
+          "part": 2,
+          "months": 12
+        }
+      },
+      {
+        "id": "gl:g85:2026-10",
+        "row": "insurance",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 100000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-08-15",
+        "ref": "JE-85",
+        "accountCode": "900-I005",
+        "accountName": "INSURANCE - WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "spread",
+          "wholeSen": 1200000,
+          "part": 3,
+          "months": 12
+        }
+      },
+      {
+        "id": "gl:g907",
+        "row": "utilities",
+        "month": "2026-09",
+        "cells": {
+          "PG": 70000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-907",
+        "accountCode": "900-W008",
+        "accountName": "WATER & ELECTRICITY - WH PENANG",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g908",
+        "row": "utilities",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 170000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-908",
+        "accountCode": "900-W007",
+        "accountName": "WATER & ELECTRICITY - WH BALAKONG",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g916",
+        "row": "utilities",
+        "month": "2026-10",
+        "cells": {
+          "PG": 70000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-916",
+        "accountCode": "900-W008",
+        "accountName": "WATER & ELECTRICITY - WH PENANG",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g917",
+        "row": "utilities",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 170000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-917",
+        "accountCode": "900-W007",
+        "accountName": "WATER & ELECTRICITY - WH BALAKONG",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g909",
+        "row": "telephone",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 18000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-909",
+        "accountCode": "900-T013",
+        "accountName": "TELEPHONE - WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g918",
+        "row": "telephone",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 18000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-918",
+        "accountCode": "900-T013",
+        "accountName": "TELEPHONE - WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "logistics_net:2026-09:PG",
+        "row": "logistics_net",
+        "month": "2026-09",
+        "cells": {
+          "PG": -450000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "logistics",
+          "netSen": -450000,
+          "fairIncomeSen": 0
+        }
+      },
+      {
+        "id": "logistics_net:2026-09:KL",
+        "row": "logistics_net",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": -550000,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "logistics",
+          "netSen": -550000,
+          "fairIncomeSen": 0
+        }
+      },
+      {
+        "id": "logistics_net:2026-09:EM",
+        "row": "logistics_net",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": 450000
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "logistics",
+          "netSen": 450000,
+          "fairIncomeSen": 0
+        }
+      },
+      {
+        "id": "logistics_net:2026-10:PG",
+        "row": "logistics_net",
+        "month": "2026-10",
+        "cells": {
+          "PG": -600000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "logistics",
+          "netSen": -600000,
+          "fairIncomeSen": 0
+        }
+      },
+      {
+        "id": "logistics_net:2026-10:KL",
+        "row": "logistics_net",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": -1150000,
+          "EM": 0
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "logistics",
+          "netSen": -1150000,
+          "fairIncomeSen": 0
+        }
+      },
+      {
+        "id": "logistics_net:2026-10:EM",
+        "row": "logistics_net",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": 600000
+        },
+        "src": "figure",
+        "day": null,
+        "ref": null,
+        "accountCode": null,
+        "accountName": null,
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "logistics",
+          "netSen": 600000,
+          "fairIncomeSen": 0
+        }
+      }
+    ],
+    "income": [
+      {
+        "lineId": "bl1",
+        "billNo": "HC-ODB-2610-001",
+        "billDate": "2026-10-23",
+        "debtorName": "2990 HOME SDN BHD",
+        "description": "OPERATION CHARGES - SEP'26",
+        "accountCode": "599-0000",
+        "accountName": "ADDITIONAL INCOME",
+        "amountSen": 700000,
+        "month": "2026-09",
+        "key": "income_2990",
+        "region": "KL"
+      },
+      {
+        "lineId": "bl3",
+        "billNo": "HC-ODB-2610-009",
+        "billDate": "2026-10-31",
+        "debtorName": "A TENANT SDN BHD",
+        "description": "WAREHOUSE CHARGES - OCT'26",
+        "accountCode": "599-0000",
+        "accountName": "ADDITIONAL INCOME",
+        "amountSen": 550000,
+        "month": "2026-10",
+        "key": "income_warehouse",
+        "region": "KL"
+      },
+      {
+        "lineId": "bl2",
+        "billNo": "HC-ODB-2611-004",
+        "billDate": "2026-11-13",
+        "debtorName": "2990 HOME SDN BHD",
+        "description": "OPERATION CHARGES - OCT'26",
+        "accountCode": "599-0000",
+        "accountName": "ADDITIONAL INCOME",
+        "amountSen": 1100000,
+        "month": "2026-10",
+        "key": "income_2990",
+        "region": "KL"
+      }
+    ],
+    "manpower": [
+      {
+        "lineId": "g23",
+        "day": "2026-09-30",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "notes": "LOGISTIC (ADMIN) SALARY",
+        "amountSen": 1000000,
+        "row": "manpower_logistic",
+        "region": null,
+        "cells": {
+          "PG": 195652,
+          "KL": 739131,
+          "EM": 65217
+        }
+      },
+      {
+        "lineId": "g24",
+        "day": "2026-09-30",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "notes": "WAREHOUSE OPERATIONS SALARY",
+        "amountSen": 2000000,
+        "row": "manpower_operation",
+        "region": null,
+        "cells": {
+          "PG": 391304,
+          "KL": 1478261,
+          "EM": 130435
+        }
+      },
+      {
+        "lineId": "g25",
+        "day": "2026-09-30",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "notes": "OPERATION STOREKEEPER SALARY",
+        "amountSen": 950000,
+        "row": "manpower_storekeeper",
+        "region": null,
+        "cells": {
+          "PG": 185870,
+          "KL": 702174,
+          "EM": 61956
+        }
+      },
+      {
+        "lineId": "g26",
+        "day": "2026-09-30",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "notes": "OPERATION STOREKEEPER PG SALARY",
+        "amountSen": 130000,
+        "row": "manpower_storekeeper",
+        "region": "PG",
+        "cells": {
+          "PG": 130000,
+          "KL": 0,
+          "EM": 0
+        }
+      },
+      {
+        "lineId": "g30",
+        "day": "2026-09-30",
+        "accountCode": "900-S200",
+        "accountName": "E'YER EPF",
+        "notes": "WAREHOUSE OPERATIONS EPF",
+        "amountSen": 230000,
+        "row": "manpower_operation",
+        "region": null,
+        "cells": {
+          "PG": 45000,
+          "KL": 170000,
+          "EM": 15000
+        }
+      },
+      {
+        "lineId": "g65",
+        "day": "2026-10-30",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "notes": "LOGISTIC (ADMIN) SALARY",
+        "amountSen": 1000000,
+        "row": "manpower_logistic",
+        "region": null,
+        "cells": {
+          "PG": 190476,
+          "KL": 714286,
+          "EM": 95238
+        }
+      },
+      {
+        "lineId": "g66",
+        "day": "2026-10-30",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "notes": "WAREHOUSE OPERATIONS SALARY",
+        "amountSen": 2000000,
+        "row": "manpower_operation",
+        "region": null,
+        "cells": {
+          "PG": 380952,
+          "KL": 1428572,
+          "EM": 190476
+        }
+      },
+      {
+        "lineId": "g67",
+        "day": "2026-10-30",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "notes": "OPERATION STOREKEEPER SALARY",
+        "amountSen": 950000,
+        "row": "manpower_storekeeper",
+        "region": null,
+        "cells": {
+          "PG": 180952,
+          "KL": 678572,
+          "EM": 90476
+        }
+      },
+      {
+        "lineId": "g68",
+        "day": "2026-10-30",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "notes": "OPERATION STOREKEEPER PG SALARY",
+        "amountSen": 130000,
+        "row": "manpower_storekeeper",
+        "region": "PG",
+        "cells": {
+          "PG": 130000,
+          "KL": 0,
+          "EM": 0
+        }
+      },
+      {
+        "lineId": "g72",
+        "day": "2026-10-30",
+        "accountCode": "900-S200",
+        "accountName": "E'YER EPF",
+        "notes": "WAREHOUSE OPERATIONS EPF",
+        "amountSen": 230000,
+        "row": "manpower_operation",
+        "region": null,
+        "cells": {
+          "PG": 43809,
+          "KL": 164286,
+          "EM": 21905
+        }
+      }
+    ],
+    "spreads": [
+      {
+        "lineId": "g85",
+        "kind": "insurance",
+        "accountCode": "900-I005",
+        "accountName": "INSURANCE - WAREHOUSE",
+        "day": "2026-08-15",
+        "docNo": "JE-85",
+        "notes": null,
+        "amountSen": 1200000,
+        "region": "KL",
+        "months": 12,
+        "isDefault": true,
+        "perMonthSen": 100000,
+        "inRangeSen": 200000,
+        "lastMonth": "2027-07"
+      }
+    ],
+    "rows": [
+      {
+        "key": "do_value",
+        "label": "Delivery Order",
+        "kind": "strong",
+        "group": "head"
+      },
+      {
+        "key": "do_income",
+        "label": "7% Income from Delivery Order",
+        "kind": "line",
+        "group": "gross"
+      },
+      {
+        "key": "income_warehouse",
+        "label": "Income:- Warehouse income",
+        "kind": "line",
+        "group": "gross"
+      },
+      {
+        "key": "income_2990",
+        "label": "Income:- 2990 income",
+        "kind": "line",
+        "group": "gross"
+      },
+      {
+        "key": "income_other",
+        "label": "Income:- Other operation charges",
+        "kind": "line",
+        "group": "gross",
+        "optional": true
+      },
+      {
+        "key": "logistic_expense",
+        "label": "(-) Logistic Expense",
+        "kind": "line",
+        "group": "gross"
+      },
+      {
+        "key": "gross",
+        "label": "Gross Profit / (Loss)",
+        "kind": "strong",
+        "group": "result"
+      },
+      {
+        "key": "manpower_logistic",
+        "label": "Warehouse Manpower - Logistic",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "manpower_operation",
+        "label": "Warehouse Manpower - Operation",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "manpower_procurement",
+        "label": "Warehouse Manpower - Procurement",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "manpower_storekeeper",
+        "label": "Warehouse Manpower - Storekeeper",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "recruitment",
+        "label": "Recruitment (job ads)",
+        "kind": "line",
+        "group": "expense",
+        "optional": true
+      },
+      {
+        "key": "accommodation",
+        "label": "Accommodation Cost",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "rental",
+        "label": "Rental Warehouse",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "expenses",
+        "label": "Expenses of Warehouse",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "parttime",
+        "label": "Part Time Worker / Wages",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "upkeep",
+        "label": "Upkeep of Warehouse",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "insurance",
+        "label": "Insurance Warehouse",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "utilities",
+        "label": "Water & Electricity",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "telephone",
+        "label": "Telephone & Internet",
+        "kind": "line",
+        "group": "expense"
+      },
+      {
+        "key": "total_expense",
+        "label": "Total Warehouse Expenses",
+        "kind": "strong",
+        "group": "expense_total"
+      },
+      {
+        "key": "net",
+        "label": "Net Profit / (Loss)",
+        "kind": "strong",
+        "group": "result"
+      },
+      {
+        "key": "logistics_net",
+        "label": "Profit / (Loss) From Logistics",
+        "kind": "line",
+        "group": "result"
+      },
+      {
+        "key": "sd_net",
+        "label": "Profit / (Loss) From Setup/Dismantle",
+        "kind": "line",
+        "group": "result"
+      },
+      {
+        "key": "net_after",
+        "label": "Net Profit / (Loss) After Logistics & Setup/Dismantle",
+        "kind": "final",
+        "group": "result"
+      }
+    ],
+    "regions": [
+      {
+        "code": "PG",
+        "name": "Penang"
+      },
+      {
+        "code": "KL",
+        "name": "KL"
+      },
+      {
+        "code": "EM",
+        "name": "SBH & SWK"
+      }
+    ],
+    "logisticsIncomeBp": 300,
+    "logisticsProblem": "the fairs are not reachable from here"
+  },
+  "exhibition": {
+    "from": "2026-09-01",
+    "to": "2026-10-31",
+    "label": "Exhibition",
+    "dept": "exhibition",
+    "months": [
+      "2026-09",
+      "2026-10"
+    ],
+    "perMonth": [
+      {
+        "month": "2026-09",
+        "salesSen": 200000000,
+        "costOfSalesSen": 83000000,
+        "grossSen": 117000000,
+        "otherIncomeSen": 0,
+        "expensesSen": 84000000,
+        "taxationSen": 0,
+        "netSen": 1800000,
+        "chargesSen": 31200000,
+        "baseSen": 195000000
+      },
+      {
+        "month": "2026-10",
+        "salesSen": 230000000,
+        "costOfSalesSen": 96000000,
+        "grossSen": 134000000,
+        "otherIncomeSen": 0,
+        "expensesSen": 99400000,
+        "taxationSen": 0,
+        "netSen": -1400000,
+        "chargesSen": 36000000,
+        "baseSen": 225000000
+      }
+    ],
+    "tree": {
+      "tradingIncome": [
+        {
+          "kind": "account",
+          "id": "order:bedframe",
+          "key": "order:bedframe",
+          "label": "Bedframe",
+          "pct": null,
+          "children": [],
+          "cells": {
+            "2026-09": 80000000,
+            "2026-10": 90000000
+          },
+          "amountSen": 170000000
+        },
+        {
+          "kind": "account",
+          "id": "order:mattress",
+          "key": "order:mattress",
+          "label": "Mattress",
+          "pct": null,
+          "children": [],
+          "cells": {
+            "2026-09": 70000000,
+            "2026-10": 80000000
+          },
+          "amountSen": 150000000
+        },
+        {
+          "kind": "account",
+          "id": "order:sofa",
+          "key": "order:sofa",
+          "label": "Sofa",
+          "pct": null,
+          "children": [],
+          "cells": {
+            "2026-09": 45000000,
+            "2026-10": 55000000
+          },
+          "amountSen": 100000000
+        },
+        {
+          "kind": "account",
+          "id": "order:service",
+          "key": "order:service",
+          "label": "Service / transport income",
+          "pct": null,
+          "children": [],
+          "cells": {
+            "2026-09": 5000000,
+            "2026-10": 5000000
+          },
+          "amountSen": 10000000
+        }
+      ],
+      "costOfSales": [
+        {
+          "kind": "account",
+          "id": "order:bedframe",
+          "key": "order:bedframe",
+          "label": "Bedframe",
+          "pct": null,
+          "children": [],
+          "cells": {
+            "2026-09": 32000000,
+            "2026-10": 36000000
+          },
+          "amountSen": 68000000
+        },
+        {
+          "kind": "account",
+          "id": "order:mattress",
+          "key": "order:mattress",
+          "label": "Mattress",
+          "pct": null,
+          "children": [],
+          "cells": {
+            "2026-09": 28000000,
+            "2026-10": 32000000
+          },
+          "amountSen": 60000000
+        },
+        {
+          "kind": "account",
+          "id": "order:sofa",
+          "key": "order:sofa",
+          "label": "Sofa",
+          "pct": null,
+          "children": [],
+          "cells": {
+            "2026-09": 23000000,
+            "2026-10": 28000000
+          },
+          "amountSen": 51000000
+        }
+      ],
+      "otherIncome": [],
+      "expenses": [
+        {
+          "kind": "category",
+          "id": "pl:exh",
+          "label": "Exhibition & roadshow expense",
+          "amountSen": 123200000,
+          "pct": null,
+          "children": [
+            {
+              "kind": "account",
+              "id": "acc:900-R032",
+              "label": "900-R032 · RENTAL - EXHIBITION",
+              "code": "900-R032",
+              "key": "900-R032",
+              "amountSen": 99000000,
+              "pct": null,
+              "children": [],
+              "cells": {
+                "2026-09": 45000000,
+                "2026-10": 54000000
+              }
+            },
+            {
+              "kind": "account",
+              "id": "acc:900-B003",
+              "label": "900-B003 · BOOTH SET UP",
+              "code": "900-B003",
+              "key": "900-B003",
+              "amountSen": 24200000,
+              "pct": null,
+              "children": [],
+              "cells": {
+                "2026-09": 11000000,
+                "2026-10": 13200000
+              }
+            }
+          ],
+          "cells": {
+            "2026-09": 56000000,
+            "2026-10": 67200000
+          }
+        },
+        {
+          "kind": "category",
+          "id": "pl:general:commission",
+          "label": "Commission",
+          "amountSen": 60200000,
+          "pct": null,
+          "cells": {
+            "2026-09": 28000000,
+            "2026-10": 32200000
+          },
+          "children": [
+            {
+              "kind": "account",
+              "id": "acc:900-C003",
+              "label": "900-C003 COMMISSION ( EVENT ) — the commission bills for Sep 2026, Oct 2026, in place of the monthly release",
+              "code": "900-C003",
+              "key": "900-C003",
+              "amountSen": 60200000,
+              "pct": null,
+              "children": [],
+              "cells": {
+                "2026-09": 28000000,
+                "2026-10": 32200000
+              }
+            }
+          ]
+        }
+      ],
+      "taxation": []
+    },
+    "basis": "performance",
+    "orders": {
+      "counted": 40,
+      "notDelivered": 9
+    },
+    "rates": {
+      "gaBp": 800,
+      "operationBp": 700,
+      "logisticsBp": 300,
+      "setupDismantleBp": 100,
+      "merchandiseBp": 200
+    },
+    "merchandiseAccounts": [
+      "900-T009"
+    ],
+    "charges": [
+      {
+        "kind": "account",
+        "id": "charge:ga",
+        "key": "charge:ga",
+        "label": "G&A — 8% of sales excluding service",
+        "pct": null,
+        "children": [],
+        "cells": {
+          "2026-09": 15600000,
+          "2026-10": 18000000
+        },
+        "amountSen": 33600000
+      },
+      {
+        "kind": "account",
+        "id": "charge:operation",
+        "key": "charge:operation",
+        "label": "Operation — 7% of sales excluding service",
+        "pct": null,
+        "children": [],
+        "cells": {
+          "2026-09": 13650000,
+          "2026-10": 15750000
+        },
+        "amountSen": 29400000
+      },
+      {
+        "kind": "account",
+        "id": "charge:setupDismantle",
+        "key": "charge:setupDismantle",
+        "label": "Setup & dismantle — 1% of sales excluding service",
+        "pct": null,
+        "children": [],
+        "cells": {
+          "2026-09": 1950000,
+          "2026-10": 2250000
+        },
+        "amountSen": 4200000
+      }
+    ]
+  },
+  "unitOperation": {
+    "from": "2026-09-01",
+    "to": "2026-10-31",
+    "basis": "performance",
+    "label": "Operation",
+    "rates": {
+      "gaBp": 800,
+      "operationBp": 700,
+      "logisticsBp": 300,
+      "setupDismantleBp": 100,
+      "merchandiseBp": 200
+    },
+    "base": {
+      "2026-09": 195000000,
+      "2026-10": 225000000
+    },
+    "unit": "operation",
+    "months": [
+      "2026-09",
+      "2026-10"
+    ],
+    "rows": [
+      {
+        "key": "from_selling",
+        "label": "From the selling department (7% of sales excluding service)",
+        "group": "income",
+        "cells": {
+          "2026-09": 13650000,
+          "2026-10": 15750000
+        }
+      },
+      {
+        "key": "income_warehouse",
+        "label": "Income:- Warehouse income",
+        "group": "income",
+        "cells": {
+          "2026-09": 0,
+          "2026-10": 550000
+        }
+      },
+      {
+        "key": "income_2990",
+        "label": "Income:- 2990 income",
+        "group": "income",
+        "cells": {
+          "2026-09": 700000,
+          "2026-10": 1100000
+        }
+      },
+      {
+        "key": "manpower_logistic",
+        "label": "Warehouse Manpower - Logistic",
+        "group": "expense",
+        "cells": {
+          "2026-09": 1000000,
+          "2026-10": 1000000
+        }
+      },
+      {
+        "key": "manpower_operation",
+        "label": "Warehouse Manpower - Operation",
+        "group": "expense",
+        "cells": {
+          "2026-09": 2230000,
+          "2026-10": 2230000
+        }
+      },
+      {
+        "key": "manpower_storekeeper",
+        "label": "Warehouse Manpower - Storekeeper",
+        "group": "expense",
+        "cells": {
+          "2026-09": 1080000,
+          "2026-10": 1080000
+        }
+      },
+      {
+        "key": "recruitment",
+        "label": "Recruitment (job ads)",
+        "group": "expense",
+        "cells": {
+          "2026-09": 63595,
+          "2026-10": 63595
+        }
+      },
+      {
+        "key": "accommodation",
+        "label": "Accommodation Cost",
+        "group": "expense",
+        "cells": {
+          "2026-09": 120000,
+          "2026-10": 120000
+        }
+      },
+      {
+        "key": "rental",
+        "label": "Rental Warehouse",
+        "group": "expense",
+        "cells": {
+          "2026-09": 4830000,
+          "2026-10": 4830000
+        }
+      },
+      {
+        "key": "expenses",
+        "label": "Expenses of Warehouse",
+        "group": "expense",
+        "cells": {
+          "2026-09": 250000,
+          "2026-10": 250000
+        }
+      },
+      {
+        "key": "insurance",
+        "label": "Insurance Warehouse",
+        "group": "expense",
+        "cells": {
+          "2026-09": 100000,
+          "2026-10": 100000
+        }
+      },
+      {
+        "key": "utilities",
+        "label": "Water & Electricity",
+        "group": "expense",
+        "cells": {
+          "2026-09": 240000,
+          "2026-10": 240000
+        }
+      },
+      {
+        "key": "telephone",
+        "label": "Telephone & Internet",
+        "group": "expense",
+        "cells": {
+          "2026-09": 18000,
+          "2026-10": 18000
+        }
+      },
+      {
+        "key": "to_logistics",
+        "label": "Logistics — 3% of sales excluding service",
+        "group": "paid",
+        "cells": {
+          "2026-09": 5850000,
+          "2026-10": 6750000
+        }
+      }
+    ],
+    "perMonth": [
+      {
+        "month": "2026-09",
+        "incomeSen": 14350000,
+        "expenseSen": 9931595,
+        "paidSen": 5850000,
+        "netSen": -1431595
+      },
+      {
+        "month": "2026-10",
+        "incomeSen": 17400000,
+        "expenseSen": 9931595,
+        "paidSen": 6750000,
+        "netSen": 718405
+      }
+    ],
+    "regions": [
+      {
+        "code": "PG",
+        "name": "Penang"
+      },
+      {
+        "code": "KL",
+        "name": "KL"
+      },
+      {
+        "code": "EM",
+        "name": "SBH & SWK"
+      }
+    ],
+    "lines": [
+      {
+        "id": "bill:bl3",
+        "row": "income_warehouse",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 550000,
+          "EM": 0
+        },
+        "src": "bill",
+        "day": "2026-10-31",
+        "ref": "HC-ODB-2610-009",
+        "accountCode": "599-0000",
+        "accountName": "ADDITIONAL INCOME",
+        "text": "WAREHOUSE CHARGES - OCT'26",
+        "party": "A TENANT SDN BHD",
+        "how": null
+      },
+      {
+        "id": "bill:bl1",
+        "row": "income_2990",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 700000,
+          "EM": 0
+        },
+        "src": "bill",
+        "day": "2026-10-23",
+        "ref": "HC-ODB-2610-001",
+        "accountCode": "599-0000",
+        "accountName": "ADDITIONAL INCOME",
+        "text": "OPERATION CHARGES - SEP'26",
+        "party": "2990 HOME SDN BHD",
+        "how": null
+      },
+      {
+        "id": "bill:bl2",
+        "row": "income_2990",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 1100000,
+          "EM": 0
+        },
+        "src": "bill",
+        "day": "2026-11-13",
+        "ref": "HC-ODB-2611-004",
+        "accountCode": "599-0000",
+        "accountName": "ADDITIONAL INCOME",
+        "text": "OPERATION CHARGES - OCT'26",
+        "party": "2990 HOME SDN BHD",
+        "how": null
+      },
+      {
+        "id": "gl:g23",
+        "row": "manpower_logistic",
+        "month": "2026-09",
+        "cells": {
+          "PG": 195652,
+          "KL": 739131,
+          "EM": 65217
+        },
+        "src": "ledger",
+        "day": "2026-09-30",
+        "ref": "JE-23",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "LOGISTIC (ADMIN) SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 1000000
+        }
+      },
+      {
+        "id": "gl:g65",
+        "row": "manpower_logistic",
+        "month": "2026-10",
+        "cells": {
+          "PG": 190476,
+          "KL": 714286,
+          "EM": 95238
+        },
+        "src": "ledger",
+        "day": "2026-10-30",
+        "ref": "JE-65",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "LOGISTIC (ADMIN) SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 1000000
+        }
+      },
+      {
+        "id": "gl:g24",
+        "row": "manpower_operation",
+        "month": "2026-09",
+        "cells": {
+          "PG": 391304,
+          "KL": 1478261,
+          "EM": 130435
+        },
+        "src": "ledger",
+        "day": "2026-09-30",
+        "ref": "JE-24",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "WAREHOUSE OPERATIONS SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 2000000
+        }
+      },
+      {
+        "id": "gl:g30",
+        "row": "manpower_operation",
+        "month": "2026-09",
+        "cells": {
+          "PG": 45000,
+          "KL": 170000,
+          "EM": 15000
+        },
+        "src": "ledger",
+        "day": "2026-09-30",
+        "ref": "JE-30",
+        "accountCode": "900-S200",
+        "accountName": "E'YER EPF",
+        "text": "WAREHOUSE OPERATIONS EPF",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 230000
+        }
+      },
+      {
+        "id": "gl:g66",
+        "row": "manpower_operation",
+        "month": "2026-10",
+        "cells": {
+          "PG": 380952,
+          "KL": 1428572,
+          "EM": 190476
+        },
+        "src": "ledger",
+        "day": "2026-10-30",
+        "ref": "JE-66",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "WAREHOUSE OPERATIONS SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 2000000
+        }
+      },
+      {
+        "id": "gl:g72",
+        "row": "manpower_operation",
+        "month": "2026-10",
+        "cells": {
+          "PG": 43809,
+          "KL": 164286,
+          "EM": 21905
+        },
+        "src": "ledger",
+        "day": "2026-10-30",
+        "ref": "JE-72",
+        "accountCode": "900-S200",
+        "accountName": "E'YER EPF",
+        "text": "WAREHOUSE OPERATIONS EPF",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 230000
+        }
+      },
+      {
+        "id": "gl:g25",
+        "row": "manpower_storekeeper",
+        "month": "2026-09",
+        "cells": {
+          "PG": 185870,
+          "KL": 702174,
+          "EM": 61956
+        },
+        "src": "ledger",
+        "day": "2026-09-30",
+        "ref": "JE-25",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "OPERATION STOREKEEPER SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 950000
+        }
+      },
+      {
+        "id": "gl:g26",
+        "row": "manpower_storekeeper",
+        "month": "2026-09",
+        "cells": {
+          "PG": 130000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-30",
+        "ref": "JE-26",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "OPERATION STOREKEEPER PG SALARY",
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g67",
+        "row": "manpower_storekeeper",
+        "month": "2026-10",
+        "cells": {
+          "PG": 180952,
+          "KL": 678572,
+          "EM": 90476
+        },
+        "src": "ledger",
+        "day": "2026-10-30",
+        "ref": "JE-67",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "OPERATION STOREKEEPER SALARY",
+        "party": null,
+        "how": {
+          "kind": "shared",
+          "wholeSen": 950000
+        }
+      },
+      {
+        "id": "gl:g68",
+        "row": "manpower_storekeeper",
+        "month": "2026-10",
+        "cells": {
+          "PG": 130000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-30",
+        "ref": "JE-68",
+        "accountCode": "900-S100",
+        "accountName": "STAFF SALARIES & OVERTIME",
+        "text": "OPERATION STOREKEEPER PG SALARY",
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g901",
+        "row": "recruitment",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 63595,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-901",
+        "accountCode": "900-A004",
+        "accountName": "ADVERTISEMENT - MANAGEMENT FEES",
+        "text": "WAREHOUSE ASSISTANT - JOB AD",
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g910",
+        "row": "recruitment",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 63595,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-910",
+        "accountCode": "900-A004",
+        "accountName": "ADVERTISEMENT - MANAGEMENT FEES",
+        "text": "WAREHOUSE ASSISTANT - JOB AD",
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g902",
+        "row": "accommodation",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 120000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-902",
+        "accountCode": "900-H004",
+        "accountName": "HOSTEL - WAREHOUSE STAFF",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g911",
+        "row": "accommodation",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 120000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-911",
+        "accountCode": "900-H004",
+        "accountName": "HOSTEL - WAREHOUSE STAFF",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g903",
+        "row": "rental",
+        "month": "2026-09",
+        "cells": {
+          "PG": 1900000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-903",
+        "accountCode": "900-R004",
+        "accountName": "WAREHOUSE - (PENANG)",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g904",
+        "row": "rental",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 2750000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-904",
+        "accountCode": "900-R005",
+        "accountName": "WAREHOUSE - (BELAKONG)",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g905",
+        "row": "rental",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": 180000
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-905",
+        "accountCode": "900-R046",
+        "accountName": "WAREHOUSE - (SABAH/SARAWAK) OUTSOURCE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g912",
+        "row": "rental",
+        "month": "2026-10",
+        "cells": {
+          "PG": 1900000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-912",
+        "accountCode": "900-R004",
+        "accountName": "WAREHOUSE - (PENANG)",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g913",
+        "row": "rental",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 2750000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-913",
+        "accountCode": "900-R005",
+        "accountName": "WAREHOUSE - (BELAKONG)",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g914",
+        "row": "rental",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 0,
+          "EM": 180000
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-914",
+        "accountCode": "900-R046",
+        "accountName": "WAREHOUSE - (SABAH/SARAWAK) OUTSOURCE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g906",
+        "row": "expenses",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 250000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-906",
+        "accountCode": "900-E013",
+        "accountName": "EXPENSES OF WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g915",
+        "row": "expenses",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 250000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-915",
+        "accountCode": "900-E013",
+        "accountName": "EXPENSES OF WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g85:2026-09",
+        "row": "insurance",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 100000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-08-15",
+        "ref": "JE-85",
+        "accountCode": "900-I005",
+        "accountName": "INSURANCE - WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "spread",
+          "wholeSen": 1200000,
+          "part": 2,
+          "months": 12
+        }
+      },
+      {
+        "id": "gl:g85:2026-10",
+        "row": "insurance",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 100000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-08-15",
+        "ref": "JE-85",
+        "accountCode": "900-I005",
+        "accountName": "INSURANCE - WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": {
+          "kind": "spread",
+          "wholeSen": 1200000,
+          "part": 3,
+          "months": 12
+        }
+      },
+      {
+        "id": "gl:g907",
+        "row": "utilities",
+        "month": "2026-09",
+        "cells": {
+          "PG": 70000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-907",
+        "accountCode": "900-W008",
+        "accountName": "WATER & ELECTRICITY - WH PENANG",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g908",
+        "row": "utilities",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 170000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-908",
+        "accountCode": "900-W007",
+        "accountName": "WATER & ELECTRICITY - WH BALAKONG",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g916",
+        "row": "utilities",
+        "month": "2026-10",
+        "cells": {
+          "PG": 70000,
+          "KL": 0,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-916",
+        "accountCode": "900-W008",
+        "accountName": "WATER & ELECTRICITY - WH PENANG",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g917",
+        "row": "utilities",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 170000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-917",
+        "accountCode": "900-W007",
+        "accountName": "WATER & ELECTRICITY - WH BALAKONG",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g909",
+        "row": "telephone",
+        "month": "2026-09",
+        "cells": {
+          "PG": 0,
+          "KL": 18000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-09-07",
+        "ref": "JE-909",
+        "accountCode": "900-T013",
+        "accountName": "TELEPHONE - WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": null
+      },
+      {
+        "id": "gl:g918",
+        "row": "telephone",
+        "month": "2026-10",
+        "cells": {
+          "PG": 0,
+          "KL": 18000,
+          "EM": 0
+        },
+        "src": "ledger",
+        "day": "2026-10-07",
+        "ref": "JE-918",
+        "accountCode": "900-T013",
+        "accountName": "TELEPHONE - WAREHOUSE",
+        "text": null,
+        "party": null,
+        "how": null
+      }
+    ],
+    "logisticsProblem": null
+  },
+  "unitLogistics": {
+    "from": "2026-09-01",
+    "to": "2026-10-31",
+    "basis": "performance",
+    "label": "Logistics",
+    "rates": {
+      "gaBp": 800,
+      "operationBp": 700,
+      "logisticsBp": 300,
+      "setupDismantleBp": 100,
+      "merchandiseBp": 200
+    },
+    "base": {
+      "2026-09": 195000000,
+      "2026-10": 225000000
+    },
+    "unit": "logistics",
+    "months": [
+      "2026-09",
+      "2026-10"
+    ],
+    "rows": [
+      {
+        "key": "from_operation",
+        "label": "From Operation (3% of sales excluding service)",
+        "group": "income",
+        "cells": {
+          "2026-09": 5850000,
+          "2026-10": 6750000
+        }
+      },
+      {
+        "key": "ti_2990",
+        "label": "Transport income billed (2990)",
+        "group": "income",
+        "cells": {
+          "2026-09": 500000,
+          "2026-10": 500000
+        }
+      },
+      {
+        "key": "sd_income",
+        "label": "In-house setup & dismantle trips (paid by Setup & dismantle)",
+        "group": "income",
+        "cells": {
+          "2026-09": 300000,
+          "2026-10": 200000
+        }
+      },
+      {
+        "key": "outsource",
+        "label": "Outsource (3PL)",
+        "group": "expense",
+        "cells": {
+          "2026-09": 4000000,
+          "2026-10": 4500000
+        }
+      },
+      {
+        "key": "petrol",
+        "label": "Petrol, toll and parking",
+        "group": "expense",
+        "cells": {
+          "2026-09": 1000000,
+          "2026-10": 1000000
+        }
+      },
+      {
+        "key": "manpower",
+        "label": "Drivers' and helpers' pay",
+        "group": "expense",
+        "cells": {
+          "2026-09": 1500000,
+          "2026-10": 1500000
+        }
+      }
+    ],
+    "perMonth": [
+      {
+        "month": "2026-09",
+        "incomeSen": 6650000,
+        "expenseSen": 6500000,
+        "paidSen": 0,
+        "netSen": 150000
+      },
+      {
+        "month": "2026-10",
+        "incomeSen": 7450000,
+        "expenseSen": 7000000,
+        "paidSen": 0,
+        "netSen": 450000
+      }
+    ],
+    "regions": [
+      {
+        "code": "PG",
+        "name": "Penang"
+      },
+      {
+        "code": "KL",
+        "name": "KL"
+      },
+      {
+        "code": "EM",
+        "name": "SBH & SWK"
+      }
+    ],
+    "lines": [],
+    "logisticsProblem": null
+  },
+  "unitSetupDismantle": {
+    "from": "2026-09-01",
+    "to": "2026-10-31",
+    "basis": "performance",
+    "label": "Setup & dismantle",
+    "rates": {
+      "gaBp": 800,
+      "operationBp": 700,
+      "logisticsBp": 300,
+      "setupDismantleBp": 100,
+      "merchandiseBp": 200
+    },
+    "base": {
+      "2026-09": 195000000,
+      "2026-10": 225000000
+    },
+    "unit": "setupDismantle",
+    "months": [
+      "2026-09",
+      "2026-10"
+    ],
+    "rows": [
+      {
+        "key": "from_selling",
+        "label": "From the selling department (1% of sales excluding service)",
+        "group": "income",
+        "cells": {
+          "2026-09": 1950000,
+          "2026-10": 2250000
+        }
+      },
+      {
+        "key": "900-T031",
+        "label": "900-T031 · TRANSPORT FAIR (KL, SLG, MLK, JHR, OTHERS)",
+        "group": "expense",
+        "cells": {
+          "2026-09": 1200000,
+          "2026-10": 1600000
+        }
+      },
+      {
+        "key": "in_house",
+        "label": "In-house trips (paid to Logistics)",
+        "group": "expense",
+        "cells": {
+          "2026-09": 300000,
+          "2026-10": 200000
+        }
+      }
+    ],
+    "perMonth": [
+      {
+        "month": "2026-09",
+        "incomeSen": 1950000,
+        "expenseSen": 1500000,
+        "paidSen": 0,
+        "netSen": 450000
+      },
+      {
+        "month": "2026-10",
+        "incomeSen": 2250000,
+        "expenseSen": 1800000,
+        "paidSen": 0,
+        "netSen": 450000
+      }
+    ],
+    "regions": [
+      {
+        "code": "PG",
+        "name": "Penang"
+      },
+      {
+        "code": "KL",
+        "name": "KL"
+      },
+      {
+        "code": "EM",
+        "name": "SBH & SWK"
+      }
+    ],
+    "lines": [],
+    "logisticsProblem": null
+  }
+}

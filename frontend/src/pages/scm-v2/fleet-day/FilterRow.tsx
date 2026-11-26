@@ -27,6 +27,7 @@ export function FleetDayFilterRow({
 }: {
   filters: FleetFilters;
   onChange: (next: FleetFilters) => void;
+  /** The region chips in order, INCLUDING the leading All (regionTabsFrom's output). */
   regionTabs: Array<{ key: string; label: string }>;
   salespeople: Array<{ id: string; label: string }>;
   lateCount: number;
@@ -39,7 +40,8 @@ export function FleetDayFilterRow({
       <FilterPills
         value={filters.region}
         onChange={(v) => set({ region: v })}
-        options={[{ value: 'ALL', label: 'All' }, ...regionTabs.map((r) => ({ value: r.key, label: r.label }))]}
+        // regionTabs comes from regionTabsFrom, which already starts with "All".
+        options={regionTabs.map((r) => ({ value: r.key, label: r.label }))}
       />
 
       <span className="h-5 w-px bg-border" />

@@ -332,19 +332,25 @@ export const commissionLabel = (c: PeriodCommission): string =>
  */
 export function performanceLayout(r: PerformanceReport, layout: Layout, companyId: number, stored: boolean): PerformanceLayout {
   const baseSen = r.totals.salesSen > 0 ? r.totals.salesSen : null;
-  const o = r.operatingExpense;
-  const opex: LaidLine = { code: o.account, name: o.accountName ?? o.account, label: operatingExpenseLabel(o), amountSen: o.amountSen };
   const block = (key: string): LayoutItem[] => layout.blocks[key] ?? [];
   return {
     stored,
     baseSen,
     otherIncome: layOutBlock(block('otherIncome'), r.otherIncome, companyId, baseSen),
-    /* A covered account that booked something prints where it always sits,
-       at nil — the money is inside the rate's line. */
-    expenses: layOutBlock(block('expenses'), [
-      opex,
-      ...r.otherExpenses.map((e): LaidLine => (r.commission && e.code === r.commission.code ? { ...e, label: commissionLabel(r.commission) } : e)),
-      ...r.inRate.map((e) => ({ code: e.code, name: e.name, amountSen: 0 })),
-    ], companyId, baseSen),
+    expenses: layOutBlock(block('expenses'), performanceExpenseLines(r), companyId, baseSen),
   };
+}
+
+/** The Performance P&L's expense lines, before any tree: the computed
+ *  operating expense under the code of the account it replaces, every other
+ *  expense as booked (the commission at the bills, said so), and a covered
+ *  account that booked something at nil where it always sits — the money is
+ *  inside the rate's line. Its own tree and the P&L's (acc/pnl-views) read them. */
+export function performanceExpenseLines(r: PerformanceReport): LaidLine[] {
+  const o = r.operatingExpense;
+  return [
+    { code: o.account, name: o.accountName ?? o.account, label: operatingExpenseLabel(o), amountSen: o.amountSen },
+    ...r.otherExpenses.map((e): LaidLine => (r.commission && e.code === r.commission.code ? { ...e, label: commissionLabel(r.commission) } : e)),
+    ...r.inRate.map((e) => ({ code: e.code, name: e.name, amountSen: 0 })),
+  ];
 }

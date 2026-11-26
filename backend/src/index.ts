@@ -43,6 +43,8 @@ import notifications from "./routes/notifications";
 import badgeCounts, { setBadgeDispatch } from "./routes/badgeCounts";
 import pushDevices from "./routes/push";
 import itSupport from "./routes/itSupport";
+import mcpRoutes, { mcpWellKnown, setMcpApp } from "./routes/mcp";
+import mcpAdminRoutes from "./routes/mcpAdmin";
 import meetings, { publicMeetings } from "./routes/meetings";
 import { MEETINGS_DIRECTORY_JOB, pushMeetingsDirectory } from "./services/meetingsDirectory";
 import { sendAiUsageToHub } from "./services/aiUsageHub";
@@ -125,6 +127,7 @@ import mailAcks from "./routes/mail-acks";
 import mailAccessLog from "./routes/mail-access-log";
 import mailReplyGuard from "./routes/mail-reply-guard";
 import mailPersonal from "./routes/mail-personal";
+import mailSenders from "./routes/mail-senders";
 import mailClaim from "./routes/mail-claim";
 // 2990 → Houzs LIVE SO mirror receiver. PRE-AUTH (secret-guarded, called by the
 // 2990 DB via pg_net, no user JWT) — mounted at the top level, outside /api/scm.
@@ -354,6 +357,10 @@ app.get("/health", (c) => {
 // /api/auth/* is unauthenticated (login, bootstrap, accept-invite, status,
 // me, logout). It must be mounted BEFORE the auth middleware below.
 app.route("/api/auth", authRoutes);
+// AI Connector (MCP): own auth (OAuth + hzmcp_ tokens), so above the gate.
+// /.well-known is reached through the Pages functions at the site root.
+app.route("/api/mcp", mcpRoutes);
+app.route("/.well-known", mcpWellKnown);
 
 // Public customer survey — unauthenticated, token-based. Lives under
 // /api/survey (not /survey) so it doesn't collide with the SPA route
@@ -564,6 +571,7 @@ app.route("/api/badge-counts", badgeCounts);
 app.route("/api/push", pushDevices);
 // IT Support: a proxy to the Houzs IT Hub (any signed-in user, own requests only).
 app.route("/api/it-support", itSupport);
+app.route("/api/mcp-admin", mcpAdminRoutes);
 // Meetings: every signed-in user; rooms need meetings.manage_rooms (checked in the router).
 app.route("/api/meetings", meetings);
 app.route("/api/presence", presence);
@@ -656,6 +664,7 @@ app.route("/api/mail-center", mailAccessLog);
 app.route("/api/mail-center", mailReplyGuard);
 app.route("/api/mail-center", mailPersonal);
 app.route("/api/mail-center", mailClaim);
+app.route("/api/mail-center", mailSenders);
 app.route("/api/mail-center", mailCenter);
 // Announcements — the banner GET, the LIST GET and the ack POST are open to
 // every authed user (the route handles it internally: the list is audience- and
@@ -776,6 +785,9 @@ app.onError((err, c) => {
 // registration order to prove every PUBLIC_API_PREFIXES entry is backed
 // by a router mounted above the auth gate. The invariant is about mount
 // ORDER, so it can only be checked against the assembled app.
+// The AI Connector re-enters the assembled app in-process for its reads.
+setMcpApp(app as unknown as Parameters<typeof setMcpApp>[0]);
+
 export { app };
 
 export default {

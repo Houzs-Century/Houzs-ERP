@@ -312,8 +312,8 @@ export function EmailPage({ erpName }: { erpName: string }) {
   return (
     <section className={cn(CARD, "p-5")}>
       <b>Email and WhatsApp for {erpName}</b>
-      <p className="mt-2 text-ink-secondary">Not connected yet. Meeting invitations, changes and reminders reach people as the bell notification in their own ERP and in My meetings.</p>
-      <p className="mt-2 text-ink-secondary">Sending them by email from this ERP's Gmail, and reminders by WhatsApp through Houzs Connect, is switched on here once the Google setup for the company mailboxes is finished. Each ERP sets its own sending address.</p>
+      <p className="mt-2 text-ink-secondary">Email is on. Invitations, changes, cancellations and reminders are emailed to everyone in the meeting who has an email address, outside guests included. They are sent from this ERP's own mailbox, and also show as the bell notification in each person's own ERP and in My meetings.</p>
+      <p className="mt-2 text-ink-secondary">WhatsApp reminders through Houzs Connect are coming soon.</p>
     </section>
   );
 }

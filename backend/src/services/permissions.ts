@@ -399,6 +399,10 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "users.manage", resource: "Team",  verb: "manage", label: "Manage team", description: "Invite, change role, disable, or remove users" },
   { key: "roles.read",   resource: "Roles", verb: "read",   label: "View roles",  description: "See the list of roles and their permissions" },
   { key: "roles.manage", resource: "Roles", verb: "manage", label: "Manage roles", description: "Create, edit, and delete custom roles" },
+
+  // AI Connector (routes/mcpAdmin.ts): approve who may connect Claude / ChatGPT
+  // read-only, see what was looked up, disconnect anyone. Owner holds it via "*".
+  { key: "ai_connector.manage", resource: "AI Connector", verb: "manage", label: "Manage AI Connector", description: "Approve staff for the read-only AI connector, see their lookups, and disconnect them" },
 ];
 
 const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));

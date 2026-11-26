@@ -52,18 +52,8 @@ export async function listOpenDefects(
     binds.push(opts.companyId);
   }
   // Open-only is the default (the service team's actionable queue); `all` drops
-  // the filter so a resolved photo stays listed with its Done stamp. A defect is
-  // settled in the project EITHER way, so both drop off Open here too:
-  //  1. the photo's latest action is resolved — `done` OR `done_clean` (the
-  //     reviewer's "Done Clean" settles without escalating); the SAME set as
-  //     defectReviewer.ts RESOLVED_STATUSES, and
-  //  2. the defect checklist ITEM is ticked `done`/`na` — the project's own
-  //     "finished" test (services/projects.ts My-Pending: once ticked done/na the
-  //     defect leaves every open lane, regardless of the photo's last action).
-  const openSql = opts.includeResolved
-    ? ""
-    : ` AND LOWER(COALESCE(la.status, '')) NOT IN ('done', 'done_clean')
-        AND LOWER(COALESCE(dl.status, '')) NOT IN ('done', 'na')`;
+  // the filter so a resolved photo stays listed with its Done stamp.
+  const openSql = opts.includeResolved ? "" : " AND COALESCE(la.status, '') <> 'done'";
   const rows = await env.DB.prepare(
     `SELECT
         a.id AS attachment_id, a.r2_key, a.file_name, a.content_type, a.caption, a.uploaded_at,

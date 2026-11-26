@@ -1,4 +1,8 @@
 method,path,auth_boundary,company_boundary,mount_gate,router_gate,direct_gate,handler_guard,mutation,review_state,source
+GET,/.well-known/oauth-authorization-server,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/mcp.ts
+GET,/.well-known/oauth-authorization-server/*,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/mcp.ts
+GET,/.well-known/oauth-protected-resource,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/mcp.ts
+GET,/.well-known/oauth-protected-resource/*,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/mcp.ts
 GET,/api/admin/ai-usage,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,requireItPages(),,,NO,INHERITED_ONLY,backend/src/routes/aiUsage.ts
 GET,/api/admin/health/audit-feed,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,requireItPages(),,,NO,INHERITED_ONLY,backend/src/routes/systemHealth.ts
 GET,/api/admin/health/autocount/host-build,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,requireItPages(),"requirePermission(""*"")",,NO,DECLARED_GATE,backend/src/routes/systemHealth.ts
@@ -379,6 +383,7 @@ GET,/api/mail-center/attachments/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,au
 GET,/api/mail-center/claim,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-claim.ts
 POST,/api/mail-center/claim,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-claim.ts
 POST,/api/mail-center/compose,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-center.ts
+GET,/api/mail-center/compose/senders,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-senders.ts
 GET,/api/mail-center/directory,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-personal.ts
 POST,/api/mail-center/inbound,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-inbound.ts
 GET,/api/mail-center/labels,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-center.ts
@@ -409,6 +414,25 @@ POST,/api/mail-center/threads/:id/reply,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT
 POST,/api/mail-center/threads/:id/replying,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mail-reply-guard.ts
 GET,/api/mail-center/visibility,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-personal.ts
 GET,/api/mail-center/waiting-count,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mail-reply-guard.ts
+DELETE,/api/mcp,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcp.ts
+GET,/api/mcp,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/mcp.ts
+POST,/api/mcp,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcp.ts
+POST,/api/mcp-admin/admin/access,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+DELETE,/api/mcp-admin/admin/access/:userId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+POST,/api/mcp-admin/admin/actions,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+POST,/api/mcp-admin/admin/leak-check,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+GET,/api/mcp-admin/admin/overview,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+POST,/api/mcp-admin/admin/requests/:id/:decision,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+POST,/api/mcp-admin/admin/revoke,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+GET,/api/mcp-admin/consent/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+POST,/api/mcp-admin/consent/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+GET,/api/mcp-admin/me,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+POST,/api/mcp-admin/me/request,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+POST,/api/mcp-admin/me/revoke,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+GET,/api/mcp/export/:key,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/mcp.ts
+GET,/api/mcp/oauth/authorize,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/mcp.ts
+POST,/api/mcp/oauth/register,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcp.ts
+POST,/api/mcp/oauth/token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcp.ts
 GET,/api/meetings/bootstrap,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/meetings.ts
 GET,/api/meetings/calendar,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/meetings.ts
 GET,/api/meetings/links,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/meetings.ts
@@ -698,6 +722,7 @@ GET,/api/scm/acc-events/departments/lines,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTE
 GET,/api/scm/acc-events/departments/operation,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/acc-events.ts
 GET,/api/scm/acc-events/departments/plan,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/acc-events.ts
 PUT,/api/scm/acc-events/departments/rate,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/acc-events.ts
+GET,/api/scm/acc-events/departments/unit,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/acc-events.ts
 GET,/api/scm/acc-events/logistics,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/acc-events.ts
 PUT,/api/scm/acc-events/logistics/area-rate,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/acc-events.ts
 PUT,/api/scm/acc-events/logistics/fair-income-rate,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/acc-events.ts
@@ -827,6 +852,7 @@ GET,/api/scm/accounting/reports/performance,AUTHENTICATED_MIDDLEWARE,COMPANY_CON
 GET,/api/scm/accounting/reports/performance/months,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 POST,/api/scm/accounting/reports/performance/settings,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/reports/pnl,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
+GET,/api/scm/accounting/reports/pnl-views,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/reports/receipts-payments,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/reports/receipts-payments/opening-bills,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 GET,/api/scm/accounting/reports/receipts-payments/opening-bills/:supplierId,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
