@@ -2,12 +2,16 @@
 // backfill-autocount-deposit-notes.mjs — the AutoCount deposit note for every
 // carried-over order already invoiced since the books started.
 //
-// WHY. The owner, 2026-11-25: 「以前autocount带过来的也要开cn对冲，但是以前的订单我
-// 是放在deferred revenue」 and 「9月开始送的货如果是autocount带过来的订单，那么他的
-// deposit就应该knock off deferred revenue」. From this change on, an order's
-// first sales invoice dated after the books' opening day raises one credit note
-// for the deposit the order took in AutoCount: Dr DEFERRED REVENUE (440-0000) /
-// Cr AR, the invoice's party, dated the invoice day (acc/autocount-deposits.ts).
+// WHY. AutoCount counted the deposits it took as deposit sales at each month
+// end and booked 34% of them as cost (owner 2026-11-25); the ERP's invoice
+// counts the whole order as sales again. The owner, 2026-11-26: 「从sales 扣回来，
+// 但是是开cn 的方式吧，account 不要放在sales 那边一起」. From this change on, an
+// order's first sales invoice dated after the books' opening day raises one
+// credit note for the deposit the order took in AutoCount, dated the invoice
+// day, the invoice's party: Dr DEPOSIT SALES BOOKED IN AUTOCOUNT (511-0000,
+// SALES ADJUSTMENTS) / Cr AR, its entry also Dr 410-0080 ACCRUAL - COST OF GOOD
+// SOLD / Cr 619-0000 COST OF PURCHASE BASED ON DEPOSIT for 34% of it
+// (acc/autocount-deposits.ts, acc/credit-notes.ts).
 // The invoices raised between the books' start and that change never passed
 // the hook; this raises their notes with the app's own code, driven over
 // DATABASE_URL through lib/pgrest-shim.mjs, so no note and no entry is hand-made.
@@ -19,7 +23,7 @@
 // the note's), and no live AutoCount deposit note yet. An order whose only such
 // invoice bills RM 0 gets none (no sale, no receivable: AutoCount invoiced it
 // before the books). EXCLUDE (comma list of order numbers) leaves orders out —
-// one whose AutoCount deposit Finance already took out of DEFERRED REVENUE by hand.
+// one whose AutoCount deposit Finance already settled by hand.
 // PAID_BY_OPENING (comma list) names orders whose balance the import dated after
 // the opening day (AutoCount kept no payment date) though AutoCount's own record
 // shows them settled by it (owner 2026-11-26): their note carries ALL their
@@ -37,10 +41,12 @@
 // invoices) posts instead of raising a second one. Any shim gap stops the run.
 // Then every order is read back on a FRESH connection: one live note, posted,
 // for the order's AutoCount money, on the invoice planned, dated its day, its
-// entry Dr the deferred-revenue account / Cr AR with the invoice's party.
+// entry Dr the deposit-sales account / Cr AR with the invoice's party, and Dr
+// the cost accrual / Cr the deposit cost for 34% of it.
 //
-// RE-RUN: harmless. An order that carries a live AutoCount deposit note is not
-// selected again, and the app's function raises nothing for one that does; a
+// RE-RUN: harmless. An order that carries a posted AutoCount deposit note is not
+// selected again; one whose note an earlier run left as a draft is selected and
+// the app's function posts that draft instead of raising a second; a
 // PAID_BY_OPENING order whose note is raised is passed over.
 //
 // Env: COMPANY_ID (1 = Houzs Century), DATABASE_URL, EXCLUDE, PAID_BY_OPENING, CONCURRENCY.
@@ -52,6 +58,7 @@ import postgres from 'postgres';
 import { pgrestShim } from './lib/pgrest-shim.mjs';
 import { applyAutoCountDepositToInvoice, invoicePartyOf, AUTOCOUNT_DEPOSIT_REF } from '../src/acc/autocount-deposits.ts';
 import { DEFAULT_ROLE_CODES } from '../src/acc/rules.ts';
+import { autoCountCostSen } from '../src/acc/autocount-deposit-note.ts';
 
 const MODE = String(process.env.MODE || 'plan').trim().toLowerCase();
 const APPLY = MODE === 'apply' || process.env.APPLY === '1';
@@ -112,11 +119,14 @@ async function readPlan(sql) {
         FROM live
        ORDER BY live.so_doc_no, live.revenue_posted DESC, (live.total_sen > 0) DESC, live.invoice_date, live.invoice_number)
     SELECT si.*, ac.rule_sen, ac.all_sen, ac.paid_by_opening,
-           (CASE WHEN ac.paid_by_opening THEN ac.all_sen ELSE ac.rule_sen END)::bigint AS ac_sen
+           (CASE WHEN ac.paid_by_opening THEN ac.all_sen ELSE ac.rule_sen END)::bigint AS ac_sen,
+           EXISTS (SELECT 1 FROM scm.acc_credit_notes n
+                    WHERE n.company_id = ${COMPANY_ID} AND n.kind = 'CN' AND n.so_doc_no = si.so_doc_no
+                      AND n.source_doc_no = ${AUTOCOUNT_DEPOSIT_REF} AND n.status = 'DRAFT') AS has_draft
       FROM si JOIN ac ON ac.so_doc_no = si.so_doc_no
      WHERE NOT EXISTS (SELECT 1 FROM scm.acc_credit_notes n
                         WHERE n.company_id = ${COMPANY_ID} AND n.kind = 'CN' AND n.so_doc_no = si.so_doc_no
-                          AND n.source_doc_no = ${AUTOCOUNT_DEPOSIT_REF} AND n.status <> 'CANCELLED')
+                          AND n.source_doc_no = ${AUTOCOUNT_DEPOSIT_REF} AND n.status = 'POSTED')
      ORDER BY si.invoice_date, si.invoice_number`;
   const mine = rows.filter((r) => !EXCLUDE.has(r.so_doc_no));
   const take = mine.filter((r) => r.revenue_posted);
@@ -137,11 +147,20 @@ async function readPlan(sql) {
   return { start, take, zero, unposted, excluded, wrong };
 }
 
-/** The deferred-revenue and AR codes the notes book to (roles, else the defaults). */
+/** The codes the notes book to (roles, else the defaults) — each must be a live
+    posting account of the company, or nothing is raised. */
+const ROLES = ['AUTOCOUNT_DEPOSIT_SALES', 'AUTOCOUNT_COST_ACCRUAL', 'AUTOCOUNT_DEPOSIT_COST', 'AR'];
 async function roleCodes(sql) {
-  const rows = await sql`SELECT role, account_code FROM scm.acc_account_roles WHERE company_id = ${COMPANY_ID} AND role IN ('AUTOCOUNT_DEFERRED', 'AR')`;
+  const rows = await sql`SELECT role, account_code FROM scm.acc_account_roles WHERE company_id = ${COMPANY_ID} AND role = ANY(${ROLES}::text[])`;
   const by = new Map(rows.map((r) => [r.role, r.account_code]));
-  return { deferred: by.get('AUTOCOUNT_DEFERRED') ?? DEFAULT_ROLE_CODES.AUTOCOUNT_DEFERRED, ar: by.get('AR') ?? DEFAULT_ROLE_CODES.AR };
+  const code = (role) => by.get(role) ?? DEFAULT_ROLE_CODES[role];
+  const codes = { sales: code('AUTOCOUNT_DEPOSIT_SALES'), accrual: code('AUTOCOUNT_COST_ACCRUAL'), cost: code('AUTOCOUNT_DEPOSIT_COST'), ar: code('AR') };
+  const chart = await sql`SELECT account_code FROM scm.accounts WHERE company_id = ${COMPANY_ID} AND is_active
+                            AND account_code = ANY(${Object.values(codes)}::text[])`;
+  const live = new Set(chart.map((r) => r.account_code));
+  const missing = Object.values(codes).filter((c) => !live.has(c));
+  if (missing.length > 0) throw new Error(`company ${COMPANY_ID} has no live account ${missing.join(', ')} — nothing to raise the notes on.`);
+  return codes;
 }
 
 // ── Plan ─────────────────────────────────────────────────────────────────────
@@ -158,13 +177,14 @@ try {
 const byMonth = new Map();
 for (const r of plan.take) {
   const m = day(r.invoice_date).slice(0, 7);
-  const t = byMonth.get(m) ?? { orders: 0, sen: 0 };
-  t.orders += 1; t.sen += Number(r.ac_sen);
+  const t = byMonth.get(m) ?? { orders: 0, sen: 0, cost: 0 };
+  t.orders += 1; t.sen += Number(r.ac_sen); t.cost += autoCountCostSen(Number(r.ac_sen));
   byMonth.set(m, t);
 }
 const totalSen = plan.take.reduce((s, r) => s + Number(r.ac_sen), 0);
-console.log(`Company ${COMPANY_ID}, books from ${plan.start}: ${plan.take.length} order(s) to raise, ${rm(totalSen)} from ${codes.deferred} onto ${codes.ar}.`);
-for (const [m, t] of [...byMonth].sort()) console.log(`  invoices of ${m}: ${t.orders} order(s), ${rm(t.sen)}`);
+const costSen = plan.take.reduce((s, r) => s + autoCountCostSen(Number(r.ac_sen)), 0);
+console.log(`Company ${COMPANY_ID}, books from ${plan.start}: ${plan.take.length} order(s) to raise, ${rm(totalSen)} Dr ${codes.sales} / Cr ${codes.ar}; cost released ${rm(costSen)} Dr ${codes.accrual} / Cr ${codes.cost}.`);
+for (const [m, t] of [...byMonth].sort()) console.log(`  invoices of ${m}: ${t.orders} order(s), ${rm(t.sen)}, cost released ${rm(t.cost)}`);
 for (const r of plan.take) {
   const late = r.paid_by_opening ? ` (all its AutoCount money: ${rm(Number(r.all_sen) - Number(r.rule_sen))} the import dated after the opening day was paid by it)` : '';
   console.log(`  ${r.so_doc_no} at ${r.invoice_number} (${day(r.invoice_date)}): ${rm(r.ac_sen)}${late}`);
@@ -210,8 +230,10 @@ async function worker() {
       });
       if (sb.__gaps.length > 0) { gap = `${r.so_doc_no}: the shim met a method it does not implement: ${sb.__gaps.join(' | ')}`; return; }
       if (!res.ok) throw new Error(res.reason);
-      if (res.status !== 'raised') throw new Error(`expected a new note, got ${res.status}${res.why ? ` (${res.why})` : ''}`);
-      done.push({ row: r, party: party.party, noteNumber: res.noteNumber, jeNo: res.jeNo, amountSen: res.amountSen });
+      /* A draft an earlier run left is posted, never raised a second time. */
+      const fine = res.status === 'raised' || (r.has_draft && res.status === 'already_offset');
+      if (!fine) throw new Error(`expected a new note, got ${res.status}${res.why ? ` (${res.why})` : ''}`);
+      done.push({ row: r, party: party.party, noteNumber: res.noteNumber, jeNo: res.jeNo });
     } catch (e) {
       failed.push({ row: r, reason: String(e?.message ?? e) });
     }
@@ -232,7 +254,7 @@ try {
   await check.end();
 }
 if (problems.length > 0) stop(`VERIFY FAILED after the run:\n  ${problems.join('\n  ')}`);
-console.log(`Verified on a fresh connection: ${done.length} order(s), each one posted note for its AutoCount deposit, ${codes.deferred} Dr / ${codes.ar} Cr.`);
+console.log(`Verified on a fresh connection: ${done.length} order(s), each one posted note for its AutoCount deposit, Dr ${codes.sales} / Cr ${codes.ar}, its cost Dr ${codes.accrual} / Cr ${codes.cost}.`);
 if (failed.length > 0) process.exit(1);
 
 /** Everything a raised note must look like — values, not counts. */
@@ -260,11 +282,14 @@ async function shapeProblems(db, raised, roleCode) {
     if (Number(n.total_sen) !== Number(d.row.ac_sen)) out.push(`${d.row.so_doc_no}: ${n.note_number} is not the order's AutoCount deposit`);
     if ((n.party_code ?? null) !== (d.party.code ?? null)) out.push(`${d.row.so_doc_no}: ${n.note_number} credits another party`);
     const je = lines.filter((l) => l.je_no === n.je_no);
-    const dr = je.filter((l) => l.account_code === roleCode.deferred && Number(l.debit_sen) === Number(d.row.ac_sen) && Number(l.credit_sen) === 0);
-    const cr = je.filter((l) => l.account_code === roleCode.ar && Number(l.credit_sen) === Number(d.row.ac_sen) && Number(l.debit_sen) === 0
-      && (l.party_code ?? null) === (d.party.code ?? null));
-    if (je.length !== 2 || dr.length !== 1 || cr.length !== 1 || je.some((l) => !l.posted) || je.some((l) => day(l.entry_date) !== day(d.row.invoice_date))) {
-      out.push(`${d.row.so_doc_no}: entry ${n.je_no ?? '(none)'} is not one posted Dr ${roleCode.deferred} / Cr ${roleCode.ar} pair on the invoice day`);
+    const sen = Number(d.row.ac_sen);
+    const cost = autoCountCostSen(sen);
+    const one = (code, dr, cr, party) => je.filter((l) => l.account_code === code && Number(l.debit_sen) === dr && Number(l.credit_sen) === cr
+      && (party === undefined || (l.party_code ?? null) === party)).length === 1;
+    const shaped = one(roleCode.sales, sen, 0) && one(roleCode.ar, 0, sen, d.party.code ?? null)
+      && (cost > 0 ? je.length === 4 && one(roleCode.accrual, cost, 0) && one(roleCode.cost, 0, cost) : je.length === 2);
+    if (!shaped || je.some((l) => !l.posted) || je.some((l) => day(l.entry_date) !== day(d.row.invoice_date))) {
+      out.push(`${d.row.so_doc_no}: entry ${n.je_no ?? '(none)'} is not one posted entry on the invoice day: Dr ${roleCode.sales} / Cr ${roleCode.ar}, Dr ${roleCode.accrual} / Cr ${roleCode.cost} for 34%`);
     }
   }
   return out;

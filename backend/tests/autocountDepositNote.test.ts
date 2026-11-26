@@ -1,10 +1,13 @@
-/* The AutoCount deposit note (owner 2026-11-25: 「9月开始送的货如果是autocount带过来
-   的订单，那么他的deposit就应该knock off deferred revenue」). Pinned, with made-up
-   figures:
+/* The AutoCount deposit note: AutoCount counted the deposit as sales and booked
+   34% of it as cost (owner 2026-11-25); the ERP takes it back out of sales by a
+   credit note on an account of its own (owner 2026-11-26: 「从sales 扣回来，但是是
+   开cn 的方式吧，account 不要放在sales 那边一起」). Pinned, with made-up figures:
      • the order's first sales invoice dated after the books' opening day raises
        ONE posted credit note for the order's AutoCount money — CN, dated the
-       invoice day, Dr DEFERRED REVENUE 440-0000 / Cr AR (the invoice's party),
-       source document AUTOCOUNT DEPOSIT, linked to the invoice;
+       invoice day, Dr DEPOSIT SALES BOOKED IN AUTOCOUNT 511-0000 (SALES
+       ADJUSTMENTS) / Cr AR (the invoice's party), its entry also Dr 410-0080 /
+       Cr 619-0000 for 34% of it, source document AUTOCOUNT DEPOSIT, linked to
+       the invoice;
      • the order's later invoice, and a re-post, raise nothing beside it;
      • money AutoCount took after the opening day (a balance the second import
        dated 1-7 Sep), a soft-launch invoice, a company with no books start and
@@ -27,6 +30,7 @@ import {
   releaseAutoCountDepositFromInvoice,
 } from '../src/acc/autocount-deposits';
 import { depositPaperRefusal, depositPapers } from '../src/acc/credit-note-si';
+import { autoCountCostSen } from '../src/acc/autocount-deposit-note';
 
 const CO = 1;
 const SO = 'HC-SO-000101';
@@ -35,9 +39,11 @@ const acct = (code: string, name: string, type: string, over: Row = {}): Row => 
 });
 const CHART: Row[] = [
   acct('300-0000', 'ACCOUNT RECEIVEABLE', 'ASSET', { special_type: 'SDC' }),
-  acct('440-0000', 'DEFERRED REVENUE', 'LIABILITY'),
+  acct('410-0080', 'ACCRUAL - COST OF GOOD SOLD', 'LIABILITY'),
   acct('500-0003', 'SALES OF SOFA', 'INCOME'),
   acct('509-0000', 'DEPOSIT PAY BY CUSTOMER', 'INCOME'),
+  acct('511-0000', 'DEPOSIT SALES BOOKED IN AUTOCOUNT', 'INCOME'),
+  acct('619-0000', 'COST OF PURCHASE BASED ON DEPOSIT (34%)', 'EXPENSE'),
 ];
 const OPENED = { company_id: CO, books_start_date: '2026-09-01', opening_stock: null, opening_locked_at: null, opening_locked_by: null };
 
@@ -85,7 +91,7 @@ const net = (sb: Sb, code: string) => {
 };
 
 describe('the AutoCount deposit at the order\'s invoice', () => {
-  test('the first invoice after the opening day raises one posted note: Dr 440-0000 / Cr AR (the invoice\'s party), dated the invoice, for the AutoCount money only', async () => {
+  test('the first invoice after the opening day raises one posted note: Dr 511-0000 / Cr AR (the invoice\'s party) and 34% cost released, dated the invoice, for the AutoCount money only', async () => {
     const sb = harness();
     invoice(sb, 'si-1', 'HC-SI-2609-001', '2026-09-20', 200_000);
     expect(await postSiRevenue(sb, 'HC-SI-2609-001')).toMatchObject({ ok: true, status: 'posted', totalSen: 200_000 });
@@ -93,18 +99,27 @@ describe('the AutoCount deposit at the order\'s invoice', () => {
       ['HC-CN-2609-001', 'CN', 'POSTED', 'si-1', SO, AUTOCOUNT_DEPOSIT_REF, '2026-09-20', 120_000, '300-C002', 'Mei Ling'],
     ]);
     expect((sb.tables.acc_credit_note_lines as Row[]).map((l) => [l.account_code, l.amount_sen, l.description])).toEqual([
-      ['440-0000', 120_000, `Deposit paid in AutoCount (SO-000101) on ${SO}, applied to HC-SI-2609-001`],
+      ['511-0000', 120_000, `Deposit paid in AutoCount (SO-000101) on ${SO}, applied to HC-SI-2609-001`],
     ]);
     const cn = jes(sb).find((j) => j.source_type === 'CN')!;
     expect(cn.entry_date).toBe('2026-09-20');
     expect(linesOf(sb, String(cn.je_no))).toEqual([
-      { code: '440-0000', dr: 120_000, cr: 0, party: null },
+      { code: '511-0000', dr: 120_000, cr: 0, party: null },
       { code: '300-0000', dr: 0, cr: 120_000, party: '300-C002' },
+      { code: '410-0080', dr: 40_800, cr: 0, party: null },
+      { code: '619-0000', dr: 0, cr: 40_800, party: null },
     ]);
     /* The invoice +200,000, the AutoCount deposit −120,000: the customer owes
-       80,000 here (the ERP's own 30,000 books through its own SOPAY). */
+       80,000 here (the ERP's own 30,000 books through its own SOPAY). Sales:
+       the invoice's 200,000 less the 120,000 AutoCount already counted, apart
+       from the SALES accounts; cost: 34% of it back out of cost. */
     expect(net(sb, '300-0000')).toBe(80_000);
-    expect(net(sb, '440-0000')).toBe(120_000);
+    expect(net(sb, '500-0003')).toBe(-200_000);
+    expect(net(sb, '511-0000')).toBe(120_000);
+    expect(net(sb, '509-0000')).toBe(0);
+    expect(net(sb, '410-0080')).toBe(40_800);
+    expect(net(sb, '619-0000')).toBe(-40_800);
+    expect(net(sb, '440-0000')).toBe(0);
   });
 
   test('the order\'s next invoice and a re-post raise nothing beside it', async () => {
@@ -164,13 +179,16 @@ describe('the AutoCount deposit at the order\'s invoice', () => {
       ['HC-CN-2609-001', 'CANCELLED', 'si-1', '2026-09-20', 120_000],
       ['HC-CN-2610-001', 'POSTED', 'si-2', '2026-10-03', 120_000],
     ]);
-    expect(net(sb, '440-0000')).toBe(120_000);
+    expect(net(sb, '511-0000')).toBe(120_000);
+    expect(net(sb, '619-0000')).toBe(-40_800);
 
-    /* The last live invoice cancelled: the deposit is back in DEFERRED REVENUE. */
+    /* The last live invoice cancelled: the deposit is back in sales, its cost back in cost. */
     (sb.tables.sales_invoices as Row[]).find((s) => s.id === 'si-2')!.status = 'CANCELLED';
     expect(await releaseAutoCountDepositFromInvoice(sb, { companyId: CO, siId: 'si-2', actor: 'Chew' }))
       .toEqual({ ok: true, released: ['HC-CN-2610-001'], movedTo: null });
-    expect(net(sb, '440-0000')).toBe(0);
+    expect(net(sb, '511-0000')).toBe(0);
+    expect(net(sb, '410-0080')).toBe(0);
+    expect(net(sb, '619-0000')).toBe(0);
     expect(await releaseAutoCountDepositFromInvoice(sb, { companyId: CO, siId: 'si-2', actor: 'Chew' }))
       .toEqual({ ok: true, released: [], movedTo: null });
   });
@@ -188,7 +206,8 @@ describe('the AutoCount deposit at the order\'s invoice', () => {
     expect(notes(sb)).toHaveLength(0);
     expect(await applyAutoCountDepositToInvoice(sb, { ...at, amountSen: 160_000 })).toMatchObject({ ok: true, status: 'raised', amountSen: 160_000 });
     expect(notes(sb).map((n) => [n.note_number, n.sales_invoice_id, n.total_sen])).toEqual([['HC-CN-2609-001', 'si-1', 160_000]]);
-    expect(net(sb, '440-0000')).toBe(160_000);
+    expect(net(sb, '511-0000')).toBe(160_000);
+    expect(net(sb, '619-0000')).toBe(-54_400);
 
     /* The invoice cancelled: the note moves to the next invoice with its whole
        amount, not the 120,000 the dates alone would give. */
@@ -199,7 +218,8 @@ describe('the AutoCount deposit at the order\'s invoice', () => {
       ['HC-CN-2609-001', 'CANCELLED', 'si-1', 160_000],
       ['HC-CN-2610-001', 'POSTED', 'si-2', 160_000],
     ]);
-    expect(net(sb, '440-0000')).toBe(160_000);
+    expect(net(sb, '511-0000')).toBe(160_000);
+    expect(net(sb, '619-0000')).toBe(-54_400);
   });
 
   test('an order AutoCount invoiced before the books, whose ERP invoice bills RM 0, gets no note', async () => {
@@ -234,6 +254,12 @@ describe('what counts as the AutoCount deposit', () => {
       { method: 'imported', amount_sen: 7_000, paid_at: null },
       { method: 'cash', amount_sen: 11_000, paid_at: '2026-08-01' },
     ], '2026-08-31')).toBe(75_000);
+  });
+
+  test('the cost it releases is 34% of the deposit, in whole sen', () => {
+    expect(autoCountCostSen(120_000)).toBe(40_800);
+    expect(autoCountCostSen(5)).toBe(2);
+    expect(autoCountCostSen(1)).toBe(0);
   });
 
   test('the note is known by its source document, whatever its case', () => {

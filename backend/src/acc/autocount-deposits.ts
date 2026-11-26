@@ -1,24 +1,27 @@
 // ----------------------------------------------------------------------------
 // autocount-deposits — the deposit an order took in AutoCount, before the
-// books started, offset at the order's sales invoice (owner 2026-11-25:
-// 「以前autocount带过来的也要开cn对冲，但是以前的订单我是放在deferred revenue」;
-// 「9月开始送的货如果是autocount带过来的订单，那么他的deposit就应该knock off
-// deferred revenue」).
+// books started, taken back out of sales at the order's sales invoice.
 //
-// WHERE THE MONEY IS. AutoCount kept customers' money on its cash debtor and
-// moved it each month into DEFERRED REVENUE (440-0000); the books opened with
-// that balance. The ERP carries each order's AutoCount money as a payment row
-// of method 'imported', which books nothing (acc/payments.ts). A sales invoice
-// books Dr AR for its whole total, so without this the customer owes the
-// AutoCount money a second time in the books.
+// WHERE THE MONEY IS. At each month end AutoCount counted the deposits it had
+// taken as deposit sales and booked 34% of them as cost (owner 2026-11-25:
+// 「autocount 是每个月尾转balance as deposit sales」, 「有，记了 34%」); the books
+// opened with that cost still accrued (410-0080). The ERP carries each order's
+// AutoCount money as a payment row of method 'imported', which books nothing
+// (acc/payments.ts). A sales invoice counts the order's whole total as sales
+// and books Dr AR for it, so without this the deposit is sales twice and the
+// customer owes it twice.
 //
 // WHAT IT DOES. At the order's first live sales invoice dated after the books'
-// opening day, ONE credit note for the order's whole AutoCount money:
-//     Dr AUTOCOUNT_DEFERRED (440-0000) / Cr AR (party = the invoice's party)
-// dated the invoice day, linked to the invoice (sales_invoice_id), marked by
-// its source document AUTOCOUNT_DEPOSIT_REF. A later invoice of the same order
-// raises nothing. A cancelled invoice cancels its note by contra and the note
-// is raised again on the order's next live invoice, if there is one.
+// opening day, ONE credit note for the order's AutoCount money, dated the
+// invoice day, linked to the invoice (sales_invoice_id), marked by its source
+// document AUTOCOUNT_DEPOSIT_REF (owner 2026-11-26: 「从sales 扣回来，但是是开cn
+// 的方式吧，account 不要放在sales 那边一起」):
+//     Dr AUTOCOUNT_DEPOSIT_SALES (511-0000, SALES ADJUSTMENTS) / Cr AR (the invoice's party)
+// and its entry releases the cost AutoCount booked on it (credit-notes.ts):
+//     Dr AUTOCOUNT_COST_ACCRUAL (410-0080) / Cr AUTOCOUNT_DEPOSIT_COST (619-0000), 34%.
+// A later invoice of the same order raises nothing. A cancelled invoice cancels
+// its note by contra and the note is raised again on the order's next live
+// invoice, if there is one.
 //
 // THE WHOLE AMOUNT, NOT A SLICE. A refund or a move of the order's money books
 // Dr AR through its own flow (acc/payments.ts SOCONV, the Customer Refund), so
@@ -32,8 +35,8 @@
 // so the note is a deposit paper (acc/credit-note-si.ts depositPapers): it nets
 // inside its order on the AR Aging and is never ticked against an invoice.
 //
-// NOT HERE: money dated after the opening day (AutoCount took it after the
-// books started, so it is not in DEFERRED REVENUE), a migrated invoice (it
+// NOT HERE: money dated after the opening day (AutoCount took it after its
+// last month end, so it never counted it as sales), a migrated invoice (it
 // books nothing), an RM 0 invoice (no sale and no receivable to offset: an
 // order AutoCount itself invoiced before the books carries one), an invoice
 // dated on or before the opening day (soft launch, outside the books), a
@@ -83,7 +86,7 @@ function importedSen(payments: ReadonlyArray<PaymentRow>, throughDay: string | n
   return sen;
 }
 
-/** The order's AutoCount money that sits in DEFERRED REVENUE: its imported
+/** The order's AutoCount money that AutoCount counted as sales: its imported
     payment rows above nought, dated on or before the books' opening day. */
 export function autoCountDepositSen(payments: ReadonlyArray<PaymentRow>, openingDate: string): number {
   return importedSen(payments, openingDate);
@@ -132,8 +135,8 @@ async function liveNotesOf(sb: Db, companyId: number, soDocNo: string): Promise<
 }
 
 /**
- * At a sales invoice: the order's AutoCount deposit moves out of DEFERRED
- * REVENUE onto the customer — once per order. Idempotent: an order that already
+ * At a sales invoice: the order's AutoCount deposit comes back out of sales
+ * onto the customer — once per order. Idempotent: an order that already
  * carries a live note raises nothing (a draft one a retry left is posted).
  *
  * `amountSen`: null = the rule (imported money dated on or before the opening
@@ -209,7 +212,7 @@ export async function applyAutoCountDepositToInvoice(
     reason: `Deposit paid in AutoCount applied to ${p.siNumber}`,
     lines: [{
       description: `Deposit paid in AutoCount${acDocNo ? ` (${acDocNo})` : ''} on ${p.soDocNo}, applied to ${p.siNumber}`,
-      code: roles.AUTOCOUNT_DEFERRED,
+      code: roles.AUTOCOUNT_DEPOSIT_SALES,
       amountSen,
     }],
     createdBy: p.actor,
@@ -252,8 +255,8 @@ async function nextInvoiceOf(sb: Db, companyId: number, soDocNo: string, exceptI
 
 /**
  * When a sales invoice is CANCELLED: its AutoCount deposit note is cancelled by
- * contra (the money is back in DEFERRED REVENUE), then raised again, for the
- * same amount, on the order's next live invoice, if it has one.
+ * contra (the deposit is back in sales, its cost back in cost), then raised
+ * again, for the same amount, on the order's next live invoice, if it has one.
  */
 export async function releaseAutoCountDepositFromInvoice(
   sb: Db,

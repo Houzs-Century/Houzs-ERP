@@ -116,8 +116,9 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
     await applyDepositInvoicesBestEffort(sb, {
       companyId, siId: (si as { id: string }).id, siNumber: si.invoice_number, soDocNo, invoiceDate: si.invoice_date, actor: null,
     });
-    /* The deposit the order took in AutoCount leaves DEFERRED REVENUE here, onto
-       the same AR party — once per order (owner 2026-11-25). */
+    /* The deposit the order took in AutoCount, which AutoCount already counted
+       as sales, comes back out of sales here onto the same AR party — once per
+       order (owner 2026-11-26). */
     await applyAutoCountDepositBestEffort(sb, {
       companyId, siId: (si as { id: string }).id, siNumber: si.invoice_number, soDocNo, invoiceDate: si.invoice_date,
       party: { code: partyCode, name: si.debtor_name ?? null }, actor: null,
