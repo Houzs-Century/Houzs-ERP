@@ -16,7 +16,7 @@ Run it when your diff touches any covered file below, and in particular when it 
 - a new dispatcher that reaches `dispatchOne`;
 - how the C# host saves a document, or a DocNo existence check before `Save()`.
 
-Covered (synced at commit `ab4f08b343ad57165547d9aced4554bc39274945`):
+Covered (synced at commit `efe17f8be92f12341e3443685ef0ea73b86f8f04`):
 - `backend/src/scm/lib/autocount-claim.ts` — `claimOutboxRow`, `releaseExpiredClaims`, `AC_CLAIM_LEASE_MS`
 - `backend/src/scm/lib/autocount-outbox.ts` — `mark`, `dispatchOne`, `drainAutoCountOutbox`, `MAX_ATTEMPTS`
 - `backend/src/scm/lib/autocount-requeue.ts` — the Send now claim and dispatch
@@ -24,7 +24,7 @@ Covered (synced at commit `ab4f08b343ad57165547d9aced4554bc39274945`):
 - `backend/scripts/autocount-service/AcSyncService.cs` — `CreateSo`, `CreatePo`, `Convert_`, `SoToPo` save paths
 - `backend/src/db/migrations-pg/0277_scm_autocount_outbox.sql`, `0315_ac_outbox_claim.sql`
 
-Check drift: `git diff ab4f08b343ad57165547d9aced4554bc39274945 -- <the files above>`.
+Check drift: `git diff efe17f8be92f12341e3443685ef0ea73b86f8f04 -- <the files above>`.
 
 ## The command
 

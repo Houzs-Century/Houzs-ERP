@@ -64,4 +64,4 @@ Not verified from this repo: whether the AutoCount SDK itself refuses a second d
 - Company scope and the per-company write-back switch.
 - Whether AutoCount refuses a duplicate DocNo (see Finding).
 
-Last synced with the code at commit `ab4f08b343ad57165547d9aced4554bc39274945`.
+Last synced with the code at commit `efe17f8be92f12341e3443685ef0ea73b86f8f04`.
