@@ -8,6 +8,7 @@ import { reconcileSchedule, type ProjRow } from "../services/agents/schedule-rec
 import {
   DEFECT_REVIEW_REGION_STATES,
   approverBrandBlocked,
+  isAllStateDefectReviewer,
   isCrewScopedUser,
   isDefectReviewerPosition,
   isDefectRegionState,
@@ -4339,7 +4340,9 @@ app.post(
     const isAdmin = hasPermission(granted, "*") || hasPermission(granted, "projects.manage");
     // Region split (owner 2026-08-11): Nancy the Ops Exec reviews the region
     // states, Shukor the Storekeeper Supervisor the rest; the purchaser/BD close.
-    const isReviewer = isDefectReviewerPosition(user) || role === "ops exec";
+    // Farra (owner 2026-11-26) reviews EVERY state — the all-state finaliser.
+    const isReviewer =
+      isDefectReviewerPosition(user) || role === "ops exec" || isAllStateDefectReviewer(user);
     const isPurchaser = role.includes("purchaser") || role.includes("bd");
     if (!isAdmin && !isReviewer && !isPurchaser) return c.json({ error: "Only a defect reviewer, purchaser or BD can log defect actions" }, 403);
     const body = await c.req.json<{ status?: string; remark?: string | null }>();
@@ -4366,7 +4369,9 @@ app.post(
     // reviewer on any project — so a mis-tap or a stale tab could still close a
     // Sarawak defect as Nancy. Each reviewer may act only on their own states;
     // admins and the purchaser/BD closing an escalation are unaffected.
-    if (!isAdmin && isReviewer && !isPurchaser && REVIEWER_STATUSES.has(status)) {
+    // The all-state finaliser (Farra) is exempt from the region split — she may
+    // clean/escalate any state, so she is excluded from this per-reviewer routing.
+    if (!isAdmin && isReviewer && !isPurchaser && !isAllStateDefectReviewer(user) && REVIEWER_STATUSES.has(status)) {
       const inRegion = isDefectRegionState(att.state);
       const mine = role === "ops exec" ? inRegion : !inRegion;
       if (!mine) {
