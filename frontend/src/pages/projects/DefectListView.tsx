@@ -10,6 +10,7 @@ import { cn, formatDate, formatDateTime } from "../../lib/utils";
 import { PageHeader } from "../../components/Layout";
 import { EmptyState } from "../../components/EmptyState";
 import { MediaLightbox } from "../../components/MediaLightbox";
+import { DateField } from "../../vendor/scm/components/DateField";
 import { parseDefectCaption } from "./defectRemark";
 import {
   canPurchaseDefect,
@@ -347,21 +348,21 @@ export function DefectListView() {
         </div>
         <label className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
           From
-          <input
-            type="date"
+          <DateField
             value={dateFrom}
             max={dateTo || undefined}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={setDateFrom}
+            aria-label="Filter events from date"
             className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink outline-none focus:border-primary"
           />
         </label>
         <label className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
           To
-          <input
-            type="date"
+          <DateField
             value={dateTo}
             min={dateFrom || undefined}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={setDateTo}
+            aria-label="Filter events to date"
             className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink outline-none focus:border-primary"
           />
         </label>
