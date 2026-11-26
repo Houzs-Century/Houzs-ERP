@@ -18,6 +18,7 @@ import { useFleetDay } from "../../vendor/scm/lib/fleet-day-queries";
 import { useActiveTripLocations } from "../../vendor/scm/lib/trip-locations-queries";
 import { useLorries, useLorryPositions, useLorryTrack, useLorryKmCost } from "../../vendor/scm/lib/lorries-queries";
 import { ScheduleRouteMap, type RoutePoint } from "../../vendor/scm/components/ScheduleRouteMap";
+import { DateField } from "../../vendor/scm/components/DateField";
 import { fmtSen, fmtTime, todayMY } from "../../vendor/shared/format";
 import { BTN_SEC, Tile } from "./FleetUi";
 import { fmtDrive, fmtKm, useRoadFigures } from "../../vendor/scm/lib/lorry-routes-queries";
@@ -102,8 +103,7 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
           </select>
         </label>
         <label className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-muted">Day
-          <input type="date" value={date} max={today} onChange={(e) => setDay(e.target.value)}
-            className="h-[34px] rounded-lg border border-[#d9d3c6] bg-surface px-2 text-[13px] font-normal text-ink" />
+          <DateField value={date} max={today} onChange={setDay} aria-label="Day" />
         </label>
         {!isToday && <button type="button" className={BTN_SEC} onClick={() => setDay(today)}>Today</button>}
       </div>

@@ -401,7 +401,6 @@ lorries.get('/:id/track', async (c) => {
     .range(f, t));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const fixes = oneTracker(data ?? []).map(({ device_id: _d, ...f }) => f);
-  // Fixes are a unified fleet; the drop points are DO / job data and filtered by the caller's companies.
   const { drops, error: dErr } = await loadDrops(c.get('supabase'), c, c.req.param('id'), date);
   return c.json({ date, km: kmFromFixes(fixes), fixes, drops, dropsError: dErr });
 });

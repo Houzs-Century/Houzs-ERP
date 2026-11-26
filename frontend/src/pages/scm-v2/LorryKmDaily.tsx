@@ -2,8 +2,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { fmtSen, todayMY } from '../../vendor/shared/format';
 import { useLorries, useLorryKmDaily } from '../../vendor/scm/lib/lorries-queries';
 import { fmtKm, useRoadFigures } from '../../vendor/scm/lib/lorry-routes-queries';
-
-const DATE_INPUT = 'h-[34px] rounded-lg border border-border bg-surface px-2 text-[13px] text-ink';
+import { DateField } from '../../vendor/scm/components/DateField';
 
 function Sub({ googleM, costSen }: { googleM: number | null; costSen: number | null }) {
   if (googleM == null && costSen == null) return null;
@@ -38,10 +37,10 @@ export function LorryKmDaily() {
       <div className="flex flex-wrap items-center gap-3">
         <h3 className="text-[14px] font-semibold text-ink">Km per day</h3>
         <label className="flex items-center gap-1.5 text-[12px] text-ink-muted">From
-          <input type="date" className={DATE_INPUT} value={from} max={to} onChange={(e) => set('kmFrom', e.target.value)} />
+          <DateField aria-label="From" value={from} max={to} onChange={(v) => set('kmFrom', v)} />
         </label>
         <label className="flex items-center gap-1.5 text-[12px] text-ink-muted">To
-          <input type="date" className={DATE_INPUT} value={to} min={from} max={today} onChange={(e) => set('kmTo', e.target.value)} />
+          <DateField aria-label="To" value={to} min={from} max={today} onChange={(v) => set('kmTo', v)} />
         </label>
       </div>
       {q.isLoading ? (

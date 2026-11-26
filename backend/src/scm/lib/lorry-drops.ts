@@ -1,8 +1,3 @@
-// The actual delivery points of a lorry's day: POD GPS of its trips' DOs and of
-// completed jobs (scm.job_progress). Drawn as numbered pins on the lorry page's
-// history map. Fixes are a unified fleet; DOs and jobs are company data, so the
-// loader filters by the caller's allowed companies.
-
 import { scopeToAllowedCompanies, type CompanyScopeCtx } from './companyScope';
 
 /** lat/lng null = delivered with no POD GPS (listed, not pinned). stopId: the planned trip stop, for distance from its address. */
