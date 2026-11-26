@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// AccountingHeader — the head of an Accounting page tab in the owner's
-// redesign (batch 6 §1.2): no tab strip, the sub-page's name as the title and
-// "Finance · <section>" above it, the section the sidebar files the tab under.
-// Journal entries, General ledger and Trial balance are reached from Books and
-// from the report list; opened from the list (`in=reports`) they read
-// "Finance · Reports". A tab with header actions renders this itself; the
-// Accounting page renders it bare for the rest.
-// ----------------------------------------------------------------------------
 
 import type { ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';

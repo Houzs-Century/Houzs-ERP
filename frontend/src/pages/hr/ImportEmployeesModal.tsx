@@ -1,10 +1,3 @@
-/* Employee Master > Import from a spreadsheet (option 2). Download the template,
- * fill it, upload it: every row is previewed — what it will create and what it
- * cannot and why — and nothing is written until Confirm. The mapping and the
- * validation are employeeImport.ts (the same shared validator the server uses),
- * so the preview and the result agree. Reading the file reuses lib/import-sheet
- * (CSV or .xlsx), and the template is written with the lazy SheetJS runtime so
- * the workbook code stays out of the first load. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileUp } from "lucide-react";
 import { ModalOverlay } from "../../components/scm-v2/DocumentRelationshipMapModal";
@@ -51,8 +44,6 @@ export function ImportEmployeesModal({ open, onClose, onDone }: { open: boolean;
     () => new Map((options.data?.departments ?? []).map((d) => [d.name.trim().toLowerCase(), d.id])),
     [options.data],
   );
-  // The ERP accounts already tied to an employee, by email: a row naming one of
-  // these updates that person rather than adding a duplicate.
   const linkedByEmail = useMemo(() => {
     const m = new Map<string, string>();
     for (const a of options.data?.accounts ?? []) if (a.linkedEmpNo) m.set(a.email.toLowerCase(), a.linkedEmpNo);

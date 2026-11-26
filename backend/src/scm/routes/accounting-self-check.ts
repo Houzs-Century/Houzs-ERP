@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// accounting-self-check — Books › Self-check run and summed (the owner's
-// Claude Design, batch 6 c3). One run reads what the page shows — the
-// control check (acc/control-check), the cancelled orders still holding
-// money, the official receipts owed — and leaves one row in
-// scm.acc_selfcheck_runs: how many of the eight checks name something to look
-// at, and the items To do lists. POST /accounting/self-check/run is the
-// page's Run again (it returns the three reads, so the page needs no second
-// read); the nightly 00:05 job runs it for every company. Reads only — the
-// row is a summary; nothing posts.
-// ----------------------------------------------------------------------------
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
@@ -94,7 +83,6 @@ export async function sweepSelfCheck(sb: Db, companyIds: number[]): Promise<Arra
   return out;
 }
 
-/* ── POST /accounting/self-check/run — the page's Run again ───────────────── */
 export const selfCheckRunHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) return c.json({ error: "You don't have permission to run the self-check." }, 403);
   const co = requireActiveCompanyId(c);
@@ -103,6 +91,5 @@ export const selfCheckRunHandler = async (c: any): Promise<Response> => {
   const read = await runSelfCheck(sb, co.companyId);
   const by = (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
   const saved = await recordSelfCheck(sb, co.companyId, read.summary, 'manual', by);
-  /* The reads stand even when the summary could not be kept; the page says so. */
   return c.json({ ...read, ranAt: saved.ok ? saved.ranAt : new Date().toISOString(), ...(saved.ok ? {} : { recordError: saved.reason }) });
 };

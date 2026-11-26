@@ -6,7 +6,6 @@ import { normalizeImportHeader, readImportGrid, resolveImportHeaders } from './i
 
 const file = (name: string, body: BlobPart): File => {
   const f = new File([body], name);
-  /* jsdom's File has neither text() nor arrayBuffer(); the browser's does. */
   Object.defineProperty(f, 'arrayBuffer', { value: async () => body });
   Object.defineProperty(f, 'text', { value: async () => String(body) });
   return f;

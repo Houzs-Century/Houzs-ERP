@@ -26,11 +26,6 @@ export function withoutLineDate<T extends Record<string, unknown>>(body: T): Omi
   return rest;
 }
 
-/* Save draft on the phone (YH, prod 2026-11-02): a draft blanks the header
-   dates, but each line still carried the Delivery Date the header cascade had
-   copied onto it, so the create hit `soLineDateRefusal` ("Set the Processing
-   Date first"). A draft's lines carry no date either; the server then leaves
-   them unpinned, so they follow the header once the order is proceeded. */
 export function createLineBody<T extends Record<string, unknown>>(body: T, asDraft: boolean): T | Omit<T, 'lineDeliveryDate'> {
   return asDraft ? withoutLineDate(body) : body;
 }

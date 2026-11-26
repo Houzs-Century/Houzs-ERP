@@ -1,30 +1,6 @@
-// ----------------------------------------------------------------------------
-// allowed-options-check.test.ts — the gate had NO test at all until this file.
-//
-// Grepping `variant_not_allowed` across every *.test.ts in backend/src and
-// frontend/src returned zero hits before this PR, so nothing pinned the
-// behaviour of the ten refusal sites that produce the SO add-line 400.
-//
-// Two things are pinned here:
-//   1. THE GLYPH TRAP (measured on prod 2026-08-17, run 32048732641). The one
-//      `total_heights` pool shared by all 10 restricted BEDFRAME Models stores
-//      its EVEN values with an ASCII inch mark (U+0022) and its ODD values
-//      17/19/23/27 with U+201C and 21/25 with U+201D. The line editor can only
-//      ever emit U+0022 (SoLineCard.tsx:436, `${d + l + g}"`), so every odd
-//      total was refused by a pool that visibly lists that number. Restricting
-//      to the gaps the picker can actually offer, 94 of the 280 pickable
-//      divan x leg x gap combinations refused ON THE QUOTE CHARACTER ALONE.
-//      The pricing engine already folds these (mfg-pricing.ts:165-192); this
-//      gate never did.
-//   2. THE DERIVED-FIELD CONTEXT. `total_height` is arithmetic with no input on
-//      the form, so a refusal naming only `total_height` names nothing the
-//      salesperson can touch. The refusal now carries `derivedFrom` — the three
-//      inputs he CAN change — so the client can say which boxes to move.
-// ----------------------------------------------------------------------------
 import { describe, expect, it } from 'vitest';
 import { checkAllowedOptions, variantNotAllowedSentence, variantsForEditCheck } from './allowed-options-check';
 
-/** The live prod pool, verbatim, including the mixed inch glyphs. */
 const PROD_TOTAL_HEIGHTS = [
   '10"', '12"', '14"', '16"', '17“', '18"', '19“', '20"',
   '21”', '22"', '23“', '24"', '25”', '26"', '27“', '28"',
@@ -194,9 +170,6 @@ describe('checkAllowedOptions — the fabric pool speaks SERIES', () => {
   });
 
   it('refuses when the line carries NO series and the colour is not in the pool', () => {
-    // A line written before pickFabricColour sent fabricId. Nothing to resolve
-    // by, so the old answer stands - the gate must not guess a series from the
-    // colour's spelling.
     expect(checkAllowedOptions(sofa, pool, { fabricCode: 'BO315-23' })).not.toBeNull();
   });
 
@@ -213,8 +186,6 @@ describe('checkAllowedOptions — the fabric pool speaks SERIES', () => {
   });
 
   it('a pool entry stored as a LABEL matches neither colour nor series — the 10 rows a repair must fix', () => {
-    // "GD2034 (HIVE)" is fabric_library.label, not .id. Accepting labels here
-    // would make the gate guess at display text; the data is repaired instead.
     const err = checkAllowedOptions(sofa, model({ fabrics: ['GD2034 (HIVE)'] }), {
       fabricCode: 'GD2034-01', colourId: 'GD2034-01', fabricId: 'GD2034',
     });
@@ -282,13 +253,6 @@ describe('checkAllowedOptions — a DIVAN ONLY line has no gap, so no total-heig
 });
 
 describe('checkAllowedOptions — leg height: the zero-inch glyph is "No Leg"', () => {
-  // 1,149 imported bedframe lines / 765 orders store legHeight 0" while the
-  // Modular pools spell zero "No Leg" (prod, 2026-09-22). Picking a fabric
-  // PATCHes the line, which re-validated the UNTOUCHED 0" leg and 400'd — so the
-  // fabric never landed AND the order could never take a Processing Date, a
-  // catch-22 the operator could not escape (HC-SO-012831). Same fold-safety
-  // shape as the glyph fold above: only a value that already 400s can start
-  // matching, and only against a pool that offers the equivalent zero.
   it('accepts a line\'s 0" against a pool that offers "No Leg"', () => {
     expect(checkAllowedOptions(product(), prodModel, { legHeight: '0"' })).toBeNull();
   });
@@ -344,9 +308,6 @@ describe('variantsForEditCheck — a special the line already held is grandfathe
 });
 
 describe('checkAllowedOptions — compartment codes ignore case (ZNT 4821, 2026-09-30)', () => {
-  /* The pool is the live 8030 SOFFIO list; `8030-CONSOLE` is a real active SKU
-     beside `8030-Console`. The scan canonicalised to the upper-case one and the
-     draft was refused three times over. */
   const soffio = model({ compartments: ['1S', '2A(LHF)', '2A(RHF)', 'Console', 'STOOL'] });
   const sofaSku = (code: string) => product({ code, category: 'SOFA', size_code: null });
 

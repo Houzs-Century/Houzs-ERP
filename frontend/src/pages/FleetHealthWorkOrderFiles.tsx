@@ -36,8 +36,6 @@ export function WorkOrderFiles({ wo, onChanged }: {
     if (busy || files.length === 0) return;
     setBusy(true); setErr(null);
     try {
-      /* One at a time: the route appends to a refs array, so parallel uploads
-         to the same work order could drop one. */
       for (const f of files) {
         const ext = (f.name.split(".").pop() || "").toLowerCase();
         await api.putBinary(`${base}?kind=${kind}&ext=${encodeURIComponent(ext)}&name=${encodeURIComponent(f.name)}`,

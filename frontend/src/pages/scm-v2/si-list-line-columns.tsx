@@ -31,7 +31,6 @@ export function siLineColumns<T extends SiGridRow>(): Record<string, Column<T, S
     lineValue: (_r, l) => senToRinggit(pick(l), 4),
     exportFormat: "rate",
   });
-  /* AutoCount's columns that hold no value in this ERP: blank cells, AutoCount's shape. */
   const blank = (key: string, label: string) => text(key, label, () => null, { width: "90px" });
 
   return {
@@ -47,8 +46,6 @@ export function siLineColumns<T extends SiGridRow>(): Record<string, Column<T, S
     line_total: money("line_total", L.lineTotal, (l) => l.line_total_sen),
     tax_code: blank("tax_code", L.taxCode),
     line_tax: blank("line_tax", L.lineTax),
-    /* The ERP keeps no line tax on a sales invoice: Total (Ex) and Total (Inc) are
-       the line total. */
     total_ex: money("total_ex", L.totalEx, (l) => l.line_total_sen),
     total_inc: money("total_inc", L.totalInc, (l) => l.line_total_sen),
     desc2: blank("desc2", L.desc2),

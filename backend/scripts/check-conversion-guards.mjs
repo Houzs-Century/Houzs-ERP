@@ -128,6 +128,16 @@ const SOURCES = {
     source: ["purchase_order_items"],
     core: { file: "backend/src/scm/lib/grn-from-po-core.ts", fn: "createDraftGrnsFromPoItemsCore" },
   },
+  "backend/src/scm/routes/threepl-do-charges.ts::POST /from-ap/:apInvoiceId/read": {
+    doc: "AP invoice bill -> 3PL DO charge rows (read step). The AP invoice is loaded by id in loadApBill.",
+    source: ["ap_invoices"],
+    core: { file: "backend/src/scm/lib/threepl-bill-import.ts", fn: "loadApBill" },
+  },
+  "backend/src/scm/routes/threepl-do-charges.ts::POST /from-ap/:apInvoiceId/confirm": {
+    doc: "AP invoice bill -> 3PL DO charge rows (confirm step), same loadApBill read.",
+    source: ["ap_invoices"],
+    core: { file: "backend/src/scm/lib/threepl-bill-import.ts", fn: "loadApBill" },
+  },
   "backend/src/scm/routes/mfg-purchase-orders.ts::POST /from-sos": {
     doc: "SO -> PO, through the shared convertSosToPosCore",
     source: ["mfg_sales_order_items"],
@@ -237,7 +247,9 @@ function scopedTables(text) {
     // ...and does NOT credit a query in a LATER statement
     st("q = scopeToCompany(q, c);\nconst r = sb.from('grns').select('id');") === "" &&
     // ...and an unscoped read contributes nothing
-    st("const { data } = await sb.from('grns').select('id').eq('id', id);") === "";
+    st("const { data } = await sb.from('grns').select('id').eq('id', id);") === "" &&
+    stripComments(["//   /from-ap/*  a path in a line comment", "r.post('/from-ap/:id/read', h);"])[1] === "r.post('/from-ap/:id/read', h);" &&
+    stripComments(["a(); /* x */ b(); // y", "/* open", "still */ c();"]).join("|") === "a();  b(); || c();";
   if (!ok) {
     console.error("check-conversion-guards: internal pattern self-test FAILED - not reporting.");
     process.exit(2);
@@ -251,6 +263,8 @@ function stripComments(lines) {
     if (inBlock) { const e = out.indexOf("*/"); if (e === -1) return ""; out = out.slice(e + 2); inBlock = false; }
     for (;;) {
       const s = out.indexOf("/*");
+      const lineComment = out.indexOf("//");
+      if (lineComment !== -1 && (s === -1 || lineComment < s)) { out = out.slice(0, lineComment); break; }
       if (s === -1) break;
       const e = out.indexOf("*/", s + 2);
       if (e === -1) { out = out.slice(0, s); inBlock = true; break; }

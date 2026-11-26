@@ -1,35 +1,5 @@
-// ----------------------------------------------------------------------------
-// session-revocation — the "cancelled passes" board.
-//
-// A signed staff pass (session-pass.ts) is verified LOCALLY with no DB read, so
-// nothing about a pass tells us whether the person was disabled, their role
-// changed, or that device logged out AFTER the pass was signed. This board is
-// what makes de-authorization instant instead of waiting out the 8h pass TTL.
-//
-// TWO LEVELS, because "log this one device out" and "revoke this person" are
-// different blast radii:
-//   • SID  (one session/device) — set on logout, so logging out on a phone does
-//     NOT force the same user's desktop back onto the DB path.
-//   • UID  (one user)           — set on a role/permission change or a disable,
-//     which must void every device that person holds.
-// Each stores a timestamp; a pass whose issued-at (iat) is OLDER than the
-// timestamp is void. A pass minted AFTER the event (a fresh login, or a
-// re-issue) has a newer iat and is honoured, so revocation self-clears without
-// a delete.
-//
-// STORE: env.SESSION_CACHE, the same KV the session cache uses. TTL = pass TTL
-// + 1h buffer — past that window every pass has expired on its own and the
-// entry is dead weight.
-//
-// FAILS OPEN ON READ, on purpose. A KV blip must not lock everyone out; the
-// middleware's DB fallback is the real safety net, and a genuine revocation is
-// re-asserted on the next event. FAILS SILENT ON WRITE for the same reason a
-// cache bust does — a revocation that could not be recorded is retried by the
-// next mutation, and the pass expires in 8h regardless.
-// ----------------------------------------------------------------------------
 import type { Env } from '../types';
 
-/** Pass TTL (8h, session-pass.ts) + 1h buffer. */
 const REVOKE_TTL_SECONDS = 9 * 60 * 60;
 
 const sidKey = (sid: string) => `sess:revoked-sid:${sid}`;
@@ -51,7 +21,7 @@ export async function revokeSession(env: Env, sid: string, nowMs: number): Promi
   if (!env.SESSION_CACHE) return;
   try {
     await env.SESSION_CACHE.put(sidKey(sid), String(nowMs), { expirationTtl: REVOKE_TTL_SECONDS });
-  } catch { /* best-effort — see header */ }
+  } catch { }
 }
 
 /** Void all of a user's passes from now (role change, disable). */
@@ -59,7 +29,7 @@ export async function revokeUser(env: Env, uid: number, nowMs: number): Promise<
   if (!env.SESSION_CACHE) return;
   try {
     await env.SESSION_CACHE.put(uidKey(uid), String(nowMs), { expirationTtl: REVOKE_TTL_SECONDS });
-  } catch { /* best-effort — see header */ }
+  } catch { }
 }
 
 /**

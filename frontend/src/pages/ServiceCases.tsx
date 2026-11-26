@@ -97,23 +97,8 @@ import {
 } from "../hooks/useIdentityPreference";
 import { readAssrListFilter, writeAssrListFilter } from "../lib/assrListFilter";
 
-/* The four /api/assr/lookups/* lists are admin-maintained reference data, not
-   transactional rows. On the 30s global staleTime they were re-fetched on every
-   case open: measured on prod 2026-08-01, opening ASSR/2607-074 cost FOUR
-   lookup calls at 643-670ms each, on top of the case itself.
-
-   Safe because an edit still lands immediately, not eventually: LookupManager
-   (the only writer) now invalidates this exact key after every write, and
-   invalidation ignores staleTime and forces an active refetch. Without that
-   half this number would be the window an admin's edit went unseen — which is
-   why the two changes ship together. 5 minutes matches the reference-data
-   callsites in Team.tsx. */
 const LOOKUP_CACHE = { staleTime: 300_000 } as const;
 
-/* How tall the SO typeahead lists on this page want to be when there is room
-   (what the old `max-h-72` class asked for). lib/anchoredPanel shortens them
-   to the room actually available on the side it opens, so the last suggestion
-   is never below the bottom of the window. */
 const SO_SUGGEST_MAX_H = 288;
 import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
@@ -168,9 +153,6 @@ import { printFrameAs } from "../lib/printFrame";
 
 type StageFilter = "ALL" | AssrStage;
 
-// v3.1 workflow — 8 stages since mig 0105 retired Pending Inspection
-// (inspection lives inside Verification now). Labels match the
-// canonical proposal vocabulary; values are the SQL enum.
 const STAGE_OPTIONS: { value: StageFilter; label: string }[] = [
   { value: "ALL", label: "All" },
   { value: "pending_review", label: "Review" },
@@ -203,26 +185,9 @@ const NCR_OPTIONS = [
   "other",
 ] as const;
 
-// Default "next" suggestion for the in-form transition button. Skips
-// (Replace Unit → no supplier pickup / item ready;
-// Field-Service Own Team → no supplier pickup / item ready;
-// Return Visit → no item pickup / supplier pickup / item ready) are
-// honored by the service-admin manually picking the correct next
-// stage from the dropdown — this map only seeds the primary button.
 
-// ── Cases-surface view modes ──────────────────────────────────
-// The Cases surface can be read three ways. "list" is the dense,
-// server-paginated DataTable (the original). "board" is an SLA-urgency
-// kanban — cases bucketed by how close they are to their SLA deadline.
-// "calendar" plots every open case on a month grid by its SLA deadline
-// (or reported date). Board + Calendar fetch all matching cases in one
-// shot client-side (per_page high) since they need the whole set to
-// lay out, not a page at a time.
 type CaseViewMode = "list" | "board" | "calendar";
 
-// Filters shared across all three views — built once in CasesView and
-// handed to Board/Calendar so every mode honours the same stage / search
-// / archived / mine / creditor scope.
 type CaseFilters = {
   stage?: string;
   search?: string;
@@ -232,9 +197,6 @@ type CaseFilters = {
   creditor_code?: string;
 };
 
-// Stage value → human label, sourced from the canonical STAGE_OPTIONS so
-// Board/Calendar chips read the same vocabulary as the filter pills
-// (StatusDot.stageLabel still maps the older 6-stage enum).
 const STAGE_LABEL_BY_VALUE: Record<string, string> = Object.fromEntries(
   STAGE_OPTIONS.filter((o) => o.value !== "ALL").map((o) => [o.value, o.label])
 );
@@ -243,9 +205,6 @@ function caseStageLabel(stage: string): string {
   return STAGE_LABEL_BY_VALUE[stage] ?? stageLabel(stage);
 }
 
-// SLA urgency, derived from the server-computed `hours_to_deadline`
-// (negative = past deadline). One model drives the colour of both the
-// Board columns and the Calendar chips so the two views read identically.
 type Urgency = "overdue" | "today" | "soon" | "later" | "none";
 
 const URGENCY_ORDER: Urgency[] = ["overdue", "today", "soon", "later", "none"];
@@ -271,7 +230,6 @@ function caseUrgency(c: AssrCase): Urgency {
   return "later";
 }
 
-// "3h overdue" / "2d left" — compact countdown off hours_to_deadline.
 function formatCountdown(h: number | null | undefined): string | null {
   if (h == null) return null;
   const abs = Math.abs(h);
@@ -279,7 +237,6 @@ function formatCountdown(h: number | null | undefined): string | null {
   return h < 0 ? `${txt} overdue` : `${txt} left`;
 }
 
-// Local YYYY-MM-DD (calendar grid keys off local days, matching formatDate).
 function isoLocal(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -287,7 +244,6 @@ function isoLocal(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Every case the list filters match, in pages of 200 (the route's cap). */
 async function fetchAllCases(filters: CaseFilters, signal: AbortSignal | undefined): Promise<Paginated<AssrCase>> {
   const per = 200;
   const first = await api.get<Paginated<AssrCase>>(`/api/assr${buildQuery({ ...filters, page: 1, per_page: per })}`, { signal });
@@ -302,12 +258,7 @@ async function fetchAllCases(filters: CaseFilters, signal: AbortSignal | undefin
   return { ...first, data: rows, page: 1, per_page: rows.length };
 }
 
-// ── Main page ─────────────────────────────────────────────────
 
-// Shell — two tabs: the case list and the quality-metrics dashboard.
-// The metrics used to live at /service-metrics as its own sidebar
-// entry; it's just a report about cases so it belongs here alongside
-// them rather than as a top-level module.
 type ServiceView = "hub" | "cases" | "metrics" | "lead_time" | "settings";
 
 const SERVICE_VIEWS: ServiceView[] = [
@@ -318,11 +269,8 @@ const SERVICE_VIEWS: ServiceView[] = [
   "settings",
 ];
 
-// The module's admin surface — both need `service_cases.manage`.
 const SERVICE_ADMIN_VIEWS: ServiceView[] = ["settings", "lead_time"];
 
-// Per-view header config so each view gets its own dedicated title.
-// (settings view owns its own PageHeader, so it's not in this map.)
 const VIEW_HEADER: Record<
   Exclude<ServiceView, "settings">,
   { title: string; description: string }
@@ -345,27 +293,14 @@ const VIEW_HEADER: Record<
   },
 };
 
-// Both admin views below deny with the same sentence — one element, two call
-// sites, so the wording cannot drift apart.
 const SERVICE_ADMIN_DENIED = (
   <Forbidden reason="Service Maintenance is limited to people who can manage service cases. Ask an administrator if you need access." />
 );
 
 export function ServiceCases() {
-  // URL-driven (`?view=…`). The sidebar's Quality Management group has
-  // one entry per view, so the page itself doesn't render a tab strip
-  // — view selection lives in the sidebar.
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { can } = useAuth();
-  // Service Maintenance (settings / lead_time) is the module's ADMIN surface.
-  // Sidebar.tsx gates its nav entry on `service_cases.manage`; this page had no
-  // matching gate, so the hub card below offered it to everyone the /assr route
-  // admits — which includes Sales via `allowSales`. The backend holds (writes
-  // are all `service_cases.manage`), but its READS only need
-  // `service_cases.read`, so a reader without manage got the config back at 200
-  // and a raw 403 toast on every write. Gate on the same permission the nav
-  // uses so both agree.
   const canManageService = can("service_cases.manage");
   const [storedView, setStoredView] = useIdentityPreference<ServiceView>(
     "assr:view",
@@ -373,12 +308,6 @@ export function ServiceCases() {
     enumPreference(SERVICE_VIEWS),
   );
   const urlView = params.get("view") as ServiceView | null;
-  // `assr:view` persists the last view rendered, so anyone who opened Service
-  // Maintenance before it was gated has "settings" stored. Falling back to it
-  // would strand them on a permanent Forbidden at a bare /assr — the effect
-  // below only rewrites the store once a DIFFERENT view renders, which it never
-  // would. Land them on the board instead. An EXPLICIT ?view= is left alone: if
-  // they typed it, they get the plain-language denial and know why.
   const storedFallback: ServiceView =
     SERVICE_ADMIN_VIEWS.includes(storedView) && !canManageService
       ? "cases"
@@ -386,16 +315,11 @@ export function ServiceCases() {
   const view: ServiceView =
     urlView && SERVICE_VIEWS.includes(urlView) ? urlView : storedFallback;
 
-  // Persist whatever view was rendered so a bare `/assr` lands back
-  // where the user left off.
   useEffect(() => {
     if (view !== storedView) setStoredView(view);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
-  // Legacy `/assr?view=lead_time` URL — Lead Time Portal merged into
-  // Service Maintenance as a tab. Redirect any old bookmarks to the
-  // new deep-link so they don't 404.
   useEffect(() => {
     if (urlView === "lead_time") {
       navigate("/assr?view=settings&tab=lead_time", { replace: true });
@@ -403,10 +327,6 @@ export function ServiceCases() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlView]);
 
-  /* "New Case" action lives on the Cases view's header. Nick 2026-07-09:
-     the global QuickActionsFAB now offers "Create Service Case" too, so we
-     auto-open the create panel when the URL carries ?new=1 (e.g. the FAB
-     drops the operator here with the panel already open, no extra click). */
   const [showCreate, setShowCreate] = useState(params.get("new") === "1");
 
   return (
@@ -446,9 +366,6 @@ export function ServiceCases() {
         <CasesView showCreate={showCreate} setShowCreate={setShowCreate} />
       )}
       {view === "metrics" && <ServiceMetrics />}
-      {/* lead_time redirects to ?view=settings&tab=lead_time above, but the
-          redirect runs in an effect — one render lands here first, which was
-          enough to fire the portal's fetch. Gated for that tick. */}
       {view === "lead_time" &&
         (canManageService ? <ServiceLeadTimePortal /> : SERVICE_ADMIN_DENIED)}
       {view === "settings" &&
@@ -476,24 +393,16 @@ function CasesView({
     () => (readAssrListFilter().stage as StageFilter) || "ALL",
   );
   const [search, setSearch] = useState(() => readAssrListFilter().search);
-  // Write-through: persist the current search + stage to the per-tab record on
-  // every change, so a Back into this list restores them. Cleared automatically
-  // once both are empty/ALL (see writeAssrListFilter).
   useEffect(() => {
     writeAssrListFilter({ search, stage });
   }, [search, stage]);
   const [showArchived, setShowArchived] = useIdentityPreference("assr:showArchived", false, booleanPreference);
   const [myCases, setMyCases] = useIdentityPreference("assr:myCases", false, booleanPreference);
-  // Hide completed cases from the working list — closed cases pile up
-  // and ops mostly only cares about what's still open.
   const [hideCompleted, setHideCompleted] = useIdentityPreference("assr:hideCompleted", false, booleanPreference);
   const [bulkSelected, setBulkSelected] = useState<Set<number>>(new Set());
   const [params, setParams] = useSearchParams();
   const creditorFilter = params.get("creditor_code");
 
-  // View mode (list / board / calendar) is URL-backed (`?cases=`) so a
-  // bookmark or shared link lands on the same layout. Defaults to the
-  // dense list.
   const caseViewParam = params.get("cases");
   const caseView: CaseViewMode =
     caseViewParam === "board" || caseViewParam === "calendar"
@@ -506,17 +415,11 @@ function CasesView({
     setParams(nextParams, { replace: true });
   };
 
-  // ?focus=ID — Overview inbox deep-links straight to the detail page.
   useFocusFromUrl((id) => navigate(`/assr/${id}`, { replace: true }));
 
-  // Skip the hide-completed param when the stage filter is explicitly
-  // "completed" — otherwise the page would return zero rows and look
-  // broken. Lets the user override the toggle by picking that stage.
   const excludeStageParam =
     hideCompleted && stage !== "completed" ? "completed" : undefined;
 
-  // Shared filter scope handed to Board / Calendar so every view honours
-  // the same stage / search / archived / mine / creditor selection.
   const caseFilters: CaseFilters = {
     stage: stage === "ALL" ? undefined : stage,
     search: search || undefined,
@@ -526,8 +429,6 @@ function CasesView({
     creditor_code: creditorFilter || undefined,
   };
 
-  // Manual AutoCount DO-mirror refresh (backend gates on
-  // service_cases.manage; the daily cron covers routine freshness).
   const [syncingDo, setSyncingDo] = useState(false);
 
   /* Every case the filters above match, not one page (owner 2026-10-20: "filter
@@ -538,8 +439,6 @@ function CasesView({
   const list = useQuery<Paginated<AssrCase>>("assr-list",
     (signal) => fetchAllCases(caseFilters, signal),
     [stage, search, showArchived, excludeStageParam, myCases, user?.id, creditorFilter],
-    // Paginated + stage/filter-switched list: keep the current rows visible
-    // while the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
   );
   const searchTransition = useSearchResultTransition({
@@ -551,8 +450,6 @@ function CasesView({
     hasError: Boolean(list.error),
   });
 
-  // Drop selections that are no longer on screen — keeps the bulk
-  // toolbar count honest when you change pages or filters.
   useEffect(() => {
     if (bulkSelected.size === 0) return;
     const visibleIds = new Set((list.data?.data ?? []).map((r) => r.id));
@@ -597,8 +494,6 @@ function CasesView({
       label: "",
       alwaysVisible: true,
       width: "32px",
-      // Header select-all — checks/unchecks every row on the current
-      // page; indeterminate while only some are ticked.
       renderHeader: () => (
         <span
           onClick={(e) => e.stopPropagation()}
@@ -638,7 +533,6 @@ function CasesView({
       filterable: true,
       label: "Stage",
       render: (r) => {
-        // Sub rides a muted second line; legs always show (Nico 2026-08-22).
         const stageText = caseStageLabel(r.stage);
         const sub = assrSubStatus(r.stage, r.sub_status ?? null);
         const subText =
@@ -653,7 +547,6 @@ function CasesView({
                   Archived
                 </Badge>
               )}
-              {/* Funnel-consistent dot: red = SLA-breached, else the stage's own colour. */}
               <StatusDot
                 variant={
                   r.stage !== "completed" && r.is_breached === 1
@@ -663,7 +556,6 @@ function CasesView({
                 label={stageText}
               />
               {r.stage !== "completed" && (r.is_breached === 1 || r.escalated_at) && (
-                // One SLA badge: solid = breached, outline = escalated (>24h overdue).
                 <Badge
                   tone="error"
                   variant={r.is_breached === 1 ? "solid" : "outline"}
@@ -685,9 +577,6 @@ function CasesView({
           </div>
         );
       },
-      // caseStageLabel, plus the sub label so the column FILTER and CSV split
-      // the legs. All Pickup/Return legs stay listed even at 0 cases (Nico
-      // 2026-09-04: an empty leg must still be pickable in the filter).
       getValue: (r) => {
         const sub = assrSubStatus(r.stage, r.sub_status ?? null);
         return sub ? `${caseStageLabel(r.stage)} — ${sub.label}` : caseStageLabel(r.stage);
@@ -730,8 +619,6 @@ function CasesView({
       key: "ref_no",
       filterable: true,
       label: "Ref No.",
-      // The SO's customer reference (HC/ZNT/PG…) — what the branches and
-      // suppliers quote back, so it sits default-visible next to SO No.
       render: (r) => <span className="font-mono text-xs">{r.ref_no || "—"}</span>,
       getValue: (r) => r.ref_no,
     },
@@ -739,9 +626,6 @@ function CasesView({
       key: "do_numbers",
       filterable: true,
       label: "DO No",
-      // Hand-entered DO on the case wins; the server merge fills the rest
-      // ("DO1 · DO2" when shipped in parts) — AutoCount transfer_to chain +
-      // DO mirror for Houzs, the SCM module for 2990.
       render: (r) => (
         <span className="font-mono text-xs">{r.delivery_order || r.do_numbers || "—"}</span>
       ),
@@ -751,10 +635,6 @@ function CasesView({
       key: "po",
       filterable: true,
       label: "PO",
-      // ONE column for both PO facts on a case: the SO's supplier "Order PO"s
-      // (order_pos, read-only) and the case's own service PO (po_no), deduped
-      // so a service PO typed without its company prefix does not show twice.
-      // The two stay separate fields — the detail panel edits/mints po_no.
       render: (r) => <span className="font-mono text-xs">{assrMergedPoText(r) || "—"}</span>,
       getValue: (r) => assrMergedPoText(r),
     },
@@ -776,8 +656,6 @@ function CasesView({
       key: "sales_agent",
       filterable: true,
       label: "Salesperson",
-      // The SO's sales agent — copied onto the case at intake from the
-      // AutoCount mirror; server search matches it too.
       render: (r) => (
         <span className="block max-w-[140px] truncate" title={r.sales_agent || undefined}>
           {r.sales_agent || "—"}
@@ -790,11 +668,6 @@ function CasesView({
       label: "Priority · Dwell",
       align: "left",
       filterable: true,
-      // Merged signal, single colour axis = DWELL so dot and text always
-      // agree (no clashing two-colour cells). DWELL in the current stage:
-      // On track <7d (green) / Slow 7–29d (amber) / Stuck ≥30d (red). The
-      // dot carries the same tier colour as the text. PRIORITY rides along
-      // as a red ring around the dot, shown only for Urgent/High.
       render: (r) => {
         const d = r.days_in_stage;
         const tier =
@@ -834,15 +707,12 @@ function CasesView({
           </div>
         );
       },
-      // Sort by dwell days — the actionable axis. Priority stays scannable
-      // via the dot colour even when sorted by dwell.
       getValue: (r) => r.days_in_stage ?? -1,
     },
     {
       key: "assigned_to_name",
       filterable: true,
       label: "Assigned To",
-      // Both responsible people, primary first ("Farra · Nancy").
       render: (r) =>
         [r.assigned_to_name, r.assigned_to_2_name].filter(Boolean).join(" · ") || "—",
       getValue: (r) =>
@@ -852,19 +722,12 @@ function CasesView({
       key: "item_code",
       filterable: true,
       label: "Item",
-      // Product code — visible on the detail page; hidden here to cut
-      // clutter, still available from the Columns menu.
       defaultHidden: true,
-      // Product Info items first (items_codes aggregate); the legacy
-      // form-era item_code only as fallback (Nico 2026-08-07).
       render: (r) => <span className="font-mono text-[11px]">{(r as any).items_codes || r.item_code || "—"}</span>,
       getValue: (r) => (r as any).items_codes || r.item_code,
     },
     {
       key: "complaint_issue",
-      // Free text — a distinct-values filter menu would be noise, so no
-      // filter; the column still sorts (alphabetical) and the full text
-      // rides the title tooltip. (Nico 2026-08-13)
       label: "Complaint Issue",
       render: (r) =>
         r.complaint_issue ? (
@@ -880,9 +743,6 @@ function CasesView({
       key: "resolution_method",
       filterable: true,
       label: "Resolution",
-      // Empty until a case reaches the solution stage, so it's mostly
-      // "—" on the working list — hidden by default to cut clutter,
-      // still available from the Columns menu.
       defaultHidden: true,
       render: (r) => (
         <span className="text-[11px] text-ink-secondary">
@@ -907,9 +767,6 @@ function CasesView({
       render: (r) => formatDate(r.items_ready_at),
       getValue: (r) => r.items_ready_at,
     },
-    // The rest of the intake snapshot (already in the list payload) —
-    // hidden by default, togglable from the Columns menu (Nico 2026-07-27:
-    // the list was missing case info like DO / salesperson / contact).
     {
       key: "phone",
       filterable: true,
@@ -937,8 +794,6 @@ function CasesView({
       defaultHidden: true,
       render: (r) => r.service_category || "—",
       getValue: (r) => r.service_category,
-      // Multi-select: a case can be "Bedframe, Mattress". Ticking Bedframe
-      // in the funnel must surface it, so the filter sees the parts.
       getFilterValues: (r) => splitCategories(r.service_category),
     },
     {
@@ -994,9 +849,6 @@ function CasesView({
           cards and stage funnel above scroll away (owner: funnel 不用 freeze,
           "我要滑动到这里freeze着"); see DataTable's frozen-header block. */}
       <div data-freeze-anchor className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-3">
-        {/* View mode — List / Board / Calendar. The board and calendar
-            re-read the same cases through an SLA-urgency lens; the list
-            stays the dense system-of-record. */}
         <div className="inline-flex overflow-hidden rounded-md border border-border bg-bg/40">
           {([
             { v: "list" as const, label: "List", icon: ListIcon },
@@ -1020,8 +872,6 @@ function CasesView({
             </button>
           ))}
         </div>
-        {/* Stage selection now lives in the per-stage stat cards above —
-            click a card to filter, click it again to clear back to All. */}
         <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-ink-secondary">
           <input
             type="checkbox"
@@ -1217,7 +1067,6 @@ function CasesView({
       </>
       )}
 
-      {/* Create panel */}
       {showCreate && (
         <CreatePanel
           onClose={() => setShowCreate(false)}
@@ -1260,12 +1109,6 @@ function StageStatStrip({
   onPick: (s: StageFilter) => void;
 }) {
   const { can } = useAuth();
-  // OFF-NOT-HIDE: the stage-funnel strip is an ORG aggregate gated behind
-  // `service_cases.read`. A non-director Sales user reaches this page (their
-  // My-Cases list loads via the widened requireServiceCaseAccess route) but
-  // lacks that matrix permission, so firing this would 403 → "Forbidden"
-  // toast. Gate the fetch so it never fires for them; the strip just renders
-  // its empty/zero state instead.
   const canReadSummary = can("service_cases.read");
   const q = useQuery<AssrSummary>("/api/assr/summary?since_days=730",
     () => api.get("/api/assr/summary?since_days=730"),
@@ -1273,11 +1116,6 @@ function StageStatStrip({
     { enabled: canReadSummary }
   );
 
-  // The /summary aggregate runs ~13 queries and flakes with a 500 on a
-  // cold Supabase pool during cutover (same transient issue as the list).
-  // It's a read-only count, so silently retry a few times rather than
-  // stranding the cards on "Unavailable" — the next attempt usually warms
-  // the pool and succeeds.
   const retriesRef = useRef(0);
   useEffect(() => {
     if (q.data) {
@@ -1305,7 +1143,6 @@ function StageStatStrip({
 
   return (
     <div className="mb-4 space-y-3">
-      {/* Summary KPIs — Open / SLA Risk / Avg Resolution / Completed. */}
       <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         <StatCard
           label="Open Cases"
@@ -1334,7 +1171,6 @@ function StageStatStrip({
         />
       </div>
 
-      {/* Stage funnel — click a stage to filter; click again (or All) to clear. */}
       <div className="rounded-xl border border-border bg-surface p-4 shadow-stone">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-[13px] font-bold text-ink">Stage funnel</div>
@@ -1345,8 +1181,6 @@ function StageStatStrip({
             { value: "ALL" as StageFilter, label: "All", desc: "All stages", total: allTotal, breached: stages.reduce((n, st) => n + (byStage.get(st.value)?.breached ?? 0), 0) },
             ...stages.map((s) => {
               const row = byStage.get(s.value);
-              // Supplier bucket names its three legs (Nico 2026-08-22 / 09-01):
-              // one chase count per leg — customer / supplier / return.
               const cust = row?.sub_customer ?? 0;
               const ret = row?.sub_return ?? 0;
               const desc =
@@ -1364,8 +1198,6 @@ function StageStatStrip({
           ].map((s) => {
             const isActive = stage === s.value;
             const empty = ready && s.total === 0;
-            // Dot: red = holds breached cases, dim grey = empty, green = All,
-            // solid grey = Completed split off All (Nico 2026-07-09), petrol = open.
             const dot =
               s.breached > 0
                 ? "bg-err"
@@ -1397,8 +1229,6 @@ function StageStatStrip({
                     {ready ? s.total : "—"}
                   </span>
                   <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
-                  {/* How many of them are past the stage's target days (owner
-                      2026-10-20), as the Quality Overview's tabs show it. */}
                   {ready && s.breached > 0 && (
                     <span className="rounded-full bg-err px-1.5 py-px font-mono text-[10px] font-bold leading-none text-white" title={`${s.breached} of ${s.total} past the stage's target days`}>
                       {s.breached} overdue
@@ -1427,10 +1257,6 @@ function StageStatStrip({
   );
 }
 
-// ── Cases · SLA Board ─────────────────────────────────────────
-// Kanban-by-urgency. Every open case is dropped into one of five
-// columns by how close it is to its SLA deadline. Ops triage reads
-// left-to-right: clear the red column first.
 
 function CasesBoardView({
   filters,
@@ -1439,9 +1265,6 @@ function CasesBoardView({
   filters: CaseFilters;
   onOpen: (id: number) => void;
 }) {
-  // Forward-looking triage board — completed cases carry no live SLA, so
-  // drop them unless the user is explicitly filtering to that stage. This
-  // also spends the 200-row server budget on open work, not closed noise.
   const effective: CaseFilters = {
     ...filters,
     exclude_stage: filters.stage === "completed" ? filters.exclude_stage : "completed",
@@ -1565,8 +1388,6 @@ function CasesBoardView({
   );
 }
 
-// Compact case card — shared by the Board columns and the Calendar
-// day-modal. Left rail + countdown colour encode SLA urgency.
 function CaseCard({ c, onOpen }: { c: AssrCase; onOpen: (id: number) => void }) {
   const u = caseUrgency(c);
   const meta = URGENCY_META[u];
@@ -1614,12 +1435,6 @@ function CaseCard({ c, onOpen }: { c: AssrCase; onOpen: (id: number) => void }) 
   );
 }
 
-// ── Cases · Calendar ──────────────────────────────────────────
-// Month grid plotting every open case on its SLA deadline (or the
-// reported date). Chips are coloured by SLA urgency; hover reveals the
-// case basics, "+N more" opens a day list. Mirrors the Projects
-// calendar's visual language (blank adjacent cells, prominent today,
-// wheel-to-navigate).
 
 export function CasesCalendarView({
   filters,
@@ -1629,9 +1444,6 @@ export function CasesCalendarView({
   onOpen: (id: number) => void;
 }) {
   const [params, setParams] = useSearchParams();
-  // Reported date is the default basis: nearly every case has a
-  // complained_date, whereas SLA deadlines are sparsely set — so the
-  // calendar lands populated rather than mostly empty.
   const basis: "deadline" | "reported" =
     params.get("cbasis") === "deadline" ? "deadline" : "reported";
 
@@ -1656,19 +1468,11 @@ export function CasesCalendarView({
   const setAnchor = (d: Date) =>
     patch({ cmonth: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` });
 
-  // Like the board, the calendar is about live work — hide completed
-  // cases unless that stage is explicitly selected.
   const effective: CaseFilters = {
     ...filters,
     exclude_stage: filters.stage === "completed" ? filters.exclude_stage : "completed",
   };
 
-  // Bound the fetch to the visible 6×7 month grid (Mon-first, 42 cells)
-  // instead of fetch-all: pass its span as from/to on the same date column
-  // the grid buckets by (reported → complained_date, deadline → deadline_at).
-  // The window covers the adjacent-month days that spill into the grid, so
-  // no rendered cell is ever under-populated. Recomputing these from `anchor`
-  // + `basis` (and listing them in the query deps) refetches on month nav.
   const gridFirst = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
   const gridLead = (gridFirst.getDay() + 6) % 7;
   const winStart = new Date(gridFirst);
@@ -1706,7 +1510,6 @@ export function CasesCalendarView({
   const cases = q.data?.data ?? [];
   const total = q.data?.total ?? cases.length;
 
-  // Group by the active date basis (local day key).
   const byDate = useMemo(() => {
     const m = new Map<string, AssrCase[]>();
     for (const c of cases) {
@@ -1718,7 +1521,6 @@ export function CasesCalendarView({
       if (arr) arr.push(c);
       else m.set(key, [c]);
     }
-    // Sort each day by urgency then countdown so the worst sits on top.
     for (const arr of m.values()) {
       arr.sort(
         (a, z) =>
@@ -1730,7 +1532,6 @@ export function CasesCalendarView({
     return m;
   }, [cases, basis]);
 
-  // 6×7 month grid, Monday-first, starting on the Monday on/before the 1st.
   const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
   const startOffset = (first.getDay() + 6) % 7;
   const gridStart = new Date(first);
@@ -1744,7 +1545,6 @@ export function CasesCalendarView({
   const today = todayMyt();
   const monthLabel = anchor.toLocaleDateString("en-GB", { month: "2-digit", year: "numeric" });
 
-  // Wheel over the grid steps months (throttled, non-passive).
   const gridRef = useRef<HTMLDivElement>(null);
   const wheelTsRef = useRef(0);
   const anchorRef = useRef(anchor);
@@ -1776,7 +1576,6 @@ export function CasesCalendarView({
 
   return (
     <div>
-      {/* Toolbar */}
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <div className="inline-flex items-center gap-1">
           <button
@@ -1817,7 +1616,6 @@ export function CasesCalendarView({
           Today
         </button>
 
-        {/* Date basis */}
         <div className="ml-auto inline-flex overflow-hidden rounded-md border border-border bg-bg/40 text-[10.5px] font-semibold">
           {([
             { v: "reported", label: "Reported date" },
@@ -1839,7 +1637,6 @@ export function CasesCalendarView({
         </div>
       </div>
 
-      {/* Legend */}
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
         {URGENCY_ORDER.map((u) => (
           <span key={u} className="inline-flex items-center gap-1.5 text-[10.5px] text-ink-secondary">
@@ -1866,7 +1663,6 @@ export function CasesCalendarView({
               q.loading && "animate-pulse opacity-60"
             )}
           >
-            {/* Weekday header */}
             <div className="grid grid-cols-7 border-b border-border bg-surface-dim/60">
               {WEEKDAYS.map((d) => (
                 <div
@@ -1877,7 +1673,6 @@ export function CasesCalendarView({
                 </div>
               ))}
             </div>
-            {/* Cells */}
             <div className="grid grid-cols-7">
               {cells.map((cell, i) => {
                 const items = byDate.get(cell.iso) ?? [];
@@ -1972,7 +1767,6 @@ export function CasesCalendarView({
   );
 }
 
-// Cursor-anchored hover card for a calendar chip.
 function CaseChipPopover({
   info,
   basis,
@@ -2047,7 +1841,6 @@ function CaseChipPopover({
   );
 }
 
-// Day overflow modal — every case landing on one day, as cards.
 function CaseDayModal({
   iso,
   cases,
@@ -2106,10 +1899,6 @@ function CaseDayModal({
   );
 }
 
-// ── Bulk actions toolbar ─────────────────────────────────────
-// Sits above the table when one or more rows are checked. Mirrors
-// the staff actions from the detail panel — archive/restore are the
-// safest bulk ops; assign-to-me is a one-click triage shortcut.
 
 function BulkActionsBar({
   count,
@@ -2181,7 +1970,6 @@ function BulkActionsBar({
   );
 }
 
-// ── Create Panel ──────────────────────────────────────────────
 
 // ── SO-No editor with the create-form's SO search (Nick 2026-07-14:
 // "edit SO 的时候需要和 create case 的 search 功能一样"). Debounced
@@ -2283,7 +2071,6 @@ function SoNoSearchEdit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current]);
 
-  // Debounced mirror search — same endpoint + cadence as CreatePanel.
   useEffect(() => {
     const q = draft.trim();
     if (q.length < 2 || q === current) {
@@ -2308,9 +2095,6 @@ function SoNoSearchEdit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, current]);
 
-  /* Track the input rect so the portaled dropdown follows it — shared
-     geometry (lib/anchoredPanel), so the list flips above the field when the
-     room below cannot hold it and is never taller than the space it is in. */
   const rect = useAnchoredPanel(inputRef, suggestions.length > 0, SO_SUGGEST_MAX_H);
 
   async function commit(next: string) {
@@ -2371,9 +2155,6 @@ function SoNoSearchEdit({
       {rect &&
         createPortal(
           <div
-            /* The SO list needs a readable minimum even under a narrow field,
-               so the width floor overrides the anchor's own width. zIndex
-               stays this page's 60. */
             style={{ ...anchoredPanelStyle(rect), width: Math.max(rect.width, 320), zIndex: 60 }}
             className="overflow-auto rounded-md border border-border bg-surface shadow-lg"
           >
@@ -2413,11 +2194,6 @@ function SoNoSearchEdit({
   );
 }
 
-/* Product Category is multi-select since 2026-08 — a complaint can be
-   mattress AND bedframe on the same case. Chips rather than <select
-   multiple>: the list is five items and ctrl-click-to-multi-select is
-   undiscoverable. Values the lookup doesn't know (legacy free text) render
-   as chips too, so reopening a case never silently drops one. */
 function CategoryChips({
   options,
   value,
@@ -2429,10 +2205,6 @@ function CategoryChips({
   onChange: (next: string[]) => void;
   disabled?: boolean;
 }) {
-  /* Which chips exist, and what a toggle produces, come from the SHARED rule
-     the phone reads too (lib/assrProductCategories.ts). Only the markup below
-     is desktop's. Re-deriving either here is how the phone ended up writing
-     free text into this column. */
   return (
     <div className="flex flex-wrap gap-1.5">
       {categoryChipList(options, value).map((n) => {
@@ -2470,11 +2242,6 @@ function CreatePanel({
   const { can } = useAuth();
   const { touched: formTouched, markTouched, allowLeave, guardedBack: guardedClose } = useFormGuard(onClose);
   const [docNo, setDocNo] = useState("");
-  // Typeahead state: search local SO mirror by partial DocNo /
-  // reference / customer name so staff don't have to remember the
-  // full SO number. `pickedDocNo` is the DocNo last chosen from a
-  // suggestion — used to suppress the dropdown once a selection is
-  // committed (re-typing reopens it).
   const [soSuggestions, setSoSuggestions] = useState<
     { doc_no: string; ref: string | null; debtor_name: string | null; phone: string | null; doc_date: string | null; sales_agent: string | null; company_code?: string | null; case_count?: number; open_case_count?: number }[]
   >([]);
@@ -2493,40 +2260,23 @@ function CreatePanel({
   } | null>(null);
   const [pickedDocNo, setPickedDocNo] = useState<string | null>(null);
   const [searchingSO, setSearchingSO] = useState(false);
-  // The dropdown is rendered through a portal because PanelSection
-  // wraps its body in `overflow-hidden` (Panel.tsx:193), which would
-  // otherwise clip suggestions extending below the section. Track the
-  // input's viewport rect and re-render dropdown in fixed coordinates.
   const soInputRef = useRef<HTMLInputElement | null>(null);
   const [lookupItems, setLookupItems] = useState<{ item_code: string; item_description: string | null; qty?: number }[] | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
-  // Per-item affected quantity (owner 2026-07: multiselect + per-product
-  // qty). Seeded from the SO line qty when an item is ticked; editable via
-  // the Qty input on each selected row. Backend create already stores a
-  // qty per assr_items row, so this is frontend-only.
   const [itemQty, setItemQty] = useState<Record<string, number>>({});
   const [issue, setIssue] = useState("");
-  // "" → unset; OTHER_SENTINEL → user picked Other but hasn't typed yet;
-  // any other string → either a canonical category or a custom label.
   const [issueCategory, setIssueCategory] = useState<string>("");
   const [customCategory, setCustomCategory] = useState("");
   const stillNeeded = missingCaseFields([["SO number", docNo], ["issue description", issue], ["issue category", issueCategory === OTHER_SENTINEL ? customCategory : issueCategory]]);
   const [lookingUp, setLookingUp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [customerInfo, setCustomerInfo] = useState<{ name?: string; phone?: string; location?: string } | null>(null);
-  // Intake extras — captured up front so a case is created complete
-  // rather than backfilled in the detail view. ref_no seeds from the
-  // picked SO's own customer reference (below) but stays editable.
   const [refNo, setRefNo] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   const [serviceCategories, setServiceCategories] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
-  // Mig 065 — pull issue categories from the lookup endpoint so the
-  // intake form mirrors what admins maintain in Service Maintenance.
-  // Fall back to the shared ASSR_ISSUE_CATEGORIES list if the call
-  // hasn't returned yet.
   const issueCategoriesQ = useQuery<{ data: { slug: string; name: string }[] }>("/api/assr/lookups/issue-categories",
     () => api.get("/api/assr/lookups/issue-categories"),
     [],
@@ -2534,9 +2284,6 @@ function CreatePanel({
   );
   const issueCatOptions =
     issueCategoriesQ.data?.data.map((r) => r.name) ?? [];
-  // Product Category options mirror AutoCount's item groups (Nick
-  // 2026-07-14) — admin-maintained in Service Maintenance until the
-  // AutoCount reconnect back-fills the authoritative list.
   const productCategoriesQ = useQuery<{ data: { slug: string; name: string }[] }>(ASSR_PRODUCT_CATEGORIES_ENDPOINT,
     () => api.get(ASSR_PRODUCT_CATEGORIES_ENDPOINT),
     [],
@@ -2546,7 +2293,7 @@ function CreatePanel({
     productCategoriesQ.data?.data.map((r) => r.name) ?? [];
 
   const MAX_FILES = 5;
-  const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
+  const MAX_SIZE = 5 * 1024 * 1024;
   const ALLOWED_EXT = new Set(["jpg", "jpeg", "png", "webp", "mp4", "pdf"]);
 
   function addFiles(picked: FileList | null) {
@@ -2571,14 +2318,8 @@ function CreatePanel({
     setFiles((prev) => prev.filter((_, i) => i !== index));
   }
 
-  // A drop that misses the dropzone below must not navigate the SPA
-  // away to the dropped file.
   useStrayFileDropGuard();
 
-  // Clipboard paste — when the panel is mounted, intercept any paste
-  // that carries file blobs (typically a screenshot or copied image)
-  // and route it through addFiles. Plain-text pastes are left alone
-  // so the Issue Description textarea still works.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const blobs = clipboardFiles(e);
@@ -2590,12 +2331,9 @@ function CreatePanel({
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-    // addFiles is stable enough — uses functional setFiles + constants.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Best-effort — the warning is advisory, so a failed fetch just shows
-  // nothing rather than blocking intake.
   async function fetchExistingCases(d: string) {
     try {
       const res = await api.get<{ cases: NonNullable<typeof existingCases>["cases"] }>(
@@ -2626,10 +2364,6 @@ function CreatePanel({
     }
   }
 
-  // Debounced typeahead — fires whenever the input changes and the
-  // current value isn't an already-picked DocNo. Kept short so the
-  // dropdown feels live; the backend route is a single indexed-ish
-  // LIKE against the local mirror, so cost is low per call.
   useEffect(() => {
     const q = docNo.trim();
     if (q.length < 2 || pickedDocNo === q) {
@@ -2653,9 +2387,6 @@ function CreatePanel({
     return () => clearTimeout(handle);
   }, [docNo, pickedDocNo]);
 
-  /* Sync the portaled dropdown to the input rect, tracking scroll/resize so
-     the menu follows if the panel body scrolls — shared geometry, same flip
-     and clamp as every other picker here. */
   const dropdownRect = useAnchoredPanel(
     soInputRef,
     soSuggestions.length > 0 && pickedDocNo !== docNo.trim(),
@@ -2668,12 +2399,10 @@ function CreatePanel({
     setSoSuggestions([]);
     void fetchExistingCases(s.doc_no);
     setCustomerInfo({ name: s.debtor_name ?? undefined, phone: s.phone ?? undefined });
-    // Seed Ref No from the SO's own customer reference; stays editable.
     if (s.ref && !refNo.trim()) setRefNo(s.ref);
     setLookupItems(null);
     setSelectedItems(new Set());
     setItemQty({});
-    // Auto-run the items lookup so the form proceeds in one click.
     setTimeout(() => {
       void (async () => {
         setLookingUp(true);
@@ -2695,7 +2424,6 @@ function CreatePanel({
     if (!docNo.trim() || !issue.trim()) return;
     const items = [...selectedItems].map((code) => {
       const found = lookupItems?.find((i) => i.item_code === code);
-      // User-chosen affected qty wins; falls back to the SO line qty.
       const chosen = itemQty[code];
       return {
         item_code: code,
@@ -2723,19 +2451,11 @@ function CreatePanel({
         items,
         complaint_issue: issue.trim(),
         issue_category: resolvedCategory,
-        // Priority + assignee are no longer picked at intake (Nick
-        // 2026-07-14): the backend defaults priority to "normal" and
-        // assigns the admin-configured default PIC; both are adjusted
-        // on the detail page when needed.
-        // Intake extras — sent trimmed-or-null so the case is created
-        // complete. The backend also trims/whitelists these defensively.
         ref_no: refNo.trim() || null,
         customer_email: customerEmail.trim() || null,
         service_category: serviceCategories.length ? serviceCategories : null,
       });
 
-      // Upload any staged defect photos/videos as "complaint" attachments.
-      // WO-7: uploadAssrAttachment compresses photos + uploads their thumbs.
       if (files.length > 0) {
         setUploadProgress({ done: 0, total: files.length });
         let failed = 0;
@@ -2787,13 +2507,11 @@ function CreatePanel({
       return next;
     });
     if (deselecting) {
-      // Drop the qty so re-ticking re-seeds from the SO line qty.
       setItemQty((q) => {
         const { [code]: _dropped, ...rest } = q;
         return rest;
       });
     } else {
-      // Seed the affected qty from the SO line qty (fallback 1).
       const found = lookupItems?.find((i) => i.item_code === code);
       setItemQty((q) => ({ ...q, [code]: found?.qty && found.qty > 0 ? found.qty : 1 }));
     }
@@ -2821,9 +2539,6 @@ function CreatePanel({
             {lookingUp ? "…" : "Lookup"}
           </Button>
         </div>
-        {/* Typeahead dropdown — portaled to body so PanelSection's
-            overflow-hidden doesn't clip suggestions extending below
-            the section. Coords are tracked in `dropdownRect`. */}
         {dropdownRect && createPortal(
           <div
             style={{ ...anchoredPanelStyle(dropdownRect), zIndex: 60 }}
@@ -2881,8 +2596,6 @@ function CreatePanel({
             <PullFromAutoCount
               query={docNo}
               onPulled={async (d) => {
-                // Now mirrored — re-run the same search so we can select it and
-                // seed customer info exactly as picking a suggestion would.
                 try {
                   const r = await api.get<{
                     results: {
@@ -2905,10 +2618,6 @@ function CreatePanel({
               }}
             />
           )}
-        {/* Existing-case warning — shown only while the input still holds
-            the doc_no the fetch answered, so retyping self-dismisses it.
-            Cases open in a new tab: the operator is mid-form and likely
-            wants to compare before deciding to abandon this create. */}
         {existingCases &&
           existingCases.cases.length > 0 &&
           docNo.trim().toLowerCase() === existingCases.docNo.toLowerCase() && (
@@ -2978,9 +2687,6 @@ function CreatePanel({
                     </span>
                   )}
                   {selectedItems.has(item.item_code) ? (
-                    // Selected → editable affected qty (seeded from the SO
-                    // line qty). Click/keys stay in the input — never toggle
-                    // the row's checkbox.
                     <span
                       className="ml-auto flex flex-none items-center gap-1"
                       onClick={(e) => e.preventDefault()}
@@ -3007,7 +2713,6 @@ function CreatePanel({
             </div>
           )}
 
-          {/* Manual item entry if no items found */}
           {lookupItems.length === 0 && (
             <div className="mt-2">
               <input
@@ -3067,11 +2772,6 @@ function CreatePanel({
         </div>
       </PanelSection>
 
-      {/* Customer & Assignment — intake extras that the redesigned
-          detail view collects (Ref No / Email / Product Category /
-          Operations PIC). Capturing them here means a case is created
-          complete instead of being backfilled after the fact. Ref No
-          seeds from the picked SO's own customer reference. */}
       <PanelSection title="Customer & Assignment">
         <div className="space-y-3">
           <div>
@@ -3119,7 +2819,6 @@ function CreatePanel({
             }
           }}
           onDragLeave={(e) => {
-            // Ignore leave events triggered by entering a child node.
             if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
             setDragActive(false);
           }}
@@ -3183,7 +2882,6 @@ function CreatePanel({
   );
 }
 
-// ── Detail Panel ──────────────────────────────────────────────
 
 function DetailContent({
   id,
@@ -3200,19 +2898,11 @@ function DetailContent({
     [id]
   );
 
-  // PR 4 — the active-stage set collapses to 7 when the resolution
-  // method is internal (own team / return-to-store). Compute once
-  // per render and thread through the workflow card, summary bar,
-  // and stage accordion.
   const activeStages = useMemo(
     () => getActiveStages(detail.data?.case?.resolution_method, detail.data?.case?.stage ?? "pending_review"),
     [detail.data?.case?.resolution_method, detail.data?.case?.stage],
   );
 
-  // PR 3 — snap the accordion's open row to the case's current stage
-  // any time the case's stage changes. A hooks ref remembers the last
-  // stage we snapped to so the user can still hand-collapse or open a
-  // different row without us fighting them on every render.
   useEffect(() => {
     const s = detail.data?.case?.stage;
     if (!s) return;
@@ -3221,12 +2911,6 @@ function DetailContent({
     setOpenStage(s);
   }, [detail.data?.case?.stage]);
 
-  // Mig 106 — Service Admin opening a case that's still on
-  // pending_review auto-advances it to under_verification. The server
-  // gates on write permission so read-only viewers don't kick the
-  // stage. Fire once per case after the detail loads; if the case
-  // actually advanced, reload the detail so the panel reflects the
-  // new stage without a manual refresh.
   const openedRef = useRef<number | null>(null);
   useEffect(() => {
     const c = detail.data?.case;
@@ -3250,10 +2934,6 @@ function DetailContent({
     () => api.get<any>("/api/users").then((r: any) => r.users ?? r.data ?? r ?? []),
     []
   );
-  // Mig 065 — picker values come from the lookup endpoints maintained
-  // in Service Maintenance. Each query is small; the four together
-  // are still cheap. Fall back to the legacy hardcoded constants when
-  // the API hasn't returned yet so the form stays usable.
   type LookupOpt = { slug: string; name: string };
   const issueCategoriesQ = useQuery<{ data: LookupOpt[] }>("/api/assr/lookups/issue-categories",
     () => api.get("/api/assr/lookups/issue-categories"),
@@ -3285,9 +2965,6 @@ function DetailContent({
   const issueOptions = (issueCategoriesQ.data?.data ?? []).map((r) => r.name);
   const resolutionOptions = (resolutionMethodsQ.data?.data ?? []).map((r) => r.slug);
   const priorityOptions = (prioritiesQ.data?.data ?? []).map((r) => r.slug);
-  // Map slug → display name so the Lead Time pill can render "Urgent"
-  // instead of the raw "urgent" slug. Recomputes only when the
-  // priorities lookup changes.
   const priorityMap = useMemo(() => {
     const m: Record<string, string> = {};
     for (const p of prioritiesQ.data?.data ?? []) m[p.slug] = p.name;
@@ -3297,31 +2974,17 @@ function DetailContent({
   const [note, setNote] = useState("");
   const [noteFormOpen, setNoteFormOpen] = useState(false);
   const [isPostingNote, setIsPostingNote] = useState(false);
-  // Mig 064 / 0108 — note posting picks an audience bucket. Default
-  // 'service' (internal); only 'customer' is portal-visible.
-  // (internal team comms) since most notes are operational. Switch to
-  // 'customer' to make the entry visible on the customer portal.
-  // Customer card starts read-only (Nick 2026-07-14: "don't keep the
-  // inputs open — add an Edit button"); toggling exposes the InlineEdit
-  // fields, incl. the SO-No mirror re-match.
   const [custEditing, setCustEditing] = useState(false);
   const [noteCategory, setNoteCategory] = useState<AssrNoteAudience>("service");
   const [transitioning, setTransitioning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showClosePrompt, setShowClosePrompt] = useState(false);
   const [showVoidPrompt, setShowVoidPrompt] = useState(false);
-  // PR 3 — stage accordion open row. Defaults to the case's current
-  // stage so ops lands on the row they need to work; changing the
-  // stage from the Workflow card also snaps this to the new stage.
   const [openStage, setOpenStage] = useState<AssrStage | null>(null);
   const stageSetByHookRef = useRef<AssrStage | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [showAddItem, setShowAddItem] = useState(false);
   const [showAddLogistics, setShowAddLogistics] = useState(false);
-  // SO-based item picker for the Add Item panel — mirrors the
-  // intake form's `lookup-items` flow so ops adds items by checkbox
-  // instead of re-typing them. Manual fallback covers ad-hoc entries
-  // that aren't on the original SO.
   type LookupItem = { item_code: string; item_description: string | null; qty?: number };
   const [lookupItems, setLookupItems] = useState<LookupItem[] | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
@@ -3356,11 +3019,6 @@ function DetailContent({
     }
   }
 
-  // Auto-stage-transition watcher (TODO item 5). When the predicate
-  // for the current stage flips from unsatisfied → satisfied, prompt
-  // the user to advance. Row 2 (Under Verification → Pending Solution)
-  // is owned by VerificationCard so it can use the richer outcome
-  // semantics; the other six rows route through here.
   useStageAutoAdvance({ c, logistics, transition, dialog });
 
   async function addNote() {
@@ -3381,9 +3039,6 @@ function DetailContent({
     }
   }
 
-  // Keep a mistargeted drop from navigating the SPA to the file, and
-  // teach the paste affordance: a file paste that lands while no upload
-  // zone is hovered would otherwise vanish silently.
   useStrayFileDropGuard();
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -3393,7 +3048,6 @@ function DetailContent({
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-    // toast methods are stable under the hood.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3402,27 +3056,21 @@ function DetailContent({
     if (accepted.length === 0) return;
     setUploading(true);
     try {
-      // WO-7: shared pipeline — compresses photos + uploads their thumbs.
       for (const f of accepted) await uploadAssrAttachment(id, f, category);
       toast.success(accepted.length > 1 ? `${accepted.length} files uploaded` : "File uploaded");
     } catch (err: any) {
       toast.error(`Upload failed: ${err?.message || err}`);
     } finally {
       setUploading(false);
-      // Reload even on failure — earlier files of a batch may have saved.
       detail.reload();
     }
   }
 
-  // Open the Add Item panel and lazily fetch the case's SO items —
-  // same `/api/assr/lookup-items/:doc_no` endpoint used by the
-  // intake form. Cached after the first open; user can re-fetch via
-  // the Refresh button if the SO has changed since.
   async function openAddItem() {
     setShowAddItem(true);
     setPickedCodes(new Set());
     if (!c?.doc_no) return;
-    if (lookupItems !== null) return; // already loaded
+    if (lookupItems !== null) return;
     setLookupLoading(true);
     try {
       const res = await api.get<{ items: LookupItem[] }>(
@@ -3500,16 +3148,9 @@ function DetailContent({
     setShowClosePrompt(true);
   }
 
-  // NEXT_STAGE lookup retired in mig 064 — the header picker now
-  // accepts any stage. Kept the constant defined at module scope for
-  // any external consumers (tests, etc.); no live UI consumes it.
   const userOptions = Array.isArray(users.data)
     ? users.data.map((u) => ({ id: u.id, name: u.name }))
     : [];
-  // PIC picker is a server typeahead now; the dropdown stays restricted to
-  // Operations-department members via `filterOption`. The currently-assigned
-  // people are resolved from the already-loaded users list so their chips
-  // always display (even if outside Operations) and stay removable.
   const assignedItems: UserOptionItem[] = Array.isArray(users.data)
     ? users.data
         .filter((u: any) => u.id === c?.assigned_to || u.id === c?.assigned_to_2)
@@ -3548,8 +3189,6 @@ function DetailContent({
       actions={
         c ? (
           <>
-            {/* PR 1 redesign — Print + Portal Link moved up from the
-                pill row. Match the design's title-row action group. */}
             <PrintMenu
               caseId={id}
               assrNo={c.assr_no}
@@ -3601,14 +3240,6 @@ function DetailContent({
                 Archive
               </HeaderButton>
             )}
-            {/* Stage picker moved into the Workflow Progress card below
-                (rendered as "Change to"), matching the case-detail layout. */}
-            {/* Close Case on every open case (Nick 2026-07-21) — not just
-                Delivery/Service. The ClosePrompt (satisfaction rating)
-                is stage-agnostic and the stage dropdown already allows
-                jumping straight to Completed, so early closes (customer
-                withdrew, resolved without delivery) go through the same
-                rated flow instead of a silent stage jump. */}
             {c.stage !== "completed" && !c.archived_at && (
               <HeaderButton
                 variant="primary"
@@ -3624,7 +3255,7 @@ function DetailContent({
         ) : undefined
       }
     >
-      {false && <div className="hidden">{/* loading handled by DetailLayout */}</div>}
+      {false && <div className="hidden"></div>}
       {detail.loading && <div className="p-6 text-sm text-ink-muted">Loading...</div>}
       {detail.error && !detail.loading && (
         <div className="m-5 rounded-md border border-err/40 bg-err/5 p-4 text-sm">
@@ -3637,7 +3268,6 @@ function DetailContent({
       )}
       {c && (
         <>
-          {/* Close Case Prompt — collects final customer satisfaction only. */}
           {showClosePrompt && (
             <ClosePrompt
               onConfirm={async (rating, notes) => {
@@ -3650,8 +3280,6 @@ function DetailContent({
             />
           )}
 
-          {/* Void Prompt — records WHY the case is not valid before it
-              moves to the terminal 'voided' stage (Nico 2026-07-29). */}
           {showVoidPrompt && (
             <VoidPrompt
               onConfirm={async (reason) => {
@@ -3664,7 +3292,6 @@ function DetailContent({
             />
           )}
 
-          {/* Archived banner */}
           {c.archived_at && (
             <div className="border-b border-border bg-ink-muted/5 px-5 py-2 text-[11px] text-ink-muted">
               <span className="font-semibold uppercase tracking-wider text-ink-secondary">Archived</span>
@@ -3673,12 +3300,6 @@ function DetailContent({
             </div>
           )}
 
-          {/* PR 3 redesign hook — accordion open state. Defaults to
-              the case's current stage so the row that ops needs is
-              already open when the page lands. */}
-          {/* Workflow card + Status summary bar sit at the same left/right
-              edges as the DetailGrid columns below (no extra padding wrapper
-              — matches the design's aligned rounded-card stack). */}
           <div className="mb-3 space-y-3">
             <WorkflowCard
               currentStage={c.stage}
@@ -3699,16 +3320,6 @@ function DetailContent({
           </div>
           <DetailGrid>
             <DetailMain>
-          {/* ── Issue (captured at intake) ─────────────────────
-              Everything in this block was filled in (or auto-derived
-              from) the original create form: the customer's reported
-              complaint, the issue category, and the priority used for
-              SLA calculation. service_category was removed when the
-              intake form was simplified — the issue_category taxonomy
-              now drives both the dashboard breakdown and triage. */}
-          {/* Design overview strip — LEFT rail top: Issue + Product
-              side-by-side (2 cols on md+). Customer sits in the RIGHT
-              rail per design (1.62fr : 1fr split), not up here. */}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <PanelSection title="Issue" icon={<AlertCircle size={13} />}>
             <InlineEdit
@@ -3732,8 +3343,6 @@ function DetailContent({
               options={priorityOptions.length ? priorityOptions : [...PRIORITY_OPTIONS]}
               onSave={(v) => patch({ priority: v })}
             />
-            {/* Photos / videos — kept inside the Issue card (intake
-                evidence next to the complaint). */}
             <div className="border-t border-border-subtle/50 pt-2.5">
               <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted">
                 Photos / Videos ({attachments.length})
@@ -3743,10 +3352,6 @@ function DetailContent({
               onFiles={(files) => uploadFiles(files, c.stage === "completed" ? "completion" : "evidence")}
             >
             {attachments.length > 0 && (() => {
-              // Issue evidence (what the service form / staff reported)
-              // and QC-result shots read very differently — split the
-              // grid by category instead of one mixed wall. Lightbox
-              // indices stay against the full attachments array.
               const groupOf = (cat: string): { key: string; label: string; order: number } => {
                 if (cat === "complaint" || cat === "evidence")
                   return { key: "issue", label: "Issue photos", order: 0 };
@@ -3827,7 +3432,6 @@ function DetailContent({
             </div>
           </PanelSection>
 
-          {/* Product Info — product attributes + procurement (PO). */}
           <PanelSection title="Product Info" icon={<Package size={13} />}>
             {items.length === 0 ? (
               <div className="text-[12px] text-ink-muted">No items</div>
@@ -3910,16 +3514,11 @@ function DetailContent({
                 <Plus size={12} /> Add Item
               </button>
             )}
-            {/* Product attributes */}
             <div className="mt-1 space-y-2.5 border-t border-border-subtle/50 pt-2.5">
               <div>
                 <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
                   Product Category
                 </div>
-                {/* Multi-select, saved on every toggle. The detail payload
-                    carries the list; fall back to splitting the flat string
-                    so a case fetched from a cached/older response still
-                    shows its chips. */}
                 <CategoryChips
                   options={detailProductCategoryOptions}
                   value={
@@ -3930,9 +3529,6 @@ function DetailContent({
               </div>
             </div>
             {showAddItem && (() => {
-              // Hide items already on the case so users only see what's
-              // still pickable from the SO. Manual fallback below covers
-              // anything not on the original SO.
               const existingCodes = new Set(items.map((it: any) => it.item_code));
               const available = (lookupItems ?? []).filter(
                 (it) => !existingCodes.has(it.item_code),
@@ -4007,7 +3603,6 @@ function DetailContent({
                       })}
                     </div>
                   )}
-                  {/* Manual fallback for items not on the SO. */}
                   <div className="rounded border border-dashed border-border bg-surface/40 p-2">
                     <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
                       Or add manually (not on SO)
@@ -4048,8 +3643,6 @@ function DetailContent({
                 </div>
               );
             })()}
-            {/* Procurement / PO — product-side info (moved out of
-                Resolution, which now only holds supplier handling). */}
             <div className="mt-2 border-t border-border-subtle pt-2">
               <AssrOrderPoLine row={c} />
               <AssrExchangePoPanel caseRow={c} />
@@ -4080,22 +3673,12 @@ function DetailContent({
 
           </div>
 
-          {/* PR 3 redesign — Stage Accordion. Wraps Verification /
-              Resolution / QC Inspection / Reference & Logistics as
-              accordion rows keyed by workflow stage. The row for the
-              current stage auto-opens (see the useEffect on
-              detail.data?.case?.stage above); click any header to
-              toggle. Later PRs (4) will hide the two supplier-only
-              rows for internal resolution methods. */}
           <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
             <div className="flex items-center justify-between border-b border-border-subtle px-5 py-3">
               <div className="text-[13.5px] font-bold tracking-tight text-ink">Stage actions</div>
               <span className="font-mono text-[10px] text-ink-muted">click any stage to expand</span>
             </div>
 
-            {/* pending_review — the intake gate. Body is a small
-                summary; nothing to edit here beyond the initial
-                complaint (captured in the Issue card above). */}
             <StageRow
               c={c}
               priorityMap={priorityMap}
@@ -4125,7 +3708,6 @@ function DetailContent({
               </div>
             </StageRow>
 
-            {/* pending_solution — pick resolution method + set supplier */}
             <StageRow
               c={c}
               priorityMap={priorityMap}
@@ -4153,12 +3735,6 @@ function DetailContent({
               optionLabel={resolutionLabel}
               onSave={(v) => patch({ resolution_method: v })}
             />
-            {/* Refresh — route tag chip + consequence line right under
-                the resolution-method selector. Mirrors the design's
-                `_resSelect()` output so ops sees whether picking this
-                method routes the case to the supplier flow or keeps
-                it internal, plus a one-liner spelling out what that
-                means downstream. */}
             {(() => {
               const route = resolutionRoute(c.resolution_method);
               const chipCls =
@@ -4202,10 +3778,6 @@ function DetailContent({
               value={c.action_remark}
               onSave={(v) => patch({ action_remark: v })}
             />
-            {/* PR 4 — pickup / supplier-handover fields moved to
-                their respective stage rows so each stage has one
-                canonical place. See Pending Item Pickup + Pending
-                Supplier Pickup rows below. */}
             {(c.items_ready_at || attachments.some((a: any) => a?.category === "ready_doc")) && (
               <MilestoneAttachmentSlot
                 caseId={id}
@@ -4223,7 +3795,6 @@ function DetailContent({
           </PanelSection>
             </StageRow>
 
-            {/* under_verification — QC Issue Inspection on receipt */}
             <StageRow
               c={c}
               priorityMap={priorityMap}
@@ -4243,8 +3814,6 @@ function DetailContent({
               openStage={openStage}
               setOpenStage={setOpenStage}
             >
-              {/* Mig 081 — Verification card wraps its own PanelSection so
-                  we strip the outer card wrapper by nesting it directly. */}
               <VerificationCard
                 c={c}
                 patch={patch}
@@ -4259,9 +3828,6 @@ function DetailContent({
               />
             </StageRow>
 
-            {/* pending_supplier_pickup — the whole supplier leg since mig
-                0110: we collect from the customer, the supplier collects
-                from us, and the supplier brings it back. */}
             <StageRow
               c={c}
               priorityMap={priorityMap}
@@ -4278,8 +3844,6 @@ function DetailContent({
               setOpenStage={setOpenStage}
             >
               <div className="space-y-3">
-                {/* Folded in from the retired Item Pickup stage (mig 0110). Sections
-                    follow the service flow (Operation Dept 2026-11-09). */}
                 <PickupTrackingFields c={c} patch={patch} />
                 {/* 返厂 (owner 2026-09-21). Every factory trip is a row; ops
                     adds as many as needed (a real case has been back 4 times).
@@ -4297,9 +3861,6 @@ function DetailContent({
                   confirm={dialog.confirm}
                 />
                 <CaseSection title="4. Handover Documents" badge={null} icon={null} action={null} isCollapsible={false}>
-                  {/* Mig 106 — send-out slip that goes with the item
-                      when supplier collects. Supplier sees this on
-                      their portal (read-only). */}
                   <InlineEdit
                     label="Goods Returned Note"
                     textarea
@@ -4325,7 +3886,6 @@ function DetailContent({
               </div>
             </StageRow>
 
-            {/* pending_item_ready — QC Inspection after supplier return */}
             <StageRow
               c={c}
               priorityMap={priorityMap}
@@ -4357,7 +3917,6 @@ function DetailContent({
               />
             </StageRow>
 
-            {/* pending_delivery_service — logistics rows + related POs */}
             <StageRow
               c={c}
               priorityMap={priorityMap}
@@ -4379,8 +3938,6 @@ function DetailContent({
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
               {([
                 ["SO", c.doc_no, true],
-                // Hand-entered DO wins; do_numbers = the server-resolved
-                // AutoCount/SCM linkage (same precedence as the list).
                 ["DO", c.delivery_order || c.do_numbers, true],
                 ["DO date", formatDate(c.do_date), false],
                 ["PO", c.po_no, true],
@@ -4394,7 +3951,6 @@ function DetailContent({
               ))}
             </div>
 
-          {/* Logistics */}
           {(c.stage === "pending_supplier_pickup" || c.stage === "pending_item_ready" || c.stage === "pending_delivery_service" || c.stage === "completed" || logistics.length > 0) && (
             <PanelSection title={`Logistics (${logistics.length})`}>
               {logistics.map((l) => (
@@ -4430,7 +3986,6 @@ function DetailContent({
             </PanelSection>
           )}
 
-          {/* Related POs */}
           {relatedPOs.length > 0 && (
             <PanelSection title={`Related POs (${relatedPOs.length})`}>
               <div className="space-y-1">
@@ -4472,7 +4027,6 @@ function DetailContent({
               </CollapsibleBlock>
             </StageRow>
 
-            {/* completed — closed case summary */}
             <StageRow
               c={c}
               priorityMap={priorityMap}
@@ -4518,7 +4072,6 @@ function DetailContent({
             </DetailMain>
 
             <DetailAside>
-          {/* Right rail per design: Customer · Assigned to · SLA · Timeline. */}
           <PanelSection
             title="Customer"
             icon={<User size={13} />}
@@ -4539,10 +4092,6 @@ function DetailContent({
           >
             {custEditing ? (
             <>
-              {/* Edit view — the full InlineEdit set. Correcting the SO No
-                  re-matches customer info from the local SO mirror
-                  server-side, the address included (lines + postcode /
-                  city / state, CaseAddressFields). */}
               <InlineEdit
                 label="Customer"
                 value={c.customer_name}
@@ -4568,9 +4117,6 @@ function DetailContent({
                 }}
                 placeholder="Sales rep"
               />
-              {/* SO + Ref side by side — mirrors the read view's twin
-                  chips (Nick 2026-07-23). Ref No is a plain editable
-                  field (the SO re-match fills it only on SO change). */}
               <div className="grid grid-cols-2 gap-2">
                 <SoNoSearchEdit value={c.doc_no} onSave={(v) => patch({ doc_no: v })} />
                 <InlineEdit
@@ -4586,7 +4132,6 @@ function DetailContent({
                 onSave={(v) => patch({ phone: v })}
                 placeholder="012-345 6789"
               />
-              {/* SO layout: lines + State / City / Postcode, the SO form's cascade. */}
               <CaseAddressFields c={c as unknown as Record<string, unknown>} onSave={patch} classes={CASE_ADDRESS_DESKTOP} />
               <InlineEdit
                 label="Location"
@@ -4607,8 +4152,6 @@ function DetailContent({
             </>
             ) : (
             <>
-              {/* Read view — mirrors the .dc.html reference: identity row,
-                  SO/Ref chips, phone row with call, address + location chip. */}
               <div className="flex items-center gap-3">
                 <span className="flex h-[42px] w-[42px] shrink-0 select-none items-center justify-center rounded-[11px] bg-primary-soft text-[15px] font-bold text-primary-ink">
                   {(c.customer_name || "?")
@@ -4670,15 +4213,7 @@ function DetailContent({
             )}
           </PanelSection>
 
-          {/* Assigned To — Design PR 2. Unassigned uses a dashed
-              amber placeholder so it reads as "attention needed" from
-              across the page; picking a user snaps to the standard
-              filled select. */}
           <PanelSection title="Assigned to" icon={<UserPlus size={13} />}>
-            {/* Searchable A→Z multi-select, max 2 — first pick is the
-                primary assignee, second the co-assignee. Unassigned
-                keeps the amber "attention needed" treatment via the
-                warning row below. */}
             <UserMultiSelect
               value={[c.assigned_to, c.assigned_to_2].filter((n): n is number => n != null)}
               selectedItems={assignedItems}
@@ -4705,9 +4240,6 @@ function DetailContent({
             }}
           />
 
-          {/* SLA — Design PR 2. Full red card + big mono countdown +
-              progress bar when overdue. The subtitle keeps the deadline
-              date and priority tier for context. */}
           {(() => {
             const closed = c.stage === "completed";
             const breached = !closed && c.is_breached === 1;
@@ -4838,10 +4370,6 @@ function DetailContent({
                       className="rounded-md border border-border bg-surface px-2 py-1.5 text-[11px] font-semibold outline-none focus:border-primary"
                       title="Where this note is visible"
                     >
-                      {/* Shared with mobile (vendor/scm/lib/assr/case-fields). The
-                          two lists had already drifted on the one label that
-                          matters: this side promised "Customer-visible", the phone
-                          said only "Customer". */}
                       {ASSR_NOTE_AUDIENCES.map((a) => (
                         <option key={a.value} value={a.value}>{a.label}</option>
                       ))}
@@ -4889,9 +4417,6 @@ function DetailContent({
             }
           />
 
-          {/* Cost / Quality / CSAT — folded by default (v2); relevant
-              mostly at sign-off / close. */}
-          {/* Satisfaction (shown when completed) */}
           {c.stage === "completed" && (
             <PanelSection title="Customer Satisfaction">
               {c.satisfaction_rating ? (
@@ -4948,10 +4473,6 @@ export function ServiceCaseDetail() {
   return <DetailContent id={id} onUpdated={() => {}} toast={toast} />;
 }
 
-// ── Customer history ─────────────────────────────────────────
-// Surfaces prior cases for the same customer (matched on phone if
-// available, else exact name) so staff can spot repeat complaints
-// before promising a fix.
 
 type CustomerHistoryRow = {
   id: number;
@@ -4967,27 +4488,9 @@ type CustomerHistoryRow = {
   resolution_method: string | null;
 };
 
-// ── Issue Category picker ────────────────────────────────────
-// Five canonical categories + "Other" which prompts for a custom
-// label. Stored as plain text on the case so existing free-text
-// values still display; selecting "Other" lets ops capture niche
-// cases without locking them into the standard set.
-//
-// The five live in vendor/scm/lib/assr/case-fields — mobile carried an
-// identical second copy, which is what the note-audience labels looked like
-// the day before THEY drifted.
 
 const OTHER_SENTINEL = "__other__";
 
-// ── Stage auto-advance (TODO item 5) ───────────────────────────
-// Each non-completed stage has a "completion predicate" — when it goes
-// from unsatisfied to satisfied, prompt the user to advance. They keep
-// the existing manual override (Next stage button + stage chip menu).
-//
-// Row 2 (Under Verification → Pending Solution) is intentionally NOT in
-// this table — VerificationCard owns it because the predicate is an
-// explicit acceptance decision rather than a field-fill, and it has
-// side-paths (rejected/needs_more_info) the other rows don't have.
 
 interface StagePredicate {
   next: AssrStage;
@@ -5055,9 +4558,6 @@ function useStageAutoAdvance({
     satisfied: boolean;
   } | null>(null);
 
-  // Stable key derived from the fields that any predicate cares about.
-  // Limited to those so unrelated patches (e.g. issuing a PO note) don't
-  // re-run the effect.
   const key = useMemo(() => {
     if (!c) return "";
     return JSON.stringify({
@@ -5093,8 +4593,6 @@ function useStageAutoAdvance({
       last && last.caseId === c.id && last.stage === c.stage;
 
     if (!sameCaseAndStage) {
-      // First sighting of this case/stage: set baseline silently so we
-      // don't pop the modal on initial mount of an already-ready case.
       lastRef.current = {
         caseId: c.id,
         stage: c.stage,
@@ -5124,49 +4622,13 @@ function useStageAutoAdvance({
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
-// ── Verification card ──────────────────────────────────────────
-// Mig 081. The Under Verification → Pending Solution transition is the
-// only stage gate that's a true judgement call (everything else fires
-// off a date/text field being filled). Three outcomes:
-//
-//   accepted        → real defect we'll fix. When root cause is also
-//                     filled, prompt to advance the stage.
-//   rejected        → not our issue. Prompt to short-circuit to Completed.
-//   needs_more_info → wait on the customer; case stays put.
-//
-// `verified_at` / `verified_by` are server-stamped on PATCH, so the
-// timestamp can't drift from the actor.
 
 
-// ── Detail top-of-page redesign (PR 1) ─────────────────────────
-// Two card components lifted from `Service Case Detail — Redesign.dc.html`:
-// a numbered workflow tracker with an inline "Change to" dropdown, and a
-// 5-cell status summary bar. The full accordion + resolution-driven flow
-// filtering land in later PRs; this PR only refreshes the header strip.
 
-// READ from the canonical table, never retyped. This WAS a sixth hand-written
-// copy of the stage vocabulary and four of its rows had drifted: it printed
-// "Review" / "Solution" / "Verification" / "Delivery / Service" where the shared
-// table — and therefore the phone, the portal and the printed report — says
-// "Pending Review" / "Pending Solution" / "Under Verification" / "Pending
-// Delivery / Service". One stage, two names, decided by which device the reader
-// picked up. `id` is this page's own name for the stage key; everything else,
-// including the funnel-dot caption, now comes from stages.ts.
 const DETAIL_STAGES: { id: AssrStage; short: string; long: string; desc: string }[] =
   ASSR_STAGES.map((s) => ({ id: s.key as AssrStage, short: s.short, long: s.long, desc: s.desc }));
 
-// `resolutionRoute` — which side of the flow a resolution method routes to —
-// now lives in the shared vendor/scm/lib/assr/stages module (imported above)
-// so desktop + mobile can't drift on it. It drives the dot colour + subtitle
-// in the Resolution cell of the summary bar and, via `getActiveStages` below,
-// whether the two supplier-only workflow stages appear at all.
 
-// PR 4 — filtered stage list. When the case's resolution method is
-// on-site (own team) / return to store, the two supplier-only stages
-// (Supplier Pickup + Item Ready) drop out. We keep the current stage in
-// the list unconditionally as a safety net so a case parked on a
-// filtered-out stage still renders (unlikely, but ops can happen). The
-// per-stage rule (isStageActive) is shared with mobile.
 function getActiveStages(
   method: string | null | undefined,
   currentStage: AssrStage,
@@ -5174,12 +4636,6 @@ function getActiveStages(
   return DETAIL_STAGES.filter((s) => isStageActive(method, s.id, currentStage));
 }
 
-// Design PR 3 — accordion row for a single workflow stage. Shows a
-// numbered badge (done ✓ / current N / pending N), title, chip, and
-// one-line summary. Clicking the header toggles the body. Current
-// stage is auto-opened on mount / on stage change (see the useEffect
-// in DetailBody). The current row gets a cream inset + brass left rail
-// so ops can spot it from across the page.
 function StageRow({
   stageId,
   title,
@@ -5199,21 +4655,9 @@ function StageRow({
   badge?: React.ReactNode;
   children: React.ReactNode;
   currentStage: AssrStage;
-  // PR 4 — filtered active-stage list. If stageId isn't in it, the
-  // row hides itself (internal resolution methods skip Supplier
-  // Pickup + Item Ready). Row number + Done/Current/Pending state
-  // come from this filtered list too, so the numbering matches the
-  // Workflow card above.
   stages: typeof DETAIL_STAGES;
   openStage: AssrStage | null;
   setOpenStage: (s: AssrStage | null) => void;
-  /* Nico 2026-07-09 — surface per-stage SLA on the CURRENT row so ops
-     can spot an over-budget stage from the Detail. Uses the same
-     stage_target_days snapshot LeadTimePill was already computed for
-     (mig 082) — target is set at stage entry, elapsed is now vs
-     stage_entered_at. Compact pill: green ≤50%, amber 50–100%, red
-     >100%. DONE / FUTURE stages don't have this data on the case row
-     (would need the audit log) — showing only on CURRENT for now. */
   c?: AssrCase;
   priorityMap?: Record<string, string>;
 }) {
@@ -5229,10 +4673,6 @@ function StageRow({
     <div
       className={cn(
         "border-b border-border-subtle last:border-b-0",
-        // Nico 2026-07-09 — CURRENT stage highlight swapped from amber
-        // (bg-amber-50 dark:bg-amber-950/40 + accent shadow + accent text) to petrol; matches
-        // the Stage funnel dot flip below and the "amber = SLA warning
-        // only" convention.
         state === "current" && "bg-primary/5 shadow-[inset_3px_0_0_0_theme(colors.primary.DEFAULT)]",
       )}
     >
@@ -5272,9 +4712,6 @@ function StageRow({
               {chip}
             </span>
             {badge}
-            {/* Per-stage SLA pill — only on the CURRENT row. Reuses
-                LeadTimePill's elapsed-vs-target computation so the
-                Detail matches the case list's SLA lens. */}
             {state === "current" && c && priorityMap && (
               <LeadTimePill c={c} priorityMap={priorityMap} />
             )}
@@ -5317,17 +4754,12 @@ function WorkflowCard({
   voidReason,
 }: {
   currentStage: AssrStage;
-  // PR 4 — pass the filtered active-stage list. Internal resolution
-  // methods drop Supplier Pickup + Item Ready → 5 dots instead of 7.
   stages: typeof DETAIL_STAGES;
   transitioning: boolean;
   onChange: (s: AssrStage) => void;
   disabled?: boolean;
-  /** Stored sub-status of the current stage — rendered under its label. */
   subStatus?: { key: string; label: string } | null;
-  /** Directly switch the sub-status (PATCH sub_status). */
   onSubChange?: (key: string) => void;
-  /** Reason shown on the terminal Voided banner. */
   voidReason?: string | null;
 }) {
   const isVoided = currentStage === "voided";
@@ -5353,17 +4785,9 @@ function WorkflowCard({
                 className="h-8 rounded-md border border-border bg-bg px-2.5 text-[12.5px] font-semibold outline-none focus:border-primary disabled:opacity-60"
                 title="Move this case to any stage"
               >
-                {/* The FILTERED prop, not the module table. This mapped
-                    DETAIL_STAGES while the counter two lines up read `stages` —
-                    so an internal-resolution case said "Step 2 / 5" and then
-                    offered all 7, the two supplier-only stages included. That is
-                    the exact drift vendor/scm/lib/assr/stages.ts exists to stop,
-                    and mobile (activeAssrStages) never had it. */}
                 {stages.map((s) => (
                   <option key={s.id} value={s.id}>{s.long}</option>
                 ))}
-                {/* Terminal alt-outcome — not a pipeline step, offered as
-                    a final option (Nico 2026-07-29). */}
                 <option value="voided">{ASSR_STAGE_LABEL.voided}</option>
               </select>
               {onSubChange && ASSR_SUB_STATUSES[currentStage] && (
@@ -5459,7 +4883,6 @@ function StatusSummaryBar({
   c: AssrCase;
   stages: typeof DETAIL_STAGES;
   priorityMap: Record<string, string>;
-  /** Finer state inside the current stage — shown on the Status cell. */
   subStatus?: { key: string; label: string } | null;
 }) {
   const curIdx = Math.max(0, stages.findIndex((s) => s.id === c.stage));
@@ -5551,12 +4974,6 @@ function StatusSummaryBar({
   );
 }
 
-// ── Inspection card ────────────────────────────────────────────
-// Surfaces the v3.1 `inspection_result` field (pass / fail / na) +
-// an inspection-report attachment slot. Hidden on early-stage cases
-// to keep the page uncluttered; renders once the case has reached
-// pending_supplier_pickup or beyond, OR when there's already a result /
-// report on file.
 
 const INSPECTION_STAGES_OR_LATER: AssrStage[] = [
   "pending_supplier_pickup",
@@ -5567,9 +4984,6 @@ const INSPECTION_STAGES_OR_LATER: AssrStage[] = [
 
 const INSPECTION_OPTIONS = ["pass", "fail", "na"] as const;
 
-// Collapsible card — bold header + chevron, body hidden until expanded.
-// Used to fold lower-priority detail sections (Reference & Logistics on the
-// left; Cost / Quality / CSAT on the right) per the v2 layout.
 function CollapsibleBlock({
   title,
   defaultOpen = false,
@@ -5622,9 +5036,6 @@ function VerificationCard({
   archived: boolean;
   detail: ReturnType<typeof useQuery>;
   toast: ReturnType<typeof useToast>;
-  // Refresh — inside a StageRow the accordion supplies the section
-  // title, so skip the PanelSection wrapper here to avoid stacking
-  // two headers on top of each other.
   hideHeader?: boolean;
 }) {
   const [rootDraft, setRootDraft] = useState(c.verified_root_cause ?? "");
@@ -5643,7 +5054,6 @@ function VerificationCard({
     setSaving(true);
     try {
       await patch({ verification_outcome: next });
-      // Side-paths off the outcome itself.
       if (next === "rejected" && c.stage !== "completed") {
         if (
           await dialog.confirm(
@@ -5672,9 +5082,6 @@ function VerificationCard({
     setSaving(true);
     try {
       await patch({ verified_root_cause: next || null });
-      // If outcome was already 'accepted' and we just supplied the
-      // missing root cause, prompt the same advance dialog so the user
-      // doesn't have to re-tap the outcome chip.
       if (next && outcome === "accepted" && isUnderVerification) {
         if (
           await dialog.confirm(
@@ -5691,10 +5098,6 @@ function VerificationCard({
 
   const inner = (
     <>
-      {/* Folded in from the retired Pending Inspection stage (mig
-          0105) — who inspects the reported issue. Own team routes the
-          visit into Delivery Planning via customer_pickup_at; supplier
-          handles it on their side via the supplier portal. */}
       <InspectByToggle
         value={c.inspection_by ?? null}
         isDisabled={archived || saving}
@@ -5748,9 +5151,6 @@ function VerificationCard({
           </div>
         </div>
         <div className="hidden h-8 w-px bg-border sm:block" />
-        {/* qc_issue_result column exists (mig 0105) but has no UI — Nick
-            2026-07-14: the on-receipt check only needs the date + photos;
-            the pass/fail verdict lives in Outcome. */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <span className="text-[13px] font-semibold text-ink">Outcome</span>
           <VerificationOutcomeChips outcome={outcome} isDisabled={saving} onPick={setOutcome} />
@@ -5792,10 +5192,6 @@ function VerificationCard({
         </div>
       )}
 
-      {/* Photos / videos taken at receipt inspection — evidence of
-          what the item looked like BEFORE it went to the supplier.
-          Distinct category from the post-return QC report so both
-          checkpoints keep their own paper trail. */}
       <CaseSection title="QC Issue Inspection Photos / Videos" badge={null} icon={<ImageIcon size={16} />} action={null} isCollapsible={false}>
         <MilestoneAttachmentSlot
           caseId={caseId}
@@ -5831,18 +5227,7 @@ function VerificationCard({
   );
 }
 
-// ── Sign-off attachment slot ───────────────────────────────────
-// Item 2 of the QMS TODO. Single-file slot inside Quality Review for
-// the verification photo / doc the QA wants on record before the case
-// flips to Completed. Reuses the existing attachments endpoint with
-// category=sign_off so storage + visibility toggles already work.
 
-// ── Milestone attachment slot ──────────────────────────────────
-// Generic per-category attachment slot, used at every stage handoff
-// where ops needs a paper trail (sign-off, inspection report, pickup
-// form, item-ready doc, delivery POD). Filters the case's existing
-// attachments by the given category and exposes a small Upload button
-// that hits the existing /api/assr/:id/attachments PUT route.
 
 type MilestoneCategory =
   | "sign_off"
@@ -5877,11 +5262,7 @@ function MilestoneAttachmentSlot({
   detail: ReturnType<typeof useQuery>;
   dialog: ReturnType<typeof useDialog>;
   toast: ReturnType<typeof useToast>;
-  /** Slimmer layout for inline use under a date field — drops the
-   *  uppercase header label since the surrounding field already
-   *  contextualises the slot. */
   compact?: boolean;
-  /** Wider thumbnail grid with file names and an upload tile (QC Inspection Report). */
   gallery?: boolean;
 }) {
   const [uploading, setUploading] = useState(false);
@@ -5895,14 +5276,12 @@ function MilestoneAttachmentSlot({
     if (accepted.length === 0) return;
     setUploading(true);
     try {
-      // WO-7: shared pipeline — compresses photos + uploads their thumbs.
       for (const f of accepted) await uploadAssrAttachment(caseId, f, category);
       toast.success(accepted.length > 1 ? `${accepted.length} files uploaded` : `${label} uploaded`);
     } catch (err: any) {
       toast.error(err?.message || "Upload failed");
     } finally {
       setUploading(false);
-      // Reload even on failure — earlier files of a batch may have saved.
       detail.reload();
     }
   }
@@ -5984,9 +5363,6 @@ function MilestoneAttachmentSlot({
   );
 }
 
-// Thin wrapper preserves the existing Quality Review call site —
-// shipped this morning with `category="sign_off"`. Future call sites
-// should use MilestoneAttachmentSlot directly.
 function SignOffAttachmentSlot(props: {
   caseId: number;
   attachments: any[];
@@ -6006,11 +5382,6 @@ function SignOffAttachmentSlot(props: {
   );
 }
 
-// ── Logistics row (view + inline edit) ─────────────────────────
-// TODO item 4. Each ASSR logistics row gets an Edit toggle so ops can
-// fix the scheduled date / time / assignee / status / remark after
-// saving — previously the only way to change one was archive + recreate.
-// Uses the existing PATCH /api/assr/:id/logistics/:logId endpoint.
 
 function LogisticsRow({
   l,
@@ -6202,10 +5573,6 @@ function LogisticsRow({
           {l.notes}
         </div>
       )}
-      {/* Delivery POD slot — case-level attachment shown on every
-          delivery row so ops can attach the signed POD next to the
-          row it belongs to. Single PODs per case in v1 (the
-          attachment is keyed by case, not by logistics row). */}
       {l.type === "delivery" && (
         <div className="mt-2 border-t border-border/60 pt-2">
           <MilestoneAttachmentSlot
@@ -6227,12 +5594,6 @@ function LogisticsRow({
   );
 }
 
-// ── Print menu (header) ────────────────────────────────────────
-// Replaces the single Print button with a 3-variant chooser per the
-// proposal §12 print artifacts: Customer / Supplier / Office. Each
-// option appends a `?variant=` query param to the existing print
-// route — backend defaults to "office" so any legacy bookmark still
-// works.
 
 const PRINT_VARIANTS = {
   customer: { label: "Customer Copy", hint: "Tracker + QR to portal" },
@@ -6241,11 +5602,6 @@ const PRINT_VARIANTS = {
 } as const;
 type PrintVariant = keyof typeof PRINT_VARIANTS;
 
-/* Whose paper the copy prints on. The two entities share one service
-   operation, so a case raised under one is routinely handed to the customer on
-   the other's letterhead; "Both" names them separately (service provider vs
-   retail entity) for the cases where the difference matters. Applies to all
-   three copies — customer, supplier and office. */
 const PRINT_ENTITIES = {
   houzs: "Houzs",
   "2990": "2990",
@@ -6269,9 +5625,6 @@ function PrintMenu({
   refNo?: string | null;
   stage?: string | null;
   resolutionMethod?: string | null;
-  /** The case's OWN company — not the active workspace's. The two differ
-   *  routinely (a 2990 workspace holding a Houzs-owned case), and this is what
-   *  the document heads itself with when no entity is picked. */
   companyCode?: string | null;
   toast: ReturnType<typeof useToast>;
 }) {
@@ -6294,14 +5647,8 @@ function PrintMenu({
      before. The picker lives in the dialog rather than the copy menu because
      the menu would otherwise become 3 copies × 3 entities = 9 rows. */
   const [entity, setEntity] = useState<PrintEntity | null>(null);
-  /* Null means "not touched" — which resolves to the case's OWN company, the
-     same thing the backend falls back to. Resolving it here rather than leaving
-     it blank is what lets the picker highlight a real choice and the card name
-     the company that will actually head the paper. */
   const caseEntity: PrintEntity = companyCode === "2990" ? "2990" : "houzs";
   const chosen: PrintEntity = entity ?? caseEntity;
-  /* The band names the entity being printed, not the workspace you happen to be
-     in. `both` heads the paper with Houzs (see the route), so it says Houzs. */
   const bandCompany = defaultBrandingForCompany(
     chosen === "2990" ? "2990" : HOUZS_COMPANY_CODE,
   ).companyName;
@@ -6317,11 +5664,6 @@ function PrintMenu({
     }
   }
 
-  /* Print without a visible embed and without bouncing through a tab: fetch the
-     document, mount it in a HIDDEN iframe, print that, then drop it. Same trick
-     the PDF documents use (vendor/scm/lib/pdf-common deliverPdf), and the same
-     reason — printing an iframe sidesteps the app's global @media print rules,
-     which would otherwise put a blank sheet in the tray. */
   const printNow = async (v: PrintVariant, e: PrintEntity) => {
     let html: string;
     try {
@@ -6337,13 +5679,10 @@ function PrintMenu({
       try {
         printFrameAs(frame, frame.contentDocument?.title || "Service document");
       } catch {
-        /* Some engines throw before the document settles; the tab exit is still
-           there and the frame is cleaned up below either way. */
       }
     };
     document.body.appendChild(frame);
-    // 60s, same as the PDF path: long enough for the OS print dialog to hold it.
-    window.setTimeout(() => { try { document.body.removeChild(frame); } catch { /* gone */ } }, 60_000);
+    window.setTimeout(() => { try { document.body.removeChild(frame); } catch { } }, 60_000);
   };
 
   const print = usePrintPreview(() => (variant ? printNow(variant, chosen) : undefined));
@@ -6354,7 +5693,6 @@ function PrintMenu({
     print.openPreview();
   };
 
-  // Click-outside close — listen on document while open.
   useEffect(() => {
     if (!open) return;
     function onDown(ev: MouseEvent) {
@@ -6402,9 +5740,6 @@ function PrintMenu({
           docTitle="Service Case"
           docNo={assrNo ?? `Case ${caseId}`}
           companyName={bandCompany}
-          /* The facts that identify THIS document, in the same shape the DO /
-             SO / SI previews use — customer, what is wrong, how it is being
-             fixed. "Copy" stays because it is the one thing the menu chose. */
           rows={[
             { label: "Customer", value: customer || "—" },
             ...(refNo ? [{ label: "Ref No.", value: refNo }] : []),
@@ -6447,9 +5782,6 @@ function PrintMenu({
   );
 }
 
-// Portal-link dropdown — sits next to Print. Lets ops pick which link to
-// generate (customer or supplier) instead of two always-visible rows in the
-// Customer card.
 function PortalLinksMenu({
   id,
   assrNo,
@@ -6526,12 +5858,6 @@ function PrintMenuItem({
   );
 }
 
-// ── Lead Time pill (header) ────────────────────────────────────
-// Glanceable answer to "which priority is driving this case's SLA,
-// and what's the target for the current stage?" — reads
-// stage_target_days (snapshotted at stage entry per mig 082) and
-// tints by elapsed/target ratio so an over-budget stage jumps out.
-// Hidden on completed cases and on legacy rows without a snapshot.
 
 function LeadTimePill({
   c,
@@ -6544,8 +5870,6 @@ function LeadTimePill({
   if (c.stage_target_days == null) return null;
 
   const target = c.stage_target_days;
-  // Elapsed days since the case entered the current stage. stage_entered_at
-  // is ISO without a Z suffix on some rows — normalise to UTC.
   let elapsed = 0;
   if (c.stage_entered_at) {
     const iso = c.stage_entered_at.endsWith("Z")
@@ -6594,10 +5918,6 @@ function IssueCategoryField({
   value: string | null | undefined;
   onSave: (next: string | null) => Promise<void>;
   dialog: ReturnType<typeof useDialog>;
-  // Mig 065 — passed in from the parent so the picker reflects what
-  // admins added in Service Maintenance. Falls back to the legacy
-  // shared ASSR_ISSUE_CATEGORIES list if the API hasn't
-  // returned yet.
   categories: readonly string[];
 }) {
   const isCanonical = !!value && categories.includes(value);
@@ -6655,11 +5975,6 @@ function IssueCategoryField({
   );
 }
 
-// ── Cost tracking panel ──────────────────────────────────────
-// The case carries `customer_amount` (revenue side) and `po_amount`
-// (supplier cost). Both can be auto-filled from the linked SO + PO via
-// /api/assr/:id/cost-suggestion — staff click "Auto-fill" to fetch a
-// suggestion, review the values, then Apply (or edit manually).
 
 interface CostSuggestion {
   customer_amount: number | null;
@@ -6928,13 +6243,10 @@ function CustomerHistory({ id }: { id: number }) {
   );
 }
 
-// URL-safe ASSR slug for readable portal links (ASSR/2607-008 →
-// ASSR-2607-008). Cosmetic only — the portal resolves by token.
 function assrSlug(assrNo: string): string {
   return assrNo.replace(/[^A-Za-z0-9-]+/g, "-");
 }
 
-// ── Portal tracking link generator (shown on every case) ────
 
 function PortalLinkRow({
   id,
@@ -6950,8 +6262,6 @@ function PortalLinkRow({
   toast: ReturnType<typeof useToast>;
 }) {
   const [busy, setBusy] = useState(false);
-  // Readable link: the ASSR slug rides in the path (cosmetic — the
-  // token alone still resolves, old bare links keep working).
   const link = existingToken
     ? `${window.location.origin}/portal/case/${assrSlug(assrNo)}/${existingToken}`
     : null;
@@ -6960,9 +6270,7 @@ function PortalLinkRow({
     setBusy(true);
     try {
       await api.post<{ token: string; path: string }>(`/api/assr/${id}/track-link`);
-      // Reload the case detail so existingToken propagates in.
       onGenerated();
-      // The parent reload is async — optimistically tell the user it worked.
       toast.success("Portal link generated.");
     } catch (e: any) {
       toast.error(e?.message || "Failed to generate link");
@@ -7017,12 +6325,6 @@ function PortalLinkRow({
   );
 }
 
-// ── Supplier portal link (v3.1) ─────────────────────────────────
-//
-// Mirrors PortalLinkRow but minted via /supplier-link. The endpoint is
-// idempotent on (case, creditor_code), so calling it twice returns the
-// same active token. The token isn't surfaced in the case detail
-// payload (yet) — Generate fetches it lazily.
 
 function SupplierPortalLinkRow({
   id,
@@ -7096,12 +6398,6 @@ function SupplierPortalLinkRow({
   );
 }
 
-// ── Sales portal link ────────────────────────────────────────────
-//
-// Third variant of the per-case portal link: same /portal/case route
-// as the customer link but the token is source='sales', so the portal
-// shows the salesperson view — full 7-stage progress with dates, and
-// comments/uploads attributed to sales. Idempotent per case.
 
 function SalesPortalLinkRow({
   id,
@@ -7177,7 +6473,6 @@ function SalesPortalLinkRow({
   );
 }
 
-// ── Survey link generator (shown on closed cases) ─────────────
 
 function SurveyLinkButton({ id, toast }: { id: number; toast: ReturnType<typeof useToast> }) {
   const [link, setLink] = useState<string | null>(null);
@@ -7189,16 +6484,11 @@ function SurveyLinkButton({ id, toast }: { id: number; toast: ReturnType<typeof 
       const res = await api.post<{ token: string }>(`/api/assr/${id}/survey-token`);
       const url = `${window.location.origin}/survey/${res.token}`;
       setLink(url);
-      /* The catch used to swallow the clipboard failure and the success toast
-         fired unconditionally — so on Safari, an insecure context, or a denied
-         permission the user was told the link was on their clipboard when it
-         was not, and pasted whatever was there before. The link is shown on
-         screen either way, so the honest fallback is to point at it. */
       let copied = false;
       try {
         await navigator.clipboard?.writeText(url);
         copied = true;
-      } catch { /* copied stays false */ }
+      } catch { }
       if (copied) toast.success("Survey link copied to clipboard");
       else toast.info("Survey link ready — copy it from the box below. Your browser wouldn't let us copy it for you.");
     } catch (e: any) {
@@ -7246,7 +6536,6 @@ function SurveyLinkButton({ id, toast }: { id: number; toast: ReturnType<typeof 
   );
 }
 
-// ── Close Case Prompt (satisfaction rating) ──────────────────
 
 function ClosePrompt({
   onConfirm,
@@ -7317,10 +6606,6 @@ function ClosePrompt({
   );
 }
 
-// ── Void Prompt (reason capture) ─────────────────────────────
-// Mirrors ClosePrompt: an inline red banner that records WHY the case
-// is not valid / not warranty-covered before it moves to 'voided'.
-// Reason is required — the terminal state must carry an explanation.
 function VoidPrompt({
   onConfirm,
   onCancel,
@@ -7363,7 +6648,6 @@ function VoidPrompt({
   );
 }
 
-// ── Logistics creation form ──────────────────────────────────
 
 function LogisticsForm({
   assrId,
@@ -7508,9 +6792,6 @@ function SupplierField({ c, id, detail, toast, onUpdated }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, open, adding]);
 
-  // Supplier identity is office + supplier-portal only (Nick
-  // 2026-07-15) — the server already strips the creditor fields for
-  // sales-scoped callers; hiding the card removes the dead controls.
   if (isSalesStaff(user)) return null;
 
   async function assign(code: string | null) {
@@ -7723,12 +7004,6 @@ function SupplierField({ c, id, detail, toast, onUpdated }: {
   );
 }
 
-// ── Per-item remark input ──────────────────────────────────────
-// Prints in the ITEMS table's REMARK column on both the customer and
-// supplier copies (Nick 2026-07-15). Saves on blur / Enter; empty
-// clears the remark.
-// Per-item quantity stepper (Nick 2026-07-20) — − N + inline in the
-// Product Info card; saves immediately, feeds the print QTY column.
 function ItemQtyStepper({ caseId, item, disabled, onSaved, toast }: {
   caseId: number;
   item: any;
@@ -7870,7 +7145,6 @@ function ItemRemarkInput({ caseId, item, field, label, placeholder, disabled, on
     setDraft(String(item[field] ?? ""));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, item[field]]);
-  // Auto-grow so multi-line remarks stay fully visible.
   useEffect(() => {
     const el = taRef.current;
     if (!el) return;
@@ -7903,10 +7177,6 @@ function ItemRemarkInput({ caseId, item, field, label, placeholder, disabled, on
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
-        // Enter saves (blur); Alt+Enter inserts a line break (Nico
-        // 2026-07-29). The browser does NOT insert a newline for
-        // Alt+Enter on its own (only plain/Shift+Enter do), so the
-        // break is spliced in manually at the caret.
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           e.preventDefault();
@@ -7931,7 +7201,6 @@ function ItemRemarkInput({ caseId, item, field, label, placeholder, disabled, on
   );
 }
 
-// ── Local file preview (before upload) ─────────────────────────
 
 function FilePreview({ file, onRemove }: { file: File; onRemove: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -7968,7 +7237,6 @@ function FilePreview({ file, onRemove }: { file: File; onRemove: () => void }) {
   );
 }
 
-// ── Attachment thumbnail (loads via auth) ──────────────────────
 
 function AttachmentThumb({ att, onClick, onVisibilityChange, onArchive }: {
   att: AssrAttachment & { source?: string; visible_to_customer?: number };
@@ -7993,9 +7261,6 @@ function AttachmentThumb({ att, onClick, onVisibilityChange, onArchive }: {
   useEffect(() => {
     if (!isImage) return;
     let revoked = false;
-    // WO-7 — try the light `.thumb` sibling first; photos uploaded before
-    // thumbnails shipped have none (404) and fall back to the original.
-    // The lightbox click-through still loads the full-size original.
     loadThumbFirst((p) => api.fetchBlobUrl(p), `/api/assr/attachments/${att.r2_key}`)
       .then((u) => {
         if (!revoked) setUrl(u);
@@ -8074,10 +7339,6 @@ function AttachmentThumb({ att, onClick, onVisibilityChange, onArchive }: {
   );
 }
 
-// ── Full-screen lightbox for staff-side attachments ──────────
-// Mirrors the portal lightbox but fetches via the staff auth path
-// (/api/assr/attachments/:r2_key). Images and videos participate in
-// prev/next navigation — PDFs/docs stay out.
 function StaffLightbox({
   attachments,
   index,
@@ -8089,9 +7350,6 @@ function StaffLightbox({
   onChange: (i: number) => void;
   onClose: () => void;
 }) {
-  // Images and videos participate in lightbox navigation. The
-  // caller's `index` is the index into the full attachments array,
-  // but we map it to the media-only list for prev/next.
   const mediaIndices = useMemo(
     () => attachments
       .map((a, i) => {
@@ -8131,10 +7389,6 @@ function StaffLightbox({
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  // This is a FULL-SCREEN viewer, not a thumbnail: with `.catch(() => {})` a
-  // denied or failed fetch left the "Loading…" placeholder up forever, so a 403
-  // was indistinguishable from a slow network and the operator waited on
-  // something that was never coming. Keep the reason and render it.
   const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     setUrl(null);

@@ -25,8 +25,6 @@ export const AdvanceKnockOff = ({ pvId, supplierId }: { pvId: string; supplierId
   const advancesQ = useSupplierAdvances(supplierId);
   const applyM = useApplyAdvance();
   const piListQ = usePurchaseInvoices();
-  /* The other creditor's bills (2026-09-06): an advance to a 405-x supplier
-     lands on its AP INVOICES, which the purchase-invoice list never carries. */
   const apListQ = useApInvoices('API');
   const [pick, setPick] = useState<KnockOffPick>({});
   const [note, setNote] = useState<string | null>(null);

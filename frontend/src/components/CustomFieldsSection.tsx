@@ -5,15 +5,6 @@ import type { UseUdfResult, UdfFieldType } from "../hooks/useUdf";
 import { useDialog } from "../hooks/useDialog";
 import { useToast } from "../hooks/useToast";
 
-/**
- * Custom fields (UDF) editor — add and delete the user-defined columns a
- * document type carries. Renaming is deliberately not exposed: the backend
- * `key` is stable by design.
- *
- * Lifted verbatim out of ColumnsPanel when the columns drawer was rebuilt
- * (design handoff 2026-08-01), so the redesign did not also rewrite the one
- * part of that panel that writes to the server.
- */
 
 const FIELD_TYPES: Array<{ value: UdfFieldType; label: string }> = [
   { value: "text", label: "Text" },

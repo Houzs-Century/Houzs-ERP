@@ -66,8 +66,6 @@ export type ColourKivOffenderLike = {
   fabricLabel?: string;
 };
 
-/** Canonical axis key → human label for the given category ('legHeight' →
- *  'Leg Height'). Falls back to the raw key if the axis isn't in the rule. */
 const axisLabel = (group: string, key: string): string => {
   const axes = REQUIRED_VARIANT_AXES_BY_CATEGORY[(group ?? '').toLowerCase()] ?? [];
   return axes.find((a) => a.key === key)?.label ?? key;
@@ -93,9 +91,6 @@ const ACT_CLAUSE: Record<GateAct, string> = {
   proceed: 'before this order can be proceeded',
 };
 
-/** What each condition is ABOUT, in the operator's words, minus the act clause.
- *  A missing postcode says the postcode is missing — it does not recite the
- *  other four conditions, which is exactly what the old single sentence did. */
 const CONDITION_SUBJECT: Record<Exclude<ProceedGateCondition, 'deposit'>, { subject: string; field: string }> = {
   customer_name: { subject: 'Customer name is required',            field: 'Customer' },
   address:       { subject: 'Delivery address line 1 is required',  field: 'Address' },
@@ -103,17 +98,11 @@ const CONDITION_SUBJECT: Record<Exclude<ProceedGateCondition, 'deposit'>, { subj
   delivery_date: { subject: 'A delivery date is required',          field: 'Delivery date' },
 };
 
-/** 2990-0029: a custom-colour pillow needs its colour; a pillow with no chosen
- *  colour is a different SKU, `SQUARE PILLOW RDM` (random colour). Name it so the
- *  operator is not left with only the fabric picker. */
 const randomColourHint = (itemCode: string, axisKey: string): string =>
   axisKey === 'fabricCode' && /^SQUARE PILLOW(?!.*RDM)/i.test(itemCode.trim())
     ? '. No colour chosen? Use the random-colour pillow SKU instead'
     : '';
 
-/** One completeness condition as a problem. Freshly built every call — a shared
- *  object handed to two responses is one `problems` list away from a caller
- *  mutating the other's. */
 const completenessProblem = (
   cond: Exclude<ProceedGateCondition, 'deposit'>,
   act: GateAct,
@@ -123,17 +112,6 @@ const completenessProblem = (
   field: CONDITION_SUBJECT[cond].field,
 });
 
-/** The deposit shortfall as a problem, or null when the money gate is MET.
- *
- *  IT ASKS meetsDepositGate ITSELF, and that is the load-bearing line. A free
- *  order (total <= 0) is vacuously met there, so this returns null and no
- *  deposit sentence can reach the operator — the 2026-08-17 failure was a
- *  zero-total order being told about a deposit it did not owe. A `totalSen > 0`
- *  guard here would read the same today and drift the moment the threshold rule
- *  grows a branch; delegating cannot drift.
- *
- *  Both amounts are SEN (the server ledger's unit): unlike the ratio-only
- *  `paid`/`total` on ProceedGateInput, these are printed, so the unit is fixed. */
 const depositProblem = (
   paidSen: number,
   totalSen: number,
@@ -156,28 +134,12 @@ const depositProblem = (
 };
 
 export type ProcessingGateFacts = {
-  /** Effective processing date on this save (YYYY-MM-DD) or null. */
   procDate: string | null;
-  /** Effective delivery date on this save (YYYY-MM-DD) or null. */
   delivDate: string | null;
-  /** Malaysia calendar day (YYYY-MM-DD) — the not-in-the-past floor. */
   todayMY: string;
-  /** Stored dates BEFORE this save, for the grandfather carve-out on the edit
-   *  path: an already-saved past — or unpaired — date this edit does NOT change
-   *  is a historical record, not a fresh entry, and must not block. Omit (leave
-   *  undefined) on the create path — every date there is new. */
   origProcDate?: string | null;
   origDelivDate?: string | null;
-  /** Lines whose category-mandatory variants aren't filled — exactly what the
-   *  routes get from findIncompleteVariantLines. */
   variantOffenders?: readonly VariantOffenderLike[];
-  /** Lines whose fabric colour is still KIV (findColourKivLines). Owner rule
-   *  2026-07-24 (after SO-2607-016): the moment an SO carries a Processing
-   *  Date, every line must be a fully-confirmed maintained selection — a
-   *  colour-KIV line blocks the date. Routes must pass this ONLY when the save
-   *  genuinely SETS or CHANGES processing_date (the offenders are ignored
-   *  when procDate is null, and clearing the date never blocks), so editing
-   *  e.g. a remark on an old KIV order still works. */
   kivOffenders?: readonly ColourKivOffenderLike[];
   /* NO `deposit`, AND NO `companyCode` — owner ruling 2026-08-20, 「以电脑为准
      —— 两边都不查」. The money condition used to live here and it is GONE, not
@@ -211,13 +173,6 @@ export type ProcessingGateFacts = {
 export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveProblem[] {
   const out: SaveProblem[] = [];
 
-  // 1. Category-mandatory variants — one problem per (line, missing axis) so the
-  //    UI can name the exact line AND the exact field to fill. Mirrors the
-  //    routes' findIncompleteVariantLines → 409 variants_incomplete.
-  //    A line that is colour-KIV also reads as "fabricCode missing" here; the
-  //    KIV problem below explains that state better ("confirm the colour", not
-  //    "Fabrics is required"), so the bare fabricCode axis is suppressed for
-  //    those lines to avoid double-reporting the same field.
   const kivLines = new Set((facts.kivOffenders ?? []).map((o) => o.itemCode));
   for (const off of facts.variantOffenders ?? []) {
     for (const key of off.missing) {
@@ -254,14 +209,8 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
     }
   }
 
-  // 1c. Customer + delivery completeness. Unified with the Proceed gate (owner
-  //     2026-07-31) — the Processing Date IS the signal that releases the order
-  //     to purchasing, so the same facts must be present for either. Only when a date is being SET;
-  //     clearing it, or editing something else on a dated order, never blocks.
   if (facts.procDate && facts.completeness) {
     const { hasCustomerName, hasAddress, hasPostcode } = facts.completeness;
-    /* Same table the proceed refusal reads (completenessProblem) — the wording
-       here is unchanged, it simply stopped being a second copy of itself. */
     if (!hasCustomerName) out.push(completenessProblem('customer_name', 'processing_date'));
     if (!hasAddress) out.push(completenessProblem('address', 'processing_date'));
     if (!hasPostcode) out.push(completenessProblem('postcode', 'processing_date'));
@@ -301,8 +250,6 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
      out of this ruling's scope — but it IS the trap for whoever wires a future
      proceed path, and it is flagged in docs/modules/sales-order.md. */
 
-  // 3. Date rules. A freshly-typed / moved past date is rejected; an unchanged
-  //    already-past date is grandfathered (proc/deliv !== their originals).
   const { procDate, delivDate, todayMY } = facts;
   const origProc = facts.origProcDate ?? null;
   const origDeliv = facts.origDelivDate ?? null;
@@ -347,9 +294,6 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
       field: procDate ? 'Delivery Date' : 'Processing Date',
     });
   }
-  // The release date can't fall after the date it is promised for: purchasing
-  // cannot be released to buy AFTER the goods were due. Both plain ISO
-  // YYYY-MM-DD, so a string compare is correct.
   if (procDate && delivDate && procDate > delivDate) {
     out.push({
       code: 'processing_after_delivery',
@@ -412,13 +356,8 @@ export type ProceedGateFacts = {
   hasAddress: boolean;
   hasPostcode: boolean;
   hasDeliveryDate: boolean;
-  /** Deposit collected so far, in centi. */
   paidSen: number;
-  /** Order total, in centi. <= 0 (a free order) means nothing to collect, and
-   *  no deposit problem is ever emitted for it. */
   totalSen: number;
-  /** Active company ('HOUZS' | '2990') — picks the deposit threshold. Absent
-   *  falls back to the looser 30%; see processingDateThresholdFor. */
   companyCode?: string | null;
 };
 
@@ -444,10 +383,6 @@ export function collectProceedGateProblems(f: ProceedGateFacts): SaveProblem[] {
       out.push(completenessProblem(cond, 'proceed'));
       continue;
     }
-    /* Non-null whenever 'deposit' is in the list: both sides ask
-       meetsDepositGate the same question with the same arguments. The guard
-       keeps the type honest without inventing a sentence — a null here would
-       mean the two disagreed, and silence beats a made-up amount. */
     const shortfall = depositProblem(f.paidSen, f.totalSen, f.companyCode, 'proceed');
     if (shortfall) out.push(shortfall);
   }
@@ -471,16 +406,7 @@ export function proceedGateUnmetBody(problems: SaveProblem[]): {
   return { error: 'proceed_gate_unmet', reason: proceedGateReason(problems), problems };
 }
 
-/** Every failing condition in one sentence-shaped string.
- *
- *  NOT validationFailedBody's "N things need fixing" summary: that surface has a
- *  modal listing the problems underneath it, and this one is the fallback for
- *  surfaces that have nothing but `reason`. Telling those a COUNT would repeat
- *  the original defect in a new costume — a refusal that names no condition. */
 const proceedGateReason = (problems: SaveProblem[]): string =>
   problems.length > 0
     ? problems.map((p) => p.message).join('; ')
-    /* Unreachable through the routes, which build this body only after
-       collecting at least one problem. Stated rather than thrown: a refusal is
-       not the place to add a new way to 500. */
     : 'This order cannot be proceeded yet.';

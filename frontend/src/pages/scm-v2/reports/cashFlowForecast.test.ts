@@ -1,9 +1,3 @@
-/* The Cash Flow's forecast helpers (steps 2 and 4 of the forecast port): the
-   columns — Actual | Orders & bills | P&L forecast, Orders & bills from the
-   current month on — each forecast's balances run through on its own, and the
-   note — its non-cash lines, a long list of suppliers without a term cut
-   short, the orders in no month. The page's own test drives them through the
-   screen (ReceiptsPayments.test.tsx). Made-up names and figures. */
 import { describe, expect, it } from 'vitest';
 import { fcKey, forecastColumns, forecastNote, fpKey, isForecastKey, rollForecast } from './cashFlowForecast';
 import type { CashFlowForecast } from '../../../vendor/scm/lib/cash-flow-forecast-queries';
@@ -29,7 +23,6 @@ const forecast = (o: Partial<CashFlowForecast> = {}): CashFlowForecast => ({
   flagged: [], nonCash: [], docs: null, tf: null,
   ...o,
 });
-/* The Orders & bills column: November as at its 1st, then December and February (a month with nothing in between still shows). */
 const docs = (o: Partial<NonNullable<CashFlowForecast['docs']>> = {}): NonNullable<CashFlowForecast['docs']> => ({
   months: [
     { month: '2026-11', future: false, report: report(0, 700, 100) },

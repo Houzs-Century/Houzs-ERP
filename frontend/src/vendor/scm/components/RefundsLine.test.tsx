@@ -1,5 +1,3 @@
-/* The SO side of a Customer Refund (§14): the refunds raised on the order,
-   linked by number; nothing at all when there are none. */
 import { render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 

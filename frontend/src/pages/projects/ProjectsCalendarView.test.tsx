@@ -1,5 +1,3 @@
-/* The Projects calendar renders the month the URL names and lays the events the
- * calendar feed returns onto it. */
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";

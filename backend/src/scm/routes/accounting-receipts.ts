@@ -16,17 +16,9 @@ import { companyCodeById } from '../lib/doc-no';
 import { paginateAll } from '../lib/paginate-all';
 import { monthRange } from './accounting-receipts-check';
 
-/* Receipts are a sales-side paper: the writer key covers recording payments,
-   so it covers handing over the receipt for one. */
 const requirePerm = (c: any): boolean =>
   hasHouzsPerm(c, 'scm.payment_voucher.post') || hasHouzsPerm(c, 'scm.sales_order.write');
 
-/* ── GET /accounting/receipts?status=&limit=&month=YYYY-MM&all=1 ────────────
-   Without a month: the newest `limit` receipts — or, with `all=1`, every one,
-   newest first (Money in › Receipts' Any month, the owner's Claude Design batch
-   5 §2.3 c2: the book read whole, paged, so its chips count it truly). With a
-   month: every receipt whose payment day falls in it, oldest first, so the
-   month reads whole beside its check (accounting-receipts-check.ts). */
 export const receiptsList = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to see receipts." }, 403);
   const co = requireActiveCompanyId(c);
@@ -66,13 +58,6 @@ export const receiptsList = async (c: any): Promise<Response> => {
   return c.json({ receipts: await withParties((data ?? []) as Array<Record<string, unknown>>) });
 };
 
-/* ── GET /accounting/receipts/:id — one official receipt, for its page ──────
-   (the owner's Claude Design, batch 5 §8.3 c7). The row; the receipt that
-   replaced it (a cancelled receipt points at its re-issue) and the one it
-   replaced; the PAYMENT's journal — a receipt posts nothing, its payment's
-   entry is its books; what the payment says now (the page names an amount
-   that is no longer the payment's); the order and its salesperson. Reads
-   only, every one of them company-scoped; a read that fails says so. */
 type PaymentNow = { amountSen: number; paidAt: string | null; method: string | null; soDocNo: string | null; salesInvoiceId: string | null };
 type Rec = Record<string, unknown>;
 const textOf = (v: unknown): string | null => (v == null || v === '' ? null : String(v));
@@ -109,7 +94,6 @@ export const receiptDetail = async (c: Parameters<typeof receiptsList>[0]): Prom
   const entries = (jes.data ?? []) as Array<{ id: string; je_no: string; reversed: boolean | null }>;
   const je = entries.find((e) => !e.reversed) ?? entries.at(0);
 
-  /* The payment as it stands now — gone when it was deleted. */
   const table = source === 'SIPAY' ? 'sales_invoice_payments' : 'mfg_sales_order_payments';
   const payCols = source === 'SIPAY' ? 'id, sales_invoice_id, paid_at, method, amount_sen' : 'id, so_doc_no, paid_at, method, amount_sen';
   const { data: payRaw, error: payErr } = await sb.from(table).select(payCols).eq('company_id', co.companyId).eq('id', paymentId).maybeSingle();
@@ -120,7 +104,6 @@ export const receiptDetail = async (c: Parameters<typeof receiptsList>[0]): Prom
     soDocNo: textOf(pay.so_doc_no), salesInvoiceId: textOf(pay.sales_invoice_id),
   } : null;
 
-  /* A sales-invoice payment's invoice, and through it the order. */
   let salesInvoice: { id: string; number: string } | null = null;
   let soDocNo: string | null = payment?.soDocNo ?? (source === 'SOPAY' ? textOf(r.doc_no) : null);
   if (source === 'SIPAY') {
@@ -138,7 +121,6 @@ export const receiptDetail = async (c: Parameters<typeof receiptsList>[0]): Prom
     if (soErr) return fail('sales order', soErr.message);
     const spId = textOf((soRaw as Rec | null)?.salesperson_id);
     if (spId) {
-      /* staff is the people master, shared by every company. */
       const { data: spRaw, error: spErr } = await sb.from('staff').select('id, name').eq('id', spId).maybeSingle();
       if (spErr) return fail('salesperson', spErr.message);
       salesperson = textOf((spRaw as Rec | null)?.name);
@@ -147,7 +129,6 @@ export const receiptDetail = async (c: Parameters<typeof receiptsList>[0]): Prom
 
   const ref = (x: unknown) => { const v = x as { id: number; or_number: string; status: string } | null; return v ? { id: v.id, orNumber: v.or_number, status: v.status } : null; };
   return c.json({
-    /* RECEIVED FROM on the print: the order's phone and address, its name where the receipt has none. */
     receipt: withReceiptParty(r, await loadReceiptParties(sb, co.companyId, [r])),
     replacedBy: ref(next.data),
     replaces: ref(prev.data),
@@ -159,7 +140,6 @@ export const receiptDetail = async (c: Parameters<typeof receiptsList>[0]): Prom
   });
 };
 
-/* ── POST /accounting/receipts/ensure — {source, paymentId} ──────────────── */
 export const receiptEnsure = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to issue receipts." }, 403);
   const co = requireActiveCompanyId(c);
@@ -175,17 +155,11 @@ export const receiptEnsure = async (c: any): Promise<Response> => {
   // company-scope: ensureReceiptForPayment reads the receipt and the payment with co.companyId
   const r = await ensureReceiptForPayment(sb, source as 'SOPAY' | 'SIPAY', paymentId, co.companyId);
   if (!r.ok) return c.json({ error: 'ensure_failed', reason: r.reason }, r.reason.endsWith('not found') ? 404 : 500);
-  /* The caller is about to PRINT: hand back the whole row (customer, method,
-     amounts, issued-by), not just the number — one round trip, server truth. */
   const { data: row, error: rowErr } = await sb.from('acc_official_receipts').select('*').eq('id', r.id).maybeSingle();
   if (rowErr || !row) return c.json({ error: 'ensure_failed', reason: rowErr?.message ?? 'receipt vanished after ensure' }, 500);
   return c.json({ receipt: withReceiptParty(row as Rec, await loadReceiptParties(sb, co.companyId, [row as Rec])) });
 };
 
-/* ── POST /accounting/receipts/:id/formalise — {accountCode?} ─────────────
-   The human said the money is real. accountCode names where it landed; left
-   out, the company's default bank answers (transfers into the main account —
-   the common case the owner described). */
 export const receiptFormalise = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to confirm receipts." }, 403);
   const co = requireActiveCompanyId(c);
@@ -193,7 +167,7 @@ export const receiptFormalise = async (c: any): Promise<Response> => {
   const id = Number(c.req.param('id'));
   if (!Number.isInteger(id)) return c.json({ error: 'bad_id' }, 400);
   let body: any = {};
-  try { body = await c.req.json(); } catch { /* empty body = default bank */ }
+  try { body = await c.req.json(); } catch { }
   const sb = c.get('supabase');
 
   const roles = await resolveRoles(sb, co.companyId);

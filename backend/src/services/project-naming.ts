@@ -1,19 +1,3 @@
-/* How a project's CODE and NAME are derived from its identity fields.
- *
- * Both formats are contracts, not conveniences: mig 071 backfilled every
- * existing row to them, `backfill-project-codes.mjs` rewrites the legacy
- * `PRJ-YYYY-NNN` rows to them, and `seed-projects.mjs` has to land on the SAME
- * string or a re-seed creates a second project for an event that already
- * exists. They moved out of `services/projects.ts` (over its size ceiling) so
- * there is one obvious place to read them from, and so they could be tested —
- * neither had a test, and one of the two rules below had already been
- * hand-copied WRONG into the seed script.
- *
- * The mirror for `.mjs` scripts, which cannot import TypeScript, is
- * `backend/scripts/lib/project-naming.mjs`, pinned by
- * `backend/tests/projectNamingMirror.test.ts`. Same arrangement as
- * `variant-axes.mjs`, and for the same reason.
- */
 
 function slugSegment(s: string | null | undefined): string {
   return (s ?? "")
@@ -39,10 +23,6 @@ export function deriveProjectCode(input: {
   state?: string | null;
   venue?: string | null;
   brand?: string | null;
-  /** Optional event-type slug. When "solo", the organizer slot is
-   *  forced to the literal "SOLO" regardless of whether an organizer
-   *  was picked — a solo event is by definition not organised by
-   *  anyone. Mirrors `composeDefaultProjectName` on the frontend. */
   event_type_slug?: string | null;
 }): string {
   const state = slugSegment(input.state);
@@ -104,8 +84,6 @@ export function deriveProjectName(input: {
   brand?: string | null;
   organizer?: string | null;
   venue?: string | null;
-  /** Event-type slug; accepted for call-site symmetry with
-   *  deriveProjectCode. The name no longer branches on it. */
   event_type_slug?: string | null;
 }): string {
   const state = (input.state || "").trim() || "—";

@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// pdf-core — the drawing helpers every jspdf document shares (letterhead, info
-// columns, CJK font, amount in words, file names). Split out of pdf-common.ts so
-// the SAME code draws the document in the browser and on the Worker (AI
-// Connector get_pdf). Worker-safe by rule: no DOM, no React, no api client —
-// what differs between the two is asked of the host (pdf-host.ts).
-// pdf-common.ts re-exports all of this, so generators keep importing from there.
-// ----------------------------------------------------------------------------
 
 import { fmtDate, fmtDateTime, fmtMoneySen } from '@2990s/shared';
 import { pdfHost, type PdfLogo } from './pdf-host';
@@ -37,11 +29,6 @@ export function wrapAtCommas(line: string, maxW: number, measure: (s: string) =>
   return out;
 }
 
-/* The letterhead text, read from the host at draw time (the browser host reads
-   the branding cache that useBranding() keeps current; the Worker host reads the
-   document's company branding). Live getters, so every draw call reflects the
-   latest edit without the consumer PDF libs changing a line — they all keep
-   reading COMPANY.name / .reg / .addressLines / .portalLabel. */
 export const COMPANY = {
   get name(): string { return pdfHost().letterhead().name; },
   get reg(): string { return pdfHost().letterhead().reg; },
@@ -80,25 +67,16 @@ const WINANSI_ABOVE_LATIN1 = new Set([
   0x2022, 0x2026, 0x2030, 0x2039, 0x203a, 0x20ac, 0x2122,
 ]);
 
-/* The generators' own joiners — the arrow between an old and a new value, the
-   minus of a negative figure, the "about" of a converted amount — are outside
-   WinAnsi AND outside both subsets, so a report that is otherwise plain Latin
-   would refuse to print over its own punctuation. Folded to ASCII for paper;
-   the screen keeps the symbols. Applied to a whole cell, a customer's own
-   arrow folds the same way, which is a faithful print, not a corruption. */
-/* Spaces and marks pasted from Word or a website (HC-PO-2611-134 held a U+2006): they
-   look like nothing, so nobody can find them to remove, and neither font carries them. */
 const PAPER_FOLDS: ReadonlyArray<[RegExp, string]> = [
   [/→/g, '->'], [/←/g, '<-'], [/−/g, '-'], [/≈/g, '~'],
   [/[ -   　]/g, ' '], [/[​-‏⁠﻿]/g, ''],
 ];
 export const paperText = (s: string): string => PAPER_FOLDS.reduce((acc, [re, to]) => acc.replace(re, to), s);
 
-/** Hanzi proper (vs. CJK punctuation) — picks which subset a document needs. */
 const isHanzi = (cp: number): boolean =>
-  (cp >= 0x3400 && cp <= 0x4dbf) ||   // Unified Ideographs Ext. A
-  (cp >= 0x4e00 && cp <= 0x9fff) ||   // Unified Ideographs
-  (cp >= 0xf900 && cp <= 0xfaff);     // Compatibility Ideographs
+  (cp >= 0x3400 && cp <= 0x4dbf) ||
+  (cp >= 0x4e00 && cp <= 0x9fff) ||
+  (cp >= 0xf900 && cp <= 0xfaff);
 
 const CJK_FAMILY = 'NotoSansSC';
 
@@ -119,9 +97,6 @@ export const TIER_FACES: Record<CjkTier, Record<'normal' | 'bold', FontAssetUrl>
   hanzi: { normal: '/fonts/noto-sans-sc-hanzi-400.9f7451f3.ttf', bold: '/fonts/noto-sans-sc-hanzi-700.7f9ab99f.ttf' },
 };
 
-/* One plain sentence each — these surface to the user verbatim (every caller
-   try/catches the generator and shows e.message). A driver holding a mojibake
-   address is the failure we're removing; do not "recover" by drawing anyway. */
 const CJK_FETCH_FAILED =
   'This document has Chinese text and the Chinese font could not be loaded — please check your connection and try again.';
 /* Not worded as "Chinese": the same guard catches anything helvetica can't
@@ -130,10 +105,6 @@ const CJK_FETCH_FAILED =
 const glyphMissing = (cps: readonly number[]): string =>
   `This document has a character we cannot print yet (${cps.slice(0, 5).map((cp) => `"${String.fromCodePoint(cp)}" U+${cp.toString(16).toUpperCase()}`).join(', ')}), so the PDF was not created. Remove it from the document and try again.`;
 
-/* Scans the text as it will be PAINTED: the fold shim below turns these
-   symbols into ASCII at draw time, so an "→" in a line remark (BUG-28,
-   HC-PO-2609-266) must not send the document looking for a glyph that
-   neither subset carries. */
 const addCodepoints = (s: string, into: Set<number>): void => {
   for (const ch of paperText(s)) {
     const cp = ch.codePointAt(0);
@@ -141,15 +112,10 @@ const addCodepoints = (s: string, into: Set<number>): void => {
   }
 };
 
-/* Walk the generator's raw payload rather than naming fields: every generator
-   passes the API row verbatim, so a column added later is covered for free —
-   and a field missed here would print as mojibake, which is the whole bug. */
 const collectCodepoints = (value: unknown, into: Set<number>, depth = 0): void => {
   if (value == null || depth > 8) return;
   if (typeof value === 'string') { addCodepoints(value, into); return; }
   if (Array.isArray(value)) { for (const v of value) collectCodepoints(v, into, depth + 1); return; }
-  /* Maps before the plain-object branch: the print-time lookups hand us
-     Map<code, description>, and Object.values() of a Map is []. */
   if (value instanceof Map) {
     for (const [k, v] of value) { collectCodepoints(k, into, depth + 1); collectCodepoints(v, into, depth + 1); }
     return;
@@ -161,9 +127,6 @@ const collectCodepoints = (value: unknown, into: Set<number>, depth = 0): void =
 };
 
 
-/* Memoized per tier and shared across concurrent prints (a batch export renders
-   many docs). Dropped on failure so the next print retries — unlike the logo
-   memo, a failure here is loud, not a permanent degrade. */
 const tierMemo = new Map<CjkTier, Promise<Record<'normal' | 'bold', string>>>();
 const loadTier = (tier: CjkTier): Promise<Record<'normal' | 'bold', string>> => {
   let inflight = tierMemo.get(tier);
@@ -181,16 +144,10 @@ const loadTier = (tier: CjkTier): Promise<Record<'normal' | 'bold', string>> => 
   return inflight;
 };
 
-/* Per-doc state: a combined export calls this once per document on ONE doc, so
-   registering must not embed the same face twice or re-wrap setFont. */
 const docTiers = new WeakMap<object, Set<CjkTier>>();
 const docShimmed = new WeakSet<object>();
 const docFolded = new WeakSet<object>();
 
-/* Fold at the jsPDF instance, not per generator: ~20 generators and
-   jspdf-autotable (which paints and measures through this same instance) all
-   reach text through these four methods. Measure and paint are folded
-   together so a wrapped line is sized on the text that is actually drawn. */
 const foldPaperTextOnDoc = (doc: import('jspdf').jsPDF): void => {
   if (docFolded.has(doc)) return;
   const fold = <T>(t: T): T =>
@@ -240,10 +197,6 @@ export async function ensurePdfCjkFont(
     } catch {
       throw new Error(CJK_FETCH_FAILED);
     }
-    /* Both weights, always: jspdf resolves an unregistered style by SILENTLY
-       falling back to times (:3661) — a WinAnsi standard font, i.e. straight
-       back to mojibake — so a bold-only-Latin letterhead over a CJK body would
-       re-corrupt on the very fields we just fixed. */
     for (const style of ['normal', 'bold'] as const) {
       const vfs = `${CJK_FAMILY}-${tier}-${style}.ttf`;
       doc.addFileToVFS(vfs, faces[style]);
@@ -265,24 +218,11 @@ export async function ensurePdfCjkFont(
   if (missing.length > 0) throw new Error(glyphMissing(missing));
 
   if (!docShimmed.has(doc)) {
-    /* The generators ask for 'helvetica' by name in ~50 places, and
-       jspdf-autotable resolves every cell to the literal 'helvetica' from its
-       own defaults (autotable 3.8.4 jspdf.plugin.autotable.js:376 → :665).
-       Redirecting the family here covers both without touching a draw call.
-       Whole-document, not per-field: helvetica and Noto measure ~7% apart, and
-       text wrapped on one font's metrics but painted in the other overflows its
-       column. */
     const inner = doc.setFont.bind(doc);
     doc.setFont = (family: string, style?: string, weight?: string | number) => {
       if (typeof family !== 'string' || family.toLowerCase() !== 'helvetica') {
         return inner(family, style, weight);
       }
-      /* Noto Sans SC has no italic — weight is its only axis — so the four
-         generators that set 'italic' for a caption fold onto the upright face.
-         Registering a duplicate face under 'italic' would embed the entire
-         subset a second time in the file; jspdf never reaches a font any other
-         way (setFontStyle doesn't exist in 2.5.2 and autotable guards on it),
-         so normalising here is enough to keep them off the times fallback. */
       const upright = style === 'italic' ? 'normal' : style === 'bolditalic' ? 'bold' : style;
       return inner(CJK_FAMILY, upright, weight);
     };
@@ -290,9 +230,6 @@ export async function ensurePdfCjkFont(
   }
 }
 
-/* ── Amount in words (AutoCount footer convention) ─────────────────────
-   "RINGGIT MALAYSIA ONE THOUSAND TWO HUNDRED THIRTY-FOUR AND SEN
-    FIFTY-SIX ONLY" — integer ringgit + sen, both spelled out. */
 const ONES = [
   'ZERO', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE',
   'TEN', 'ELEVEN', 'TWELVE', 'THIRTEEN', 'FOURTEEN', 'FIFTEEN', 'SIXTEEN',
@@ -347,9 +284,6 @@ export const amountInWordsMyr = (centi: number | null | undefined): string => {
   return `RINGGIT MALAYSIA ${intToWords(rm)}${senPart} ONLY`;
 };
 
-/* The warehouse a DO ships from / a GRN received into (Conts-ERP #717): its
-   name, else its code label; null when the document recorded none, so the row
-   is omitted rather than dashed. */
 export const warehousePrintName = (h: { warehouse_name?: string | null; warehouse_code?: string | null }): string | null =>
   (h.warehouse_name ?? '').trim() || (h.warehouse_code ?? '').trim() || null;
 
@@ -388,22 +322,14 @@ export const DOC_TABLE_STYLES = {
 
 export const DOC_TABLE_HEAD_STYLES = {
   fontStyle: 'bold' as const,
-  // Per-side widths: a rule above and below the header row, nothing at the
-  // sides. autoTable accepts the object form; its published type does not.
   lineWidth: { top: 0.4, bottom: 0.4 } as never,
 };
 
-// Draw the company header (top-left brand) + doc title + meta block on the right.
-// Returns the y position where the body should continue.
 export function drawHeader(
   doc: import('jspdf').jsPDF,
   opts: {
-    docTitle: string;       // e.g. "SALES INVOICE"
+    docTitle: string;
     rightMeta: Array<{ label: string; value: string }>;
-    /** Per-document logo override (owner 2026-07 — brand letterheads): when
-     *  set, draws THIS logo (e.g. the SO's resolved brand logo) instead of
-     *  the company logo. null/undefined → the company logo memo, then the
-     *  historic text-only header — company letterhead stays the fallback. */
     logo?: PdfLogo | null;
   },
 ): number {
@@ -417,13 +343,6 @@ export function drawHeader(
      memo not yet warmed) → the historic text-only header, byte-identical.
      The memo is primed by useBranding() at app load and awaited by the SO
      generator, so multi-page / multi-print runs never refetch. */
-  /* Measure the right-hand meta column FIRST. The company block on the left
-     used to be drawn with no width limit at all, so a long address simply ran
-     under the right column — on a 2990 Delivery Order "…Wilayah Persekutuan
-     KL" ended up touching "Date: 06/08/2026". Reserving the right column's
-     real width (plus a gutter) and wrapping the left block into what remains
-     is what keeps the two apart; nothing moves for a letterhead that already
-     fitted. */
   const gutter = 8;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
   let rightW = doc.getTextWidth(opts.docTitle);
@@ -436,25 +355,18 @@ export function drawHeader(
   const logo = opts.logo ?? pdfHost().companyLogo();
   let logoBox: { w: number; h: number } | null = null;
   if (logo) {
-    const maxW = 40;   // mm — letterhead-scale, never dominates the header
-    const maxH = 16;   // mm — fits beside the 4-line text block
+    const maxW = 40;
+    const maxH = 16;
     const scale = Math.min(maxW / logo.width, maxH / logo.height);
     logoBox = { w: logo.width * scale, h: logo.height * scale };
     textX = margin + logoBox.w + 6;
   }
 
-  // What the left block may occupy before it would collide with the meta
-  // column. Floored so a pathological logo/meta combination still leaves a
-  // usable measure rather than a negative one.
   const leftMaxW = Math.max(40, pageW - margin - textX - rightW - gutter);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
   const nameLines = doc.splitTextToSize(COMPANY.name, leftMaxW) as string[];
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
   const regLines = doc.splitTextToSize(COMPANY.reg, leftMaxW) as string[];
-  /* Comma-aware (see wrapAtCommas): the width wrap must not cut inside a
-     chunk like "No. 2,". Only a chunk that ALONE overflows the measure falls
-     back to the word wrap. Shared letterhead — every document tidies up
-     together. */
   const addressLines = COMPANY.addressLines.flatMap((line) =>
     wrapAtCommas(line, leftMaxW, (s) => doc.getTextWidth(s)).flatMap((l) =>
       doc.getTextWidth(l) > leftMaxW ? (doc.splitTextToSize(l, leftMaxW) as string[]) : [l],
@@ -479,7 +391,7 @@ export function drawHeader(
       doc.addImage(logo.dataUrl, logo.format, margin, topY, logoBox.w, logoBox.h);
       logoBottomY = topY + logoBox.h;
     } catch {
-      textX = margin; // fail-soft: draw the text-only header, full width
+      textX = margin;
     }
   }
 
@@ -509,12 +421,11 @@ export function drawHeader(
   }
 
   y = Math.max(y, rightY) + 6;
-  if (logoBottomY) y = Math.max(y, logoBottomY + 3); // divider clears the logo
+  if (logoBottomY) y = Math.max(y, logoBottomY + 3);
   doc.setDrawColor(180); doc.line(margin, y, pageW - margin, y);
   return y + 4;
 }
 
-// Two-column info block (e.g. "BILL TO" + "DETAILS")
 export function drawTwoColInfo(
   doc: import('jspdf').jsPDF,
   startY: number,
@@ -539,11 +450,6 @@ export function drawTwoColInfo(
   return top + Math.max(lefts.length, rights.length, 1) * 4 + 4;
 }
 
-/* Unified document info block (Commander 2026-06-19 — Hookka-tidy layout):
-   LEFT = "BILL TO" with a label gutter (Company / Address / Tel …); the value
-   wraps. RIGHT = a colon-aligned key:value list ("SO No : … / Date : …").
-   Blank values are skipped. Returns the Y to continue below the taller column.
-   Black-and-white only (no fills) so it prints clean. */
 export function drawInfoColumns(
   doc: import('jspdf').jsPDF,
   startY: number,
@@ -583,8 +489,6 @@ export function drawInfoColumns(
     }
   }
   for (const [label, value] of right.rows) {
-    /* An array is a value the caller has already broken into lines (a PI's
-       PO list); each element prints on its own line under the first. */
     if (Array.isArray(value)) {
       const parts = value.map((p) => p.trim()).filter(Boolean);
       if (!parts.length) continue;
@@ -601,7 +505,6 @@ export function drawInfoColumns(
     if (!v) continue;
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(110); doc.text(label, midX, ry); doc.setTextColor(0);
-    /* Wrapped inside the right margin: a long project or reference ran past the page edge (Conts #743). */
     const wrapped = doc.splitTextToSize(`: ${v}`, rValW) as string[];
     doc.text(wrapped, rValX, ry);
     ry += Math.max(1, wrapped.length) * lh;
@@ -609,7 +512,6 @@ export function drawInfoColumns(
   return Math.max(ly, ry) + 4;
 }
 
-// Two dashed signature boxes side by side
 export function drawSignatureBoxes(
   doc: import('jspdf').jsPDF,
   startY: number,
@@ -632,27 +534,8 @@ export function drawSignatureBoxes(
   return ty + 28;
 }
 
-/* Safe filename fragment.
-   This used to keep ONLY `[A-Za-z0-9_-]`, which is fine for a Latin customer and
-   destroys everything else: a Chinese debtor name came out as
-   `2990-DO-2608-006-______.pdf` — the customer's name replaced by a row of
-   underscores, on the file you send that customer (Nico, 2026-08-07).
-
-   Every target that matters handles Unicode filenames: `doc.save()` goes through
-   an <a download> (UTF-8 by definition), Windows/macOS/Linux all accept CJK, and
-   so does every mail client. What is genuinely illegal is a much smaller set —
-   the Windows reserved punctuation, path separators, and control characters — so
-   strip THAT and keep the name.
-
-   Also guarded: a trailing dot or space (Windows silently drops them, turning
-   "Foo ." into a name that round-trips wrong) and an all-punctuation input
-   collapsing to an empty string. */
-// Control characters plus the Windows reserved set. Nothing else is removed.
-// eslint-disable-next-line no-control-regex
+ 
 const ILLEGAL_IN_FILENAME = /[\x00-\x1f\x7f<>:"/\\|?*]+/g;
-/* "Page x of y" counted within ONE document. A batch print renders many
-   documents into one file; counting the file's pages made the second invoice's
-   first page read "Page 3 of 7". */
 export const docPageLabel = (page: number, startPage: number, pageCount: number): string =>
   `Page ${page - startPage + 1} of ${pageCount - startPage + 1}`;
 
@@ -662,10 +545,6 @@ export const safeName = (s: string, maxLen = 32): string => {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLen)
-    /* Truncation can leave a dangling separator, and Windows silently drops a
-       trailing space. A trailing DOT is deliberately kept — every caller
-       appends ".pdf", so it never ends the real filename, and stripping it
-       would eat the dot in "Sdn. Bhd.", which is most of our supplier list. */
     .replace(/[\s-]+$/, '');
   return cleaned || 'doc';
 };

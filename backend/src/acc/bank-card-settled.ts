@@ -18,7 +18,6 @@ import type { resolveRoles } from './rules';
 
 export const BANK_CARD_TABLE = 'acc_bank_card_settlements';
 
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 type Fail = { ok: false; reason: string };
 

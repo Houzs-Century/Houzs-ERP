@@ -1,9 +1,3 @@
-/* POS Admin > Import backup (layout E8): drop houzs_pos_T0x_backup.json from
- * a device, the ERP opens it with that terminal's key, classifies every
- * receipt (NEW / UPDATE / DUPLICATE / CONFLICT / INVALID), shows the preview,
- * and imports NEW + UPDATE through the same path the device sync uses, so
- * stock and the audit trail come out the same. Nothing is written until
- * Import is pressed. */
 import { useRef, useState } from "react";
 import { Upload } from "lucide-react";
 import { useNavigate } from "react-router-dom";

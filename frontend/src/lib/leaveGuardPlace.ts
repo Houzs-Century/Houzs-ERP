@@ -1,6 +1,3 @@
-// The "is this move leaving the page?" half of the leave guard. Kept apart from
-// lib/leaveGuard.ts because only the lazily loaded LeaveGuardBridge needs it,
-// while the registry itself is imported by the always-loaded shell.
 import { heldPlaceParams } from "./leaveGuard";
 
 export interface Place {

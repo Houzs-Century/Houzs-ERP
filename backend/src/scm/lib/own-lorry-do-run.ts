@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// own-lorry-do-run — which delivery orders our own lorries ran, and on which
-// day. ONE rule, two readers: Trip Pay pays the crew for these runs
-// (routes/lib/hr-trip-store.ts) and the Own fleet tab prices them on the own
-// fleet rate card (own-fleet-load.ts), so a run a driver is paid for is the
-// run that is costed. PURE.
-// ----------------------------------------------------------------------------
 import { doCountsAsDelivered } from '../shared/do-shipped-states';
 
 /** What the rule reads of a delivery order, its crew record and the lorry that
@@ -12,19 +5,13 @@ import { doCountsAsDelivered } from '../shared/do-shipped-states';
 export type OwnLorryDoFacts = {
   do_id: string;
   do_status: string | null;
-  /** The SO's due date (amended, else the customer's): the day Last Mile puts it on the lorry. */
   so_due_date: string | null;
-  /** This is its SO's newest live DO (not cancelled, newest created_at, ties by id), the one Last Mile shows. */
   is_latest_live: boolean | null;
-  /** The Malaysia date of delivered_at. */
   delivered_day: string | null;
   do_date: string | null;
   is_dropship: boolean | null;
-  /** A 3PL carrier billed this DO (scm.threepl_do_charges). */
   has_3pl: boolean | null;
-  /** A stop on a trip that is not cancelled carries this DO: that stop is its row. */
   on_live_trip: boolean | null;
-  /** The plate typed on the crew record, and the lorry master it resolves to. */
   crew_plate: string | null;
   lorry_plate: string | null;
   lorry_internal: boolean | null;

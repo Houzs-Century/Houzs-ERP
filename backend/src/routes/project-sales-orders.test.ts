@@ -1,11 +1,3 @@
-// GET /api/project-sales-orders/:projectId — the Sales Orders written at one
-// exhibition, as the project page reads them. Harness mirrors
-// scm/routes/autocountRelinkRoute.test.ts: a bare Hono app whose middleware
-// injects the fake-postgrest client and the caller context, mounting the
-// EXPORTED handler (the router's own supabaseAuth would try to build a real
-// client). The SO scope helpers are mocked at the module boundary for the
-// scoped-rep case only: the fake cannot evaluate applySoScope's `ov` overlap
-// term, and the rule itself is pinned by salesScope's own tests.
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import type { Env, Variables } from '../scm/env';
@@ -45,8 +37,6 @@ const get = (app: Hono<{ Bindings: Env; Variables: Variables }>, id: string) =>
 const DIRECTOR: Caller = { accessLevel: 'full', position: 'Sales Director', perms: [] };
 const REP: Caller = { accessLevel: 'partial', position: 'Sales Executive', perms: [] };
 
-/* Fair 77 of company 1: two live orders by two reps, one draft, one cancelled;
-   fair 78 and company 2 each hold an order that must never appear. */
 const TABLES: Record<string, Row[]> = {
   mfg_sales_orders: [
     { doc_no: 'HC-SO-000001', company_id: 1, project_id: 77, status: 'CONFIRMED', so_date: '2026-09-18',
@@ -71,7 +61,6 @@ const TABLES: Record<string, Row[]> = {
   mfg_sales_order_payments: [
     { id: 'p1', company_id: 1, so_doc_no: 'HC-SO-000001', amount_sen: 200000, is_deposit: true },
     { id: 'p2', company_id: 1, so_doc_no: 'HC-SO-000001', amount_sen: 50000, is_deposit: false },
-    /* The other company's ledger row for a same-numbered doc must not leak in. */
     { id: 'p3', company_id: 2, so_doc_no: 'HC-SO-000001', amount_sen: 999900, is_deposit: false },
   ],
   staff: [
@@ -97,18 +86,12 @@ describe('GET /project-sales-orders/:projectId', () => {
     const first = body.data.find((r) => r.doc_no === 'HC-SO-000001')!;
     expect(first.customer_name).toBe('Lim Ah Kow');
     expect(first.salesperson_name).toBe('Anthony');
-    /* The booklet number a new order carries in Ref No. (customer_so_no) is
-       what the column shows; a migrated order's `ref` is the fallback. */
     expect(first.ref).toBe('HC 13503');
     expect(body.data.find((r) => r.doc_no === 'HC-SO-000002')!.ref).toBe('HC13504');
-    /* paid = ledger only (the deposit is IN the ledger, so the header deposit
-       is not added again); balance = total − paid, signed. */
     expect(first.amount_sen).toBe(500000);
     expect(first.paid_sen).toBe(250000);
     expect(first.balance_sen).toBe(250000);
 
-    /* total_revenue_sen 0 → the migrated order's local_total stands; its header
-       deposit never reached the ledger, so it counts as paid. */
     const second = body.data.find((r) => r.doc_no === 'HC-SO-000002')!;
     expect(second.amount_sen).toBe(300000);
     expect(second.paid_sen).toBe(100000);
@@ -164,9 +147,9 @@ describe('GET /project-sales-orders/:projectId', () => {
     const res = await harness(tables, DIRECTOR).request('/project-sales-orders/77', undefined, { DB } as unknown as Env);
     const body = await res.json() as Body;
     const flag = (doc: string) => body.data.find((r) => r.doc_no === doc)!.venue_differs;
-    expect(flag('HC-SO-000001')).toBeNull(); // same place, spelled differently
+    expect(flag('HC-SO-000001')).toBeNull();
     expect(flag('HC-SO-000002')).toBe('KLCC');
-    expect(flag('HC-SO-000003')).toBeNull(); // no venue on the order: nothing to compare
+    expect(flag('HC-SO-000003')).toBeNull();
     expect(calls).toEqual([[77]]);
   });
 
@@ -199,10 +182,8 @@ describe('GET /project-sales-orders/:projectId', () => {
     const res = await harness(tables, FINANCE).request('/project-sales-orders/77', undefined, { DB } as unknown as Env);
     const body = await res.json() as Body & { can_transfer: boolean };
     const row = (doc: string) => body.data.find((r) => r.doc_no === doc)!;
-    /* KLCC on the slip, but MID VALLEY's own report lists HC 13503: right. */
     expect(row('HC-SO-000001').venue_differs).toBeNull();
     expect(row('HC-SO-000001').report_elsewhere).toBeNull();
-    /* HC13504 is in the KLCC fair's report: still flagged, and where to move it. */
     expect(row('HC-SO-000002').venue_differs).toBe('KLCC');
     expect(row('HC-SO-000002').report_elsewhere).toEqual({ project_id: 80, label: 'AKEMI — KLCC — MLE (09/18 - 09/20)', report_date: '2026-09-19' });
     expect(body.can_transfer).toBe(true);

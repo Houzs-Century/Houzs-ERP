@@ -66,7 +66,7 @@ describe('GET /purchase-returns/returnable-grn-lines', () => {
 describe('PurchaseReturnNew — the PO prefill carries the receipt linkage', () => {
   it('builds PO-mode lines from useReturnableGrnLines, each with its grnItemId', () => {
     expect(FE).toContain('useReturnableGrnLines(poId)');
-    const prefill = FE.slice(FE.indexOf('Pre-fill from PO'), FE.indexOf('const setLine'));
+    const prefill = FE.slice(FE.indexOf('if ((!poId && !piId) || !poolQ.data) return;'), FE.indexOf('const setLine'));
     expect(prefill, 'PO prefill must link each line').toContain('grnItemId:      l.grnItemId');
     expect(prefill, 'the null-linkage shape must be gone').not.toContain('grnItemId:      null');
   });

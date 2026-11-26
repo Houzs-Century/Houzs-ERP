@@ -34,14 +34,6 @@ import { paginateAll } from '../lib/paginate-all';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { readStaffAgentName } from '../lib/so-agent';
-/* THE THIRD DOOR ONTO A MIGRATED SALES ORDER. `/mfg-sales-orders/*` and
-   `/so-amendments/*` are both guarded by the router-level migratedSoReadonly
-   factory (scm/index.ts); this route is not, and cannot be — that factory
-   reads the document number out of the PATH, and `POST /apply` carries a
-   LIST of them in the body. So the same decision is asked here, per order,
-   through the SAME function the guard and the SO detail screen both use.
-   It writes `salesperson_id` and `agent`, which are two of the fields
-   sync-ac-delta's header lane copies back from AutoCount. */
 import { migratedSoReadonlyState } from '../lib/migrated-so-readonly';
 import { enqueueEdit } from '../lib/autocount-outbox';
 import type { Env, Variables } from '../env';
@@ -49,16 +41,8 @@ import type { Env, Variables } from '../env';
 export const soHandover = new Hono<{ Bindings: Env; Variables: Variables }>();
 soHandover.use('*', supabaseAuth);
 
-/* One apply call = one Cloudflare request, and each order costs a read, a write,
-   an audit row and an AutoCount enqueue. Twenty-five keeps that inside the
-   worker's budget with room to spare; the UI loops batches and shows progress.
-   (A 60-order handover that 524s halfway is worse than four clean batches.) */
 export const HANDOVER_BATCH_MAX = 25;
 
-/* The preview is a LIST, not a page: the operator is about to act on all of it,
-   so a cap that silently hides orders would be a lie. If a rep somehow has more
-   than this, the response says so and the UI tells the operator to run it again
-   after the first pass. */
 const PREVIEW_MAX = 500;
 
 export type HandoverRequest = {
@@ -67,8 +51,6 @@ export type HandoverRequest = {
   docNos: string[];
 };
 
-/* Request validation, split out so it can be tested without a Hono context or a
-   database. Rejects with the exact payload the handler returns. */
 export function parseHandoverBody(
   body: Record<string, unknown>,
 ): { ok: true; req: HandoverRequest }
@@ -133,7 +115,6 @@ export type ShareRequest = {
   mode: 'add' | 'remove';
 };
 
-/* Same shape and the same testability as parseHandoverBody. */
 export function parseShareBody(
   body: Record<string, unknown>,
 ): { ok: true; req: ShareRequest }
@@ -165,51 +146,17 @@ export function parseShareBody(
     };
   }
 
-  /* ADD is the default and REPLACE is deliberately not offered. The operator is
-     acting on up to 25 orders they cannot see the current collaborators of, so a
-     replace would silently drop a grant somebody else made — the bulk-tool
-     version of losing data. Removal is explicit and equally bulk. */
   const mode = body.mode === 'remove' ? 'remove' : 'add';
 
   return { ok: true, req: { staffIds, docNos, mode } };
 }
 
-/* GET /preview?from=<staffId> — every order currently attributed to that
-   salesperson, in this company. `total` is what the operator is committing to;
-   `truncated` says the list is not all of it. */
-/* GET /holders — WHO holds this company's Sales Orders.
- *
- * The panel's "Orders currently with" picker used to read GET /staff, and that
- * is the wrong question. `/staff` is company-scoped by the caller's LINK
- * (scm/lib/staffCompanyScope.ts `staffCompanyIds`): a staff row with no ERP
- * login is bucketed to the 2990 mirror, which is the normal shape for an
- * AutoCount-imported rep who resigned years ago — exactly the person this panel
- * exists to hand over. Measured on production 2026-09-09 (run 34336422828):
- * 22 holders / 339 non-cancelled orders in HOUZS were unselectable, including
- * all three reps the owner came to move. Switching company does not rescue it —
- * their ORDERS are in HOUZS while their staff rows answer to 2990, so neither
- * company can complete the handover.
- *
- * A holder list cannot omit a holder: it is derived from the orders themselves.
- *
- * Counted the SAME way `/preview` lists — company-scoped, no status filter — so
- * the number on the picker and the number on the list that follows it cannot
- * disagree. (A cancelled order is still attributed to somebody; `/apply` is what
- * decides per order whether it may move.)
- *
- * Gated on `scm.so.attribute_other` like the rest of this router: it enumerates
- * the company's order book by salesperson.
- */
 soHandover.get('/holders', async (c) => {
   if (!hasHouzsPerm(c, 'scm.so.attribute_other')) return c.json({ error: 'forbidden' }, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
 
-  /* Every attributed order's salesperson, reduced in JS. The alternative is a
-     grouped PostgREST aggregate, which this codebase already keeps a JS
-     fallback for (lib/status-counts.ts) because aggregates can be disabled on
-     the instance — one path that always works beats two that disagree. */
   const { data, error } = await paginateAll<{ salesperson_id: string | null }>(
     (from, to) => scopeToCompanyId(
       sb.from('mfg_sales_orders')
@@ -230,10 +177,6 @@ soHandover.get('/holders', async (c) => {
   const ids = [...counts.keys()];
   if (ids.length === 0) return c.json({ holders: [] });
 
-  /* Names by id — deliberately NOT the scoped roster. These ids came out of
-     this company's own orders, so resolving them leaks nothing the caller
-     cannot already enumerate, and a name that fails to resolve must still be
-     selectable (it is somebody's order book). */
   const { data: staffRows, error: staffError } = await sb
     .from('staff').select('id, name, staff_code, active').in('id', ids);
   if (staffError) return c.json({ error: 'load_failed', reason: staffError.message }, 500);
@@ -251,8 +194,6 @@ soHandover.get('/holders', async (c) => {
       orders: counts.get(id) ?? 0,
     };
   });
-  /* Most orders first — the person with fifty is the one being handed over, and
-     an alphabetical list buries them among people with one. */
   holders.sort((a, b) => b.orders - a.orders
     || (a.name ?? '').localeCompare(b.name ?? '', undefined, { sensitivity: 'base' }));
 
@@ -292,8 +233,6 @@ soHandover.get('/preview', async (c) => {
   });
 });
 
-/* POST /apply — move one batch. Reports per-order, because a handover that
-   half-applied in silence is how an order goes missing from both reps' lists. */
 soHandover.post('/apply', async (c) => {
   if (!hasHouzsPerm(c, 'scm.so.attribute_other')) return c.json({ error: 'forbidden' }, 403);
   let body: Record<string, unknown>;
@@ -307,17 +246,9 @@ soHandover.post('/apply', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
 
-  /* `agent` is the AutoCount rep NAME the account book and the SO list read.
-     so-agent.ts makes it follow a reassigned salesperson on the header PATCH;
-     this route does the same thing by hand. A name we cannot read leaves
-     `agent` alone — a stale name beats an empty one. */
   const toName = await readStaffAgentName(sb as never, toStaffId);
 
   const user = c.get('user') as { id?: string; user_metadata?: { name?: string } } | undefined;
-  /* The whole batch in one transaction: every order's move and its audit row commit together, or none do. A batch
-     that hits a failed write part-way used to leave some orders moved and the rest not. Orders skipped for a reason
-     (locked, no longer this rep's) are still reported per order. The AutoCount queue entries go after the commit,
-     like every other Houzs write-back: a queue hiccup must not undo a move the operator is told succeeded. */
   return runScmPgCommand(c, async (tx) => {
     const moved: Array<{ docNo: string }> = [];
     const skipped: Array<{ docNo: string; reason: string }> = [];
@@ -327,36 +258,16 @@ soHandover.post('/apply', async (c) => {
         tx.from('mfg_sales_orders').select('doc_no, salesperson_id, agent, status, linked_ac_docno').eq('doc_no', docNo),
         co.companyId,
       ).maybeSingle();
-      /* A FAILED read and an order that is genuinely not here are different
-         facts, and only one of them is the operator's to act on. Reporting a
-         dropped connection as "Not found in this company" would send them looking
-         for a company mix-up that never happened. Inside the transaction a failed
-         read also stops the batch: nothing after it could commit. */
       if (readError) return c.json({ error: 'handover_failed', message: `${docNo} could not be read, so no order in this batch was moved. Please try again.`, reason: readError.message }, 500);
       if (!beforeRow) { skipped.push({ docNo, reason: 'Not found in this company.' }); continue; }
       const before = beforeRow as unknown as Record<string, unknown>;
 
-      /* MIGRATED ORDERS ARE READ-ONLY WHILE THE LOCK IS ON, here too. The
-         `isMigrated` argument is REQUIRED and `boolean | null`: this route has the
-         answer for free off the row it just read (`linked_ac_docno` is the
-         import's own stamp, and the predicate is soIsMigrated's), so it says so
-         rather than letting the decision inherit a default. The refusal goes into
-         `skipped` with the lock's own sentence, which is the only reason this is
-         safe to add: a handover that silently dropped an order is exactly the
-         failure this route's per-order report exists to prevent. */
-      /* `docNo` as well, since 2026-09-08: in CORRECTNESS mode the decision is
-         per document and the sentence has to name the one it is about, so this
-         route hands over the document it is looking at rather than letting the
-         refusal speak about the class. Everything else here is unchanged - the
-         refusal still lands in `skipped` with the lock's own sentence. */
       const lock = await migratedSoReadonlyState(c, docNo, before.linked_ac_docno != null);
       if (lock.locked) {
         skipped.push({ docNo, reason: lock.reason ?? 'This order came from AutoCount and is view-only for now.' });
         continue;
       }
 
-      /* The preview may be stale. Only move what still belongs to the person the
-         operator chose — never someone else's order that happened to be listed. */
       if ((before.salesperson_id as string | null) !== fromStaffId) {
         skipped.push({ docNo, reason: 'No longer attributed to that salesperson.' });
         continue;
@@ -364,8 +275,6 @@ soHandover.post('/apply', async (c) => {
 
       const updates: Record<string, unknown> = { salesperson_id: toStaffId };
       if (toName) updates.agent = toName;
-      /* Compare-and-set on the rep read above: an order someone else moved meanwhile is skipped, not taken back. A
-         failed write rolls the whole batch back (inside a transaction nothing after it could commit anyway). */
       const { data: movedRow, error } = await scopeToCompanyId(
         tx.from('mfg_sales_orders').update(updates).eq('doc_no', docNo),
         co.companyId,
@@ -389,10 +298,6 @@ soHandover.post('/apply', async (c) => {
         note: 'Salesperson handover',
       });
 
-      /* ERP -> AutoCount, one per order that actually moved — `agent` is a real
-         AutoCount field, so an account book left naming the departed rep is the
-         same bug one layer down. Inside the loop and after every `continue`, so a
-         skipped order queues nothing. */
       deferScmAfterCommit(c, async () => {
         await enqueueEdit(sb as never, {
           companyId: co.companyId,
@@ -409,19 +314,6 @@ soHandover.post('/apply', async (c) => {
   });
 });
 
-/* POST /share — grant (or withdraw) ACCESS on a batch, without touching who the
-   order is attributed to. Per-order reporting for the same reason /apply has it.
-
-   THE MIGRATED-SO LOCK IS DELIBERATELY NOT ASKED HERE, and that is the one
-   decision in this handler worth arguing with. The lock exists because an
-   order whose ERP copy already differs from the AutoCount book must not be
-   edited further in ways that widen the gap (docs/migrated-so-lock.md).
-   `collaborator_staff_ids` has no counterpart in the account book at all — it
-   is an ERP access-control column, nothing syncs it, and no verdict can ever
-   disagree about it. Asking the lock here would instead mean the 2,676 migrated
-   open orders could never be shared, which is most of the book and exactly the
-   population a resignation leaves stranded. /apply still asks, because /apply
-   writes `agent`, which IS an AutoCount field. */
 soHandover.post('/share', async (c) => {
   if (!hasHouzsPerm(c, 'scm.so.attribute_other')) return c.json({ error: 'forbidden' }, 403);
   let body: Record<string, unknown>;
@@ -435,15 +327,8 @@ soHandover.post('/share', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
 
-  /* Every id must resolve to a real staff row before anything is written. These
-     come from a picker, so an id that does not resolve is a bug or a stale tab —
-     and a uuid silently written into the array would grant access to nobody
-     while reading, on the panel, as though it had worked. */
   const { data: staffRows, error: staffError } = await sb.from('staff').select('id').in('id', staffIds);
   if (staffError) return c.json({ error: 'load_failed', reason: staffError.message }, 500);
-  /* Cast BEFORE defaulting, not after: a PostgREST read really can answer
-     `data: null`, and `(rows ?? []) as T[]` hides that behind a shape the linter
-     then calls a redundant guard. */
   const known = new Set(((staffRows as Array<{ id?: string }> | null) ?? []).map((r) => r.id));
   const unknown = staffIds.filter((id) => !known.has(id));
   if (unknown.length > 0) {
@@ -459,8 +344,6 @@ soHandover.post('/share', async (c) => {
       sb.from('mfg_sales_orders').select('doc_no, status, collaborator_staff_ids').eq('doc_no', docNo),
       co.companyId,
     ).maybeSingle();
-    /* A failed read and an order that is genuinely not here are different facts,
-       and only one of them is the operator's to act on — same rule as /apply. */
     if (readError) { skipped.push({ docNo, reason: `Could not be read: ${readError.message}` }); continue; }
     if (!beforeRow) { skipped.push({ docNo, reason: 'Not found in this company.' }); continue; }
     const before = beforeRow as unknown as Record<string, unknown>;
@@ -470,9 +353,6 @@ soHandover.post('/share', async (c) => {
       ? current.filter((id) => !staffIds.includes(id))
       : [...new Set([...current, ...staffIds])];
 
-    /* Nothing to do is reported, not silently counted as done: an operator who
-       ran the same grant twice should see that the second run changed nothing
-       rather than believing it re-applied. */
     if (next.length === current.length && next.every((id) => current.includes(id))) {
       skipped.push({ docNo, reason: mode === 'remove' ? 'None of those people had access.' : 'Already shared with all of them.' });
       continue;

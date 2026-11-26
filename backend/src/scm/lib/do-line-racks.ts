@@ -1,35 +1,16 @@
-// do-line-racks — the RACK column on the DO detail / printed DO.
-//
-// A DO line names the rack(s) its goods were received onto by ITS OWN source
-// PO's GRN, never every rack that happens to hold the same product code in the
-// warehouse (BUG-102, Sim 2026-10-10: HC-DO-2610-156 printed six racks against
-// two JAGER-(Q) bedframes whose GRNs recorded none). A GRN line saved without a
-// rack places nothing, so that line prints a dash.
-//
-// Placement → PO: warehouse_rack_items.source_grn_id → grn_items (same grn,
-// item_code, rack_id).purchase_order_item_id → purchase_order_items
-// .purchase_order_id, falling back to grns.purchase_order_id (a multi-PO GRN's
-// header names only its first PO). Manual stock-in placements carry no GRN and
-// are not attributed to any PO. An operator's explicit pick
-// (delivery_order_items.rack_id) wins over all of this.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { pgrestIn } from './pgrest-in-list';
 import { chunkIn } from './paginate-all';
 
 export type DoLineRacks = {
-  /** `${warehouse_id}::${item_code}::${po_number}` → rack labels, sorted. */
   byPo: Map<string, string[]>;
-  /** Every rack in the ship-from warehouse(s): id → label. */
   labelById: Map<string, string>;
 };
 
 async function readIn<T>(
   sb: any, table: string, cols: string, column: string, values: string[],
 ): Promise<T[]> {
-  /* Each batch is PAGED (chunkIn): a warehouse's racks, or the placements of 200
-     item codes, pass PostgREST's 1,000-row page, and the rows past it were
-     dropped without an error, so the printed DO lost rack labels. */
   const { data, error, truncated } = await chunkIn<T>(values, (part, from, to) =>
     pgrestIn(sb.from(table).select(cols), column, part).order('id').range(from, to));
   if (error) throw error;
@@ -115,7 +96,7 @@ export async function resolveDoLineRacks(
       }
     }
     for (const [k, set] of sets) byPo.set(k, [...set].sort());
-  } catch { /* rack / GRN tables unreadable — every line shows a dash */ }
+  } catch { }
   return { byPo, labelById };
 }
 

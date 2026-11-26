@@ -14,17 +14,14 @@ import {
 } from '../../../vendor/scm/lib/rate-rule-taxonomy';
 
 export interface PriceCell {
-  /** What the price is for, inside its block: "1st set", "4 or more", "Setup". */
   label: string;
   rule: RateRule;
-  /** Another rule prices the same thing. The engine uses only one of them. */
   duplicate: boolean;
 }
 export interface ZoneRow {
   zone: string;
   perOrder: RateRule | null;
   perTrip: RateRule | null;
-  /** More than one rule for this zone and kind; the engine uses only one. */
   duplicate: boolean;
   orderTwice: boolean;
   tripTwice: boolean;
@@ -34,10 +31,6 @@ export type RuleBlock =
   | { kind: 'zones'; id: 'zones'; title: string; rows: ZoneRow[] };
 export interface RuleSection { category: RateRuleCategory; count: number; blocks: RuleBlock[] }
 
-/** The order of the card's tabs, and of Price check's answer: the taxonomy's
- *  order with the two categories a 3PL card mostly carries first (the approved
- *  mockup, 2026-11-11: Delivery · Outstation · Setup & dismantle · Service
- *  calls). Derived, not written out, so the taxonomy stays the one list. */
 const leads = (c: RateRuleCategory) => c === 'DELIVERY' || c === 'OUTSTATION';
 export const CATEGORY_ORDER: readonly RateRuleCategory[] = [
   ...RATE_RULE_CATEGORIES.filter(leads),
@@ -67,8 +60,6 @@ const markDuplicates = (cells: Array<Omit<PriceCell, 'duplicate'> & { key: strin
   return cells.map(({ key, ...c }) => ({ ...c, duplicate: (seen.get(key) ?? 0) > 1 }));
 };
 
-/** The tier ladder: the highest position prices every unit beyond it too
- *  (delivery-rate-card.ts tierAmountForPosition), so it reads "and after". */
 const tierCells = (tiers: RateRule[], unit: string): PriceCell[] => {
   const sorted = [...tiers].sort((a, b) => (a.tierPosition ?? 0) - (b.tierPosition ?? 0));
   const top = Math.max(0, ...sorted.map((r) => r.tierPosition ?? 0));
@@ -90,8 +81,6 @@ const sofaCells = (brackets: RateRule[]): PriceCell[] => markDuplicates(
     .map((r) => ({ key: `${r.bracketMin}-${r.bracketMax}`, label: sofaLabel(r.bracketMin ?? 0, r.bracketMax), rule: r })),
 );
 
-/* Charges on each DO, by the names they were given ("SST", "Permit"); a name
-   used twice is flagged, as both are charged. */
 const chargeCells = (charges: RateRule[]): PriceCell[] => markDuplicates(
   [...charges]
     .sort((a, b) => a.sortOrder - b.sortOrder || (a.label ?? '').localeCompare(b.label ?? ''))

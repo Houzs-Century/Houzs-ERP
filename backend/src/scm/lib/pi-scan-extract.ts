@@ -1,20 +1,3 @@
-// ---------------------------------------------------------------------------
-// pi-scan-extract — the supplier-INVOICE OCR: one Claude vision call that reads
-// a supplier's printed invoice into the fields the matcher needs to find our
-// OPEN Goods Receipt(s) and convert them into a DRAFT Purchase Invoice.
-//
-// The MIRROR of the SO scanner's callClaudeSlipExtract (routes/scan-so.ts),
-// but invoice-shaped instead of sale-slip-shaped, and far smaller: an invoice
-// is computer-generated clean text (the samples are DIGLANT invoices), so there
-// is no catalog to inject and no handwriting to distil — the whole prompt is
-// static except the few-shot pool of PREVIOUSLY-CONFIRMED reads (the same
-// so_scan_samples table, partitioned document_type='PI'), which is how the
-// reader self-improves.
-//
-// SAFETY: this only READS. It moves no money and creates nothing. Its output is
-// data for pi-scan-match.ts, which finds the GRN; the DRAFT PI is raised by
-// pi-from-grn-core.ts. temperature=0 for deterministic, reproducible OCR.
-// ---------------------------------------------------------------------------
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { recordAi, type AiUsageTag } from '../../services/aiUsage';
@@ -22,8 +5,6 @@ import {
   CLAUDE_MODEL, anthropicFetchWithRetry, stripJsonFences, type ContentBlock,
 } from './scan-ocr';
 
-// The scm service client is schema-parameterised (db:{schema:'scm'}); the bare
-// generic does not accept it, so the loosened alias every scan module uses.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema-parameterised client, same alias as scan-so.ts / scan-sample-review.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
@@ -47,10 +28,9 @@ export type PiScanExtract = {
   supplierName: string | null;
   supplierCode: string | null;
   invoiceNumber: string | null;
-  invoiceDate: string | null; // YYYY-MM-DD or null
+  invoiceDate: string | null;
   poNo: string | null;
   doNo: string | null;
-  /** The invoice's Sales Tax and final amount, from its summary, in RM. */
   salesTax: number | null;
   totalAmount: number | null;
   lines: PiScanLine[];
@@ -77,7 +57,6 @@ const str = (v: unknown): string | null => {
 const num = (v: unknown): number | null => {
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
   if (typeof v === 'string') {
-    // Strip currency symbols, thousands separators and spaces: "RM 1,234.50".
     const cleaned = v.replace(/[^0-9.\-]/g, '');
     if (cleaned === '' || cleaned === '-' || cleaned === '.') return null;
     const n = Number(cleaned);
@@ -86,9 +65,6 @@ const num = (v: unknown): number | null => {
   return null;
 };
 
-// YYYY-MM-DD if the model produced something date-shaped; else null. The DRAFT
-// PI's invoice_date defaults to today when this is null (pi-from-grn-core), so a
-// mis-read date never blocks the draft.
 function coerceDate(v: unknown): string | null {
   const s = str(v);
   if (!s) return null;
@@ -193,11 +169,7 @@ export async function callClaudePiExtract(
           {
             role: 'user',
             content: [
-              // Static instructions cached for 1h — reused across back-to-back
-              // invoice scans exactly like the SO catalog prefix.
               { type: 'text', text: PI_SCAN_PROMPT, cache_control: { type: 'ephemeral', ttl: '1h' } },
-              // Confirmed-read examples live AFTER the cache boundary (they grow
-              // as operators confirm drafts) so they never bust the prefix.
               ...(fewShotText ? [{ type: 'text', text: fewShotText }] : []),
               ...fileBlocks,
               {
@@ -260,8 +232,6 @@ export async function loadPiFewShot(svc: SupabaseClient, limit = 5): Promise<str
       .in('status', ['ACCEPTED', 'CONFIRMED'])
       .order('created_at', { ascending: false })
       .limit(limit);
-    // Best-effort: a read failure means "no examples this time", never a false
-    // empty pool asserted as ground truth. The reader still runs without them.
     if (error) return '';
     const rows = (data as Array<{ corrected?: unknown; extracted?: unknown }> | null) ?? [];
     const examples = rows

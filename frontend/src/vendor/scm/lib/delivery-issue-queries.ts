@@ -1,16 +1,8 @@
-/* "Delivered with issue" — the one logic layer for the crew's problem report
-   (MobilePOD, MobileJobStop) and the office's views of it (DO / SO detail on
-   desktop and mobile, Last Mile). Server: backend/src/scm/routes/delivery-issues.ts.
-   The delivery is still recorded delivered; the report adds an issue and opens
-   a Service Case. */
 import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { uploadSlipFull } from './slip';
 import { deliveryIssueKindLabel, type DeliveryIssueKind } from './delivery-issue-kinds';
 import type { JobRef } from './delivery-job';
-// The core app client (/api), NOT the scm authedFetch (/api/scm): the office
-// create reuses the Service Cases endpoint POST /api/assr, which lives on the
-// core router.
 import { api } from '../../../api/client';
 
 export type DeliveryIssue = {

@@ -1,7 +1,3 @@
-// Vendored VERBATIM (minus the unused supabase import) from
-// apps/backend/src/lib/state-warehouse-queries.ts — the SO Detail Sales-Location
-// auto-populate + SO Maintenance state→warehouse mapping editor. authedFetch
-// based already.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -55,10 +51,6 @@ export function useUpsertStateWarehouseMapping() {
     },
     onError: (err, _vars, ctx) => {
       if (ctx?.previous) qc.setQueryData(['state-warehouse-mappings'], ctx.previous);
-      /* Rolling back a rejected save without saying so reads as "it saved, then
-         flickered back" — the operator believes the state is mapped to a
-         warehouse it is not. This mapping routes deliveries, so a silently
-         reverted edit misroutes real goods. */
       serviceNotify({
         title: 'Warehouse mapping not saved',
         body: err instanceof Error ? err.message : 'Something went wrong.',

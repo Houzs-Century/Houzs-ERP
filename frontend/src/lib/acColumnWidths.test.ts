@@ -1,6 +1,3 @@
-// The number on the screen and the number the account book enforces are one
-// number in two files. This is the test that says so out loud; the build-time
-// guard that compares them is frontend/scripts/check-address-line-max.mjs.
 import { describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { ADDRESS_LINE_MAX, addressLineProps, onAddressPaste, splitAddressAtLimit } from './acColumnWidths';
@@ -9,9 +6,6 @@ describe('the input limit is the account book\'s own column width', () => {
   test('it matches the backend constant, read from the backend source', () => {
     const src = readFileSync('../backend/src/services/autocount-address-fit.ts', 'utf8');
     const m = src.match(/export const AC_ADDRESS_LINE_MAX = (\d+);/);
-    /* A missing match must FAIL, never pass quietly — a renamed constant would
-       otherwise make this test assert nothing (CLAUDE.md: a verdict computed
-       over nothing must not read as a pass). */
     expect(m, 'AC_ADDRESS_LINE_MAX not found in the backend source').toBeTruthy();
     expect(ADDRESS_LINE_MAX).toBe(Number(m?.[1]));
   });
@@ -31,8 +25,6 @@ describe('a long address breaks at a word, and the tail is never lost', () => {
     const { head, tail } = splitAddressAtLimit(text);
     expect(head.length).toBeLessThanOrEqual(ADDRESS_LINE_MAX);
     expect(head.endsWith(' ')).toBe(false);
-    /* NOT ONE WORD LOST, and their order kept: putting the two halves back
-       together must give the original text. */
     expect(`${head} ${tail}`).toBe(text);
   });
 
@@ -86,8 +78,6 @@ describe('pasting a long address spills into the next line', () => {
   });
 
   test('the tail is NOT cut to the column — the write-back re-flows what four lines cannot hold', () => {
-    /* The regression this whole handler exists to avoid: a browser truncating
-       an over-long paste drops the tail for good. */
     const clip = `${'word '.repeat(20)}end`.trim();
     const { set2 } = paste('', clip, '');
     expect(set2.mock.calls[0][0].length).toBeGreaterThan(ADDRESS_LINE_MAX);
@@ -98,7 +88,6 @@ describe('pasting a long address spills into the next line', () => {
     const clip = 'Kawasan Perindustrian Bukit Minyak Seberang Perai Tengah Pulau Pinang';
     const { set1, prevented } = paste('', clip, null);
     expect(prevented).toBe(true);
-    /* Not truncated to 40. Over the column, and the write-back re-flows it. */
     expect(set1.mock.calls[0][0]).toBe(clip);
   });
 

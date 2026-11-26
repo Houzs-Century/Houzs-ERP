@@ -51,7 +51,6 @@ export async function runProjectDueReminders(env: Env): Promise<{
   const items = rows.results ?? [];
   if (!items.length) return { items: 0, recipients: 0, sent: 0 };
 
-  // Bucket by owner email (fall back to the "unassigned" bucket).
   const UNASSIGNED = "__unassigned__";
   const byRecipient = new Map<string, typeof items>();
   for (const it of items) {
@@ -61,7 +60,6 @@ export async function runProjectDueReminders(env: Env): Promise<{
     byRecipient.set(key, arr);
   }
 
-  // Managers — used for the unassigned bucket. Computed lazily.
   let managerEmails: string[] | null = null;
   async function managers(): Promise<string[]> {
     if (managerEmails != null) return managerEmails;
@@ -77,9 +75,6 @@ export async function runProjectDueReminders(env: Env): Promise<{
     return managerEmails;
   }
 
-  // Overdue/upcoming boundary is a Malaysia calendar day, not UTC. Workers run
-  // in UTC, so before 08:00 MYT `toISOString()` is still yesterday and an item
-  // due "today" would be mislabelled overdue an entire morning.
   const today = todayMyt();
   let sent = 0;
   let recipients = 0;
@@ -89,7 +84,6 @@ export async function runProjectDueReminders(env: Env): Promise<{
       key === UNASSIGNED ? await managers() : [key];
     if (!recipientList.length) continue;
 
-    // Partition into overdue vs upcoming for the email copy.
     const overdue = bucket.filter((b) => b.due_date.slice(0, 10) < today);
     const upcoming = bucket.filter((b) => b.due_date.slice(0, 10) >= today);
 

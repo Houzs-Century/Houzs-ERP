@@ -1,16 +1,3 @@
-// ---------------------------------------------------------------------------
-// mcp-ratelimit.ts — per-person limits on the AI Connector's tools/call
-// (routes/mcp.ts callTool), and the short per-person answer cache.
-//
-// Limits: 30 tool calls a minute and 600 a day per person, counted from
-// mcp_calls (index mcp_calls_user_idx on user_id, created_at). initialize,
-// tools/list and prompts/list never reach callTool, so they are not counted.
-// A refused call is logged with note RATE_LIMITED_NOTE and is NOT counted
-// again, so a client that keeps retrying is not locked out for longer.
-// Over the limit the person gets a normal tool result with isError, never a 500.
-// The admin leak check (routes/mcpAdmin.ts) reads through readEndpoint, not
-// callTool, so it is never limited.
-// ---------------------------------------------------------------------------
 import type { Env } from "../types";
 
 type Db = Env["DB"];
@@ -59,11 +46,6 @@ export async function rateLimitRefusal(db: Db, userId: number, now: number): Pro
   }
 }
 
-// ── short answer cache ──────────────────────────────────────────────────────
-// Quick answers and the daily brief are read-only summaries; an AI app often
-// asks the same one twice within seconds (a retry, a follow-up). Per isolate,
-// keyed by person + company + tool + arguments, so nobody ever gets another
-// person's answer. 30 seconds: a permission change takes effect within that.
 
 export const ANSWER_CACHE_TTL_MS = 30_000;
 const ANSWER_CACHE_MAX = 300;

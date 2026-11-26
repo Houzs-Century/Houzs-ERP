@@ -17,9 +17,7 @@ export function PositionsTab() {
   const positionsQ = useQuery<{ positions: Position[] }>("/api/positions", () => api.get("/api/positions"));
   const deptsQ = useQuery<{ departments: Department[] }>("/api/departments", () => api.get("/api/departments"));
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  // null = closed · "new" = create · Position = edit that one
   const [editing, setEditing] = useState<Position | "new" | null>(null);
-  // Department groups the admin has collapsed in the left list.
   const [collapsedDepts, setCollapsedDepts] = useState<Set<string>>(new Set());
   const toggleDept = (dept: string) =>
     setCollapsedDepts((prev) => {
@@ -45,15 +43,12 @@ export function PositionsTab() {
       if (!m.has(d)) m.set(d, []);
       m.get(d)!.push(p);
     }
-    // Order the department groups by their saved sort_order (drag-reorderable),
-    // then name; positions inside each come back from the API already ordered.
     const ord = (name: string) => deptByName.get(name)?.sort_order ?? 9999;
     return Array.from(m.entries()).sort(
       (a, b) => ord(a[0]) - ord(b[0]) || a[0].localeCompare(b[0]),
     );
   }, [positions, deptByName]);
 
-  // ── Drag-and-drop reordering (Super Admin) ──────────────────
   const [drag, setDrag] = useState<{ kind: "pos" | "dept"; id?: number; dept: string } | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
@@ -104,7 +99,6 @@ export function PositionsTab() {
     setDragOverKey(null);
     if (!d) return;
     if (d.kind === "pos" && d.id != null) {
-      // Move a position into this department (appended at the end).
       const dragged = positions.find((p) => p.id === d.id);
       if (!dragged || (dragged.department_name ?? "No department") === targetDeptName) return;
       const list = byDept.find(([name]) => name === targetDeptName)?.[1] ?? [];
@@ -161,8 +155,6 @@ export function PositionsTab() {
       </div>
 
       <div className="flex flex-col gap-4 lg:flex-row">
-        {/* Position list — grouped by department, each row editable/deletable */}
-        {/* Position list — single column, department-grouped + collapsible */}
         <div className="shrink-0 lg:w-64">
           {positionsQ.loading && <Skeleton className="h-40 w-full" />}
           <div className="space-y-2.5">
@@ -292,7 +284,6 @@ export function PositionsTab() {
           )}
         </div>
 
-        {/* Page-access matrix for the selected position */}
         <div className="min-w-0 flex-1">
           {selected ? (
             <PositionMatrixEditor
@@ -337,7 +328,6 @@ export function PositionsTab() {
   );
 }
 
-/** Create / edit a single position (name + department). */
 function PositionEditPanel({
   position,
   departments,
@@ -486,14 +476,6 @@ function PositionMatrixEditor({
   position: Position;
   onEdit: () => void;
 }) {
-  // Page access for a positioned member is resolved from position defaults in
-  // the backend at login (services/positionPolicy.ts) — NOT from a per-page
-  // matrix edited here. The old none/view/edit/full grid wrote the
-  // position_page_access table, which auth.ts no longer reads for a positioned
-  // user, so every "Saved" changed nothing. The grid and its Save were removed
-  // so the editor can no longer claim to save an edit that does nothing; the
-  // table and its backend route are kept for when per-page editing is reworked.
-  // Position details (name / department) stay fully editable via the pencil.
   return (
     <div className="rounded-lg border border-border bg-surface p-4 shadow-stone">
       <div className="mb-3 flex items-center justify-between gap-3">

@@ -1,12 +1,3 @@
-/* "Add line" on the phone detail — who is offered it, and what is sent.
- *
- * FAILS ON THE PRE-FIX CODE — the module did not exist; the phone could not add
- * a line to any document.
- *
- * The gate is two SHARED answers ANDed (may this person write the document;
- * is it still open for a line), so both halves are pinned per document, and the
- * bodies are pinned to what the desktop add rows send.
- */
 import { describe, expect, it } from "vitest";
 import {
   MODULE_TO_ADD_LINE_DOC,
@@ -55,7 +46,6 @@ describe("mayAddLine — the operate half", () => {
   });
 
   it("keeps the owner's rule that Sales only LOOKS at a sales invoice", () => {
-    /* canOperateSalesInvoices — Sales cohort is refused even with edit access. */
     const salesEdit = access({ "scm.sales.invoices": "edit" }, salesUser);
     expect(mayAddLine("si", { status: "DRAFT" }, salesEdit)).toBe(false);
   });

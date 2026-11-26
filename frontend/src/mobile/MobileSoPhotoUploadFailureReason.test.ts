@@ -31,15 +31,12 @@ import {
 } from "../vendor/scm/lib/photo-upload-failures";
 import { sharedFailureCause } from "../vendor/scm/lib/line-write-failures";
 
-/** An authedFetch rejection: the humanised sentence plus the raw status. */
 const apiError = (message: string, status: number): Error => {
   const e = new Error(message) as Error & { status?: number };
   e.status = status;
   return e;
 };
 
-/* The sentence the migrated-SO lock actually sends, verbatim from
-   backend/src/scm/lib/migrated-so-lock.ts DEFAULT_LOCKED_MESSAGE. */
 const LOCKED =
   "This order came from AutoCount and is view-only for now: its payments are still being "
   + "reconciled, so an edit could be overwritten. New orders save normally. "
@@ -72,8 +69,6 @@ describe("a refused photo upload reaches the operator with its reason", () => {
   });
 
   it("agrees with the line-write module about what a refusal IS", () => {
-    // Same statuses, same answer — the two surfaces cannot drift apart, because
-    // this is literally the line-write module's own function.
     expect(isRefusal([photoUploadFailure("x", apiError(LOCKED, 409))])).toBe(true);
     expect(isRefusal([photoUploadFailure("x", apiError(TOO_BIG, 413))])).toBe(false);
   });
@@ -110,7 +105,7 @@ describe("one shared cause is said once", () => {
 
   it("says the cause once and keeps the count", () => {
     const msg = photoUploadFailureMessage(threeLocked);
-    expect(msg.split("AutoCount").length - 1).toBe(1); // the reason appears ONCE
+    expect(msg.split("AutoCount").length - 1).toBe(1);
     expect(msg).toContain("3 photos could not be uploaded");
     expect(msg).toContain(LOCKED);
   });

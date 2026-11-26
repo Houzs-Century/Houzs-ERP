@@ -43,8 +43,6 @@ vi.mock('../../vendor/scm/lib/forecast-queries', () => ({
   useForecast: () => ({ data: state.data, isLoading: false, isError: false, error: null }),
   useSaveForecast: () => ({ mutate, isPending: false }),
 }));
-/* The page sits in the Finance report shell, whose report list reads the
-   sidebar's gates (reports/ReportRail). */
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: null, can: () => true, pageAccess: () => 'full' }) }));
 const xlsx = vi.fn(async (..._a: unknown[]) => {});
 vi.mock('../../vendor/scm/lib/report-sheet-xlsx', () => ({ downloadReportXlsx: (...a: unknown[]) => xlsx(...a) }));
@@ -64,17 +62,14 @@ describe('the Forecast P&L page', () => {
     expect(screen.getByText('Administrative expense')).toBeTruthy();
     expect(screen.getByText('Salary & related')).toBeTruthy();
     expect(screen.getByText('500-0003 · SALES OF SOFA')).toBeTruthy();
-    /* Saved: sales 100,000 as an amount; cost 60% with its implied 60,000; salary 20,000 with its implied 20%. */
     expect(amount('2026-09', '500-0003').value).toBe('100,000.00');
     expect(percent('2026-09', '601-0003').value).toBe('60');
     expect(amount('2026-09', '601-0003').placeholder).toBe('60,000.00');
     expect(amount('2026-09', '900-S001').value).toBe('20,000.00');
     expect(percent('2026-09', '900-S001').placeholder).toBe('20');
-    /* The statement's arithmetic. */
     expect(rowText('gross-profit')).toContain('40,000.00');
     expect(rowText('net-profit')).toContain('20,000.00');
     expect(rowText('pl:general:salary')).toContain('20,000.00');
-    /* A sales line has no % box; ADVERT and the discount, never keyed, are hidden until asked. */
     expect(screen.queryByLabelText('2026-09 500-0003 percent')).toBeNull();
     expect(screen.queryByText('900-A001 · ADVERT')).toBeNull();
     fireEvent.click(screen.getByText('Show empty lines'));
@@ -90,12 +85,10 @@ describe('the Forecast P&L page', () => {
     expect(rowText('gross-profit')).toContain('80,000.00');
     expect(percent('2026-09', '900-S001').placeholder).toBe('10');
     expect(screen.getByText('Unsaved changes')).toBeTruthy();
-    /* An amount on the cost line replaces its %. */
     key(amount('2026-09', '601-0003'), '50,000');
     expect(percent('2026-09', '601-0003').value).toBe('');
     expect(percent('2026-09', '601-0003').placeholder).toBe('25');
     expect(rowText('gross-profit')).toContain('150,000.00');
-    /* A % on the salary line replaces its amount. */
     key(percent('2026-09', '900-S001'), '12.5');
     expect(amount('2026-09', '900-S001').value).toBe('');
     expect(amount('2026-09', '900-S001').placeholder).toBe('25,000.00');
@@ -132,7 +125,6 @@ describe('the Forecast P&L page', () => {
     act(() => { opts.onError(new Error('2026-09 900-S001 amount: amount must be a whole number of sen')); });
     expect(within(screen.getByRole('alert')).getByText('2026-09 900-S001 amount: amount must be a whole number of sen')).toBeTruthy();
     expect(document.activeElement).toBe(amount('2026-09', '900-S001'));
-    /* Removing the only month empties the grid the PUT will send. */
     fireEvent.click(screen.getByLabelText('Remove Sep 2026'));
     expect(screen.getByText('No month yet — pick one above and press Add month.')).toBeTruthy();
     fireEvent.click(screen.getByText('Save'));
@@ -147,7 +139,6 @@ describe('the Forecast P&L page', () => {
     fireEvent.click(screen.getByText('Save'));
     expect(mutate).not.toHaveBeenCalled();
     expect(screen.getByText('Nothing to save')).toBeTruthy();
-    /* Other… takes any month — an earlier one inherits the month before it. */
     fireEvent.change(pick, { target: { value: 'other' } });
     fireEvent.change(screen.getByLabelText('Other month to add'), { target: { value: '2026-08' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add month' }));
@@ -179,14 +170,12 @@ describe('the Forecast P&L page', () => {
       ],
     };
     render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
-    /* Sofa 60% of the 100,000 sofa sales = 60,000 (not of the 140,000 whole); bedding 10,000 of 40,000 = 25%; salary 10% of everything = 14,000. */
     expect(amount('2026-09', '601-0003').placeholder).toBe('60,000.00');
     expect(percent('2026-09', '601-0001').placeholder).toBe('25');
     expect(amount('2026-09', '900-S001').placeholder).toBe('14,000.00');
     expect(percent('2026-09', '601-0003').title).toBe("% of this line's own sales: 500-0003");
     expect(percent('2026-09', '900-S001').title).toBe("% of the month's sales");
     expect(rowText('gross-profit')).toContain('70,000.00');
-    /* More bedding sales: the bedding share falls, the sofa figure stands, salary follows the whole. */
     key(amount('2026-09', '500-0001'), '100000');
     expect(percent('2026-09', '601-0001').placeholder).toBe('10');
     expect(amount('2026-09', '601-0003').placeholder).toBe('60,000.00');
@@ -195,8 +184,6 @@ describe('the Forecast P&L page', () => {
   });
 });
 
-/* Step 1 of the Hookka forecast port (2026-11-24): a purchase line split by
-   supplier. Made-up suppliers and figures. */
 describe('a purchase line split by supplier', () => {
   const SUP_DATA: ForecastResponse = {
     ...DATA,
@@ -215,7 +202,6 @@ describe('a purchase line split by supplier', () => {
 
   test('closed, the line shows the suppliers that carry a figure and their sum, read-only; the totals take the sum', () => {
     render(<MemoryRouter><ForecastPnl /></MemoryRouter>);
-    /* Alpha 30,000 + Beta 15% of 100,000 = 15,000 → 45,000 (45%), not the line's own 60%. */
     expect(amount('2026-09', '601-0003').value).toBe('45,000.00');
     expect(amount('2026-09', '601-0003').readOnly).toBe(true);
     expect(percent('2026-09', '601-0003').value).toBe('45');
@@ -224,7 +210,6 @@ describe('a purchase line split by supplier', () => {
     expect(sup('2026-09', '601-0003', 'Beta Supplies', 'percent').value).toBe('15');
     expect(sup('2026-09', '601-0003', 'Beta Supplies', 'amount').placeholder).toBe('15,000.00');
     expect(rowText('gross-profit')).toContain('55,000.00');
-    /* Closed: no supplier without a figure, no Other, no picker. */
     expect(screen.queryByText('Cedar Works')).toBeNull();
     expect(screen.queryByText('Other (new suppliers)')).toBeNull();
     expect(screen.queryByLabelText('Add a supplier under 601-0003')).toBeNull();
@@ -239,7 +224,6 @@ describe('a purchase line split by supplier', () => {
     expect([...pick.options].map((o) => o.textContent)).toEqual(['Add supplier…', 'Echo Imports']);
     fireEvent.change(pick, { target: { value: 'sup-e' } });
     expect(sup('2026-09', '601-0003', 'Echo Imports', 'amount')).toBeTruthy();
-    /* Other takes a figure like any supplier; the line follows. */
     key(sup('2026-09', '601-0003', 'Other (new suppliers)', 'amount'), '5000');
     expect(amount('2026-09', '601-0003').value).toBe('50,000.00');
     expect(rowText('gross-profit')).toContain('50,000.00');
@@ -250,7 +234,6 @@ describe('a purchase line split by supplier', () => {
     key(sup('2026-09', '601-0003', 'Alpha Trading', 'amount'), '');
     expect(amount('2026-09', '601-0003').value).toBe('15,000.00');
     key(sup('2026-09', '601-0003', 'Beta Supplies', 'percent'), '');
-    /* No supplier left: the line's own 60% is back, and typeable. */
     expect(amount('2026-09', '601-0003').readOnly).toBe(false);
     expect(percent('2026-09', '601-0003').value).toBe('60');
     expect(amount('2026-09', '601-0003').placeholder).toBe('60,000.00');

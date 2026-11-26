@@ -1,8 +1,3 @@
-// Customer payments into the ledger — the newest auto-posting document type,
-// so it gets its mandatory behaviour locks (brief §2.1). The decisions pinned:
-// which account each method debits, that AR is always the credit, that
-// imported/migrated money never books, that a payment posts ONCE, and that the
-// backfill converges instead of double-posting.
 
 import { describe, it, expect } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
@@ -154,9 +149,6 @@ describe('postSiPayment — the invoice-side twin', () => {
     expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'SIPAY', source_doc_no: 'sp-1' });
   });
 
-  /* Conts #395: a company that keeps no debtor codes (2990) booked every
-     invoice payment under no customer — the AR leg must name the customer the
-     invoice's own revenue entry names: the order's customer_id. */
   it('an invoice with no debtor code books the payment under its order’s customer', async () => {
     const sb = fakeSb({
       accounts: CHART, acc_account_roles: [], acc_acquirers: [],
@@ -202,18 +194,14 @@ describe('backfillSoPayments — converges, never double-posts', () => {
         PAY({ id: 'pay-3', method: 'imported' }),
       ],
     });
-    // pay-1 already posted once.
     await postSoPayment(sb, PAY() as never);
     const out = await backfillSoPayments(sb, 100);
     expect(out.ok).toBe(true);
-    // pay-1 excluded by the pre-scan; imported rows excluded by the query.
     expect(out.scanned).toBe(1);
     expect(out.posted).toBe(1);
     expect(out.failed).toHaveLength(0);
     expect(out.remaining).toBe(0);
-    // The ledger holds exactly two SOPAY entries — one per real payment.
     expect(sb.tables.journal_entries.filter((j) => j.source_type === 'SOPAY')).toHaveLength(2);
-    // Second run: nothing left to do.
     const again = await backfillSoPayments(sb, 100);
     expect(again).toMatchObject({ ok: true, scanned: 0, posted: 0, remaining: 0 });
   });
@@ -245,8 +233,6 @@ describe('payments that never reached the ledger', () => {
   } as never);
 
   it('says nothing at all until this company has booked its FIRST payment', async () => {
-    /* No entry anywhere: the module is not running here, so unbooked is the
-       expected state for every row and listing them would be the noise. */
     const r = await unbookedPayments(world({
       mfg_sales_order_payments: [payRow('p1', 'SO-1', '2026-01-05', 50000)],
     }), 1);
@@ -263,9 +249,9 @@ describe('payments that never reached the ledger', () => {
     const r = await unbookedPayments(world({
       journal_entries: [je('p2', '2026-08-01')],
       mfg_sales_order_payments: [
-        payRow('old', 'SO-OLD', '2026-01-05', 900000),   // historical, deliberately unbooked
-        payRow('p2', 'SO-2', '2026-08-01', 50000),       // booked
-        payRow('p3', 'SO-3', '2026-08-05', 12345),       // NOT booked, and after the boundary
+        payRow('old', 'SO-OLD', '2026-01-05', 900000),
+        payRow('p2', 'SO-2', '2026-08-01', 50000),
+        payRow('p3', 'SO-3', '2026-08-05', 12345),
       ],
     }), 1);
     expect(r.ok).toBe(true);
@@ -275,8 +261,6 @@ describe('payments that never reached the ledger', () => {
     expect(r.totalSen).toBe(12345);
   });
 
-  /* The three the poster itself skips. Reporting them would be reporting as
-     failures the rows it was told to leave alone. */
   it('does not report what the poster deliberately skips', async () => {
     const r = await unbookedPayments(world({
       journal_entries: [je('p2', '2026-08-01')],
@@ -292,8 +276,6 @@ describe('payments that never reached the ledger', () => {
     expect(r.rows).toHaveLength(0);
   });
 
-  /* A reversed entry is not a booking: the money is on the document and NOT in
-     the books, which is exactly what this panel exists to find. */
   it('counts a payment whose only entry was reversed', async () => {
     const r = await unbookedPayments(world({
       journal_entries: [je('p2', '2026-08-01'), je('p3', '2026-08-05', { reversed: true })],
@@ -359,7 +341,6 @@ describe('dry run — would this post, and if not, why?', () => {
     expect(out).toMatchObject({ ok: true, dryRun: true, scanned: 2, posted: 0, wouldPost: 2, skipped: 0 });
     expect(out.rows.map((r) => [r.id, r.status, r.amountSen])).toEqual([['pay-1', 'would_post', 50000], ['pay-2', 'would_post', 50000]]);
     expect(sb.tables.journal_entries).toHaveLength(0);
-    /* The real run afterwards posts exactly those two. */
     const real = await backfillSoPayments(sb, 100);
     expect(real).toMatchObject({ ok: true, dryRun: false, posted: 2, wouldPost: 0 });
     expect(sb.tables.journal_entries.filter((j) => j.source_type === 'SOPAY')).toHaveLength(2);

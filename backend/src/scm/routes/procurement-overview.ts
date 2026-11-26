@@ -105,9 +105,6 @@ procurementOverview.get('/', async (c) => {
   return result.ok ? c.json({ ...forPage(result.body as Record<string, unknown>), cachedAt }) : c.json(result.body, 500);
 });
 
-/* GET /procurement-overview/stock-health - every dead and buffer row of the
-   same cached report (same query parameters as the page), for the full list,
-   its sort and its Excel export. */
 procurementOverview.get('/stock-health', async (c) => {
   const { result } = await cachedReport(c);
   if (!result.ok) return c.json(result.body, 500);
@@ -154,15 +151,11 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
   const windowStart = new Date(Date.parse(`${to}T00:00:00Z`) - 365 * 86400000).toISOString().slice(0, 10);
   const fail = (what: string, e: { message: string }): ProcurementOverviewResult => ({ ok: false, body: { error: 'load_failed', reason: `${what}: ${e.message}` } });
 
-  /* ── PO headers and lines ─────────────────────────────────────────────── */
   const pos = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_orders')
     .select('id, po_number, po_date, supplier_id, expected_at').gte('po_date', windowStart).lte('po_date', to)
     .not('status', 'in', '("DRAFT","CANCELLED")'), ctx).order('id').range(f, t));
   if (pos.error) return fail('purchase orders', pos.error);
   const poById = new Map((pos.data ?? []).map((r) => [String(r.id), r]));
-  /* Lines, their receipts and their sales order read with the rows they hang
-     off (embedded), filtered in the database: batching a year of PO and line
-     uuids into the filter cost ~100 serial round trips in production. */
   const one = (x: unknown) => (Array.isArray(x) ? x[0] : x) as Row | null | undefined;
   const itemsAll = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_order_items')
     .select('id, purchase_order_id, item_code, item_group, description, qty, received_qty, unit_price_sen, line_total_sen, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, so_item_id, po:purchase_orders!inner(po_date, status), si:mfg_sales_order_items(doc_no, so:mfg_sales_orders(customer_delivery_date, amended_delivery_date))')
@@ -171,8 +164,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
   const items = { data: (itemsAll.data ?? []).filter((r) => poById.has(String(r.purchase_order_id))) };
   const itemIds = new Set(items.data.map((r) => String(r.id)));
 
-  /* ── Receipts of those lines ──────────────────────────────────────────── */
-  /* A receipt of a PO raised in the window comes in after that PO's date. */
   const grnAll = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('grn_items')
     .select('grn_id, purchase_order_item_id, qty_received, qty_rejected, grn:grns!inner(received_at, status)')
     .not('purchase_order_item_id', 'is', null).gte('grn.received_at', windowStart), ctx).order('id').range(f, t));
@@ -186,7 +177,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
     receiptsByLine.set(k, [...(receiptsByLine.get(k) ?? []), { date: d, qty: num(g.qty_received), rejected: num(g.qty_rejected) }]);
   }
 
-  /* ── The customer's date, through the linked sales order line ─────────── */
   const soDocOfItem = new Map<string, string>();
   const needOfSo = new Map<string, string | null>();
   for (const r of items.data) {
@@ -197,7 +187,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
     if (so) needOfSo.set(String(si.doc_no), day(so.amended_delivery_date) ?? day(so.customer_delivery_date));
   }
 
-  /* ── Names, categories, lead-time settings ────────────────────────────── */
   const sups = await chunkIn<Row>([...new Set((pos.data ?? []).map((r) => str(r.supplier_id)).filter((x): x is string => !!x))], (b, f, t) =>
     scopeToCompany(sb.from('suppliers').select('id, name').in('id', b), ctx).order('id').range(f, t));
   if (sups.error) return fail('suppliers', sups.error);
@@ -206,8 +195,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
     scopeToCompany(sb.from('mfg_products').select('code, category').in('code', b), ctx).order('code').range(f, t));
   if (prods.error) return fail('products', prods.error);
   const prodCat = new Map(prods.data.map((r) => [String(r.code), str(r.category)]));
-  /* The company-wide MRP setting per category (warehouse overrides aside) —
-     the value "Apply" on the page writes back. */
   const settings = await scopeToCompany(sb.from('mrp_category_lead_times').select('category, lead_days, warehouse_id'), ctx);
   if (settings.error) return fail('lead time settings', settings.error);
   const currentLead: Record<string, number> = {};
@@ -218,7 +205,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
     else (leadOverrides[k] ??= []).push({ warehouseId: String(s.warehouse_id), days: num(s.lead_days) });
   }
 
-  /* ── Supplier bills in the period ─────────────────────────────────────── */
   const pis = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('purchase_invoices')
     .select('id, supplier_id, total_sen').gte('invoice_date', from).lte('invoice_date', to)
     .not('status', 'in', '("DRAFT","CANCELLED")'), ctx).order('id').range(f, t));
@@ -244,18 +230,10 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
   const billedByCategory: Record<string, number> = {};
   for (const l of piLines.data) { const k = catOf(l); billedByCategory[k] = (billedByCategory[k] ?? 0) + num(l.line_total_sen); }
 
-  /* ── Assemble ─────────────────────────────────────────────────────────── */
-  /* A line can record more received than its GRNs carry (marked received on
-     import, 109 of 2,715 lines in the year to 2026-10-17): the difference is
-     received, on the line's due date, and kept out of lead time. */
   const withInferred = (rs: PLine['receipts'], receivedQty: number, due: string): PLine['receipts'] => {
     const gap = receivedQty - rs.reduce((a, x) => a + x.qty, 0);
     return gap > 0 ? [...rs, { date: due, qty: gap, rejected: 0, inferred: true }] : rs;
   };
-  /* A stock PO (no sales-order line) gets the customer date of the order its
-     goods went to: the assignment kept at goods-receipt time, else the same
-     rule run over the past receipts as an estimate (lib/receipt-so-assignment.ts).
-     The earliest such date stands for the line. */
   const stockLineIds = items.data.filter((r) => !r.so_item_id && (receiptsByLine.get(String(r.id)) ?? []).length > 0).map((r) => String(r.id));
   const derivedNeed = new Map<string, string>();
   const keepNeed = (poItemId: string, d: string | null) => { if (d && (!derivedNeed.has(poItemId) || d < (derivedNeed.get(poItemId) as string))) derivedNeed.set(poItemId, d); };
@@ -285,8 +263,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
       poId: String(po.id), poNumber: String(po.po_number ?? ''), poDate: day(po.po_date) as string,
       supplier: supName.get(String(po.supplier_id ?? '')) ?? '—', category: catOf(r),
       itemCode: str(r.item_code), itemDesc: str(r.description), soDocNo: soDoc,
-      /* Net of line discount: the line total spread over its quantity, so PO
-         raised adds up to the PO totals. */
       qty: num(r.qty), priceSen: num(r.qty) > 0 && r.line_total_sen != null ? num(r.line_total_sen) / num(r.qty) : num(r.unit_price_sen),
       originalDue: original, promised: promisedDate([original, ...revised]),
       needDate: soDoc ? needOfSo.get(soDoc) ?? null : derivedNeed.get(String(r.id)) ?? null,
@@ -294,7 +270,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
     }];
   });
 
-  /* ── Dead stock: on hand now, by how long since it last went out ──────── */
   const stock = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('v_inventory_value')
     .select('warehouse_id, warehouse_code, item_code, variant_key, product_name, qty_on_hand, value_sen').gt('qty_on_hand', 0), ctx)
     .order('warehouse_id').order('item_code').order('variant_key').range(f, t));
@@ -329,14 +304,7 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
   }));
   const inScope = (warehouseId: unknown) => stockScopeKeeps(scope, kindOf.get(String(warehouseId)) ?? 'others');
   const outOfScope = (r: Row) => !inScope(r.warehouse_id);
-  /* What open sales orders still wait for, per item AND variant (owner: a
-     bedframe or sofa only serves an order for the same fabric and size): an
-     open line's quantity less what has gone out on a shipped DO, split by
-     whether the line has a delivery date — the inventory page's Scheduled /
-     Unscheduled. */
   const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
-  /* Every open order line at once, filtered in the database; batching by the
-     stock's item codes (long names, few per URL) made ~200 round trips. */
   const heldCodes = new Set((stock.data ?? []).map((r) => String(r.item_code)));
   const allDemand = await paginateAll<Row>((f, t) => scopeToCompany(sb
     .from('mfg_sales_order_items').select('id, item_code, item_group, variants, qty, line_delivery_date, so:mfg_sales_orders!inner(status, customer_delivery_date)')
@@ -345,8 +313,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
   if (demandLines.error) return fail('open order lines', demandLines.error);
   const soOf = (r: Row) => (Array.isArray(r.so) ? r.so[0] : r.so) as Row | null;
   const openLines = demandLines.data.filter((r) => { const so = soOf(r); return !!so && !SO_DONE.has(String(so.status)); });
-  /* Every DO line tied to an order line, then kept for the open ones: a few
-     pages, where batching 13,000 order-line uuids into the filter was ~180. */
   const openIds = new Set(openLines.map((r) => String(r.id)));
   const allShipped = await paginateAll<Row>((f, t) => scopeToCompany(sb
     .from('delivery_order_items').select('so_item_id, qty, do:delivery_orders!inner(status)').not('so_item_id', 'is', null), ctx).order('id').range(f, t));
@@ -368,9 +334,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
   }
   /* When each item / variant last came in, so the buffer and dead lists say
      how long the stock has sat (owner 2026-10-19). */
-  /* From the open stock lots — a goods receipt and the AutoCount cut-over
-     opening stock both carry their received date there; a movement-only
-     receipt (no lot) falls back to its IN movement. */
   const lastIn = new Map<string, string>();
   const keep = (k: string, d: string | null) => { if (d && (!lastIn.has(k) || d > (lastIn.get(k) as string))) lastIn.set(k, d); };
   const lots = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('inventory_lots')
@@ -393,7 +356,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
     bufferTop: deadRaw.bufferTop.map((x) => ({ ...x, lastIn: lastIn.get(`${x.itemCode}|${x.variantKey}`) ?? null, heldDays: heldDays(`${x.itemCode}|${x.variantKey}`) })),
   };
 
-  /* ── Turnover and sellers in the period ───────────────────────────────── */
   /* Turnover reads a fixed trailing year (owner 2026-10-17: it should not move
      with the period picked); stock movements only begin 2026-09, so until a
      year has passed the window starts at the first OUT. */
@@ -416,8 +378,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
   if (periodSos.error) return fail('sales orders in the period', periodSos.error);
   const soLines = await chunkIn<Row>((periodSos.data ?? []).map((r) => String(r.doc_no)), (b, f, t) => scopeToCompany(sb.from('mfg_sales_order_items')
     .select('item_code, item_group, description, qty, total_sen, cancelled').in('doc_no', b), ctx).order('id').range(f, t));
-  /* Sellers leave out service lines (delivery, disposal, lift — not stock), and
-     count a sofa by its model: KABBIN-L(RHF) and KABBIN-2A(LHF) are KABBIN. */
   const isService = (r: Row) => String(r.item_group ?? '').toLowerCase() === 'service' || String(r.item_code ?? '').toUpperCase().startsWith('SVC-')
     || prodCat.get(String(r.item_code ?? '')) === 'SERVICE';
   const modelOf = (code: string, category: string) => (category === 'SOFA' ? code.split('-')[0] || code : code);
@@ -438,7 +398,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
         return { warehouse: String(r.warehouse_code ?? '—'), kind: kindOf.get(String(r.warehouse_id)) ?? 'others', category: cat, itemCode: model, variantKey: '', name: model === String(r.item_code) ? str(r.product_name) : `${model} (all variants)`, qty: num(r.qty_on_hand), valueSen: num(r.value_sen), lastOut: null, firstMove: null };
       }),
       outs,
-      /* A line given free (gift pillow, bundled bedframe) is not a sale. */
       soLines.data.filter((r) => !r.cancelled && r.item_code && !isService(r) && num(r.total_sen) > 0).map((r) => {
         const cat = catOf(r); const model = modelOf(String(r.item_code), cat);
         return { itemCode: model, name: model === String(r.item_code) ? str(r.description) : `${model} (all variants)`, category: cat, qty: num(r.qty), salesSen: num(r.total_sen) };
@@ -455,7 +414,6 @@ export async function buildProcurementOverview(sb: any, ctx: CompanyScopeCtx, p:
     categories: PROCUREMENT_CATEGORIES,
     currentLead,
     stockScope: scope,
-    /* Stock-PO lines given a customer date: kept at goods receipt / estimated. */
     needSource,
     warehouseKinds: Object.fromEntries((whs.data as Row[]).map((w) => [String(w.code ?? '—'), kindOf.get(String(w.id)) ?? 'others'])),
     leadOverrides: Object.fromEntries(Object.entries(leadOverrides).map(([k, xs]) => [k, xs.map((x) => ({ warehouse: whCode.get(x.warehouseId) ?? '—', days: x.days }))])),
@@ -499,7 +457,6 @@ procurementOverview.get('/stock-ordering', async (c) => {
   const doLines = await chunkIn<Row>([...doById.keys()], (b, f, t) => scopeToCompany(sb.from('delivery_order_items')
     .select('delivery_order_id, so_item_id, item_code, qty').in('delivery_order_id', b), c).order('id').range(f, t));
   if (doLines.error) return fail('delivery order lines', doLines.error);
-  /* A sales-order line some PO line was raised for was bought for that customer, not taken from stock. */
   const soItemIds = [...new Set(doLines.data.map((l) => str(l.so_item_id)).filter((x): x is string => !!x))];
   const boughtFor = await chunkIn<Row>(soItemIds, (b, f, t) => scopeToCompany(sb.from('purchase_order_items')
     .select('so_item_id').in('so_item_id', b), c).order('id').range(f, t));

@@ -1,14 +1,3 @@
-// PINS what the DO picker and both DO-create paths answer, so the read-path
-// speed-up (perf/do-create-and-picker) can be shown to change nothing.
-//
-// Written and snapshotted against the code BEFORE that change. The snapshots
-// hold every response body AND the ordered list of writes each create makes —
-// the speed-up may only overlap or merge READS, so the write log must be
-// byte-identical too.
-//
-// The fake resolves the PostgREST embeds these paths ask for (a DO line's
-// parent DO, a return line's parent return, an SO line's DO lines), so both the
-// old two-step reads and the embedded read run against ONE set of rows.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -18,7 +7,6 @@ import type { Env, Variables } from '../env';
 type Row = Record<string, unknown>;
 type Write = { table: string; op: string; payload?: unknown; match?: string };
 
-/* ── fixture ─────────────────────────────────────────────────────────────── */
 function world(): Record<string, Row[]> {
   const soLine = (id: string, doc: string, code: string, qty: number, extra: Row = {}): Row => ({
     id, doc_no: doc, company_id: doc === 'SO-X' ? 2 : 1, item_code: code, item_group: 'ACCESSORY',
@@ -63,7 +51,6 @@ function world(): Record<string, Row[]> {
       { id: 'dl-03', delivery_order_id: 'do-3', so_item_id: 'a3', item_code: 'MAT-1', qty: 3, company_id: 1 },
       { id: 'dl-04', delivery_order_id: 'do-5', so_item_id: 'a3', item_code: 'MAT-1', qty: 1, company_id: 1 },
       { id: 'dl-05', delivery_order_id: 'do-1', so_item_id: 'a3', item_code: 'MAT-1', qty: 3, company_id: 1 },
-      // Unlinked under SO-A: 3 x PIL-1 fills a1's last 2 then spills 1 onto a2.
       { id: 'dl-06', delivery_order_id: 'do-1', so_item_id: null, item_code: 'pil-1 ', qty: 3, company_id: 1 },
       { id: 'dl-07', delivery_order_id: 'do-4', so_item_id: 'b1', item_code: 'PIL-1', qty: 5, company_id: 1 },
       { id: 'dl-08', delivery_order_id: 'do-6', so_item_id: null, item_code: 'MAT-1', qty: 1, company_id: 1 },
@@ -75,10 +62,8 @@ function world(): Record<string, Row[]> {
       { id: 'dr-2', status: 'CANCELLED', company_id: 1 },
     ],
     delivery_return_items: [
-      // a3 fully delivered, one unit back -> remaining 1; the cancelled return counts nothing.
       { id: 'ri-1', do_item_id: 'dl-05', qty_returned: 1, delivery_return_id: 'dr-1', company_id: 1 },
       { id: 'ri-2', do_item_id: 'dl-07', qty_returned: 2, delivery_return_id: 'dr-2', company_id: 1 },
-      // A return on the UNLINKED shipment re-opens the SO line it was attributed to.
       { id: 'ri-3', do_item_id: 'dl-06', qty_returned: 1, delivery_return_id: 'dr-1', company_id: 1 },
     ],
     mfg_products: [
@@ -91,8 +76,6 @@ function world(): Record<string, Row[]> {
   };
 }
 
-/* ── PostgREST fake with the embeds these paths use ──────────────────────── */
-/* capReturns: a server row cap below PAGE, on the return-line table only. */
 type FakeOpts = { failEmbed?: boolean; failCount?: boolean; capReturns?: number; calls?: string[] };
 function fakeSb(tables: Record<string, Row[]>, writes: Write[], opts: FakeOpts = {}) {
   let minted = 0;
@@ -214,7 +197,6 @@ function fakeSb(tables: Record<string, Row[]>, writes: Write[], opts: FakeOpts =
   };
 }
 
-/* ── harness ─────────────────────────────────────────────────────────────── */
 let current = fakeSb(world(), []);
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => current }));
 
@@ -244,15 +226,9 @@ async function call(method: 'GET' | 'POST', path: string, body?: unknown) {
   return { status: res.status, body: await res.json(), writes };
 }
 
-/* The day the snapshot was taken (MYT). Dates minted from "today" also reach
-   audit field changes and SO-derived defaults, so the clock is held, not masked:
-   the pins went red on 2026-11-11 for nothing but the date. Date only, so the
-   promise and timer machinery stays real. */
 beforeAll(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-10T04:00:00Z')); });
 afterAll(() => { vi.useRealTimers(); });
 
-/* Strip the per-run noise (dates minted from today) so the snapshot holds the
-   decisions, not the clock. */
 const stable = (v: unknown): unknown => JSON.parse(JSON.stringify(v, (k, val) =>
   (['do_date', 'created_at', 'updated_at', 'confirmed_at'].includes(k) && typeof val === 'string' ? '<date>' : val)));
 
@@ -268,13 +244,9 @@ describe('soDeliverableRemaining — pinned', () => {
     expect([...fallback.entries()]).toEqual([...plain.entries()]);
   });
 
-  /* Big enough that the return-line read would take more than one wave of
-     chunked requests, so the whole-table keyset read is chosen. Every way that
-     read can be in doubt must land on the chunked read with the same answer. */
   it('many shipped lines: the whole-table return read answers what the chunked read answers', async () => {
     const big = (): Record<string, Row[]> => {
       const t = world();
-      // uuid-width ids, as in production: 76 to a chunked request, so 1,000 lines take ~14 requests.
       for (let i = 0; i < 1000; i++) {
         const id = `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
         t.mfg_sales_order_items!.push({ ...t.mfg_sales_order_items![0]!, id, doc_no: 'SO-A', line_no: 100 + i, qty: 3 });
@@ -293,14 +265,12 @@ describe('soDeliverableRemaining — pinned', () => {
     const capped = await run({ capReturns: 100 });
     expect(scan.out).toEqual(chunked.out);
     expect(capped.out).toEqual(chunked.out);
-    expect(scan.returnReads).toBe(3);           // the count + one keyset page + the one unlinked line's read
+    expect(scan.returnReads).toBe(3);
     expect(chunked.returnReads).toBeGreaterThan(6);
-    // Linked DO lines ride the SO-line read: only the unlinked lookup touches delivery_order_items.
     expect(scan.doLineReads).toBe(1);
     const fallback = await run({ failEmbed: true });
     expect(fallback.out).toEqual(chunked.out);
     expect(fallback.doLineReads).toBeGreaterThan(6);
-    // The fixture really exercises returns: some lines re-opened, cancelled returns ignored.
     expect(scan.out.filter(([, l]) => l.returned > 0).length).toBeGreaterThan(50);
   });
 

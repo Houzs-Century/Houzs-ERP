@@ -33,7 +33,6 @@ describe("CaseAddressFields", () => {
     fireEvent.keyDown(postcode, { key: "Enter" });
 
     expect((screen.getByLabelText("City") as HTMLInputElement).value).toBe("Bayan Lepas");
-    // Line 3 now only repeats the postcode and city, so line 2 stops showing it twice.
     expect((screen.getByLabelText("Address line 2") as HTMLInputElement).value).toBe("lebuh nipah 2");
     fireEvent.click(screen.getByRole("button", { name: "Save address" }));
     expect(onSave).toHaveBeenCalledWith({ postcode: "11900", city: "Bayan Lepas", state: "Pulau Pinang" });

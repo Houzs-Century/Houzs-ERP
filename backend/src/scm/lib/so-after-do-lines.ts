@@ -99,10 +99,8 @@ export async function openProductLineAfterDo(
   const doLine = doLines[0];
   const target = open.targets.find((t) => t.id === doLine.delivery_order_id);
   if (!target) return { ok: false, status: 409, body: AFTER_DO_LINE_NOT_ON_DO };
-  // A Delivery Return already moved stock on its own — never layer a resync on it.
   if (target.returned) return { ok: false, status: 409, body: afterDoPriceReturnedRefusal([target.do_number ?? target.id]) };
 
-  // Sales Invoice coverage of THIS DO line — the lines, and how much qty they bill.
   const { data: siItems, error: siErr } = await scopeToCompanyId(
     sb.from('sales_invoice_items').select('id, sales_invoice_id, qty, tax_sen').eq('do_item_id', doLine.id), companyId,
   );
@@ -151,9 +149,9 @@ export async function openProductLineRemove(
  *  DO line in full. More than one invoice line would each take the new qty and
  *  double-count, so that is refused too. */
 export function afterDoQtyChangeAllowed(prevSoQty: number, doLineQty: number, siQtyOnDoLine: number, siLineCount: number): boolean {
-  if (doLineQty !== prevSoQty) return false; // part-delivered: the DO holds fewer than the order
-  if (siLineCount > 1) return false; // billed across more than one invoice line
-  if (siQtyOnDoLine > 0 && siQtyOnDoLine !== doLineQty) return false; // part-invoiced
+  if (doLineQty !== prevSoQty) return false;
+  if (siLineCount > 1) return false;
+  if (siQtyOnDoLine > 0 && siQtyOnDoLine !== doLineQty) return false;
   return true;
 }
 
@@ -194,17 +192,9 @@ export function doLinePatchFromSoLine(l: SoLineShape): Record<string, unknown> {
     custom_specials: (l.custom_specials as unknown) ?? null,
     line_suffix: (l.line_suffix as string | null) ?? null,
     special_order_price_sen: Number(l.special_order_price_sen ?? 0),
-    // NOT mirrored: notes, m3_milli, line_delivery_date(_overridden) — those are
-    // the DO line's own (delivery note, cubic volume, delivery day); an SO line
-    // qty/spec edit must not reach across and blank them.
   };
 }
 
-/** Re-derive one live invoice billing the changed DO line: its billed lines take
- *  the new spec / price / (settled) qty and the delivered cost, then the invoice
- *  is re-totalled, its paid status re-rolled, its revenue entry voided and
- *  re-posted at the new total, and the AutoCount invoice edit queued — the exact
- *  sequence copyLinePriceToInvoices uses, now carrying qty and spec too. */
 async function reDeriveInvoiceLines(
   sb: Db, who: Who, h: { id: string; invoice_number: string | null; status: string | null },
   lineIds: ReadonlyArray<string>, patch: Record<string, unknown>, setQty: number | null,
@@ -272,16 +262,12 @@ export async function propagateLineEditAfterDo(
   const { data: beforeDo, error: beforeDoErr } = await scopeToCompanyId(
     sb.from('delivery_order_items').select('item_code, qty, unit_price_sen, discount_sen').eq('id', doLine.id), who.companyId,
   ).maybeSingle();
-  // The pre-update snapshot is for the audit's from-values only; a failed read
-  // just leaves them blank (the edit itself still proceeds below).
   const patch = doLinePatchFromSoLine(soLine);
   const { error: doErr } = await scopeToCompanyId(
     sb.from('delivery_order_items').update(patch).eq('id', doLine.id), who.companyId,
   );
   if (doErr) { doCopyFailed.push(label); return { doCopyFailed, siCopyFailed }; }
 
-  // Stock OUT/IN correction (qty delta, or old-bucket return + new-bucket ship on
-  // a spec change), then the delivered cost re-stamp — the DO's own machinery.
   await deps.resyncInventoryForDo(sb, target.id, deps.performedBy);
   await deps.restampDoActualCost(sb, target.id);
   await recomputeDoTotals(sb, target.id);
@@ -299,13 +285,9 @@ export async function propagateLineEditAfterDo(
   await enqueueEdit(sb, { companyId: who.companyId, docType: 'DO', docId: target.id, newLineIds: [], createdBy: who.actor?.id ?? null });
 
   if (siLines.length === 0) return { doCopyFailed, siCopyFailed };
-  // The delivered cost the resync/restamp just settled onto the DO line is what
-  // the invoice must carry (a spec change moved the cost basis).
   const { data: costRow, error: costErr } = await scopeToCompanyId(
     sb.from('delivery_order_items').select('unit_cost_sen').eq('id', doLine.id), who.companyId,
   ).maybeSingle();
-  // On a read failure, fall back to the cost already on the patch rather than
-  // billing a zero cost.
   const deliveredCost = costErr ? null : (costRow as { unit_cost_sen?: number | null } | null)?.unit_cost_sen;
   const siPatch = { ...patch, unit_cost_sen: Number(deliveredCost ?? patch.unit_cost_sen ?? 0) };
   const byInvoice = new Map<string, { head: SiLineRow; ids: string[] }>();
@@ -345,7 +327,6 @@ export async function propagateLineRemoveAfterDo(
   const { doLine, target, siLines, deps } = args;
   const label = target.do_number ?? target.id;
 
-  // Never leave a shipped Delivery Order with no lines (a DB trigger refuses it).
   const { data: doRows, error: doErr } = await scopeToCompanyId(
     sb.from('delivery_order_items').select('id').eq('delivery_order_id', target.id), who.companyId,
   );
@@ -357,7 +338,6 @@ export async function propagateLineRemoveAfterDo(
     const g = byInvoice.get(l.sales_invoice_id) ?? { head: l, ids: [] };
     g.ids.push(l.id); byInvoice.set(l.sales_invoice_id, g);
   }
-  // Never empty a live invoice either.
   for (const { head, ids } of byInvoice.values()) {
     const { data: siAll, error: siErr } = await scopeToCompanyId(
       sb.from('sales_invoice_items').select('id').eq('sales_invoice_id', head.sales_invoice_id), who.companyId,
@@ -369,7 +349,6 @@ export async function propagateLineRemoveAfterDo(
   const doCopyFailed: string[] = [];
   const siCopyFailed: string[] = [];
 
-  // Invoice lines FIRST (they reference the DO line), then re-derive each invoice.
   for (const { head, ids } of byInvoice.values()) {
     const { error: delErr } = await scopeToCompanyId(sb.from('sales_invoice_items').delete().in('id', ids), who.companyId);
     if (delErr) { siCopyFailed.push(head.invoice_number ?? head.sales_invoice_id); continue; }
@@ -388,8 +367,6 @@ export async function propagateLineRemoveAfterDo(
     await enqueueEdit(sb, { companyId: who.companyId, docType: 'IV', docId: head.sales_invoice_id, newLineIds: [], createdBy: who.actor?.id ?? null });
   }
 
-  // Then the DO line: delete it and return the shipped stock (the resync reads the
-  // remaining lines, so the gone bucket's net OUT falls to 0 and comes back IN).
   const { error: doDelErr } = await scopeToCompanyId(sb.from('delivery_order_items').delete().eq('id', doLine.id), who.companyId);
   if (doDelErr) { doCopyFailed.push(label); return { ok: true, doCopyFailed, siCopyFailed }; }
   await deps.resyncInventoryForDo(sb, target.id, deps.performedBy);

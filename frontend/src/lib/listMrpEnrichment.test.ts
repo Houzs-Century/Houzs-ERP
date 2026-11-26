@@ -6,10 +6,6 @@ import {
   type ListMrpEnrichment,
 } from "./listMrpEnrichment";
 
-/* The PO and GRN lists paint WITHOUT the four MRP-derived columns (the list
-   endpoints omit them — resolving them ran a company-wide computeMrp on the
-   critical path), then the deferred enrichment fetch fills them. These pin that
-   two-phase behaviour on the shared overlay both lists apply. */
 
 const firstPaint: EnrichableMrpRow = { id: "po-1" };
 
@@ -23,7 +19,7 @@ const enrichment: ListMrpEnrichment = {
 describe("applyListMrpEnrichment", () => {
   it("returns the row unchanged before the endpoint resolves", () => {
     const out = applyListMrpEnrichment(firstPaint, undefined);
-    expect(out).toBe(firstPaint); // same reference — no churn
+    expect(out).toBe(firstPaint);
     expect(out.assigned_sos).toBeUndefined();
     expect(out.delivered_dos).toBeUndefined();
   });
@@ -34,7 +30,7 @@ describe("applyListMrpEnrichment", () => {
     expect(out.assigned_so_linked).toBe(true);
     expect(out.assigned_so_provenance).toEqual([{ soDocNo: "SO-2" }]);
     expect(out.delivered_dos).toEqual([{ doNo: "DO-1", qty: 3 }]);
-    expect(firstPaint.assigned_sos).toBeUndefined(); // pure overlay
+    expect(firstPaint.assigned_sos).toBeUndefined();
   });
 
   it("REPLACES columns wholesale — there is no inline arm to preserve", () => {
@@ -49,10 +45,6 @@ describe("applyListMrpEnrichment", () => {
   });
 });
 
-/* C16 guard. Its backend twins are LIST_MRP_ENRICHMENT_KEYS in
-   backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts and
-   grns-list-enrichment.ts — the literal arrays must stay equal, so a new
-   MRP-derived list field added on only one side fails CI. */
 describe("applyListMrpEnrichment — C16 field-set parity", () => {
   it("heals EXACTLY the four MRP-derived fields — no more, no less", () => {
     expect([...LIST_MRP_DERIVED_FIELDS].sort()).toEqual(

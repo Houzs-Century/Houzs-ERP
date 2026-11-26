@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// Shared helpers for jspdf-based document PDFs. Avoids copy-pasting the
-// company header / footer across SI / PI / GRN / PR / DR PDFs.
-//
-// VENDORED from 2990's apps/backend/src/lib/pdf-common.ts (verbatim layout/logic)
-// for the Houzs SCM module. ONLY change vs. source: the COMPANY letterhead block
-// now carries HOUZS's registered entity (see below), not 2990's.
-// ----------------------------------------------------------------------------
 
 import {
   getBrandingCache,
@@ -18,8 +10,6 @@ import type { FontAssetUrl } from './pdf-core';
 
 export * from './pdf-core';
 
-/* base64 for addFileToVFS. Chunked because a 1.1 MB face is ~1.1 M arguments —
-   one spread of that size blows the call stack. */
 const fetchFaceBase64 = async (url: FontAssetUrl): Promise<string> => {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} → ${res.status}`);
@@ -32,14 +22,6 @@ const fetchFaceBase64 = async (url: FontAssetUrl): Promise<string> => {
 };
 
 
-/* The BROWSER host: the letterhead comes from the centralised Branding config
-   (one editable record in Settings → Branding), NOT from hardcoded literals. The
-   pure (non-React) PDF libs can't use hooks, so they read the module-level
-   branding cache (lib/branding.ts), which useBranding() primes the moment
-   GET /api/branding resolves. Until then the cache holds DEFAULT_BRANDING —
-   VERBATIM the values that were hardcoded here before — so a PDF drawn
-   pre-fetch is byte-identical to the old output. Registered on import: every
-   browser generator imports this file. */
 setPdfHost({
   letterhead: () => letterheadFromBranding(getBrandingCache(), getBrandingCompanyCode()),
   companyLogo: getBrandingLogoCache,
@@ -107,13 +89,6 @@ export function deliverPdfBlob(
   openPdfViewerOverlay(blob, filename, { print: action === 'print' });
 }
 
-/* ── The in-app viewer ───────────────────────────────────────────────────────
- *
- * Plain DOM rather than React: deliverPdf is called from vendor generators with
- * no component tree to mount into. The PDF sits in a VISIBLE iframe (the
- * browser's own PDF viewer), so Print here prints the real document — not the
- * page, which index.css's @media print would blank. Esc / backdrop / Close all
- * tear it down and release the blob. */
 function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: boolean } = {}): void {
   const blobUrl = URL.createObjectURL(blob);
   const title = filename.replace(/\.pdf$/i, '');
@@ -123,7 +98,6 @@ function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: bool
   backdrop.setAttribute('role', 'dialog');
   backdrop.setAttribute('aria-modal', 'true');
   backdrop.setAttribute('aria-label', title);
-  /* Above the Print preview modal it was opened from. */
   backdrop.style.cssText =
     'position:fixed;inset:0;z-index:2147483000;background:rgba(15,23,42,.6);' +
     'display:flex;align-items:center;justify-content:center;padding:16px';
@@ -164,18 +138,15 @@ function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: bool
       iframe.contentWindow?.focus();
       iframe.contentWindow?.print();
     } catch {
-      /* Viewer not hydrated yet — its own toolbar print button still works. */
     }
   };
   button('Print', true, printFrame);
   button('Download', false, () => deliverPdfBlob(blob, filename, 'save'));
-  /* A fresh click, so this window.open keeps its user gesture. */
   button('New tab', false, () => openPdfPreviewTab(blob, URL.createObjectURL(blob), filename));
   button('Close', false, () => close());
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key !== 'Escape') return;
-    // Capture + stop, so Esc closes only the viewer, not the Print preview under it.
     e.stopPropagation();
     close();
   };
@@ -198,7 +169,6 @@ function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: bool
     try {
       path = await putPrintPreview(blob, filename);
     } catch {
-      // Any storage/worker failure just means the blob, as in the preview tab.
     }
     if (opts.print) iframe.addEventListener('load', () => { window.setTimeout(printFrame, PRINT_SETTLE_MS); }, { once: true });
     iframe.src = path ?? blobUrl;
@@ -211,31 +181,9 @@ function openPdfViewerOverlay(blob: Blob, filename: string, opts: { print?: bool
   document.body.style.overflow = 'hidden';
 }
 
-/* ── The preview tab ──────────────────────────────────────────────────────────
- *
- * Two routes, in order of how good the address bar looks:
- *
- *   1. `/print-preview/<filename>.pdf`, served by the service worker out of a
- *      cache this function writes. A REAL same-origin path, so the address bar
- *      reads the document — the whole point.
- *   2. A wrapper page whose <title> is the document, with the PDF in an iframe.
- *      Used when the worker is not in control: a first visit, a client still on
- *      an older worker, local dev (the worker deliberately never intercepts), or
- *      a browser with storage blocked. The tab is still NAMED correctly; only
- *      the address bar stays a blob.
- *
- * Route 1 must be PROVEN, not assumed. Without a worker, `/print-preview/x.pdf`
- * hits Pages' SPA catch-all and returns 200 + index.html — the operator would
- * get the ERP app where a document should be, with no error anywhere. So the
- * worker answers a probe with a sentinel header, and only that header switches
- * this on.
- *
- * The tab is opened SYNCHRONOUSLY, before any await: a `window.open` that
- * follows an await has lost the user gesture and is blocked as a popup. */
 function openPdfPreviewTab(blob: Blob, blobUrl: string, filename: string): void {
   const tab = window.open('', '_blank');
   if (!tab) {
-    // Popup blocked — the raw blob is still better than nothing.
     window.open(blobUrl, '_blank');
     return;
   }
@@ -247,7 +195,6 @@ function openPdfPreviewTab(blob: Blob, blobUrl: string, filename: string): void 
         return;
       }
     } catch {
-      // Any storage/worker failure just means route 2.
     }
     writeNamedPdfTab(tab, blobUrl, filename);
   })();
@@ -255,11 +202,8 @@ function openPdfPreviewTab(blob: Blob, blobUrl: string, filename: string): void 
 
 const PRINT_CACHE = 'houzs-print-preview';
 const PRINT_PREFIX = '/print-preview/';
-/** Newest N previews kept; older entries are dropped on each write. */
 const PRINT_KEEP = 5;
 
-/* Put the PDF where the service worker can serve it, and return the path — or
-   null when the worker is not in control (see openPdfPreviewTab). */
 async function putPrintPreview(
   blob: Blob,
   filename: string,
@@ -269,8 +213,6 @@ async function putPrintPreview(
   if (!probe || probe.headers.get('x-houzs-print-preview') !== '1') return null;
 
   const cache = await caches.open(PRINT_CACHE);
-  /* Trim first, so a failure below cannot leave the cache growing. cache.keys()
-     is insertion-ordered, so the oldest are at the front. */
   const keys = await cache.keys();
   await Promise.all(keys.slice(0, Math.max(0, keys.length - (PRINT_KEEP - 1))).map((k) => cache.delete(k)));
 
@@ -280,9 +222,6 @@ async function putPrintPreview(
     new Response(blob, {
       headers: {
         'Content-Type': 'application/pdf',
-        /* `inline` so the browser RENDERS it rather than downloading; the
-           filename still rides along, so Save from the viewer proposes the
-           document's name. RFC 5987 encoding carries the CJK safely. */
         'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(filename)}`,
         'Cache-Control': 'no-store',
       },
@@ -291,14 +230,6 @@ async function putPrintPreview(
   return path;
 }
 
-/* Route 2 — the fallback tab. A blob URL carries no name, so a bare
-   `window.open(blobUrl)` lands the operator on a tab called `8a7f3c2e-1b4d-…`:
-   two documents open side by side are indistinguishable and Save proposes the
-   GUID. This wrapper cannot fix the address bar (only the service-worker route
-   above can) but it does name the tab, the window title and the download. */
-/** How long the viewer gets after its load event before the print dialog is
-    asked for — Chrome fires load before the PDF is laid out, and a dialog
-    asked for too early prints a blank sheet. */
 const PRINT_SETTLE_MS = 400;
 
 function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string): void {
@@ -319,21 +250,14 @@ function writeNamedPdfTab(tab: Window, blobUrl: string, filename: string): void 
       `</body></html>`,
   );
   tab.document.close();
-  /* Wired from this side: the tab is an about:blank of our origin, so no inline
-     script has to survive whatever policy the page is served under. */
   const frame = tab.document.querySelector('iframe');
   const printFrame = () => {
     try {
       frame?.contentWindow?.focus();
       frame?.contentWindow?.print();
     } catch {
-      /* The viewer refused — the operator still has the button and the download. */
     }
   };
   tab.document.querySelector('[data-print]')?.addEventListener('click', printFrame);
-  /* No revoke timer. The old code revoked after 60 s, which was safe when the
-     tab was the blob itself (already loaded) but would quietly break this page's
-     Download link the moment the operator took longer than a minute to decide.
-     The blob dies with the opener page instead. */
 }
 

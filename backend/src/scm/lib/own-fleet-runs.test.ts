@@ -6,8 +6,6 @@ import {
 import { doFacts } from './threepl-do-charge';
 import type { RateCardSpec } from './delivery-rate-card';
 
-/* Made-up prices: RM 30 the 1st set of a trip, RM 20 the 2nd, RM 15 each after;
-   RM 50 once for a trip into Johor; RM 25 a supplier pickup; no setup price. */
 const card: PricingCard = {
   id: 'card-own', name: 'Own fleet',
   spec: {
@@ -93,7 +91,6 @@ describe('a trip priced once, like a 3PL trip', () => {
       () => card,
       zoneOf,
     );
-    // 3 sets: 30 + 20 + 15; Johor once: 50; one supplier pickup: 25; setup has no price on this card: 0.
     expect(run!.costSen).toBe(3000 + 2000 + 1500 + 5000 + 2500);
     expect(run!.otherJobsSen).toBe(2500);
     expect(run!.setCount).toBe(3);
@@ -104,7 +101,6 @@ describe('a trip priced once, like a 3PL trip', () => {
 
   test('two orders on one trip climb one ladder, not two', () => {
     const [together] = priceOwnRuns(buildOwnRuns([ownDo({ doId: '1' }), ownDo({ doId: '2' })], []), () => card, zoneOf);
-    // 4 sets on the trip: 30 + 20 + 15 + 15, where two orders priced apart would be (30 + 20) x 2.
     expect(together!.costSen).toBe(3000 + 2000 + 1500 + 1500);
   });
 

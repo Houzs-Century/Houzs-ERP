@@ -20,7 +20,6 @@ export type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE
 
 export type AccountSection = { section: string; type: AccountType };
 
-/* AutoCount's order, top to bottom — the order the chart page renders. */
 export const ACCOUNT_SECTIONS: ReadonlyArray<AccountSection> = [
   { section: 'CAPITAL', type: 'EQUITY' },
   { section: 'RETAINED EARNING', type: 'EQUITY' },
@@ -75,7 +74,7 @@ export function defaultSectionFor(type: string, code: string): string {
       if (c < '530') return 'SALES ADJUSTMENTS';
       if (c >= '800' && c < '900') return 'EXTRA-ORDINARY INCOME';
       return 'OTHER INCOMES';
-    default: // EXPENSE
+    default:
       if (c < '700') return 'COST OF GOODS SOLD';
       if (c >= '950' && c < '960') return 'TAXATION';
       return 'EXPENSES';

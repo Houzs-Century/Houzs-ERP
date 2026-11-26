@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { staleLegProgressReset } from './stale-leg-progress';
 
-/* Regression: a Service-Case pickup marked done by mistake (job_progress.completed_at)
-   stayed "Delivered" on the Last Mile board through every re-schedule onto a new
-   lorry, because the board keys progress by job, not by trip, and nothing cleared
-   the old run's completion (case ASSR/2610-048). scheduleAssrOntoTrip now resets
-   the leg's progress on the trips it moved OFF; this locks the reset's contract. */
 describe('staleLegProgressReset', () => {
   it('clears every crew / POD stamp and re-points the leg at the new trip', () => {
     const r = staleLegProgressReset('assr', 1611, 'customer_pickup', 'NEW-TRIP');
@@ -30,8 +25,6 @@ describe('staleLegProgressReset', () => {
   });
 
   it('targets only progress on a trip OTHER than the new one (never the current run)', () => {
-    // The caller filters `trip_id != excludeTripId`; a re-press of the SAME trip
-    // (excludeTripId == that trip) matches nothing, so a real completion survives.
     expect(staleLegProgressReset('assr', 42, 'delivery', 'T2').excludeTripId).toBe('T2');
   });
 });

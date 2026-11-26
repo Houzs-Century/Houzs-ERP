@@ -52,37 +52,13 @@ import {
 
 export const dpOrders = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-// Attach the scm-scoped supabase-js client (c.get('supabase')) + the real Houzs
-// caller (c.get('houzsUser')) that every handler below reads. Without this the
-// sub-router never had them set: `c.get('supabase')` was undefined, so the first
-// `sb.from(...)` in ANY endpoint threw a TypeError — surfacing as a generic 500
-// ("Something went wrong. Please try again.") on the whole DP-Order feature. Same
-// `.use('*', supabaseAuth)` line every other scm sub-router carries (e.g.
-// delivery-planning.ts); this router was the one that shipped without it. Runs
-// AFTER the parent `scm.use('/dp-orders/*', scmAreaGuard(...))` in scm/index.ts,
-// which must read the real Houzs user BEFORE supabaseAuth swaps in the scm.staff
-// system identity — the ordering the area-guard header documents.
 dpOrders.use('*', supabaseAuth);
 
-// ── Per-assignee row scope (owner rule, Lim Wei Siang) ──────────────────────
-// A Driver / Helper may see and act on ONLY the delivery jobs assigned to them.
-// PR #756 gave this treatment to the SO / trip / board rows but deliberately
-// left the standalone DP-order surfaces (this router's list + write endpoints)
-// unscoped, because this file was being written at the same time. This closes
-// that gap by reusing the SAME resolveDeliveryScope / scopeMatchesAssignment
-// primitives — no parallel mechanism. A DP order carries no crew of its own; its
-// driver/helpers are the crew of the TRIP it was scheduled onto (dp_orders.trip_id
-// → trips.driver_id / helper_1_id / helper_2_id), which is exactly how the board's
-// applyDeliveryRowScope resolves a DP row. An unscheduled DP order (no trip) has
-// no crew, so it never matches a self scope — same as any unassigned board row.
 
-/** Plain-language 403 for a field-crew caller touching a job that is not theirs. */
 const NOT_YOUR_JOB = 'You can only act on a delivery job assigned to you.';
 
 const EMPTY_CREW: CrewAssignment = { driverIds: [], helperIds: [] };
 
-/** Batch-load trip crew for a bounded set of trip ids (never the whole table).
- *  Dual-reads camelCase/snake_case for parity with the rest of the module. */
 async function tripCrewByIds(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
@@ -125,12 +101,6 @@ export function filterDpOrdersByScope<T extends DpRowLike>(
   });
 }
 
-/** Write-ownership guard for the single-record write endpoints: a self-scoped
- *  caller may act on a DP order ONLY when its trip crew is theirs. Returns a 403
- *  Response to short-circuit, or null to proceed. Fails OPEN (null) for an `all`
- *  scope and for a row that does not exist (the handler's own not-found path then
- *  answers) — belt-and-braces on top of the area guard, which already needs
- *  `edit` on scm.transportation to reach any of these at all. */
 async function denyIfNotOwnDpJob(
   c: Ctx,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -147,10 +117,6 @@ async function denyIfNotOwnDpJob(
   return c.json({ error: NOT_YOUR_JOB }, 403);
 }
 
-/* Every value on scm.trip_stop_type. INSPECTION joined that enum in mig 0165
-   and never reached this list, so a DP order could not be created for a job the
-   database, the board's Type filter and the rate card all understand. Kept in
-   step by `npm run audit:job-types`. */
 const JOB_TYPES = [
   'DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'INSPECTION',
   // Job types 8 and 9 (mig 0250, owner's 2026-08-03 list).
@@ -159,17 +125,11 @@ const JOB_TYPES = [
 
 const createSchema = z.object({
   jobType: z.enum(JOB_TYPES),
-  // At most one source reference — which one is expected depends on the type,
-  // but the resolver tolerates any and falls back to a manual (empty) snapshot.
   soDocNo: z.string().optional(),
   doId: z.string().uuid().optional(),
   assrCaseId: z.number().int().optional(),
   supplierId: z.string().uuid().optional(),
   projectId: z.number().int().optional(),
-  // TRANSFER: the transfer document being driven, and/or the destination
-  // warehouse directly (an ad-hoc move has no document — owner asked for both
-  // paths). LORRY_SERVICE: the lorry being serviced, plus the workshop it is
-  // going to, either picked directly or read off a work order. Columns: mig 0251.
   stockTransferId: z.string().uuid().optional(),
   warehouseId: z.string().uuid().optional(),
   // TRANSFER to an OUTSOURCED warehouse (owner 2026-11-02): the destination is a
@@ -192,14 +152,9 @@ const createSchema = z.object({
   fromThreeplCompanyId: z.string().uuid().optional(),
   fromSavedLocationId: z.string().uuid().optional(),
   fromOverrides: z.record(z.string(), z.string().nullable()).optional(),
-  requestedDate: z.string().optional(), // YYYY-MM-DD
+  requestedDate: z.string().optional(),
   remark: z.string().optional(),
-  /* "Delivery (no SO)": its sales amount in sen, which Trip Pay's Delivery
-     commission is worked out on - it has no DO to read one from (owner
-     2026-11-20). Column: mig 20261120T2000. */
   salesAmountSen: z.number().int().min(0).max(100_000_000_00).nullable().optional(),
-  // Manual overrides — applied ON TOP of the auto-filled snapshot so the operator
-  // can correct any field the master got wrong.
   overrides: z.record(z.string(), z.string().nullable()).optional(),
 });
 
@@ -207,7 +162,6 @@ const createSchema = z.object({
    the address; city / postcode / state alone do not tell a driver where to go.
    Every job type is held to it — TRANSFER and LORRY_SERVICE get theirs from the
    warehouse / workshop master, and the operator types it when that is blank. */
-// The four address lines, one home: so-address-on-save.ts.
 const ADDRESS_LINES = ADDRESS_COLS;
 const hasAddress = (row: Record<string, unknown>): boolean =>
   ADDRESS_LINES.some((k) => String(row[k] ?? '').trim() !== '');
@@ -251,7 +205,6 @@ const POSTCODE_REQUIRED = {
 const hasPostcode = (row: Record<string, unknown>): boolean => String(row.postcode ?? '').trim() !== '';
 const FROM_COLS = { postcode: 'from_postcode', state: 'from_state', city: 'from_city' };
 
-/** The one-line address a trip stop carries for a DP job (its manifest snapshot). */
 const dpStopAddress = (dp: Record<string, unknown>): string | null =>
   [dp.address1, dp.address2, dp.address3, dp.address4, dp.city, dp.postcode, dp.state]
     .filter(Boolean).join(', ') || null;
@@ -281,8 +234,6 @@ async function withCaseSoPlace(c: Ctx, snap: DpPartySnapshot, docNo: string | nu
   };
 }
 
-/** Read the source master (if any) and map it to the party snapshot. Falls back
- *  to an empty snapshot of the right type for a manual order. */
 async function resolveSnapshot(
   c: Ctx,
   jobType: DpJobType,
@@ -302,8 +253,6 @@ async function resolveSnapshot(
     if (data) return snapshotFromSupplier(data as Record<string, unknown>);
   }
   if (p.projectId != null) {
-    // public schema → raw SQL, like delivery-planning's ASSR union.
-    // Postcode / City come from the venue master the project picked.
     const proj = await c.env.DB.prepare(
       `SELECT p.venue, p.venue_address, p.organizer, p.state, p.pic_id, ${PROJECT_VENUE_COLS}
          FROM projects p ${PROJECT_VENUE_JOIN} WHERE p.id = ?`,
@@ -322,7 +271,6 @@ async function resolveSnapshot(
       'SELECT customer_name, phone, addr1, addr2, addr3, addr4, location, doc_no, ca.postcode, ca.city, ca.state FROM assr_cases LEFT JOIN assr_case_address ca ON ca.assr_id = assr_cases.id WHERE assr_cases.id = ?',
     ).bind(p.assrCaseId).first<Record<string, unknown>>();
     if (a) {
-      // The case's own Postcode / City / State (assr_case_address) outrank its SO's.
       const snap = await withCaseSoPlace(c, snapshotFromAssr(a), (a.doc_no as string | null) ?? null);
       const own = (v: unknown) => (v == null || String(v).trim() === '' ? null : String(v).trim());
       return { ...snap, postcode: own(a.postcode) ?? snap.postcode, city: own(a.city) ?? snap.city, state: own(a.state) ?? snap.state };
@@ -343,19 +291,12 @@ async function resolveSnapshot(
      so a 3PL pick wins outright; its single free-text address fills the snapshot
      and party_type stays WAREHOUSE. */
   if (p.threeplCompanyId) {
-    // Bind the error: on a read failure we must not fall through to the empty
-    // snapshot and then refuse with "address_required" — a misleading answer when
-    // the operator did pick a carrier. Surface the real failure instead.
     const { data, error } = await sb.from('threepl_companies')
       .select('code, name, contact_name, contact_phone, office_phone, address, postcode, city, state')
       .eq('id', p.threeplCompanyId).maybeSingle();
     if (error) throw error;
     if (data) return snapshotFromThreepl(data as Record<string, unknown>);
   }
-  /* TRANSFER — the party is the DESTINATION. An explicit warehouseId wins (the
-     operator picked where the fleet is going); otherwise resolve the transfer
-     document's to_warehouse_id. A transfer whose destination row has been
-     deleted falls through to the empty snapshot rather than a half-filled one. */
   if (p.warehouseId || p.stockTransferId) {
     let warehouseId = p.warehouseId ?? null;
     if (!warehouseId && p.stockTransferId) {
@@ -370,10 +311,6 @@ async function resolveSnapshot(
       if (data) return snapshotFromWarehouse(data as Record<string, unknown>);
     }
   }
-  /* LORRY_SERVICE — the party is the WORKSHOP. Picked directly, or read off the
-     work order this trip serves. An older work order may name its workshop only
-     as free text (mig 0241 deliberately left workshop_id unbackfilled), so that
-     name still becomes the party rather than nothing. */
   if (p.workshopId || p.workOrderId) {
     let workshopId = p.workshopId ?? null;
     let workshopText: unknown = null;
@@ -425,7 +362,6 @@ async function resolveOrigin(c: Ctx, p: z.infer<typeof createSchema>): Promise<D
   return emptySnapshot('TRANSFER');
 }
 
-/* ── POST /api/scm/dp-orders — create (type-aware auto-fill) ───────────────── */
 dpOrders.post('/', async (c) => {
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -435,15 +371,12 @@ dpOrders.post('/', async (c) => {
   const jobType = p.jobType as DpJobType;
 
   const snap = await resolveSnapshot(c, jobType, p);
-  // Manual overrides win over the auto-fill — only for keys the snapshot has.
   const merged: Record<string, unknown> = { ...snap };
   for (const [k, v] of Object.entries(p.overrides ?? {})) {
     if (k in merged) merged[k] = v;
   }
   if (!hasAddress(merged)) return c.json(ADDRESS_REQUIRED, 400);
 
-  // Origin ("from") — TRANSFER only, optional. Its own snapshot + overrides, kept
-  // apart from the destination party above so neither overwrites the other.
   const fromSnap = jobType === 'TRANSFER' ? await resolveOrigin(c, p) : emptySnapshot('TRANSFER');
   const fromMerged: Record<string, unknown> = { ...fromSnap };
   for (const [k, v] of Object.entries(p.fromOverrides ?? {})) {
@@ -454,7 +387,7 @@ dpOrders.post('/', async (c) => {
   const user = c.get('user') as { id?: string } | null;
   const insert = {
     company_id: activeCompanyId(c) ?? null,
-    dp_no: null, // minted at schedule
+    dp_no: null,
     job_type: jobType,
     party_type: partyTypeFor(jobType),
     so_doc_no: p.soDocNo ?? null,
@@ -472,16 +405,10 @@ dpOrders.post('/', async (c) => {
     work_order_id: p.workOrderId ?? null,
     party_name: merged.party_name ?? null,
     contact_name: merged.contact_name ?? null,
-    // Defensive E.164 normalisation at the DB write chokepoint. contact_phone
-    // reaches here from a party snapshot (dp-party.ts copies phone/mobile raw)
-    // or a client-supplied override — neither is guaranteed normalised, unlike
-    // the SO/supplier/driver master columns. normalizePhone keeps an
-    // unparseable value untouched (?? fallback), so nothing is rejected.
     contact_phone: normDpPhone(merged.contact_phone),
     address1: merged.address1 ?? null, address2: merged.address2 ?? null,
     address3: merged.address3 ?? null, address4: merged.address4 ?? null,
     city: merged.city ?? null, postcode: merged.postcode ?? null, state: merged.state ?? null,
-    // Origin ("from") — party_name/address* of the fromSnap map to the from_* columns.
     from_name: fromMerged.party_name ?? null,
     from_address1: fromMerged.address1 ?? null, from_address2: fromMerged.address2 ?? null,
     from_city: fromMerged.city ?? null, from_postcode: fromMerged.postcode ?? null, from_state: fromMerged.state ?? null,
@@ -521,12 +448,8 @@ dpOrders.get('/', async (c) => {
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  // Per-assignee row scope: a self-scoped Driver/Helper keeps only their own
-  // jobs; every ops/dispatcher/management caller resolves to `all` and the list
-  // is returned untouched (fail-open — see the module header).
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   const rows = (data ?? []) as Array<Record<string, unknown> & DpRowLike>;
-  // Rows saved before the postcode was detected: show it from the address (no write).
   await fillDpRowsPostcode(sb, rows);
 
   /* Sales context off the source SO (owner 2026-08-19, parity with the planning
@@ -545,9 +468,6 @@ dpOrders.get('/', async (c) => {
         .select('doc_no, agent, salesperson_id, venue, processing_date, local_total_sen')
         .in('doc_no', docNos);
       if (soErr) {
-        // Decoration only — the registry must not 500 over its garnish. With
-        // the error NAMED and logged, "every so_* renders a dash" is a decision
-        // the log can explain, not a failure dressed up as no-SO rows.
         console.error('[dp-orders] sales-context SO read failed; so_* fields degrade to null:', soErr.message);
       }
       for (const s of (soRows ?? []) as Array<Record<string, unknown>>) {
@@ -602,9 +522,6 @@ const patchSchema = z.object({
   salesAmountSen: z.number().int().min(0).max(100_000_000_00).nullable().optional(),
 });
 
-/* E.164 at the write boundary. A null/blank clears cleanly; an unparseable
- * value is kept as typed (normalizePhone → null → ?? fallback) rather than
- * rejected, matching the suppliers.ts / mfg-sales-orders.ts convention. */
 const normDpPhone = (v: unknown): string | null => {
   const s = v == null ? '' : String(v).trim();
   if (!s) return null;
@@ -620,8 +537,6 @@ const PATCH_COLS: Record<keyof z.infer<typeof patchSchema>, string> = {
   requestedDate: 'requested_date', remark: 'remark', salesAmountSen: 'sales_amount_sen',
 };
 
-/* Columns a job keeps editable after it is scheduled. Everything else in
-   PATCH_COLS (the requested date) is PENDING_SCHEDULE only. */
 export const EDITABLE_ANY_STATUS = new Set([
   'party_name', 'contact_name', 'contact_phone',
   'address1', 'address2', 'address3', 'address4', 'city', 'postcode', 'state',
@@ -654,11 +569,7 @@ dpOrders.patch('/:id', async (c) => {
     const v = (parsed.data as Record<string, unknown>)[k];
     if (v !== undefined) updates[col] = v;
   }
-  // Same E.164 normalisation the create path applies — a PATCH carries a raw
-  // client value straight through PATCH_COLS otherwise.
   if (updates.contact_phone !== undefined) updates.contact_phone = normDpPhone(updates.contact_phone);
-  /* A cleared requested date arrives as "" — the schema accepts any string —
-     and Postgres rejects it on the date column, 500ing the save. */
   coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ error: 'no_changes' }, 400);
   const changedCols = Object.keys(updates).filter((k) => k !== 'updated_at');
@@ -684,26 +595,20 @@ dpOrders.patch('/:id', async (c) => {
   const refusal = dpEditRefusal((cur.status as string | null) ?? null, changedCols);
   if (refusal) return c.json({ error: 'not_editable', message: refusal }, 409);
 
-  /* Only an edit that touches the address is checked, so an old job saved
-     before the rule can still have its date or remark fixed. */
   if (ADDRESS_LINES.some((k) => updates[k] !== undefined) && !hasAddress({ ...cur, ...updates })) {
     return c.json(ADDRESS_REQUIRED, 400);
   }
-  // A changed address with no postcode / state: detect them, as create does.
   const merged = { ...cur, ...updates };
   const touched = (cols: string[]) => cols.some((k) => updates[k] !== undefined);
   Object.assign(updates, await detectedPostcodeCols(sb, [
     ...(touched(ADDRESSISH) ? [{ fields: dpDestFields(merged), cols: DEST_COLS }] : []),
     ...(touched(FROM_ADDRESSISH) && cur.job_type === 'TRANSFER' ? [{ fields: dpFromFields(merged), cols: FROM_COLS }] : []),
   ]));
-  // An old job with no postcode is held to the rule only when its address is edited.
   if (POSTCODE_REQUIRED_JOB_TYPES.has(String(cur.job_type ?? '')) && touched([...ADDRESS_LINES, 'city', 'postcode', 'state'])
     && !hasPostcode({ ...merged, ...updates })) {
     return c.json(POSTCODE_REQUIRED, 400);
   }
 
-  // The status guard repeats the check above in the write, so a job cancelled
-  // (or scheduled, for a date edit) in between is not changed.
   const pendingOnly = changedCols.some((col) => !EDITABLE_ANY_STATUS.has(col));
   const base = sb.from('dp_orders').update(updates).eq('id', id);
   const { data, error } = await scopeToCompanyId(
@@ -715,8 +620,6 @@ dpOrders.patch('/:id', async (c) => {
     return c.json({ error: 'not_editable', message: 'This job changed while you were editing it. Reload and try again.' }, 409);
   }
 
-  /* The trip stop's manifest snapshot follows the job. Reported, never thrown:
-     the job itself is saved either way. */
   const row = data as Record<string, unknown>;
   const stopId = (row.trip_stop_id as string | null) ?? null;
   let tripStop: { updated: boolean; failed: boolean; reason?: string } = { updated: false, failed: false };
@@ -730,9 +633,6 @@ dpOrders.patch('/:id', async (c) => {
   return c.json({ dpOrder: row, tripStop });
 });
 
-/* ── GET /api/scm/dp-orders/:id — one job, for the job drawer's edit ──────────
-   Same company widening as the list. The postcode / state a row is missing are
-   shown from its address (no write). */
 dpOrders.get('/:id', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');
@@ -748,10 +648,6 @@ dpOrders.get('/:id', async (c) => {
   return c.json({ dpOrder: row });
 });
 
-/* ── POST /api/scm/dp-orders/:id/cancel — cancel a job ─────────────────────────
-   Cancelling a SCHEDULED job also removes its trip_stop: leaving the stop behind
-   would keep a cancelled job on the driver's route, which is the worst possible
-   place to discover it. Reported if that removal fails — never silently. */
 dpOrders.post('/:id/cancel', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');
@@ -774,8 +670,6 @@ dpOrders.post('/:id/cancel', async (c) => {
   const stopId = (data as { trip_stop_id?: string | null }).trip_stop_id ?? null;
   if (stopId) {
     try {
-      // trip_stops is the CROSS-COMPANY shared queue, so its predicate is the
-      // allowed set (same rule as trips.ts) — not "no predicate at all".
       const del = await scopeToAllowedCompanies(sb.from('trip_stops').delete().eq('id', stopId), c);
       stopRemoved = del.error
         ? { removed: false, failed: true, reason: del.error.message }
@@ -785,14 +679,6 @@ dpOrders.post('/:id/cancel', async (c) => {
     }
   }
 
-  /* Give the lorry back. A cancelled service that left its availability window
-     behind would keep a perfectly free lorry off the board indefinitely — the
-     mirror of the stop-left-behind problem above, and just as invisible.
-
-     Matched on the EXACT reason this job wrote (dp-lorry-block.ts), so it can
-     only ever remove its own window: never a hand-entered repair, never another
-     job's, never the Repair Days dashboard's. A job cancelled before it was
-     scheduled has no dp_no and wrote no window — nothing to undo. */
   let lorryUnblocked: { removed: boolean; failed: boolean; reason?: string } = { removed: false, failed: false };
   const dc = data as Record<string, unknown>;
   const cancelledLorryId = (dc.lorry_id ?? (dc as { lorryId?: string | null }).lorryId) as string | null ?? null;
@@ -814,28 +700,18 @@ dpOrders.post('/:id/cancel', async (c) => {
 
 const scheduleSchema = z.object({
   lorryId: z.string().uuid(),
-  tripDate: z.string(), // YYYY-MM-DD
+  tripDate: z.string(),
   tripId: z.string().uuid().optional(),
   // The driver for the run (owner 2026-10-30: pick the driver when scheduling, so
   // Driver + Lorry fill in on the board). Optional — the run can be crewed later.
   driverId: z.string().uuid().nullable().optional(),
 });
 
-/* Find the run a scheduled DP job rides, or create one. A specific trip may be
-   named (already company-checked by the caller); otherwise reuse the lorry's
-   non-cancelled run on that date, or mint a new PLANNED trip. Trips are the
-   cross-company shared queue — read scoped to the caller's allowed companies,
-   created under the active company. Returns the trip id, or an error string: the
-   DP is already claimed when this runs, so the caller reports the failure rather
-   than rolling the schedule back (the #720 rule). */
 async function resolveScheduleTrip(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + the untyped scm client, as across this route
   c: any, sb: any, lorryId: string | null, tripDate: string, namedTripId: string | null,
 ): Promise<{ tripId: string } | { error: string }> {
   if (namedTripId) return { tripId: namedTripId };
-  // Reuse the lorry's run that day only when a lorry is known. A crew-first inline
-  // edit (driver / helper picked before a lorry) has none, so it always mints a new
-  // run; trips.lorry_id is nullable, and the lorry fills in when that cell is set.
   if (lorryId) {
     const { data: found, error: fErr } = await scopeToAllowedCompanies(
       sb.from('trips').select('id').eq('lorry_id', lorryId).eq('trip_date', tripDate).neq('status', 'CANCELLED').limit(1), c,
@@ -865,13 +741,6 @@ async function resolveScheduleTrip(
   return { tripId: (created as { id: string }).id };
 }
 
-/* Put a DP job onto a run as a trip_stop (the form the trip view + route optimiser
-   read) and stamp the order with the stop id. Best-effort + REPORTED, never a
-   silent null: the caller's schedule/crew write already committed, so a stop
-   failure comes back as { failed }, it is not thrown (the #720 lesson). `dp` is the
-   just-written order row (its address + job_type + party_name shape the stop); dpNo
-   is the number the stop mirrors, or null when none is minted yet (a crew-first
-   edit with no lorry). */
 async function appendDpStop(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + the untyped scm client, as across this route
   c: any, sb: any, dp: Record<string, unknown>, tripId: string, dpNo: string | null,
@@ -902,7 +771,6 @@ async function appendDpStop(
   }
 }
 
-/* ── POST /api/scm/dp-orders/:id/schedule — assign lorry+date, MINT the DP no ─ */
 dpOrders.post('/:id/schedule', async (c) => {
   const id = c.req.param('id');
   let body: unknown;
@@ -917,24 +785,12 @@ dpOrders.post('/:id/schedule', async (c) => {
   const denied = await denyIfNotOwnDpJob(c, sb, id);
   if (denied) return denied;
 
-  /* THE TRIP IS A BODY FIELD. The dp_order itself is proved ours above, but
-     `p.tripId` was used unchecked to read the trip's stops and then to INSERT a
-     trip_stop stamped with OUR company_id — putting our job on the other
-     company's driver route, as a row their own scoped reads cannot explain.
-     Trips are the cross-company shared queue, so the predicate is the caller's
-     ALLOWED set, not the active company (trips.ts:423 reads them the same way).
-     See lib/ref-in-company.ts. Before the dp_no is minted, so a bad trip id
-     never burns a number. */
   const tripCheck = await assertTripInAllowedCompanies(sb, p.tripId ?? null, c);
   if (!tripCheck.ok) return c.json(tripCheck.body, tripCheck.status);
 
   const plate = await plateForLorry(sb, p.lorryId);
   if (!plate) return c.json({ error: 'lorry_not_found' }, 404);
 
-  /* Mint from the SHARED registry. This read used to cover `dp_orders` alone,
-     which was complete only while this handler was the only minter. Now that a
-     board-scheduled delivery also takes a number (onto trip_stops), reading one
-     table would hand the same number to two different jobs. */
   const dpNo = await mintNextDpNo(sb, { tripDate: p.tripDate, plate });
   if (!dpNo) {
     return c.json({
@@ -946,22 +802,12 @@ dpOrders.post('/:id/schedule', async (c) => {
   const { data, error } = await scopeToCompanyId(
     sb.from('dp_orders')
       .update({ dp_no: dpNo, trip_id: p.tripId ?? null, status: 'SCHEDULED', updated_at: new Date().toISOString() })
-      .eq('id', id).eq('status', 'PENDING_SCHEDULE'), // claim: only schedule an unscheduled one
+      .eq('id', id).eq('status', 'PENDING_SCHEDULE'),
     co.companyId,
   ).select('*').maybeSingle();
   if (error) return c.json({ error: 'schedule_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_pending', reason: 'DP order is not pending schedule (already scheduled or gone)' }, 409);
 
-  /* Put the DP order ONTO the trip as a stop, so it flows into the trip view and
-     the route optimiser. job_type IS a scm.trip_stop_type (SUPPLIER_PICKUP was
-     added in 0128), so it maps straight through. The structured address is
-     flattened to the stop's single `address` line — the form the optimiser
-     geocodes. Only when a trip was named; a header-only schedule (dp_no minted,
-     no trip) is valid too.
-
-     Best-effort like the board's scheduleOntoTrip — the schedule already
-     committed — but the outcome is REPORTED (tripStop.failed), never a silent
-     null, per the #720 lesson. */
   let tripStop: { id: string | null; failed: boolean; reason?: string } = { id: null, failed: false };
   const d = data as Record<string, unknown>;
   const trip = await resolveScheduleTrip(c, sb, p.lorryId, p.tripDate, p.tripId ?? null);
@@ -970,13 +816,9 @@ dpOrders.post('/:id/schedule', async (c) => {
   } else {
     try {
       const effectiveTripId = trip.tripId;
-      // Link the resolved run when the first update didn't already (auto-created
-      // or reused a run instead of a named trip).
       if (effectiveTripId !== (p.tripId ?? null)) {
         await sb.from('dp_orders').update({ trip_id: effectiveTripId, updated_at: new Date().toISOString() }).eq('id', id);
       }
-      // The stop mirrors the order's dp_no — a mirror, not a second identity; it
-      // also keeps trip_stops the complete registry the minter scans.
       tripStop = await appendDpStop(c, sb, d, effectiveTripId, dpNo);
       // Set the driver the operator picked at schedule time (owner 2026-10-30), so
       // Driver + Lorry show on the board without a second step. Best-effort.
@@ -986,21 +828,6 @@ dpOrders.post('/:id/schedule', async (c) => {
     }
   }
 
-  /* A scheduled LORRY_SERVICE takes its subject lorry OFF THE ROAD for that day.
-     Write the availability window both readers already consult (fleet-availability
-     "is this lorry out today", lorry-capacity's repair days) so the board stops
-     offering a lorry that is at a workshop — see dp-lorry-block.ts for why the
-     reason string carries the DP number.
-
-     NOTE the two different lorries: p.lorryId is the lorry PERFORMING the job
-     (it drives to the workshop and mints the DP plate letters); d.lorry_id is
-     the lorry BEING SERVICED, which is the one that becomes unavailable. They
-     are usually the same vehicle — a lorry drives itself in — but a towed one
-     is not, and blocking the wrong plate would be worse than blocking none.
-
-     Best-effort like the trip-stop wiring above (the schedule already committed)
-     and REPORTED the same way: a silent failure here would leave a lorry looking
-     available on the day it is in the workshop. */
   let lorryBlocked: { blocked: boolean; failed: boolean; reason?: string } = { blocked: false, failed: false };
   const d0 = data as Record<string, unknown>;
   const subjectLorryId = (d0.lorry_id ?? (d0 as { lorryId?: string | null }).lorryId) as string | null ?? null;
@@ -1025,12 +852,6 @@ dpOrders.post('/:id/schedule', async (c) => {
   return c.json({ dpOrder: data, dp_no: dpNo, tripStop, lorryBlocked });
 });
 
-/* Move a DP job's existing trip_stop onto a different run (the crew PEEL below).
-   Renumbers the stop at the tail of the new run; the old run keeps its other
-   stops. trip_stops is the cross-company queue, so the move is scoped to the
-   caller's allowed companies like every other write to it. REPORTED, never
-   thrown: a failed move must stop the crew write, never let it fall through onto
-   the shared run (the #720 rule). */
 async function moveStopToTrip(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Hono ctx + the untyped scm client, as across this route
   c: any, sb: any, stopId: string, newTripId: string,
@@ -1079,13 +900,11 @@ dpOrders.post('/:id/crew', async (c) => {
     return c.json({ error: 'no_changes' }, 400);
   }
   const sb = c.get('supabase');
-  // Same company + ownership class as PATCH / schedule / cancel.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const denied = await denyIfNotOwnDpJob(c, sb, id);
   if (denied) return denied;
 
-  // The job (company-scoped): its date, run, number and address shape the rest.
   const { data: dp, error: dpErr } = await scopeToCompanyId(
     sb.from('dp_orders').select(
       'id, requested_date, trip_id, trip_stop_id, dp_no, status, job_type, party_name, address1, address2, address3, address4, city, postcode, state',
@@ -1098,8 +917,6 @@ dpOrders.post('/:id/crew', async (c) => {
   const requestedDate = (d.requested_date as string | null) ?? null;
   let tripId = (d.trip_id as string | null) ?? null;
 
-  // A DP with no run yet: put it on one. A run needs a date, so a dateless job is
-  // refused with the one thing to fix first (the SO flow always has a date).
   let tripStop: { id: string | null; failed: boolean; reason?: string } = { id: null, failed: false };
   if (!tripId) {
     if (!requestedDate) {
@@ -1127,16 +944,12 @@ dpOrders.post('/:id/crew', async (c) => {
      splitting the shared one. */
   if (tripId && requestedDate) {
     let otherQ = sb.from('trip_stops').select('id').eq('trip_id', tripId).limit(1);
-    // Only a real stop id can be excluded — never neq('id','') (an invalid uuid
-    // filter). With no own stop recorded, every stop on the run counts as another.
     if (d.trip_stop_id) otherQ = otherQ.neq('id', d.trip_stop_id as string);
     const { data: otherStops, error: othErr } = await scopeToAllowedCompanies(otherQ, c);
     if (othErr) return c.json({ error: 'lookup_failed', reason: othErr.message }, 500);
     if (((otherStops ?? []) as Array<unknown>).length > 0) {
       const ownRun = await resolveScheduleTrip(c, sb, p.lorryId ?? null, requestedDate, null);
       if ('error' in ownRun) return c.json({ error: 'trip_failed', reason: ownRun.error }, 500);
-      // ownRun === tripId only when the caller re-picked the SAME lorry this run is
-      // already on — nothing to split, fall through to the in-place crew write.
       if (ownRun.tripId !== tripId) {
         if (d.trip_stop_id) {
           const moved = await moveStopToTrip(c, sb, String(d.trip_stop_id), ownRun.tripId);
@@ -1154,8 +967,6 @@ dpOrders.post('/:id/crew', async (c) => {
     }
   }
 
-  // Write the picked seat(s) — the primary action, so a failure is reported, not
-  // swallowed. The lorry is set here too (setTripCrew leaves a null lorry alone).
   try {
     await setTripCrew(sb, tripId, {
       ...(p.driverId !== undefined ? { driverId: p.driverId } : {}),
@@ -1167,8 +978,6 @@ dpOrders.post('/:id/crew', async (c) => {
     return c.json({ error: 'crew_save_failed', reason: String((e as Error)?.message ?? e).slice(0, 200) }, 500);
   }
 
-  // A lorry on the run and no number yet → mint it + flip to SCHEDULED (the drawer's
-  // end state), so "not scheduled" clears. Best-effort + reported via tripStop.
   let dpNo = (d.dp_no as string | null) ?? null;
   if (!dpNo && requestedDate) {
     const { data: tripRow, error: tripRowErr } = await sb.from('trips').select('lorry_id').eq('id', tripId).maybeSingle();

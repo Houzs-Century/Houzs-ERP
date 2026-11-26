@@ -1,21 +1,3 @@
-// Both Change Log surfaces — the desktop page and its phone twin — against a
-// mocked API.
-//
-// What is asserted is the OWNER's requirement, not the markup:
-//
-//   1. A system change is NEVER counted as a staff change. This is the whole
-//      product: a check written the day before reported "50 staff actions on
-//      migrated orders" and all fifty were the stock-allocation cron. The page
-//      opens on People, says the system's count separately, and the machine
-//      rows are one chip away.
-//   2. Who changed WHICH document, and from what to what, is readable — the
-//      from -> to pair is on screen once a row is opened.
-//   3. A load failure is said out loud rather than rendered as an empty table.
-//   4. A truncated read says its numbers are floors.
-//   5. Times are Malaysia local.
-//   6. The two surfaces answer identically. They share lib/changeLog.ts, and the
-//      recurring bug class here is a rule fixed on one surface and not the
-//      other, so both are mounted from the SAME fixtures in this file.
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -30,9 +12,6 @@ import { MobileChangeLog } from "../mobile/MobileChangeLog";
 import type { ChangeLogDocument, ChangeLogResponse } from "../lib/changeLog";
 
 afterEach(cleanup);
-/* Braces, not a concise arrow: a mock returned from beforeEach is called as the
-   test's teardown, which once made a rejection armed in one test surface in
-   another (autoCountSync.test.tsx has the trace). */
 beforeEach(() => { apiGet.mockReset(); });
 
 const HER_EDIT: ChangeLogDocument = {
@@ -161,8 +140,6 @@ describe("the desktop page", () => {
     }));
     await userEvent.click(screen.getByRole("button", { name: "The system" }));
     expect(apiGet).toHaveBeenLastCalledWith("/api/scm/change-log?hours=168&author=machine");
-    /* The machine row is credited to the machine by NAME, so nobody reads it as
-       a colleague's edit. */
     expect(await screen.findByText("The system only")).toBeTruthy();
   });
 

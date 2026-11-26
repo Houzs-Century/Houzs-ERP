@@ -1,7 +1,3 @@
-// computeGrnFlags had no direct test while it was private to routes/grns.ts —
-// it was only ever exercised through two list handlers. Each case here asserts a
-// DECISION, and the zero-qty one is the reason the function is shaped the way it
-// is rather than a plain `every`.
 
 import { describe, it, expect } from 'vitest';
 import { computeGrnFlags } from './grn-consumption-flags';
@@ -27,20 +23,14 @@ describe('computeGrnFlags', () => {
   });
 
   it('counts an OVER-invoiced line as satisfied, not as short', () => {
-    // `>=`, not `===`: an over-receipt corrected downstream must not pin the
-    // receipt open forever.
     expect(computeGrnFlags([line(10, 12)]).fully_invoiced).toBe(true);
   });
 
   it('treats a qty_accepted = 0 line as already satisfied', () => {
-    // Nothing on it to consume, so it must not hold the receipt open.
     expect(computeGrnFlags([line(10, 10), line(0)]).fully_invoiced).toBe(true);
   });
 
   it('is NOT fully consumed when there is no accepted line at all', () => {
-    // The trap the `accepted.length > 0` guard exists for: a bare `every` over an
-    // empty array is TRUE, so an all-zero receipt would read as fully invoiced
-    // and drop out of the outstanding list with nothing billed.
     expect(computeGrnFlags([line(0), line(0)])).toEqual({
       has_children: false, fully_invoiced: false, fully_returned: false,
     });

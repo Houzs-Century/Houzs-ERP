@@ -1,19 +1,3 @@
-// TanStack Query hooks for the SO-amendment / revision workflow (Phase 1-C).
-//
-// HOUZS VENDOR — verbatim port of 2990's apps/backend/src/lib/so-amendment-queries.ts.
-// Import boundary only: authedFetch comes from the vendored './authed-fetch' (the
-// same /api/scm mount every other SCM query module uses). The backend endpoints
-// live on two mounts:
-//   • /so-amendments               — list + detail + the gate PATCHes
-//   • /mfg-sales-orders/:docNo/amendments — CREATE (nests under the SO mount so
-//                                    it can reuse that file's SO guards).
-//
-// Every gate mutation invalidates the amendment list + detail AND the SO/PO
-// list + detail queries the SalesOrderDetail / PurchaseOrderDetail pages read
-// (invalidateSoLists — BOTH SO list keys — + ['mfg-sales-order-detail'] +
-// ['mfg-purchase-orders'] + ['mfg-purchase-order-detail']) — an approve re-derives
-// the SO and/or the bound PO server-side, so those pages must refetch to show the
-// revised lines/revision.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -23,9 +7,6 @@ import { invalidateSoLists } from './sales-order-queries';
 import type { SoAmendmentHeaderChanges } from './so-amendment-header';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
-/* ── Row + detail shapes (mirror the API response verbatim) ─────────────────
-   List rows are loosely typed (accessors read by name), matching the GRN/SO
-   list convention. */
 export type AmendmentRow = {
   id: string;
   so_doc_no: string;
@@ -35,24 +16,12 @@ export type AmendmentRow = {
   requested_by: string | null;
   created_at: string | null;
   updated_at: string | null;
-  /* mig 0149 — how the amendment was CLOSED and why. `resolution` separates an
-     approver's refusal ('REJECTED') from the requester pulling it back
-     ('WITHDRAWN'); both sit on status REJECTED so the state machine and the
-     one-open index are unchanged. NULL while still in flight, and on every row
-     created before 0149. */
   resolution?: 'REJECTED' | 'WITHDRAWN' | null;
   rejection_reason?: string | null;
   rejected_by?: string | null;
   rejected_at?: string | null;
-  /* mig 0149 — an amendment corrected in place while still REQUESTED. The audit
-     trail carries WHAT changed; this is the "revised since it was raised"
-     signal the approver needs on the card itself. */
   edited_at?: string | null;
   edit_count?: number | null;
-  /* Two-lane rework (2026-07-27, mig 0216): 'LINES' (product changes →
-     Purchasing signs) | 'DELIVERY' (delivery/customer changes → Logistics
-     signs). NULL on rows raised before the rework — those keep the legacy
-     supplier-confirmed two-gate chain. */
   lane?: 'LINES' | 'DELIVERY' | string | null;
   /* Set when an APPROVER said this request was not theirs to sign and PASSED it
      to the other desk (owner 2026-09-17). `lane` is already the receiving desk;
@@ -82,43 +51,26 @@ export type AmendmentLine = {
   new_variants: unknown;
   new_qty: number | null;
   new_unit_price_sen: number | null;
-  /* mig 0280 — the requested line REMARK (the operator's free-text instruction
-     for whoever executes the line). null = the request does not touch it; ''
-     = clear it. Absent on every row raised before 0280. */
   new_remark?: string | null;
-  /* mig 0317 — the requested line DISCOUNT in sen. null = the request does not
-     touch it; 0 = clear it. Absent on every row raised before 0317. */
   new_discount_sen?: number | null;
   old_snapshot: unknown;
 };
 
 export type AmendmentDetail = {
   amendment: AmendmentRow & Record<string, unknown> & {
-    /* mig 0119 — the HEADER half of the request (Delivery Date / Processing Date
-       / State / Postcode: the columns the processing lock freezes) + the values
-       they replace. NULL/absent on a line-only amendment. */
     header_changes?: SoAmendmentHeaderChanges | null;
     old_header_snapshot?: SoAmendmentHeaderChanges | null;
-    /* BUG-101 — the Purchaser's OK on a Delivery Date brought forward. */
     purchaser_ok_by?: string | null;
     purchaser_ok_at?: string | null;
-    /* BUG-101 — the requester changed a PO-frozen Processing Date under
-       scm.so.override_po_processing_date. */
     po_date_override_by?: string | null;
   };
   lines: AmendmentLine[];
   salesOrder: { doc_no: string; status: string; revision: number } | null;
   purchaseOrders: Array<{ id: string; po_number: string; status: string }>;
-  /** The caller raised this amendment (server-resolved staff identity). */
   viewerIsRequester?: boolean;
-  /** BUG-101 — an open Logistic request that brings the Delivery Date forward on
-   *  an order with a live PO: a Purchaser must OK it before Logistic approves. */
   purchaserOkRequired?: boolean;
 };
 
-/* SO revision snapshot row — one per approved SO revision (so_revisions).
-   `snapshot` is the full header+lines JSON captured when the amendment's
-   approve-so gate re-derived the order; the Revisions tab renders it read-only. */
 export type SoRevisionRow = {
   id: string;
   revision: number;
@@ -127,7 +79,6 @@ export type SoRevisionRow = {
   created_by: string | null;
 };
 
-/* Create payload — matches POST /mfg-sales-orders/:docNo/amendments. */
 export type CreateAmendmentLine = {
   salesOrderItemId?: string;
   changeType: string;
@@ -141,39 +92,21 @@ export type CreateAmendmentLine = {
      is a real request to clear it. Before 0280 this had no column and the
      submit dropped it in silence (owner 2026-08-11, 2990-SO-2608-016). */
   newRemark?: string;
-  /* mig 0317 — the line's DISCOUNT in sen. Omit when the request does not
-     touch it; 0 is a real request to clear it. The lever a derived price (the
-     delivery fee) is reduced with — before 0317 a fee reduction on a locked SO
-     was dropped in silence (operator report 2026-08-21, 2990-SO-2608-020). */
   newDiscountSen?: number;
   oldSnapshot?: unknown;
 };
 
-/* Shared invalidation for every gate mutation. An approve re-derives the SO
-   header/lines and/or the bound PO(s) server-side, so the SO list + SO detail +
-   PO list + PO detail queries (the exact keys SalesOrderDetail /
-   PurchaseOrderDetail read via the vendored queries) must all refetch alongside
-   the amendment list + detail. Broad (no id) invalidation is intentional — a
-   gate can touch any bound PO and the row only carries the SO doc_no. */
 const invalidateAmendmentSideEffects = (
   qc: ReturnType<typeof useQueryClient>,
   id?: string,
 ) => {
   qc.invalidateQueries({ queryKey: ['amendments'] });
   if (id) qc.invalidateQueries({ queryKey: ['amendment-detail', id] });
-  /* An approve re-derives the SO's lines/revision, so its list row changes —
-     and that means BOTH list keys (the V2 paged key is a sibling of
-     ['mfg-sales-orders'], not nested under it). */
   invalidateSoLists(qc);
   qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail'] });
   qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
   qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail'] });
-  /* Two-lane rework: a LINES-lane approve auto-raises follow-up rows in the PO
-     Amendments module — its list must show them without a manual refresh. */
   qc.invalidateQueries({ queryKey: ['po-amendments'] });
-  /* A gate writes one AMENDMENT_* audit row, and the amendment's Approval-history
-     view reads the SO audit log — refetch it so the new decision shows at once
-     (broad key: the gate carries the amendment id, not the SO doc_no here). */
   qc.invalidateQueries({ queryKey: ['mfg-sales-order-audit-log'] });
   /* The sidebar's red count of amendments awaiting THIS user's signature
      (hooks/useAmendmentApprovals). Every gate that resolves an amendment passes
@@ -185,7 +118,6 @@ const invalidateAmendmentSideEffects = (
   void qc.invalidateQueries({ queryKey: AMENDMENT_APPROVALS_KEY });
 };
 
-/* ── List ──────────────────────────────────────────────────────────────── */
 export const useAmendments = () => useQuery({
   queryKey: ['amendments'],
   queryFn: () => authedFetch<{ amendments: AmendmentRow[] }>(`/so-amendments`),
@@ -194,7 +126,6 @@ export const useAmendments = () => useQuery({
   retryDelay: 800,
 });
 
-/* ── Detail ────────────────────────────────────────────────────────────── */
 export const useAmendmentDetail = (id: string | null) => useQuery({
   queryKey: ['amendment-detail', id],
   queryFn: () => authedFetch<AmendmentDetail>(`/so-amendments/${id}`),
@@ -204,10 +135,6 @@ export const useAmendmentDetail = (id: string | null) => useQuery({
   retryDelay: 800,
 });
 
-/* ── SO revisions (nested under the SO mount) ──────────────────────────────
-   GET /mfg-sales-orders/:docNo/revisions — the prior SO versions for the
-   Detail "Revisions" tab. Read-only; no invalidation wiring needed. Keyed on
-   the doc_no so it refetches only when the page's docNo changes. */
 export const useSoRevisions = (docNo: string | null) => useQuery({
   queryKey: ['so-revisions', docNo],
   queryFn: () => authedFetch<{ revisions: SoRevisionRow[] }>(`/mfg-sales-orders/${docNo}/revisions`),
@@ -217,11 +144,6 @@ export const useSoRevisions = (docNo: string | null) => useQuery({
   retryDelay: 800,
 });
 
-/* ── PO revisions (nested under the PO mount) ──────────────────────────────
-   GET /mfg-purchase-orders/:id/revisions — the prior PO versions for the PO
-   Detail "Revisions" tab. Read-only; no invalidation wiring needed. Keyed on
-   the po id so it refetches only when the page's PO changes. Mirrors
-   useSoRevisions; the row shape (po_revisions) matches SoRevisionRow. */
 export const usePoRevisions = (poId: string | null) => useQuery({
   queryKey: ['po-revisions', poId],
   queryFn: () => authedFetch<{ revisions: SoRevisionRow[] }>(`/mfg-purchase-orders/${poId}/revisions`),
@@ -254,8 +176,6 @@ export const useAmendmentLanePreview = (args: AmendmentLanePreviewArgs | null) =
   queryFn: () => authedFetch<AmendmentLanePreview>(
     `/mfg-sales-orders/${args!.docNo}/amendments/lane-preview`,
     { method: 'POST', body: JSON.stringify({
-      /* Every field the server's no-op test reads (lib/amendment-noop-lines), so the
-         preview drops exactly the lines the submit will drop. oldSnapshot stays home. */
       lines: args!.lines.map(({ oldSnapshot: _snap, ...l }) => ({
         salesOrderItemId: l.salesOrderItemId ?? null, changeType: l.changeType,
         newItemCode: l.newItemCode ?? null, newVariants: l.newVariants ?? null,
@@ -271,9 +191,6 @@ export const useAmendmentLanePreview = (args: AmendmentLanePreviewArgs | null) =
   retryDelay: 800,
 });
 
-/* ── Create (nested under the SO mount) ────────────────────────────────────
-   POST /mfg-sales-orders/:docNo/amendments — the CREATE lives on the SO router
-   so it can reuse the SO processing-lock / downstream guards. */
 /** What POST /mfg-sales-orders/:docNo/amendments answers, plus what the hook
  *  then did with it. `autoApplied` counts the halves that applied on the spot. */
 export type CreateAmendmentResult = {
@@ -282,7 +199,6 @@ export type CreateAmendmentResult = {
   lanes?: string[];
   selfApprovable?: string[];
   autoApplied?: number;
-  /** Ids whose apply was REFUSED — still raised, still in the queue. */
   notApplied?: string[];
 };
 
@@ -326,11 +242,6 @@ async function createAmendmentThenApplyOwn(
       await authedFetch(`/so-amendments/${id}/approve-so`, { method: 'PATCH' });
       autoApplied += 1;
     } catch {
-      /* RECORDED, not swallowed: the id rides back on the result, `autoApplied`
-         stays short of the halves raised, and the submit notice then says the
-         desk is waiting — which is true, because the row is sitting in the
-         queue as REQUESTED for that desk to sign. Nothing is lost and nobody is
-         told a change applied when it did not. */
       notApplied.push(id);
     }
   }
@@ -346,13 +257,6 @@ export const useCreateAmendment = () => {
        line-only amendment omits it. The server 400s `amendment_empty` when both
        halves are empty, so a no-op submit can no longer create a blank
        amendment in the approval queue. */
-    /* `idempotencyKey` is OPTIONAL and MUST be destructured out of the body —
-       the rest-spread would otherwise post it as an amendment field. The
-       amendment number is minted as `${docNo}/A${prior.length + 1}` (backend
-       mfg-sales-orders.ts), the count+1 shape doc-no.ts warns about, so two
-       in-flight submits can both read the same `prior.length`. The open-
-       amendment 409 backstops the common case, but it is a check-then-act
-       race, not a constraint — one key per amendment intent closes it. */
     mutationFn: ({ docNo, idempotencyKey, ...body }: {
       docNo: string;
       idempotencyKey?: string;
@@ -363,17 +267,11 @@ export const useCreateAmendment = () => {
       createAmendmentThenApplyOwn(docNo, idempotencyKey, body),
     onSuccess: (_, vars) => {
       invalidateAmendmentSideEffects(qc);
-      // The SO gains an open amendment → its detail flags (has_open_amendment,
-      // amendment_eligible) flip. Refresh that specific SO detail immediately.
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
     },
   });
 };
 
-/* ── Gate PATCHes ──────────────────────────────────────────────────────────
-   Each records the supplier/coordinator action and advances the state machine
-   server-side. On a wrong-state call the API 409s bad_transition, which
-   authedFetch surfaces as a plain-language error. */
 export const useSupplierConfirm = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -388,9 +286,6 @@ export const useSupplierConfirm = () => {
 export const useApproveSo = () => {
   const qc = useQueryClient();
   return useMutation({
-    /* Two-lane rework: a LINES-lane approve also returns the follow-up PO
-       Amendment(s) it auto-raised (+ any plain-language warnings) so the
-       approver's toast can point at their next signature. */
     mutationFn: ({ id }: { id: string }) =>
       authedFetch<{
         amendment: AmendmentRow;
@@ -402,10 +297,6 @@ export const useApproveSo = () => {
   });
 };
 
-/* approve-po may 409 with { code:'received_floor', poItemId, revisedQty,
-   receivedQty }. The raw body rides on the thrown error (err.body / err.status
-   from authedFetch) so the caller can render the offending-line detail; a bare
-   surface still reads as one plain sentence. */
 export const useApprovePo = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -413,9 +304,6 @@ export const useApprovePo = () => {
       authedFetch<{
         amendment: AmendmentRow;
         revisedPurchaseOrders: Array<{ poNumber: string; revision: number }>;
-        /* Plain-language notes about anything the reconciliation left for a human:
-           an already-received removed line, an added item with no open PO, an
-           emptied PO. Absent/empty on a clean revision. */
         warnings?: string[];
       }>(
         `/so-amendments/${id}/approve-po`, { method: 'PATCH' },
@@ -433,10 +321,6 @@ export const useSendAmendment = () => {
   });
 };
 
-/* Reject — an APPROVER refusing the request. The reason is REQUIRED (the server
-   400s without one): a refusal that does not say why leaves the requester
-   guessing and resubmitting, which is the competing-documents problem that
-   useWithdrawAmendment / useEditAmendment exist to end. */
 export const useRejectAmendment = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -448,8 +332,6 @@ export const useRejectAmendment = () => {
   });
 };
 
-/* BUG-101 — the Purchaser's OK on a Delivery Date brought forward. Applies
-   nothing; Logistic's approve can run once it is recorded. */
 export const usePurchaserOk = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -459,8 +341,6 @@ export const usePurchaserOk = () => {
   });
 };
 
-/* Flag — the APPROVER saying this request is not theirs to sign. The server
-   passes it to the other desk (still REQUESTED), or refuses and says why. */
 export const useFlagAmendmentLane = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -472,9 +352,6 @@ export const useFlagAmendmentLane = () => {
   });
 };
 
-/* Change approver — a SUPER ADMIN (the * wildcard) choosing which desk signs an
-   open request. The server applies the same safety as the flag above and says
-   why when it refuses. */
 export const useChangeAmendmentLane = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -486,9 +363,6 @@ export const useChangeAmendmentLane = () => {
   });
 };
 
-/* Withdraw — the REQUESTER pulling their own request back, which reject cannot
-   express (reject is gated to scm.amendment.approve_po, which a salesperson does
-   not hold). REQUESTED only; the server refuses once anyone has acted on it. */
 export const useWithdrawAmendment = () => {
   const qc = useQueryClient();
   return useMutation({

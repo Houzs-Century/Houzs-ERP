@@ -1,6 +1,3 @@
-/* Backlog A1: a credit note from a delivery return is filled at the INVOICED
-   price, one line per returned line still uncredited, and its body carries the
-   return links the server holds against the returned units. */
 
 import { describe, expect, test } from 'vitest';
 import type { ReturnCreditPrefill } from '../../vendor/scm/lib/credit-note-queries';
@@ -13,7 +10,6 @@ const PREFILL: ReturnCreditPrefill = {
   soDocNo: 'HC-SO-2610-120',
   invoice: { id: 'si-a', number: 'HC-SI-2611-007' },
   lines: [
-    /* List price RM1,000 on the SKU; the invoice charged 900.00 each after a discount. */
     { returnItemId: 'r1', itemCode: 'BED-Q', description: 'Queen bed', qtyReturned: 2, creditedQty: 0, remainingQty: 2, unitSen: 90000, invoiceIds: ['si-a'], capSen: 180000 },
     { returnItemId: 'r2', itemCode: 'PIL', description: 'Pillow', qtyReturned: 1, creditedQty: 1, remainingQty: 0, unitSen: 5000, invoiceIds: ['si-a'], capSen: 0 },
     { returnItemId: 'r3', itemCode: 'FOC', description: null, qtyReturned: 1, creditedQty: 0, remainingQty: 1, unitSen: null, invoiceIds: [], capSen: null },

@@ -1,6 +1,4 @@
 // @vitest-environment node
-// (No DOM here — the pure matrix, plus a write-excel-file round-trip read back
-// with SheetJS. The node env gives a Blob with .arrayBuffer(), which jsdom's lacks.)
 /* The Excel a Finance report exports reads like the screen (owner 2026-09-19:
    excel 那边也要优化): title and period on top, the same columns, a block title
    bold, a category bold, a row indented by its depth, a total shaded, a net
@@ -38,7 +36,6 @@ describe('sheetMatrix', () => {
     expect(m[2]).toEqual([]);
     expect(m[3]!.map((c) => c?.value)).toEqual(['', 'Amount', '% of sales']);
     expect(m[3]![1]).toMatchObject({ fontWeight: 'bold', align: 'right', bottomBorderStyle: 'thin' });
-    /* A block title spans the row, bold; nothing to add up. */
     expect(m[4]).toEqual([{ value: 'Expenses', type: String, indent: 0, fontWeight: 'bold', fontSize: 11, span: 3 }]);
     /* A category is bold and indented one, its figures on its Total row below its rows
        (owner 2026-11-05: the file as the screen); an account row two. */
@@ -49,16 +46,13 @@ describe('sheetMatrix', () => {
     expect(m[8]![2]).toMatchObject({ value: 0.287, type: Number, format: PCT_FORMAT });
     expect(m[6]![0]).toMatchObject({ value: '900-S100 · STAFF SALARIES & OVERTIME', indent: 2 });
     expect(m[6]![0]).not.toHaveProperty('fontWeight');
-    /* A negative stays a number — the format brackets it; nothing prints a dash. */
     expect(m[7]![1]).toMatchObject({ value: -15, type: Number, format: AMOUNT_FORMAT });
     expect(m[7]![2]).toMatchObject({ value: '-', type: String, align: 'right' });
     expect(m[9]![0]).toMatchObject({ value: 'Unassigned', fontStyle: 'italic' });
-    /* A total is shaded with a rule above; a net line darker with a heavier rule. */
     expect(m[10]![0]).toMatchObject({ value: 'Total expenses', fontWeight: 'bold', backgroundColor: '#eceeea', topBorderStyle: 'thin' });
     expect(m[10]![1]).toMatchObject({ backgroundColor: '#eceeea' });
     expect(m[11]![0]).toMatchObject({ value: 'NET PROFIT', fontWeight: 'bold', backgroundColor: '#e3e6e0', topBorderStyle: 'medium' });
     expect(m[11]![1]).toMatchObject({ value: -415 });
-    /* The notes at the foot. */
     expect(m[12]).toEqual([]);
     expect(m[13]![0]).toMatchObject({ value: 'Expenses as booked.', span: 3 });
   });
@@ -78,7 +72,6 @@ describe('sheetMatrix', () => {
     const ws = wb.Sheets['P&L']!;
     const grid = utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true });
     expect(grid[0]![0]).toBe('P&L');
-    /* An empty header cell reads back as nothing at all. */
     expect(grid[3]!.slice(1)).toEqual(['Amount', '% of sales']);
     expect(grid[5]).toEqual(['General expense']);
     expect(grid[8]).toEqual(['Total General expense', 173_358.06, 0.287]);

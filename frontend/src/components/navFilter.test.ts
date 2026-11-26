@@ -38,7 +38,6 @@ const ctxFor = (
   pageAccess: (page) => (access[page] ?? "none") as never,
 });
 
-/** The desktop Sidebar's view: filter the tree, then flatten what survived. */
 function desktopPaths(ctx: NavFilterCtx): string[] {
   const filterTab = makeNavFilter(ctx);
   const out: string[] = [];
@@ -52,10 +51,6 @@ function desktopPaths(ctx: NavFilterCtx): string[] {
   return out;
 }
 
-/** The mobile shell's view — a faithful copy of MobileApp's `allowed(to)`:
- *  walk the RAW tree and ask whether ANY node at that path is visible. Fails
- *  CLOSED on an unmatched path, mirroring the 2026-07-19 flip in MobileApp (every
- *  path asserted here has a NAV_TABS entry, so this only keeps the copy honest). */
 function phoneAllows(ctx: NavFilterCtx, to: string): boolean {
   const navVisible = makeNavVisible(ctx);
   const flat: NavTab[] = [];
@@ -84,10 +79,6 @@ describe("nav — Amendments for a sales rep (owner rule 2026-07-16)", () => {
     expect(hits).toHaveLength(1);
   });
 
-  /* The rep leaf must not depend on the SCM matrix: /scm/amendments is an
-     `allowSales` route (App.tsx ScmGuard), which admits ANY sales staff whatever
-     their page access. A nav gate stricter than the route would hide a page the
-     rep can still reach by typing the URL. */
   it("shows Amendments even with no SCM page access at all", () => {
     const ctx = ctxFor(rep(), {});
     expect(desktopPaths(ctx)).toContain("/scm/amendments");
@@ -96,10 +87,6 @@ describe("nav — Amendments for a sales rep (owner rule 2026-07-16)", () => {
 });
 
 describe("nav — the rep SCM trim stays trimmed", () => {
-  /* The guard on the fix. The Amendments leaf sits inside a hideForSalesRep
-     group whose OTHER children are not individually flagged, so the tempting
-     "make the filter recurse into hidden groups" fix would have surfaced all of
-     these too. Each one is a real permission boundary, not a nicety. */
   const leaked = [
     "/scm/consignment-orders",
     "/scm/consignment-notes",
@@ -146,18 +133,14 @@ describe("nav — Adjustments gates on scm.warehouse.adjustments after the split
 
   it("shows Adjustments to a holder of scm.warehouse.adjustments on desktop AND phone", () => {
     const ctx = ctxFor(opsMember(), {
-      "scm.warehouse": "view", // L1 grant opens the umbrella + group
-      "scm.warehouse.adjustments": "edit", // the real gate the server now enforces
+      "scm.warehouse": "view",
+      "scm.warehouse.adjustments": "edit",
     });
     expect(desktopPaths(ctx)).toContain("/scm/stock-adjustments");
     expect(phoneAllows(ctx, "/scm/stock-adjustments")).toBe(true);
   });
 
   it("HIDES Adjustments from the Storekeeper whitelist (warehouse+inventory view, no adjustments), who still sees Inventory", () => {
-    // The Storekeeper resolved map: scm.warehouse = view (L1, opens the umbrella +
-    // group), scm.warehouse.inventory = view, and adjustments/transfers/stock_take
-    // = none. Post-split, viewing inventory must NOT surface the Adjustments page —
-    // a Storekeeper VIEWS racking/bin but cannot adjust (the server 403s the POST).
     const ctx = ctxFor(opsMember(), {
       "scm.warehouse": "view",
       "scm.warehouse.inventory": "view",
@@ -167,14 +150,11 @@ describe("nav — Adjustments gates on scm.warehouse.adjustments after the split
     });
     const paths = desktopPaths(ctx);
     expect(paths).not.toContain("/scm/stock-adjustments");
-    expect(paths).toContain("/scm/inventory"); // Inventory stays visible
+    expect(paths).toContain("/scm/inventory");
     expect(phoneAllows(ctx, "/scm/stock-adjustments")).toBe(false);
   });
 
   it("a full-cohort member (adjustments=full) sees both Inventory and Adjustments", () => {
-    // Under the position policy, an unrestricted position resolves to full on
-    // every key — including the new scm.warehouse.adjustments — so it keeps the
-    // whole warehouse group.
     const ctx = ctxFor(opsMember(), {
       "scm.warehouse": "full",
       "scm.warehouse.inventory": "full",
@@ -187,9 +167,6 @@ describe("nav — Adjustments gates on scm.warehouse.adjustments after the split
 });
 
 describe("nav — office and director are untouched by the rep leaf", () => {
-  /* The Supply Chain umbrella lists only L1 area keys in its anyAccess, so a
-     user reaching Amendments by the subgroup path needs the L1 scm.sales grant,
-     not just the L2 scm.sales.orders one. */
   const officeAccess = { "scm.sales": "edit", "scm.sales.orders": "edit" };
 
   it("keeps Amendments for a Sales Director (subgroup path)", () => {
@@ -264,11 +241,6 @@ describe("nav — Finance / HR are top-level, not under Supply Chain", () => {
     ]) expect(paths).toContain(p);
   });
 
-  /* NO WIDENING — Finance. Its own gate can only pass when the OLD parent's gate
-     would also have passed: the anyPerm lists are identical, and page-access is
-     hierarchical (a parent at "none" denies every child), so a granted
-     scm.finance.* implies scm.finance and scm — both listed in Supply Chain's
-     anyAccess. A user with NO SCM grant at all must still see nothing. */
   it("Finance stays absent for a user with no SCM access at all", () => {
     const ctx = ctxFor(rep({ position_name: "Storekeeper", department_name: "Operation Department" }));
     expect(topLevelLabels(ctx)).not.toContain("Finance");
@@ -276,10 +248,6 @@ describe("nav — Finance / HR are top-level, not under Supply Chain", () => {
   });
 
   it("a Finance-only grant shows Finance and still no other SCM area", () => {
-    // The hydrated map carries the per-group finance keys resolved from
-    // accounting (the split's cascade / backfill) — the Books/Reports/Setup nav
-    // now gates on scm.finance.books/.reports/.setup, Money in/out/bank on their
-    // own keys. Mirror that so Finance is reachable.
     const ctx = ctxFor(
       rep({ position_name: "Account Executive", department_name: "Management" }),
       {
@@ -301,9 +269,6 @@ describe("nav — Finance / HR are top-level, not under Supply Chain", () => {
     expect(paths).not.toContain("/scm/inventory");
   });
 
-  /* HR is gated on its FLAT keys alone — deliberately no scm.access. That now
-     matches the routes, which carry anyPerm ["*","scm.hr.read","scm.hr.manage"]
-     and no ScmGuard (App.tsx). Holding neither key must still show nothing. */
   it("HR stays absent without an HR permission, even with full SCM access", () => {
     const ctx = ctxFor(
       rep({ position_name: "Purchaser", department_name: "Operation Department" }),
@@ -338,13 +303,6 @@ describe("nav — Finance / HR are top-level, not under Supply Chain", () => {
   });
 });
 
-/**
- * Assistant is gated by the server-resolved capability (org.assistant.use), not
- * a position-name list. The nav link and the /assistant route guard read the
- * SAME answer, so they can no longer disagree — the drift that let a Sales user
- * see a launcher that 403s. capability() fails closed, so a shell with no
- * resolved set hides the link rather than leaking it.
- */
 describe("nav — Assistant gates on the org.assistant.use capability", () => {
   const withCap = (v: boolean) =>
     rep({ position_name: "Operation Manager", department_name: "Operation Department", capabilities: { "org.assistant.use": v } });
@@ -368,12 +326,6 @@ describe("nav — Assistant gates on the org.assistant.use capability", () => {
   });
 });
 
-/**
- * Every groupId App.tsx mounts a sub-group hub for must resolve SOMEWHERE in
- * NAV_TABS. ScmSubgroupHub used to look these up inside `scm.children` only, so
- * lifting Finance to the root turned /scm/finance — a live, bookmarkable URL —
- * into "Not found". The lookup is tree-wide now; this pins that it stays true.
- */
 describe("nav — every sub-group hub groupId still resolves", () => {
   const findGroup = (tabs: readonly NavTab[], id: string): NavTab | undefined => {
     for (const t of tabs) {

@@ -85,10 +85,6 @@ export const LANE_LABEL: Record<AmendmentLane, string> = {
   LINE_ADDREMOVE: 'add / cancel a product line',
 };
 
-/* Header payloadKey → lane. Every CONTROLLED key in so-field-policy MUST have a
-   row here — classifyHeaderKey throws on an unknown key rather than guessing a
-   lane, and the create route validates keys against soAmendableHeaderFields()
-   BEFORE classifying, so a throw here means the two tables drifted. */
 const HEADER_KEY_LANE: Record<string, AmendmentLane> = {
   /* Owner 2026-07-27 (follow-up ruling): the Processing Date is PURCHASING's —
      it re-times the supplier's production, so it signs on the LINES lane. The
@@ -158,7 +154,6 @@ export function classifyLineItemCode(itemCode: string | null | undefined): Amend
 export type LaneSplitLine<L> = { line: L; lane: AmendmentLane };
 
 export type LaneSplit<L> = {
-  /** Lanes actually present, in stable order (LINES first). */
   lanes: AmendmentLane[];
   perLane: Record<AmendmentLane, {
     headerChanges: Record<string, string | null>;
@@ -188,9 +183,6 @@ export function splitAmendmentByLane<L>(
   lineIdentity: (line: L) => LineLaneIdentity,
   linePriceOnly: (line: L) => boolean,
   priceLaneEnabled: boolean,
-  /** DEV-70 — a product line moving its price AND its spec, as two halves: the
-   *  spec half (no price) to LINES, the price half to PRICE. `null` = not such
-   *  a line. Only asked on a price-lane company. */
   splitPrice: (line: L) => { spec: L; price: L } | null,
   /** owner 2026-11-16 — an ADD or REMOVE of a whole PRODUCT line routes to the
    *  LINE_ADDREMOVE lane (Sales Director) instead of LINES on an
@@ -212,8 +204,6 @@ export function splitAmendmentByLane<L>(
   const removesProc = Object.prototype.hasOwnProperty.call(headerChanges, 'processingDate')
     && blank(headerChanges['processingDate']);
   for (const [k, v] of Object.entries(headerChanges)) {
-    // Header keys only ever answer LINES or DELIVERY — a price is a line-level
-    // value, so classifyHeaderKey never routes to PRICE.
     const lane = removesProc && k === 'customerDeliveryDate' && blank(v)
       ? 'LINES'
       : classifyHeaderKey(k);
@@ -231,9 +221,6 @@ export function splitAmendmentByLane<L>(
       perLane.LINE_ADDREMOVE.lines.push(line);
       continue;
     }
-    // A price-only product-line change is Finance's, not the Purchaser's, on a
-    // price-lane company: the sell price carries nothing for the PO to follow.
-    // Service lines are already DELIVERY and never reach this branch.
     if (lane === 'LINES' && priceLaneEnabled && linePriceOnly(line)) lane = 'PRICE';
     const halves = lane === 'LINES' && priceLaneEnabled ? splitPrice(line) : null;
     if (halves) {
@@ -250,19 +237,6 @@ export function splitAmendmentByLane<L>(
   return { lanes, perLane };
 }
 
-/* ── Lane state machine ──────────────────────────────────────────────────────
-   A lane amendment lives entirely inside the EXISTING status enum so no enum
-   migration / historical remap is needed:
-
-     REQUESTED ──approve-so──▶ SO_APPROVED   (terminal: applied)
-         │
-         ├─────reject────────▶ REJECTED      (terminal: refused, reason required)
-         └─────withdraw──────▶ REJECTED      (terminal: resolution WITHDRAWN)
-
-   SUPPLIER_PENDING / PO_APPROVED / SENT are LEGACY-ONLY states — a lane row can
-   never enter them (there is no supplier-confirm gate and the PO leg lives in
-   the PO Amendments module). Legacy rows (lane IS NULL) keep the original FLOW
-   in so-amendment.ts untouched. */
 export type LaneAction = 'approve-so' | 'reject' | 'withdraw';
 
 export function canLaneTransition(status: string, action: LaneAction | string): boolean {

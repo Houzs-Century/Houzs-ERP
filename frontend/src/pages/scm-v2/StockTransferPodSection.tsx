@@ -2,9 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { PodPhotoAlbum } from "../../components/scm-v2/PodPhotoAlbum";
 
-/* The delivery run of this transfer, as the crew recorded it (owner,
-   2026-10-08: a Transfer job is record-only, and the record shows on the
-   Stock Transfer). Nothing here moves stock — the transfer posted on creation. */
 
 type Progress = {
   source_id: string; departed_at: string | null; arrived_at: string | null; completed_at: string | null;

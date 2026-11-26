@@ -46,9 +46,6 @@ describe("security-upgraded document dependencies", () => {
   });
 
   test("the production facade still reads legacy BIFF8 .xls workbooks", async () => {
-    // Generate a real OLE/BIFF8 workbook in memory. Keeping the producer here is
-    // reviewable and avoids committing an opaque binary fixture; production
-    // remains limited to the four exports in xlsx-runtime.
     const fullSheetJs = await import("xlsx");
     const sheet = fullSheetJs.utils.aoa_to_sheet([
       ["Code", "Quantity"],
@@ -61,8 +58,6 @@ describe("security-upgraded document dependencies", () => {
       type: "array",
     }) as ArrayBuffer);
 
-    // BIFF8 .xls is wrapped in an OLE Compound File, whose fixed signature
-    // proves this is exercising the legacy binary parser rather than XLSX.
     expect(Array.from(legacyBytes.slice(0, 8))).toEqual([
       0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
     ]);

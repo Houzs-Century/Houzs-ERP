@@ -1,49 +1,3 @@
-// ---------------------------------------------------------------------------
-// delivery-agent.ts — the Houzs Delivery Agent ENGINE (deterministic, pure).
-// Ported from HOOKKA src/api/lib/delivery-agent.ts as the design template,
-// re-grounded in the Houzs delivery domain: B2C furniture deliveries with an
-// OWN fleet (drivers/helpers/lorries, migration 0053 TMS), organised by
-// customer-STATE regions on the Delivery Planning board.
-//
-// The engine only:
-//   1. generateDeliveryProposals — writes PENDING rows into
-//      delivery_agent_proposals (migration 0092):
-//        LOAD_PLAN  — the board's ready-to-deliver pool (planning state
-//                     PENDING_SCHEDULE) bucketed by REGION, one customer's
-//                     orders grouped together inside the payload.
-//        POD_CHASE  — DOs delivered >24h ago with neither a POD photo
-//                     (pod_r2_key) nor a signature (signature_data).
-//                     Default ON (Houzs has POD capture on the DO).
-//   2. collectDeliveryBrief — today's delivery picture (pool by planning
-//      state + region, overdue-to-deliver, DO pipeline, POD gaps, trips
-//      today/tomorrow with crew) + a snapshot row in delivery_agent_briefs.
-//   3. deliveryLearning — per-state ACTUAL dispatch→delivered working days
-//      (90d window) vs the configured allowance; drift ≥1 day over ≥5
-//      deliveries yields a proposed config change the LEAD wires into the
-//      skeleton's config_proposals framework (this module never writes them).
-//   4. runDeliveryAgent — orchestrates 1-3 for the scheduler.
-//   5. deliveryAgentStatus — cheap counters for the console card.
-//
-// RED LINES (HOOKKA discipline, enforced structurally):
-//   - NEVER creates/edits/dispatches DOs or trips — this module writes ONLY
-//     to delivery_agent_proposals + delivery_agent_briefs (public schema).
-//   - Deterministic only — no LLM calls, no invented numbers. The AI-focus
-//     paragraph is the lead's job (shared brain), stored via ai_focus later.
-//   - Every proposal carries a human-readable summary.
-//
-// DB access, following house patterns:
-//   - scm tables → getSupabaseService(env) (PostgREST, schema:'scm',
-//     snake_case columns verbatim — no camelCase transform, no dual-read).
-//   - public tables (delivery_agent_*, app_settings) → env.DB (d1-compat
-//     shim). Rows read off env.DB are dual-keyed r.camelCase ?? r.snake_case
-//     defensively, matching services/agent-console.ts.
-//
-// Board fidelity: the ready pool reuses the board's OWN exports —
-// summariseReadiness (scm/lib/so-readiness), soDeliverableRemaining
-// (scm/routes/delivery-orders-mfg) and derivePlanningState
-// (scm/routes/delivery-planning) — so agent and board can never disagree
-// about what "ready to deliver" means.
-// ---------------------------------------------------------------------------
 
 import type { Env } from '../../types';
 import { getSupabaseService } from '../../db/supabase';
@@ -67,7 +21,6 @@ import {
 } from './delivery-agent-geo';
 import { fmtSen } from '../../scm/shared/format';
 
-// ── Config (app_settings['agents.delivery']) ─────────────────────────────────
 
 export const DELIVERY_AGENT_SETTING_KEY = 'agents.delivery';
 
@@ -75,10 +28,8 @@ export const DELIVERY_AGENT_SETTING_KEY = 'agents.delivery';
 export const DEFAULT_TRANSIT_DAYS = 3;
 
 export interface DeliveryAgentSettings {
-  /** Per-state working-day transit allowance, keyed by canonical code (SEL, KL…). */
   transitDaysByState?: Record<string, number>;
   defaultTransitDays?: number;
-  /** POD chasing. Default ON — Houzs captures pod_r2_key / signature_data on the DO. */
   podChase?: boolean;
 }
 
@@ -93,7 +44,7 @@ async function loadDeliverySettings(db: D1Database): Promise<Required<Pick<Deliv
   return {
     transitDaysByState: byState,
     defaultTransitDays: Number.isFinite(dflt) && dflt >= 0 && dflt <= 30 ? Math.floor(dflt) : DEFAULT_TRANSIT_DAYS,
-    podChase: raw.podChase !== false, // default ON
+    podChase: raw.podChase !== false,
   };
 }
 
@@ -114,7 +65,6 @@ export const DELIVERY_TRANSIT_RULE: ConfigParamRule = {
   path: (m) => ['transitDaysByState', m[1]],
 };
 
-// ── Shared helpers ───────────────────────────────────────────────────────────
 
 function s(v: unknown): string {
   return v == null ? '' : String(v);
@@ -127,7 +77,6 @@ function rm(centi: number): string {
   return `${fmtSen(centi)}`;
 }
 
-/** Whole days from a YMD/ISO to todayYmd (>= 0). */
 function daysSince(fromIso: string, todayYmd: string): number {
   if (!fromIso) return 0;
   const from = new Date(fromIso.slice(0, 10) + 'T00:00:00Z').getTime();
@@ -136,7 +85,6 @@ function daysSince(fromIso: string, todayYmd: string): number {
   return Math.max(0, Math.floor((today - from) / 86_400_000));
 }
 
-/** Whole-day difference (target − today); null when target is blank/invalid. */
 function daysUntil(todayYmd: string, targetIso: string | null | undefined): number | null {
   if (!targetIso) return null;
   const a = new Date(`${todayYmd}T00:00:00Z`).getTime();
@@ -145,12 +93,10 @@ function daysUntil(todayYmd: string, targetIso: string | null | undefined): numb
   return Math.round((b - a) / 86_400_000);
 }
 
-/** ISO instant N days before now (for timestamptz comparisons). */
 function isoAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString();
 }
 
-/** Working-day steps fromYmd → toYmd (Sundays skipped, cap 30) — HOOKKA parity. */
 function transitWorkingDays(fromYmd: string, toYmd: string): number | null {
   if (!fromYmd || !toYmd || toYmd < fromYmd) return null;
   const d = new Date(`${fromYmd}T00:00:00`);
@@ -164,7 +110,6 @@ function transitWorkingDays(fromYmd: string, toYmd: string): number | null {
   return steps;
 }
 
-// ── The planning pool (board-faithful snapshot) ──────────────────────────────
 
 export interface PoolSo {
   docNo: string;
@@ -172,22 +117,18 @@ export interface PoolSo {
   debtorName: string | null;
   status: string;
   planningState: DeliveryState;
-  /** Canonical state code (SEL/KL/…), or 'UNKNOWN' when unresolvable. */
   stateCode: string;
   customerState: string | null;
-  /** Primary region tab (first mapped bucket) — proposals bucket on THIS. */
   region: Region;
   regions: Region[];
-  /** amended_delivery_date ?? customer_delivery_date (the board's effective date). */
   effectiveDeliveryDate: string | null;
   daysLeft: number | null;
   localTotalSen: number;
 }
 
 interface DeliverySnapshot {
-  today: string; // MYT YYYY-MM-DD
+  today: string;
   regionCfg: RegionConfig;
-  /** Every live SO on the board (all four planning states). */
   pool: PoolSo[];
 }
 
@@ -205,9 +146,6 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
   const today = todayMyt();
   const regionCfg = await loadRegionConfig(sb);
 
-  /* Live SO headers needing delivery — the board's pool definition verbatim:
-     NOT DRAFT/CANCELLED + a delivery-date signal. BASE table only (view-trap:
-     delivery_state / amended_delivery_date are NOT in the payment-totals view). */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
     sb.from('mfg_sales_orders')
       .select('doc_no, debtor_code, debtor_name, status, delivery_state, customer_state, customer_country, customer_delivery_date, amended_delivery_date, processing_date, sales_exemption_expiry, linked_ac_docno, local_total_sen')
@@ -223,12 +161,6 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
   const docNos = soRows.map((r) => s(r.doc_no)).filter(Boolean);
   if (docNos.length === 0) return { today, regionCfg, pool: [] };
 
-  /* Per-line readiness (same select shape as the board's step 3). */
-  /* chunkIn, not paginateAll: `docNos` above is every live SO in the tenant (the
-     read that built it has no date bound), and paginateAll bounds the response
-     while re-sending that whole doc list in every page's URL. Batching on doc_no
-     keeps each order's lines together, and the readiness map below is keyed by
-     doc_no, so nothing about the result moves. */
   const { data: itemRowsRaw } = await chunkIn<{
     doc_no: string; item_group: string | null; item_code: string | null;
     stock_status: string | null; cancelled: boolean | null;
@@ -252,17 +184,9 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
     });
     linesByDoc.set(it.doc_no, arr);
   }
-  /* isServiceLine's strongest signal, resolved through the SAME helper the board
-     uses. Agent and board must classify one line identically or their "ready to
-     deliver" pools diverge — the one thing this module promises cannot happen.
-     NOT company-scoped: this job spans both companies (see the pool load above),
-     and the value is only ever read as "is this SERVICE?".
-     Loud on failure, like the pool load: a discarded read would turn delivery
-     fees back into short accessories and silently shrink the ready pool. */
   const { error: catErr } = await resolveLineCategories(sb, linesByDoc.values());
   if (catErr) throw new Error(`delivery-agent product category load failed: ${catErr.message}`);
 
-  /* Delivery progress per SO (board step 4) — DELIVERED detection. */
   const deliveredByDoc = new Map<string, number>();
   const remainingByDoc = new Map<string, number>();
   const deliverableMap = await soDeliverableRemaining(sb, docNos);
@@ -271,10 +195,6 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
     remainingByDoc.set(line.docNo, (remainingByDoc.get(line.docNo) ?? 0) + line.remaining);
   }
 
-  /* The AutoCount exemption expiry, as the board's column shows it: it can decide
-     Overdue (derivePlanningState). Unresolved company context = no company filter,
-     like every read in this cross-company job; a mirror blip degrades to the
-     frozen original / delivery date. */
   const acExpiryByDoc = await loadAcExemptionExpiryByDoc(sb, { get: () => undefined }, soRows);
 
   const pool: PoolSo[] = soRows.map((r) => {
@@ -314,7 +234,6 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
   return { today, regionCfg, pool };
 }
 
-// ── POD gaps ─────────────────────────────────────────────────────────────────
 
 export interface PodGapRow {
   doId: string;
@@ -326,8 +245,6 @@ export interface PodGapRow {
   daysSinceDelivered: number;
 }
 
-/** Chase window: delivered between 90 days and 24 hours ago (bounded so day
- *  one never manufactures an ancient backlog — HOOKKA's 253-row lesson). */
 const POD_CHASE_WINDOW_DAYS = 90;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -362,13 +279,11 @@ async function loadPodGaps(sb: any, today: string): Promise<PodGapRow[]> {
     });
 }
 
-// ── Proposal persistence (delivery_agent_proposals, public schema) ───────────
 
 export type DeliveryProposalKind = 'LOAD_PLAN' | 'POD_CHASE';
 
 interface ProposalInsert {
   kind: DeliveryProposalKind;
-  /** Dedupe key — an OPEN (PENDING) proposal with the same kind+key blocks re-creation. */
   key: string;
   payload: unknown;
   summary: string;
@@ -397,14 +312,11 @@ async function insertProposal(db: D1Database, p: ProposalInsert, nowIso: string)
     .run();
 }
 
-// ── 1. generateDeliveryProposals ─────────────────────────────────────────────
 
 export interface GenerateDeliveryProposalsResult {
-  /** Rows actually inserted. */
   created: number;
   loadPlans: number;
   podChases: number;
-  /** Candidates skipped because a PENDING proposal with the same key exists. */
   skippedOpen: number;
 }
 
@@ -427,9 +339,6 @@ async function generateDeliveryProposalsCore(
 
   const proposals: ProposalInsert[] = [];
 
-  /* -- LOAD_PLAN: the ready-to-deliver pool (PENDING_SCHEDULE) bucketed by the
-        SO's PRIMARY region, one customer's orders grouped together. Proposals
-        only — trips get created by the office on the Delivery Planning board. */
   const ready = snapshot.pool.filter((so) => so.planningState === 'PENDING_SCHEDULE');
   const byRegion = new Map<Region, PoolSo[]>();
   for (const so of ready) {
@@ -462,8 +371,6 @@ async function generateDeliveryProposalsCore(
           valueSen: x.localTotalSen,
         })),
       }))
-      // Most date-pressed customer first (dateless customers last). 9999
-      // (not Infinity) so two dateless customers compare 0, never NaN.
       .sort((a, b) => {
         const da = Math.min(...a.sos.map((x) => x.daysLeft ?? 9999));
         const db2 = Math.min(...b.sos.map((x) => x.daysLeft ?? 9999));
@@ -491,7 +398,6 @@ async function generateDeliveryProposalsCore(
     });
   }
 
-  /* -- POD_CHASE: delivered >24h with neither POD photo nor signature. */
   if (settings.podChase) {
     const gaps = await loadPodGaps(sb, snapshot.today);
     for (const g of gaps) {
@@ -507,8 +413,6 @@ async function generateDeliveryProposalsCore(
     }
   }
 
-  /* Insert with dedupe: an OPEN (PENDING) proposal with the same kind+key is
-     never re-created — decided (APPROVED/REJECTED/EXPIRED) rows don't block. */
   let created = 0;
   let loadPlans = 0;
   let podChases = 0;
@@ -528,7 +432,6 @@ async function generateDeliveryProposalsCore(
   return { created, loadPlans, podChases, skippedOpen };
 }
 
-// ── 2. collectDeliveryBrief ──────────────────────────────────────────────────
 
 export interface TripBriefRow {
   tripNo: string;
@@ -543,14 +446,12 @@ export interface TripBriefRow {
 }
 
 export interface DeliveryBriefData {
-  date: string; // MYT
-  generatedAt: string; // ISO
+  date: string;
+  generatedAt: string;
   pendingPool: {
     total: number;
     byPlanningState: Record<DeliveryState, number>;
-    /** Ready-to-deliver (PENDING_SCHEDULE) buckets, largest value first. */
     readyByRegion: Array<{ region: string; label: string; count: number; customers: number; valueSen: number }>;
-    /** Ready-to-deliver by canonical customer-state code (SEL/KL/…/UNKNOWN). */
     readyByState: Array<{ stateCode: string; count: number; valueSen: number }>;
   };
   overdueToDeliver: {
@@ -560,38 +461,12 @@ export interface DeliveryBriefData {
       effectiveDeliveryDate: string | null; daysLeft: number | null; valueSen: number;
     }>;
   };
-  /** DO counts per raw status. `unavailableReason` non-null means the read
-   *  FAILED and `byStatus` is empty because nothing was counted — never read an
-   *  absent bucket as zero deliveries in that status. */
   doPipeline: { byStatus: Record<string, number>; unavailableReason: string | null };
   podGaps: { count: number; rows: PodGapRow[] };
   trips: { today: TripBriefRow[]; tomorrow: TripBriefRow[] };
   openProposals: { total: number; byKind: Record<string, number> };
 }
 
-/* The DO pipeline — counted from the ROWS, never by enumerating a status list.
-   This used to map a hand-held vocabulary and issue one
-   `count:'exact'` query per entry with `.eq('status', st)`. Two faults, both of
-   which this branch exists to end:
-
-   1. `delivery_orders.status` is a Postgres ENUM. The list it mapped
-      (scm/shared/do-shipped-states.ts DO_STATUSES) still carries 'COMPLETED',
-      which do_status has never had, so that one query sent a label Postgres
-      refuses to parse — `22P02 invalid input value for enum do_status:
-      "COMPLETED"` — exactly the 500 fixed on the SI and DO list endpoints.
-   2. The await destructured only `count` and dropped `error`, so
-      `if ((count ?? 0) > 0)` rendered the failed read as an ABSENT bucket. The
-      comment that stood here said the local copy was replaced because the
-      pipeline "reported the missing bucket as absent rather than as uncounted";
-      it went on doing precisely that.
-
-   Reading the column removes both halves at once: no literal is handed to the
-   enum, and a failed read is reported as unavailable instead of as zeros. It
-   also needs no status vocabulary at all, so there is no longer a second copy
-   of one here to drift. Statuses OUTSIDE the vocabulary (legacy spellings,
-   blanks) now appear too — under their own key, or UNKNOWN for a blank — which
-   is a change to what the brief shows and is the honest direction: they were
-   previously counted nowhere. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function collectDoStatusCounts(sb: any): Promise<StatusTally> {
   try {
@@ -601,8 +476,6 @@ export async function collectDoStatusCounts(sb: any): Promise<StatusTally> {
       () => 1,
     );
   } catch (e) {
-    /* Still contained — a throw here must not take the whole brief down — but
-       it is now REPORTED rather than swallowed into an empty pipeline. */
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }
 }
@@ -695,7 +568,7 @@ async function openProposalCounts(db: D1Database): Promise<{ total: number; byKi
       byKind[s(r.kind) || 'UNKNOWN'] = c;
       total += c;
     }
-  } catch { /* table empty / pre-migration — zeros */ }
+  } catch { }
   return { total, byKind };
 }
 
@@ -734,7 +607,6 @@ async function collectDeliveryBriefCore(
   };
   for (const so of snapshot.pool) byPlanningState[so.planningState] += 1;
 
-  /* Ready pool by region — largest value first. */
   const regionLabel = new Map(
     snapshot.regionCfg.regions.map((r) => [r.key, r.label] as [string, string]),
   );
@@ -769,8 +641,6 @@ async function collectDeliveryBriefCore(
     .map(([stateCode, a]) => ({ stateCode, count: a.count, valueSen: a.valueSen }))
     .sort((a, b) => b.valueSen - a.valueSen);
 
-  /* Overdue-to-deliver: the board's OVERDUE bucket (not ready + inside the
-     3-day window / past the effective date), most negative days-left first. */
   const overdueRows = snapshot.pool
     .filter((so) => so.planningState === 'OVERDUE')
     .sort((a, b) => (a.daysLeft ?? 0) - (b.daysLeft ?? 0))
@@ -804,7 +674,6 @@ async function collectDeliveryBriefCore(
     openProposals,
   };
 
-  /* Snapshot row — ai_focus stays NULL here; the lead's brain call fills it. */
   try {
     await db
       .prepare(
@@ -819,10 +688,8 @@ async function collectDeliveryBriefCore(
   return brief;
 }
 
-// ── 3. deliveryLearning (per-state transit drift) ────────────────────────────
 
 export interface TransitConfigProposal {
-  /** Config-proposal key, e.g. 'delivery.transitDays.SEL' (matches DELIVERY_TRANSIT_RULE). */
   key: string;
   current: number;
   proposed: number;
@@ -836,7 +703,6 @@ export interface TransitLearningFinding {
   actualAvgDays: number;
   driftDays: number;
   flagged: boolean;
-  /** Set only when flagged — the lead feeds these into config_proposals. */
   proposal: TransitConfigProposal | null;
 }
 
@@ -880,7 +746,7 @@ export async function deliveryLearning(env: Env): Promise<TransitLearningFinding
 
   const findings: TransitLearningFinding[] = [];
   for (const [stateCode, agg] of byState) {
-    if (agg.samples < LEARNING_MIN_SAMPLES) continue; // too thin to learn from
+    if (agg.samples < LEARNING_MIN_SAMPLES) continue;
     const actualAvg = Math.round((agg.total / agg.samples) * 10) / 10;
     const configured = settings.transitDaysByState[stateCode] ?? settings.defaultTransitDays;
     const drift = Math.round(actualAvg) - configured;
@@ -910,14 +776,11 @@ export async function deliveryLearning(env: Env): Promise<TransitLearningFinding
   return findings;
 }
 
-// ── 4. runDeliveryAgent (orchestrator) ───────────────────────────────────────
 
 export interface RunDeliveryAgentResult {
-  /** One-line human-readable result for the run summary. */
   summary: string;
   brief: DeliveryBriefData;
   proposalsCreated: number;
-  /** Flagged transit-drift config changes — the lead wires these into config_proposals. */
   learning: TransitConfigProposal[];
 }
 
@@ -947,12 +810,10 @@ export async function runDeliveryAgent(env: Env): Promise<RunDeliveryAgentResult
   return { summary, brief, proposalsCreated: gen.created, learning };
 }
 
-// ── 5. deliveryAgentStatus (console card counters) ───────────────────────────
 
 export interface DeliveryAgentStatus {
   openProposals: number;
   openByKind: Record<string, number>;
-  /** created_at of the newest brief snapshot, or null before the first run. */
   lastBriefAt: string | null;
 }
 
@@ -965,6 +826,6 @@ export async function deliveryAgentStatus(env: Env): Promise<DeliveryAgentStatus
       .prepare('SELECT MAX(created_at) AS last FROM delivery_agent_briefs')
       .first<{ last?: string | null }>();
     lastBriefAt = r?.last ?? null;
-  } catch { /* pre-migration — null */ }
+  } catch { }
   return { openProposals: total, openByKind: byKind, lastBriefAt };
 }

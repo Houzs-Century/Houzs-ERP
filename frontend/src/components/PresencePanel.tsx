@@ -4,7 +4,6 @@ import { usePresence } from "../hooks/usePresence";
 import { cn } from "../lib/utils";
 
 interface Props {
-  /** When the sidebar is collapsed, render a tighter icon-only version. */
   collapsed: boolean;
 }
 
@@ -21,7 +20,6 @@ export function PresencePanel({ collapsed }: Props) {
   const [hover, setHover] = useState(false);
 
   if (loading || members.length === 0) {
-    // Don't show anything until we have data — avoids a flash of "0 online".
     return null;
   }
 
@@ -77,7 +75,6 @@ export function PresencePanel({ collapsed }: Props) {
         </>
       )}
 
-      {/* Hover popover — full active list */}
       {hover && !collapsed && (
         <div className="absolute bottom-full left-3 right-3 z-20 mb-2 overflow-hidden rounded-md border border-border bg-surface shadow-slab">
           <div className="border-b border-border-subtle bg-surface-dim/60 px-3 py-2">
@@ -139,7 +136,6 @@ function Avatar({
 
 function initialsOf(m: { name: string | null; email: string }): string {
   const source = m.name || m.email;
-  // "Jane Doe" → "JD"; "jane@x.com" → "JA"
   const parts = source.trim().split(/\s+/);
   if (parts.length >= 2) {
     return (parts[0][0] + parts[1][0]).toUpperCase();

@@ -21,8 +21,6 @@
    guaranteed to be, so the runtime guards below are deliberate, not redundant. */
 import type { MaintenanceConfig, MfgPricedOption } from '../shared/mfg-pricing';
 
-/** The priced pools whose `priceSen` this derivation maxes over suppliers. The
- *  unpriced pools (gaps, sofaSizes) are not listed and are copied verbatim. */
 const PRICED_POOLS = [
   'divanHeights', 'legHeights', 'totalHeights', 'specials', 'sofaLegHeights', 'sofaSpecials',
 ] as const;
@@ -32,7 +30,6 @@ const emptyConfig = (): MaintenanceConfig => ({
   specials: [], sofaLegHeights: [], sofaSpecials: [], sofaSizes: [],
 });
 
-/** Deep-clone a config (plain JSON data) so the derivation never mutates input. */
 function clone(cfg: MaintenanceConfig): MaintenanceConfig {
   return JSON.parse(JSON.stringify(cfg)) as MaintenanceConfig;
 }
@@ -65,10 +62,8 @@ export function deriveMasterConfigCostFromSuppliers(
         if (!Number.isFinite(supCost)) continue;
         const cur = byValue.get(se.value);
         if (cur) {
-          // Max the COST only; keep the master's sellingPriceSen / active / label.
           if (supCost > Number(cur.priceSen ?? 0)) cur.priceSen = supCost;
         } else {
-          // A pool entry only a supplier has: add it cost-only (no selling).
           byValue.set(se.value, { value: se.value, priceSen: supCost });
         }
       }

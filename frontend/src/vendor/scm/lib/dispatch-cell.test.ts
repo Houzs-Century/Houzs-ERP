@@ -19,7 +19,6 @@ describe('crewComboOptions', () => {
   it('keeps an off-list current assignment selectable so it never blanks', () => {
     const opts = crewComboOptions(drivers, 'Gone Driver');
     expect(opts).toContainEqual({ value: KEEP_CURRENT, label: 'Gone Driver' });
-    // ordered after the blank, before the master rows
     expect(opts.map((o) => o.value)).toEqual(['', KEEP_CURRENT, 'd1', 'd2']);
   });
 

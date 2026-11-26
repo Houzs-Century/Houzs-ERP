@@ -26,8 +26,6 @@ export interface VenueRowLike {
   size?: string | null;
 }
 
-/* The venue list's compact field look for the shared State / City / Postcode
-   trio — the labels are screen-reader only, as the row has no header line. */
 const CONTROL =
   "h-8 w-full min-w-0 rounded-md border border-border bg-surface px-2 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15";
 export const VENUE_TRIPLE_CLASSES: AddressTripleClasses = {
@@ -57,7 +55,7 @@ export function VenueManagerRow({
   }
   function save() {
     const next = name.trim();
-    if (!next) return; // keep editing; an empty venue name is never saved
+    if (!next) return;
     if (next !== v.name) onPatch(v.id, { name: next });
     setEditing(false);
   }
@@ -117,10 +115,6 @@ export function VenueManagerRow({
       />
       </div>
       <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-[repeat(3,minmax(0,1fr))_8rem]">
-      {/* Inline State / City / Postcode — the Sales Order's controls (owner
-          2026-11-17). Each pick saves the WHOLE triple in one PATCH, so a
-          postcode that fills City and State back lands as one change; Country
-          follows the State. Values must live in my_localities. */}
         <AddressTripleFields
           postcodeRequired
           country=""
@@ -135,9 +129,6 @@ export function VenueManagerRow({
           }
           classes={VENUE_TRIPLE_CLASSES}
         />
-      {/* Inline size edit (mig 0222). Free text, committed on blur so the
-          operator can type "12,000 sqft" without a PATCH per character. key
-          includes the saved value so a reload after save re-seeds defaultValue. */}
       <input
         key={`size-${v.id}-${v.size ?? ""}`}
         defaultValue={v.size ?? ""}

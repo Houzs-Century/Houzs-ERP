@@ -24,8 +24,6 @@ export const isOfficialState = (v: unknown): v is OfficialState => typeof v === 
 /** The paying documents that can owe one, by the kind the routes name. */
 export const OFFICIAL_DOC_TABLES = {
   PV: { table: 'payment_vouchers', number: 'pv_number', entityType: 'PAYMENT_VOUCHER' },
-  /* AP invoices keep no entity trail (their module never had one); the row's
-     official_doc_at / official_doc_by say who changed it last. */
   API: { table: 'ap_invoices', number: 'invoice_number', entityType: null },
 } as const;
 export type OfficialDocKind = keyof typeof OFFICIAL_DOC_TABLES;
@@ -73,7 +71,6 @@ export function officialOwedUpdates(body: Row, who: string | null, before: Row):
 /** Does the reader's document kind say the bill is not yet the real one? */
 export const isProvisionalKind = (kind: unknown): boolean => kind === 'proforma' || kind === 'quotation';
 
-/* Letters and digits, upper case — "INV-0012" and "inv 0012" are one number. */
 const fold = (s: unknown): string => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, '');
 
 const rm = (sen: number): string => `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

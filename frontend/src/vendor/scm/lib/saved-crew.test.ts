@@ -1,6 +1,3 @@
-// 2026-11-10: a crew save that succeeded, then a board reload that timed out or
-// came back stale, showed "— none —". The save's own answer stays on the row
-// until a board read agrees with it.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { forgetSavedCrew, rememberSavedCrew, withSavedCrew } from './saved-crew';
 import type { PlanningOrder } from './delivery-planning-queries';
@@ -22,7 +19,6 @@ describe('withSavedCrew', () => {
     rememberSavedCrew('do-1', SAVED, 1_000);
     const fresh = { orders: [row('do-1', { ...withSavedCrew({ orders: [row('do-1', null)] }, 1_500).orders[0]!.crew!, driver_1_contact: '+60 11-3192 8090' })] };
     expect(withSavedCrew(fresh, 2_000)).toBe(fresh);
-    // Forgotten: a later read that clears the driver (someone removed it) is shown as is.
     const cleared = { orders: [row('do-1', null)] };
     expect(withSavedCrew(cleared, 3_000)).toBe(cleared);
   });

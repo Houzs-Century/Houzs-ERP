@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// posAlerts — the Houzs POS watchdog (spec section 10, layout E7). Every half
-// hour, for each company with terminals:
-//   1. compute the alerts each terminal should have (routes/lib/pos-alerts.ts)
-//      and reconcile them with pos_alerts: open the new ones, auto-resolve the
-//      ones no longer wanted (pending back to zero, device back);
-//   2. email the alert address (General > alert email) once per alert, then
-//      once a day while it stays open, and post an in-ERP notice to the POS
-//      Admin holders the first time;
-//   3. send the end-of-event summary ONCE per linked event, when the event is
-//      over and every active terminal has nothing pending, with the summary
-//      tables as a CSV attachment (opens in Excel).
-// Best-effort per company: one company's failure never stops the others.
-// ----------------------------------------------------------------------------
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";
@@ -53,8 +39,6 @@ export async function generalSettings(db: Db, companyId: number) {
   return normalizePosSettingsGroup("general", rows.length ? rows[0].value : null);
 }
 
-/** Active users whose role holds pos.manage, or everything ("*"): the owner
- *  and admins the spec says see the alert inside the ERP. */
 async function posAdminUserIds(env: Env): Promise<number[]> {
   const rows = await env.DB.prepare(`SELECT u.id, r.permissions FROM users u JOIN roles r ON r.id = u.role_id WHERE u.status = 'active'`).all<{ id: number; permissions: string | null }>();
   return rows.results.filter((r) => { const p = parsePermissions(r.permissions); return p.includes("*") || p.includes("pos.manage"); }).map((r) => Number(r.id));

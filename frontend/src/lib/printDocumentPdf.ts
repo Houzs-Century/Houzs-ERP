@@ -1,33 +1,3 @@
-/* ----------------------------------------------------------------------------
-   printDocumentPdf — fetch ONE document by type + address and render its PDF,
-   from anywhere. The half of the right-click print chain that talks to the API.
-
-   `printChain.ts` decides WHAT a row may print. This decides HOW that reaches a
-   printer, and it is deliberately the only new place that knows the mapping
-
-       document type  ->  detail endpoint  ->  response keys  ->  generator
-
-   because eight list pages already each held one arm of it privately
-   (`fetchSoBundle`, `fetchDoBundle`, `fetchGrnBundle`, …) and a ninth copy
-   written for the row menu would be the ninth chance for one of them to drift.
-
-   NOTHING NEW IS RENDERED. Every call below is the generator the document's own
-   detail page and its list's batch "Export PDF" already call, with the same
-   arguments in the same order. This module chooses between them; it does not
-   lay out a document.
-
-   ── "PRINT NOW" GOES THROUGH THE PDF, NEVER window.print() ────────────────
-   The global `@media print` block in `index.css` hides `body *` and reveals only
-   `.org-print-area`, so `window.print()` from a list prints a blank sheet — the
-   Delivery Order shipped exactly that once. `PdfAction` is threaded to every
-   generator here for that reason: `'print'` renders the real document and sends
-   THAT to the printer.
-
-   ── THE SALES ORDER IS ADDRESSED DIFFERENTLY, AND IT IS NOT AN OVERSIGHT ──
-   `GET /mfg-sales-orders/:docNo` is keyed by the document NUMBER; every other
-   detail route is `.eq('id', ...)` and takes a UUID. `PrintTarget.key` already
-   carries whichever one the type needs, so nothing here re-derives it.
-   ---------------------------------------------------------------------------- */
 
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
@@ -35,10 +5,6 @@ import type { PrintTarget } from "./printChain";
 import { purchaseOrderPrintBundle, salesOrderPrintBundle } from "../vendor/scm/lib/print-bundle";
 
 type Json = Record<string, unknown>;
-/* `payments` / `pwpCodes` ride BESIDE the header rather than inside it: the
-   Sales Order generator takes them as its own positional arguments, and folding
-   them into the header would put two keys on the object every other generator
-   spreads. */
 type Bundle = { header: Json; items: unknown[]; payments?: unknown[]; pwpCodes?: unknown[] };
 
 /** The DR generator takes a shape the DR record is not stored in, so the map is
@@ -114,10 +80,6 @@ export async function fetchPrintBundle(target: PrintTarget): Promise<Bundle> {
       return salesOrderPrintBundle((path) => authedFetch(path), target.key);
     case "do": {
       const j = await authedFetch<{ deliveryOrder: Json; items: unknown[] }>(`/delivery-orders-mfg/${k}`);
-      /* armDoScanToken puts the PUBLIC scan token on the header, which is what
-         the print's QR encodes since 2026-08-26 (/d/<token>, no login). Stamped
-         here for the same reason the row id used to be: so no call site has to
-         remember to. */
       const { armDoScanToken } = await import("../vendor/scm/lib/do-scan-token-arm");
       return { header: await armDoScanToken(j.deliveryOrder as object, target.key), items: j.items };
     }
@@ -144,10 +106,6 @@ export async function fetchPrintBundle(target: PrintTarget): Promise<Bundle> {
       return { header: j.purchaseReturn, items: j.items };
     }
     default:
-      /* The consignment family and the two stock documents are TransferDoc
-         members with no generator of their own; printChain.ts never builds a
-         target for one, and a thrown error is better than a silent no-op if it
-         ever does. */
       throw new Error(`No PDF generator for document type "${target.doc}"`);
   }
 }

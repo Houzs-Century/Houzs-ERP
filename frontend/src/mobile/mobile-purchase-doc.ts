@@ -97,18 +97,6 @@ export type PurchaseLineDraft = {
   name: string;
   itemGroup: string;
   qty: number;
-  /** TYPED by the operator; null until they do. Never seeded from the SKU
-   *  picker: the picker's `unitPriceSen` is the catalog SELLING price, and on a
-   *  purchase document that number would be booked as COST.
-   *
-   *  Blank rather than 0 on purpose. The shared MoneyInput refuses a keystroke
-   *  that would give 3 decimals, and a "0.00" box only accepts typing once its
-   *  select-on-focus (a setTimeout) has selected the text — typing that lands
-   *  first is dropped keystroke by keystroke and the line saves at RM 0 with no
-   *  message. Reproduced in a real 375px render 2026-09-13: "12.50" appended to
-   *  "0.00" left "0.00". An empty box has nothing for a keystroke to collide
-   *  with, on any browser. Sent as 0 when still blank, exactly as a desktop
-   *  line with no price is. */
   unitPriceSen: number | null;
   remark: string;
 };
@@ -118,24 +106,18 @@ export type PurchaseLineDraft = {
  *  exact names each endpoint takes. */
 export type PurchaseHeaderDraft = {
   supplierId: string;
-  /** PO: poDate · GRN: receivedAt · PI: invoiceDate */
   docDate: string;
-  /** PO: expectedAt · PI: dueDate · GRN: not used */
   secondDate: string;
-  /** PO: purchaseLocationId · GRN: warehouseId · PI: not used */
   warehouseId: string;
-  /** GRN: deliveryNoteRef · PI: supplierInvoiceRef · PO: not used */
   reference: string;
   notes: string;
 };
 
 export type PurchaseDocConfig = {
   title: string;
-  /** What the operator calls this document, in the success / failure message. */
   label: string;
   docDateLabel: string;
   secondDateLabel: string | null;
-  /** null = this document has no warehouse on its header. */
   warehouseLabel: string | null;
   referenceLabel: string | null;
   confirmLabel: string;
@@ -281,7 +263,6 @@ export function buildGrnPayload(header: PurchaseHeaderDraft, lines: PurchaseLine
       itemCode: l.itemCode,
       materialName: l.name || l.itemCode,
       qtyReceived: l.qty,
-      /* GrnNew: "accepted follows received (rejected 0)". */
       qtyAccepted: l.qty,
       qtyRejected: 0,
       unitPriceSen: l.unitPriceSen ?? 0,

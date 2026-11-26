@@ -1,10 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { formatReportedStack, normalizeApiPath } from "./errorReporter";
 
-/* enqueue() rate-limits on `message|route`, so request telemetry is only safe
-   to add if its messages COLLAPSE. A message carrying a raw id is unique every
-   time, PER_SIGNATURE_CAP never bites, and a bad afternoon turns the reporter
-   into the flood. These pin the collapsing. */
 describe("request telemetry signature stability", () => {
   test("collapses numeric ids so one endpoint is one signature", () => {
     expect(normalizeApiPath("/api/assr/1435")).toBe("/api/assr/:id");

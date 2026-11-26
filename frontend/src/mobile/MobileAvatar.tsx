@@ -2,23 +2,6 @@ import { useRef } from "react";
 import { useProfilePicUrl, useProfilePicture } from "../lib/profilePicture";
 import { useToast } from "../hooks/useToast";
 
-/* ---------------------------------------------------------------------------
- * MobileAvatar — the phone's profile photo, read and write.
- *
- * The desktop `components/Avatar` cannot simply be dropped in here: it is a
- * Tailwind component and the mobile shell is inline-styled `mobile.css`, and the
- * identity card's circle is a specific 58px teal/gold token. What MUST be shared
- * is the DATA path, not the paint — so both surfaces call `useProfilePicUrl` /
- * `useProfilePicture` from `lib/profilePicture.ts` and neither owns a second
- * copy of the endpoint, the compression settings, or the size limit.
- *
- * Two components, because the two gaps are separate:
- *   · MobileAvatar     — DISPLAY. Any user, photo or initials. Used by the
- *     identity card and the team roster, both of which drew initials
- *     unconditionally before, so a photo uploaded from a PC was invisible here.
- *   · MobileAvatarEditor — WRITE. The identity card's camera badge: a file input
- *     the OS answers with camera-or-gallery, plus Remove.
- * ------------------------------------------------------------------------- */
 
 /** Same rule as the desktop `Avatar`: first + last initial, or the first two. */
 export function avatarInitials(name?: string | null, email?: string | null): string {
@@ -34,7 +17,6 @@ export function MobileAvatar({
   userId, hasImage, name, email, size = 58, style,
 }: {
   userId: number | string | null | undefined;
-  /** The R2 key, or any truthy marker that this user has a photo. */
   hasImage?: boolean | string | null;
   name?: string | null;
   email?: string | null;
@@ -46,9 +28,6 @@ export function MobileAvatar({
     width: size, height: size, flex: "none", borderRadius: "50%", ...style,
   };
 
-  // A failed photo read renders as initials — the honest fallback for a
-  // decoration. `useProfilePicUrl` binds the reason rather than discarding it;
-  // nothing here needs to say it out loud.
   if (src) {
     return (
       <img
@@ -116,12 +95,6 @@ export function MobileAvatarEditor({
         ref={fileRef}
         type="file"
         accept="image/*"
-        /* `accept="image/*"` with NO `capture` is deliberate. iOS and Android
-           already answer it with "Take Photo / Photo Library / Browse", so the
-           camera is offered on the device that has one AND an existing photo can
-           still be chosen. Adding `capture` would have narrowed it to the camera
-           only and taken the gallery away, which is the opposite of the gap this
-           is closing. */
         aria-label="Profile photo"
         style={{ display: "none" }}
         onChange={(e) => {

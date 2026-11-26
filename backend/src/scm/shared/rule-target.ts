@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// Unified rule targeting — the SINGLE source of truth for "which product lines a
-// promo/fee rule covers". Ported from 2990 (#691) for the special-delivery-fee
-// matcher (migration 0024). On the POS the same code runs the cart preview;
-// here it runs the server recompute, so the two MUST match (honest-pricing: the
-// >0.5% drift check breaks the moment client/server matching diverges).
-//
-// A rule's targeting is a RuleTarget[]. Each entry is one Model plus a scope:
-//   - 'model'       → any variant / any build of that Model
-//   - 'variant'     → only the listed mfg size_codes (mattress / bedframe)
-//   - 'combo'       → sofa builds covering any listed combo's slots (subset match)
-//   - 'compartment' → sofa builds that CONTAIN any listed compartment module
-// Lists inside an entry are OR'd; entries are OR'd. An EMPTY RuleTarget[] means
-// "all models of the rule's category" (the caller scopes category).
-// ----------------------------------------------------------------------------
 import { matchComboSubset } from './sofa-combo-pricing';
 import { normalizeCompartmentCode } from './sofa-build';
 
@@ -21,29 +6,20 @@ export type RuleTargetScope = 'model' | 'variant' | 'combo' | 'compartment';
 /** The scope + its refinement lists, WITHOUT the modelId. */
 export interface TargetRefinement {
   scope: RuleTargetScope;
-  /** scope='variant': mfg_products.size_code list (UPPERCASE). OR within. */
   sizeCodes?: string[];
-  /** scope='combo': sofa_combo_pricing.id list. OR within. */
   comboIds?: string[];
-  /** scope='compartment': normalized compartment module codes. OR within. */
   compartments?: string[];
 }
 
 export interface RuleTarget extends TargetRefinement {
-  /** product_models.id. For a sofa combo/compartment entry, the parent sofa
-   *  Model id (combo matching does NOT require it — see lineMatchesTarget). */
   modelId: string;
 }
 
 /** One cart/order line flattened to what the matcher needs. */
 export interface RuleLineInput {
-  /** SOFA / MATTRESS / BEDFRAME / ACCESSORY (case-insensitive). */
   category: string;
-  /** product_models.id of the line's Model (null = no model match possible). */
   modelId: string | null;
-  /** mfg_products.size_code for mattress/bedframe (UPPERCASE); null otherwise. */
   sizeCode: string | null;
-  /** sofa build module codes (normalized inside); [] for non-sofa. */
   builtCompartments: string[];
 }
 
@@ -70,7 +46,6 @@ export function parseTargetRefinement(raw: unknown): TargetRefinement | null {
     const compartments = cleanStrArr(r.compartments);
     return compartments.length ? { scope, compartments } : null;
   }
-  // combo — accept comboIds[] (new) or a legacy single comboId.
   const comboIds = cleanStrArr(r.comboIds);
   const legacy = typeof r.comboId === 'string' && r.comboId.trim() ? [r.comboId.trim()] : [];
   const all = comboIds.length ? comboIds : legacy;
@@ -87,8 +62,6 @@ export function parseRuleTargets(raw: unknown): RuleTarget[] {
     const modelId = typeof mid === 'string' ? mid.trim() : '';
     const ref = parseTargetRefinement(e);
     if (!ref) continue;
-    // combo entries may carry an empty modelId (model-agnostic); every other
-    // scope needs a real modelId to match.
     if (ref.scope !== 'combo' && !modelId) continue;
     out.push({ modelId, ...ref });
   }
@@ -107,7 +80,7 @@ export function refinementMatchesLine(
     case 'model':
       return true;
     case 'variant': {
-      if (sofa) return false; // size is meaningless for a sofa line
+      if (sofa) return false;
       const sc = (line.sizeCode ?? '').toUpperCase();
       return sc !== '' && (ref.sizeCodes ?? []).map((s) => s.toUpperCase()).includes(sc);
     }
@@ -135,8 +108,6 @@ export function lineMatchesTarget(
   target: RuleTarget,
   comboModulesById: Map<string, string[][]>,
 ): boolean {
-  // combo matches by built modules ⊂ combo slots, regardless of modelId; every
-  // other scope requires the same Model.
   if (target.scope !== 'combo' && target.modelId !== line.modelId) return false;
   return refinementMatchesLine(line, target, comboModulesById);
 }

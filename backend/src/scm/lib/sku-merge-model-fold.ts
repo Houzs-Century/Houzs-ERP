@@ -1,14 +1,3 @@
-/**
- * After a SKU Master "Merge codes": a dropped code's Product Model left with no
- * ACTIVE code folds into the kept code's Model, in the same request (owner,
- * 2026-11-10, option C). The rules are the Model merge's own
- * (duplicate-model-merge-plan.mjs) and the writes its writer's; this file only
- * decides WHICH Models and reports every outcome, so a fold that is refused
- * reaches the person who merged instead of leaving the Model behind in silence.
- *
- * A refused or failed fold never undoes the SKU merge: that merge committed
- * first, on its own, and stands.
- */
 import { foldOnlyPlan, foldTargets, type FoldTarget } from '../../../scripts/lib/duplicate-model-merge-plan.mjs';
 
 export type FoldOutcome = { from: string | null; into: string; fold: boolean; codes: number; reason: string | null };
@@ -22,7 +11,6 @@ export type FoldIo = {
     activeByModel: Map<string, number>;
   }>;
   planModelFold: (w: { co: number; keep: string; drops: string[]; retiring: Set<string> | null }) => Promise<{ world: unknown; plan: unknown; keptActive: boolean }>;
-  /** The undo on record, then the writes, then a re-read on a fresh connection; returns what the re-read found wrong. */
   applyFold: (w: { co: number; plan: FoldPlan; world: unknown; summary: string }) => Promise<string[]>;
 };
 

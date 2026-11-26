@@ -1,7 +1,3 @@
-/* GET /outstanding/po-lines (Outstanding page, PO Chasing tab) — DEV-43: a line
- * with nothing left to receive must not appear on the chasing list. 'all' used
- * to return every line, so fully received (remaining 0) and over-received
- * (remaining < 0) lines showed up beside the ones still owed. */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -19,7 +15,6 @@ const CALLER = {
 
 const { outstanding } = await import('./outstanding');
 
-/* View rows built with mig 20260912T1000's own remaining / is_outstanding rule. */
 const line = (id: string, qty: number, received: number, status = 'PARTIALLY_RECEIVED'): Row => ({
   po_item_id: id, po_id: 'po-1', po_number: 'PO-1', po_date: '2026-10-01', status, company_id: 1,
   qty, received_qty: received, remaining_qty: qty - received,

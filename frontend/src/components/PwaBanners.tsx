@@ -11,16 +11,6 @@ import {
 } from "../pwa";
 import { shouldShowPwaPrompt } from "./pwaDismissal";
 
-/**
- * Two banner-style PWA UI bits (Theme C · Ink & Petrol):
- *   • Install prompt — surfaces when the browser fires beforeinstallprompt
- *     and the app isn't already installed. Dismissed state persists in
- *     localStorage so we don't nag (7-day cool-off).
- *   • Offline pill — appears when navigator goes offline.
- *
- * Mounted once at the app root, renders nothing the rest of the time.
- * Visual only — install/dismiss/standalone logic is unchanged.
- */
 
 const DISMISS_KEY = "pwa:install:dismissed-at";
 const NAG_AFTER_DAYS = 7;
@@ -79,10 +69,6 @@ export function PwaBanners() {
       {showInstall && (
         <div className="fixed inset-x-3 bottom-3 z-[100] mx-auto max-w-md rounded-2xl border border-border bg-surface px-[18px] py-4 shadow-slab sm:inset-x-auto sm:right-6 sm:bottom-6 sm:w-[340px]">
           <div className="flex items-start gap-3">
-            {/* Brand mark — Houzs Century HC logo on a dark ink slab. The
-                brightness-0+invert filter pair flattens the black PNG to a
-                pure-white silhouette, matching the sidebar's logo treatment
-                (see Sidebar.tsx LOGO_MARK_SRC usage). */}
             <div className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl bg-ink p-2">
               <CompanyMark
                 variant="mark"

@@ -2,15 +2,10 @@ import type { ReactNode } from "react";
 import { cn } from "../lib/utils";
 
 interface Props {
-  /** One-line headline. Required. */
   message: string;
-  /** Optional sub-line. Renders below the headline at slightly smaller size. */
   description?: ReactNode;
-  /** Optional CTA — `label` plus `onClick`. Renders as an inline accent link. */
   cta?: { label: string; onClick: () => void };
-  /** Optional leading icon (lucide-react `<Icon size={…} />`). */
   icon?: ReactNode;
-  /** Tighter padding for in-panel use (e.g. inside a sidebar card). */
   compact?: boolean;
   className?: string;
 }

@@ -10,9 +10,6 @@ const done = (title: string) => ({ title, status: "done", review_status: null })
 const approved = (title: string) => ({ title, status: "pending", review_status: "approved" });
 const pending = (title: string) => ({ title, status: "pending", review_status: null });
 
-// A post-091 event ready for the fair: floorplan, 3D, stock-out all done, the
-// event images in, but the goods-return doc ("Stock In Transfer Record") still
-// pending (it is due +2, after the event).
 const readyEventItems = [
   done("Blank Floorplan"),
   done("3D Design"),
@@ -39,7 +36,6 @@ describe("driverKeyedOf", () => {
   });
 
   it("is true for an arranged outsourced trip, false when outsourced is off/empty", () => {
-    // Sarawak HOMELOVE shape: no in-house crew, an outsourced provider named.
     expect(driverKeyedOf('{"drivers":[],"helpers":[],"outsourced":{"enabled":true,"entries":[{"provider":"outsource","name":"Aim","phone":"011","plate":"WUS1834"}]}}')).toBe(true);
     expect(driverKeyedOf('{"drivers":[],"helpers":[],"outsourced":{"enabled":true,"entries":[{"plate":"WUS1834"}]}}')).toBe(true);
     expect(driverKeyedOf('{"drivers":[],"helpers":[],"outsourced":{"enabled":false,"entries":[]}}')).toBe(false);
@@ -57,15 +53,11 @@ describe("projectStage — Driver Info tracks the keyed crew", () => {
   it("clears Driver Info once the driver/helper are keyed, landing on the post-event Stock In step", () => {
     const crew = '{"lorry_crew":[{"plate":"WABC","drivers":[{"name":"Abu"}],"helpers":[{"name":"Ali"}]}]}';
     const st = projectStage(readyEventItems, setupArrangedOf(crew, null), driverKeyedOf(crew), "2026-10-23", "2026-10-27");
-    // Driver Info + Setup/Dismantle are satisfied by the crew; the only thing
-    // left incomplete is the goods-return doc, now its own late step.
     expect(st.currentIdx).toBe(idxOf("Stock In"));
     expect(idxOf("Stock In")).toBeGreaterThan(idxOf("Filled Floorplan"));
   });
 
   it("moves a real MID VALLEY event (Filled Floorplan still pending) off Driver Info to Filled Floorplan", () => {
-    // Floorplan/3D/Stock-Out done; Filled Floorplan, Stock In still pending —
-    // the actual shape of the 3 MID VALLEY events on 2026-10-28.
     const items = [
       done("Blank Floorplan"),
       approved("3D Design"),

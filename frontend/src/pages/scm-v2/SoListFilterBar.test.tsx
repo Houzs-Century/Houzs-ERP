@@ -1,7 +1,3 @@
-/* The desktop SO list's second-level filter bar. Drives the REAL bar, rows
- * editor, grouped field picker and the shared URL state inside a MemoryRouter.
- * Faked: `authedFetch` — the count preview's request and answer are the
- * assertions, and the URL is the applied state. */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -86,9 +82,6 @@ describe("SoListFilterBar", () => {
   });
 
   it("opens the popover with fixed positioning so it escapes the list's overflow clip", async () => {
-    // Regression for the clipped/cut-off popover: the panel must be position:fixed
-    // (not absolute) so it is not clipped by the ancestors' overflow-x hidden/clip,
-    // and can be clamped into the viewport at any button position. See SoListFilterBar.tsx.
     const user = userEvent.setup();
     renderBar("/scm/sales-orders");
     await user.click(screen.getByRole("button", { name: "More filters" }));

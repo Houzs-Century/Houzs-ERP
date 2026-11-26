@@ -1,27 +1,3 @@
-// ----------------------------------------------------------------------------
-// AI reads on the scan queue — the bill reader (PV / AP invoice), the payment
-// request's bill, the supplier credit note and the card-terminal receipt.
-//
-// Each of those used to hold the request open for the whole Anthropic call
-// (p95 17-28 s, one at 644 s), so staff watched a spinner and pressed again.
-// Now the request only stores what was sent and answers with a job id; the
-// SCAN_QUEUE consumer replays the UNCHANGED synchronous handler with the
-// caller's context captured at enqueue (company, user, permissions), and keeps
-// the handler's status + JSON body on the scm.scan_jobs row (`review`) for the
-// page to poll. Same fields, same validation, same AI-usage rows, same model —
-// the handler is the same function.
-//
-//   scan_jobs.document_type   AI_PV_EXTRACT | AI_PR_READ_BILL | AI_CN_SCAN | AI_PAY_EXTRACT
-//   scan_jobs.file_hash       sha256 of what was sent: the same file sent again
-//                             by the same company while a read is under way
-//                             reuses that job
-//   scan_jobs.review          { status, body } — the handler's answer
-//   scan_jobs.image_keys      the R2 keys of the stored request (deleted once read)
-//
-// This module never imports a route (scan-payment.ts registers its routes from
-// here). The runner that knows the four handlers registers itself
-// (ai-read-runners.ts), so there is no import cycle.
-// ----------------------------------------------------------------------------
 
 import { requireActiveCompanyId } from './companyScope';
 import type { Env } from '../env';
@@ -152,15 +128,13 @@ export async function loadSnapshot(bucket: Bucket | undefined, id: string): Prom
 
 export async function dropSnapshot(bucket: Bucket | undefined, id: string): Promise<void> {
   if (!bucket) return;
-  try { await bucket.delete([requestKey(id), fileKey(id)]); } catch { /* best-effort: the bytes are also kept in scan_files */ }
+  try { await bucket.delete([requestKey(id), fileKey(id)]); } catch { }
 }
 
-/* ── The runner, registered by ai-read-runners.ts ─────────────────────────── */
 type Runner = (env: Env, jobId: string, svc: Any) => Promise<void>;
 let runner: Runner | null = null;
 export function registerAiReadRunner(fn: Runner): void { runner = fn; }
 
-/* ── Enqueue ──────────────────────────────────────────────────────────────── */
 export type AiReadGate = (c: Any) => boolean;
 export type AiReadSplit = (c: Any) => Promise<
   | { ok: true; bodies: unknown[]; file: { bytes: ArrayBuffer; name: string; type: string } | null }
@@ -253,9 +227,8 @@ export function aiReadEnqueue(kind: AiReadKind, gate: AiReadGate, split: AiReadS
           return c.json({ error: 'enqueue_failed', message: 'Could not start the read. Please try again.' }, 500);
         }
       } else if (runner) {
-        // No queue bound (local dev): run after the response, as scan-pi does.
         const p = runner(c.env, id, svc).catch((e) => console.error('[ai-read] run failed:', id, e));
-        try { c.executionCtx.waitUntil(p); } catch { /* non-Workers runtime: the promise runs on its own */ }
+        try { c.executionCtx.waitUntil(p); } catch { }
       }
       jobs.push({ index, job_id: id, status: 'queued', reused: false });
     }
@@ -263,13 +236,10 @@ export function aiReadEnqueue(kind: AiReadKind, gate: AiReadGate, split: AiReadS
   };
 }
 
-/* ── Poll ─────────────────────────────────────────────────────────────────── */
 export type AiReadJobJson = {
   id: string;
   status: 'queued' | 'running' | 'done' | 'error';
   error: string | null;
-  /** The handler's answer, once the read finished: exactly what the
-   *  synchronous endpoint would have answered. */
   result: { status: number; body: unknown } | null;
 };
 

@@ -1,26 +1,3 @@
-// /purchase-consignment-receives — Consignment receiving step.
-// PC Order → PC Receive → PC Return.
-//
-// ON-LEDGER (since 2026-06-05): a Purchase Consignment Receive records the
-// arrival of the SUPPLIER'S goods at MY warehouse on consignment. We hold the
-// physical stock (settlement comes later), so it books an IN into the receive's
-// warehouse — reconciled by resyncReceiveInventory (below), self-healing on
-// create / line CRUD / cancel. (It originally shipped off-ledger; the IN ledger
-// was added 2026-06-05 so consigned stock shows in Inventory.)
-//
-// Cloned from /grns (apps/api/src/routes/grns.ts). It still differs from a plain
-// GRN in two ways:
-//   • Rollup target is the PC ORDER, not a PO (recomputePcoReceived,
-//     recount-from-live, like recomputePoReceived but pointed at
-//     purchase_consignment_orders), with the over-receipt cap vs the PC order line.
-//   • Inventory is reconciled by a single self-healing resync (resyncReceiveInventory)
-//     rather than GRN's per-step writeMovements + FIFO/rack/recost plumbing.
-//   • KEPT: create (header + items, full variant), line CRUD, list, detail, status.
-//
-// Tables: purchase_consignment_receives / purchase_consignment_receive_items
-//   (migration 0154). FK renames: receive→purchase_consignment_order_id /
-//   pc_order_no; receive_items→pc_order_item_id.
-// Numbering: PCR-YYMM-NNN.
 
 import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
@@ -74,31 +51,15 @@ export function resolvePcReceiveUnitCostSen(
   return 0;
 }
 
-/* ── Shared helper: post a PC Receive + roll up to PC Order items ──────────
-   Counterpart of postGrnAndRollup. Recounts received_qty onto the PC ORDER lines
-   (recompute-from-live) and flips the receive to POSTED; the inventory IN is then
-   booked by resyncReceiveInventory (called at the end of this helper). */
 async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok: true; recountError?: string; movementErrors?: string[] } | { ok: false; reason: string; status?: number }> {
   const { data: items } = await sb.from('purchase_consignment_receive_items')
     .select('pc_order_item_id')
     .eq('pc_receive_id', receiveId);
 
-  // Recount received_qty + re-evaluate PC Order status from live receive lines.
   const touchedPcoItemIds = (items ?? [])
     .map((it: { pc_order_item_id: string | null }) => it.pc_order_item_id);
-  /* Carried, not discarded — the counterpart postGrnAndRollup returns its
-     recountError and this one dropped it, so a PC Order could keep a stale
-     received_qty while the receive reported a clean post. */
   const recount = await recomputePcoReceived(sb, touchedPcoItemIds);
 
-  // Receives are created POSTED directly; this is idempotent on already-POSTED
-  // rows (matches any non-CLOSED status). The inventory IN is booked by the
-  // resync below.
-  /* maybeSingle, NOT single: the two .neq gates make a zero-row result the
-     ORDINARY outcome for a CLOSED/CANCELLED receive, and PostgREST reports zero
-     rows to .single() as PGRST116 — so `error` was set, the 500 fired, and the
-     `409 cannot_post` below was unreachable. Same fix as stock-transfers.ts's
-     cancel and purchase-returns.ts's /:id/complete. */
   const { data, error } = await sb.from('purchase_consignment_receives').update({
     status: 'POSTED',
     posted_at: new Date().toISOString(),
@@ -107,14 +68,6 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
   if (error) return { ok: false, reason: error.message, status: 500 };
   if (!data) return { ok: false, reason: 'cannot_post', status: 409 };
 
-  // ON-LEDGER (2026-06-05) — book the received consignment stock INTO the
-  // receive's warehouse so it shows in Inventory. Self-healing resync (idempotent
-  // + best-effort).
-  /* CAPTURED, not discarded (2026-08-21, audit A11): this was the module's one
-     truly silent seam — a bare catch around a function that itself never
-     throws, so a refused stock IN answered a clean 200 and the receive read
-     POSTED while inventory never moved. The refusal now rides the response as
-     movementErrors, the same contract every sibling stock writer carries. */
   let movementErrors: string[] = [];
   try { movementErrors = await resyncReceiveInventory(sb, receiveId, null); }
   catch (e) { movementErrors = [`resync failed: ${e instanceof Error ? e.message : 'unknown'}`]; }
@@ -126,24 +79,6 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
   };
 }
 
-/* ── resyncReceiveInventory — self-healing IN ledger for a PC Receive ──────────
-   ONE function for the whole lifecycle (post / add-line / edit-qty / delete-line
-   / cancel), mirroring resyncNoteInventory but IN-primary (a receive books the
-   supplier's consignment stock IN). It reconciles the receive's CURRENT lines
-   (the TARGET net IN per product/variant bucket — all into the HEADER warehouse,
-   batch=pc_order_no when linked) against what inventory_movements already record
-   for this receive, and writes only the DELTA:
-     • first-ever IN for a bucket   → PC_RECEIVE  (carries the "consignment stock
-       IN" label; uq_inv_mov_pc_receive_source (0321) makes the primary posting
-       once-only at the database, and we keep the first/delta
-       split for consistency with the note template)
-     • any later increase           → STOCK_TRANSFER IN
-     • any decrease / give-back     → STOCK_TRANSFER OUT
-     • cancel → status CANCELLED → TARGET is empty → every bucket's net is driven
-       back to 0 via STOCK_TRANSFER OUT.
-   A receive posts on create — it is "active" (books IN) whenever status !==
-   'CANCELLED'. Idempotent: a re-run finds delta 0 everywhere and writes nothing.
-   Best-effort. */
 async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: string | null): Promise<string[]> {
   const { data: header } = await sb.from('purchase_consignment_receives')
     .select('receive_number, status, warehouse_id, pc_order_no, company_id').eq('id', receiveId).maybeSingle();
@@ -152,18 +87,10 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
   const receiveNo = (header as { receive_number: string }).receive_number ?? receiveId;
   const cancelled = status === 'CANCELLED';
 
-  // The receive STAMPS batch = the source PC Order number, mirroring how a GRN
-  // stamps batch_no = source PO number (migration 0120). Manual receives (no
-  // order) stay un-batched (plain FIFO).
   const batchNo = (header as { pc_order_no: string | null }).pc_order_no ?? null;
-  // Single HEADER warehouse for all lines (the form's "Receive Into").
   const warehouseId = (header as { warehouse_id: string | null }).warehouse_id
-    /* Per-company default (2026-08-03) — the old lookup was company-blind and
-       let alphabetical `code` order pick across every company's is_default
-       warehouses, so it resolved to 2990's Guangzhou warehouse for Houzs too. */
     ?? (await defaultWarehouseId(sb, (header as { company_id?: number | null }).company_id ?? undefined));
 
-  // 1. TARGET net IN per bucket = sum of current lines (empty if cancelled).
   type Bucket = { item_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number };
   const targetByBucket = new Map<string, Bucket>();
   if (!cancelled && warehouseId) {
@@ -193,8 +120,6 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
     const histCost = zeroPricedCodes.length
       ? await loadKnownPurchaseCostSen(sb, zeroPricedCodes, (header as { company_id?: number | null }).company_id ?? null)
       : new Map<string, number>();
-    /* SKU category + canonical key, written as the stocked bucket's own string
-       when canonically equal (lib/stock-bucket-key.ts). */
     const keyOf = await stockBucketKeyResolver(sb, (header as { company_id?: number | null }).company_id ?? null,
       ((lines ?? []) as Array<{ item_code: string; item_group: string | null; variants: unknown }>).map((it) => ({ item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: warehouseId })));
     for (const it of ((lines ?? []) as Array<{ item_code: string; material_name: string | null; qty_accepted: number | null; unit_price_sen: number | null; item_group: string | null; variants: unknown }>)) {
@@ -214,8 +139,6 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
     }
   }
 
-  // 2. CURRENT net IN per bucket from ALL this receive's movements (PC_RECEIVE IN
-  //    + any prior STOCK_TRANSFER resync/cancel deltas).
   const { data: movs } = await sb.from('inventory_movements')
     .select('movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen, product_name')
     .eq('source_doc_id', receiveId)
@@ -223,8 +146,6 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
   type Agg = { in_qty: number; out_qty: number; product_name: string | null };
   const aggByBucket = new Map<string, Agg>();
   for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
-    // Bucket on product+variant only — the receive is single-warehouse + single
-    // batch, so the TARGET keys on product::variant and CURRENT must match.
     const k = `${m.item_code}::${m.variant_key ?? ''}`;
     let a = aggByBucket.get(k);
     if (!a) { a = { in_qty: 0, out_qty: 0, product_name: m.product_name }; aggByBucket.set(k, a); }
@@ -233,10 +154,9 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
     if (!a.product_name) a.product_name = m.product_name;
   }
 
-  // 3. delta = target − current_net_in. >0 → book more IN; <0 → give stock back OUT.
   type MovOut = Parameters<typeof writeMovements>[1][number];
   const writes: MovOut[] = [];
-  const pcReceiveEmitted = new Set<string>(); // product::variant given a PC_RECEIVE this run
+  const pcReceiveEmitted = new Set<string>();
   for (const k of new Set<string>([...targetByBucket.keys(), ...aggByBucket.keys()])) {
     const t = targetByBucket.get(k);
     const a = aggByBucket.get(k) ?? { in_qty: 0, out_qty: 0, product_name: null };
@@ -272,17 +192,12 @@ async function resyncReceiveInventory(sb: any, receiveId: string, performedBy: s
   }
 
   if (writes.length === 0) return [];
-  // Multi-company: resync movements inherit the receive's company.
   const res = await writeMovements(sb, writes, (header as { company_id?: number | null }).company_id ?? null);
-  /* Oversell retro-cost (0154) — a consignment receive opens lots, so a prior
-     "ship anyway" DO that went out at RM0 in this warehouse can now be costed
-     from them. Wired 2026-07-29; before that only a GRN reconciled (COE §2).
-     Best-effort — never fails the receive. */
   if (res.ok) await reconcileUncostedAfterIn(sb, writes, performedBy);
   try {
     const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
     await recomputeAllocationAfterSave(sb, 'purchase-consignment-receive');
-  } catch { /* best-effort */ }
+  } catch { }
   return res.ok ? [] : [res.reason ?? 'PC receive inventory resync failed'];
 }
 
@@ -294,41 +209,23 @@ const HEADER =
 const ITEM =
   'id, pc_receive_id, pc_order_item_id, material_kind, item_code, material_name, supplier_sku, ' +
   'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_sen, notes, ' +
-  /* variant fields (migration 0057) */
   'item_group, description, description2, uom, discount_sen, variants, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
   'custom_specials, line_suffix, special_order_price_sen, ' +
-  /* line money + per-line date + cost snapshot */
   'line_total_sen, delivery_date, unit_cost_sen, ' +
-  /* consumption tracking (downstream PR draw) */
   'invoiced_qty, returned_qty, created_at, ' +
-  /* rack placement (nullable physical link; off-ledger, never required) */
   'rack_id';
 
 const nextNumber = async (sb: any, prefix: string, table: string, col: string, c: any): Promise<string> => {
-  // <PREFIX>-YYMM-NNN. max(suffix)+1 (NEVER count+1) so a deleted mid-month row
-  // can't make the counter re-mint a surviving number forever — see doc-no.ts.
   const yymm = yymmFor();
   const p = companyDocPrefix(c);
   return mintMonthlyDocNo(sb, table, col, `${p}${prefix}-${yymm}`);
 };
 
-/* ── Recompute PC Receive header money rollups ────────────────────────────
-   Sum line_total_sen across receive_items → write subtotal_sen +
-   total_sen. The receive carries no tax, so total = subtotal.
-
-   Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
-   recomputeTotals (mfg-sales-orders.ts), which carries the full rationale.
-   See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputePcReceiveTotals(sb: any, receiveId: string) {
   const { data: items, error: itemsErr } = await sb.from('purchase_consignment_receive_items')
     .select('line_total_sen')
     .eq('pc_receive_id', receiveId);
-  /* A failed READ is not an empty receive, and `?? []` cannot tell them apart —
-     it folded a transient blip into subtotal_sen / total_sen ZERO on a
-     receive whose lines were intact. The ERROR is the signal, never the
-     emptiness: a genuinely empty receive resolves error === null with data === []
-     and MUST still fall through to zero the header. */
   if (itemsErr) {
     /* eslint-disable-next-line no-console */
     console.error('[pcr-recompute] item read failed — header left unchanged:', receiveId, itemsErr.message);
@@ -346,11 +243,6 @@ async function recomputePcReceiveTotals(sb: any, receiveId: string) {
   }
 }
 
-/* ── Post-insert over-receipt verification for BULK creates ────────────────
-   Mirrors verifyGrnOverReceipt: after the receive's lines commit, re-sum the
-   LIVE qty_accepted across all non-cancelled receive lines per affected PC Order
-   line; if any now exceeds the PC Order line's qty, THIS receive broke the cap →
-   the caller deletes it + signals 409. */
 async function verifyPcReceiveOverReceipt(
   sb: any,
   receiveId: string,
@@ -398,20 +290,6 @@ async function verifyPcReceiveOverReceipt(
   }
 }
 
-/* ── Self-heal PC Order receipt counter (live-count model) ─────────────────
-   Mirrors recomputePoReceived but pointed at purchase_consignment_orders /
-   _items. For each given pc_order_item, RECOUNT received_qty from scratch as the
-   sum of qty_accepted (net of returned_qty) across ALL live (non-cancelled)
-   receive lines that point at it, then re-evaluate the parent PC Order's status.
-   No inventory is touched. Never resurrects a CANCELLED PC Order. Best-effort. */
-/* Reports its outcome, the way recomputePoReceived does.
-   It used to return void and only console.error, so the PC lane never received
-   the 2026-07-31 upgrade that followed eleven POs sitting with their goods in
-   the warehouse and received_qty untouched for seventeen days — the only trace
-   being a console line in an ephemeral Worker log. Both writes below are now
-   CHECKED for the same reason the PO twin's are: supabase-js RESOLVES on a
-   rejected write instead of throwing, so an unchecked failure never reaches the
-   catch and the function would report a recount that never happened. */
 export async function recomputePcoReceived(
   sb: any,
   pcoItemIds: Array<string | null | undefined>,
@@ -446,7 +324,6 @@ export async function recomputePcoReceived(
       return { ok: false, reason: `received_qty write failed: ${itemErr.error?.message ?? 'unknown'}` };
     }
 
-    // Re-evaluate each touched PC Order's status from its (now-recounted) lines.
     const { data: pcoiRows } = await sb.from('purchase_consignment_order_items')
       .select('purchase_consignment_order_id').in('id', ids);
     const pcoIds = [...new Set(((pcoiRows ?? []) as Array<{ purchase_consignment_order_id: string }>)
@@ -477,11 +354,6 @@ export async function recomputePcoReceived(
   }
 }
 
-/* ── PC Receive child-lock guard ───────────────────────────────────────────
-   A PC Receive locks (read-only — no line edit / no cancel) once ANY of its
-   lines has a downstream PC Return (returned_qty > 0). There is no PC invoice in
-   scope, so invoiced_qty is not consulted. Returns the blocking JSON, or null if
-   the receive is free to edit. */
 /* Header field-level lock (owner 2026-08-20, §8 GAP-1) — supplier + currency freeze
    once a PC Return exists. Column set + labels come from the ONE rulebook
    (shared/document-policy.ts) so they can't drift from the siblings. */
@@ -491,11 +363,6 @@ const PCR_IDENTITY_LABELS = PCR_LOCK_LABELS;
 async function pcReceiveHasDownstream(sb: any, receiveId: string): Promise<{ error: string; message: string } | null> {
   const { data, error } = await sb.from('purchase_consignment_receive_items')
     .select('returned_qty').eq('pc_receive_id', receiveId);
-  /* A failed read is not an empty line set (mirrors scm/lib/downstream-lock.ts).
-     Dropping the error made `data ?? []` read as "no line has been returned",
-     which is the absence that authorises the cancel / line edit this guard
-     exists to refuse. A failed read must never read as an absence when the
-     absence is what authorises the write. */
   if (error) {
     return { error: 'downstream_check_failed', message: `Could not check whether this Receive has a Consignment Return, so it is locked for safety — try again (${error.message}).` };
   }
@@ -505,9 +372,6 @@ async function pcReceiveHasDownstream(sb: any, receiveId: string): Promise<{ err
   return null;
 }
 
-/* ── Per-PC-receive consumption flags ──────────────────────────────────────
-   From a receive's items compute: has_children (any line returned_qty>0),
-   fully_returned (every accepted line has returned_qty >= qty_accepted). */
 function computePcReceiveFlags(items: Array<{ qty_accepted?: number | null; returned_qty?: number | null }>) {
   const accepted = items.filter((r) => (r.qty_accepted ?? 0) > 0);
   const hasChildren = items.some((r) => (r.returned_qty ?? 0) > 0);
@@ -520,7 +384,7 @@ purchaseConsignmentReceives.get('/', async (c) => {
   let q = sb.from('purchase_consignment_receives').select(`${HEADER}, supplier:suppliers(id, code, name), purchase_consignment_order:purchase_consignment_orders(id, pc_number)`).order('received_at', { ascending: false });
   const status = c.req.query('status'); if (status) q = q.eq('status', status);
   const supplierId = c.req.query('supplierId'); if (supplierId) q = q.eq('supplier_id', supplierId);
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
+  q = scopeToCompany(q, c);
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
@@ -547,10 +411,6 @@ purchaseConsignmentReceives.get('/', async (c) => {
   return c.json({ grns: receives });
 });
 
-/* ── GET /outstanding-pco-items ──────────────────────────────────────────
-   PC Order line items with remaining qty > 0, for the multi-select "Receive
-   from PC Orders" picker. Mirrors GRN /outstanding-po-items; this endpoint is a
-   read-only query (no inventory side-effects) without the warehouse-lock plumbing. */
 purchaseConsignmentReceives.get('/outstanding-pco-items', async (c) => {
   const sb = c.get('supabase');
   const { data: items, error } = await scopeToCompany(
@@ -608,10 +468,6 @@ purchaseConsignmentReceives.get('/outstanding-pco-items', async (c) => {
   return c.json({ items: outstanding });
 });
 
-/* Per-receive-line downstream breakdown — for each receive item id, the PC
-   Returns it was carried into (via purchase_consignment_return_items
-   .pc_receive_item_id), carrying the return number + qty + status. Cancelled PRs
-   excluded. Read-only display aid, no writes. */
 export type PcReceiveLineDownstream = { docNumber: string; docType: 'PR'; qty: number; status: string };
 export async function pcReceiveLineDownstream(
   sb: any,
@@ -645,10 +501,6 @@ export async function pcReceiveLineDownstream(
   return out;
 }
 
-// ── Outstanding PC Order lines (From-Order multi-picker) ──────────────────
-// Every purchase_consignment_order_item with outstanding = qty − received_qty
-// still > 0, across all non-cancelled PC Orders. Mirrors the PO→GRN from-po
-// picker. MUST precede /:id so the static path isn't read as an id.
 purchaseConsignmentReceives.get('/outstanding-order-lines', async (c) => {
   const sb = c.get('supabase');
   const { data: orders, error: oErr } = await paginateAll((from, to) => scopeToCompany(
@@ -713,13 +565,6 @@ purchaseConsignmentReceives.get('/:id', async (c) => {
   const itemRows = (i.data ?? []) as Array<{ qty_accepted?: number | null; returned_qty?: number | null }>;
   const receive = { ...(h.data as Record<string, unknown>), ...computePcReceiveFlags(itemRows) };
 
-  /* Surface "received from which PC Order" + receive date per line, plus the
-     downstream PC Return breakdown. */
-  /* Canonical SKU/build order at READ (sofa modules LHF→NA→RHF, mains→
-     accessories→services), mirroring the SO detail GET. The shared helper keys
-     on `item_code`; PC receive lines expose `item_code`, so sort a shimmed
-     view that carries the original row back unchanged. `.order('created_at')`
-     above stays as the stable tiebreaker — pure ordering, no persistence touched. */
   type PcrLineRow = Record<string, unknown> & { id: string; pc_order_item_id: string | null; item_code: string };
   const lineItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
@@ -754,13 +599,7 @@ purchaseConsignmentReceives.get('/:id', async (c) => {
   return c.json({ grn: receive, items });
 });
 
-// ── Linked docs (Smart Buttons fan-out) ─────────────────────────────
-// For a PC Receive: the parent PC Order + downstream PC Returns.
 purchaseConsignmentReceives.get('/:id/linked', async (c) => {
-  /* Company-scoped like every other read on this router. Without it a caller in
-     one company could resolve ANOTHER company's PC receive to its linked document
-     numbers by id. All seven /:id/linked endpoints shared this gap (found
-     2026-08-12 by code read; two module guides claimed scoping that was absent). */
   const sb = c.get('supabase'); const id = c.req.param('id');
 
   const [recvRes, prRes] = await Promise.all([
@@ -798,20 +637,12 @@ purchaseConsignmentReceives.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (body.status === 'DRAFT') return c.json({ error: 'draft_status_not_supported', message: 'Consignment receives post immediately on create.' }, 400);
-  /* A receive may be created WITHOUT a parent PC Order (manual receipt). Only the
-     supplier is required; purchaseConsignmentOrderId is optional. Each line still
-     carries its own pc_order_item_id (or null) so the received-qty rollup runs
-     per-line for PC-order-linked rows and is skipped for manual rows. */
   if (!body.supplierId) return c.json({ error: 'supplier_required' }, 400);
   const items = body.items as Array<Record<string, unknown>> | undefined;
   if (!Array.isArray(items) || !items.length) return c.json({ error: 'items_required' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
 
-  /* Over-receipt guard — PC-order-linked lines can't accept more than the PC
-     Order line's remaining (qty - received_qty). Lines with no pc_order_item_id
-     (manual receipts) are uncapped. Picks that target the SAME PC Order line
-     within one receive are summed. */
   {
     const acceptedByPcoItem = new Map<string, number>();
     for (const it of items) {
@@ -840,27 +671,19 @@ purchaseConsignmentReceives.post('/', async (c) => {
 
   const receiveNumber = await nextNumber(sb, 'PCR', 'purchase_consignment_receives', 'receive_number', c);
 
-  // Snapshot the PC Order number (pc_order_no) when linked.
   const pcOrderId = (body.purchaseConsignmentOrderId as string | undefined) ?? null;
   let pcOrderNo: string | null = null;
   if (pcOrderId) {
     const { data: pcoHead } = await sb.from('purchase_consignment_orders').select('pc_number, company_id').eq('id', pcOrderId).maybeSingle();
     const pco = pcoHead as { pc_number?: string | null; company_id?: number | null } | null;
-    /* CROSS-COMPANY SOURCE (lib/companyScope) — the parent PC Order arrives as a
-       body field and the receive below is stamped `activeCompanyId(c)`, so a PC
-       Order id from the other company would have this company receive against
-       it and recomputePcoReceived would then move that company's received_qty.
-       A manual receive sends no parent, resolves to no source, and is
-       unaffected. Refused before the doc number is committed to. */
     if (pco && isCrossCompanySource(pco.company_id, c)) {
       return c.json(crossCompanyConversionBlocked(pco.pc_number ?? null, pco.company_id, c), 409);
     }
     pcOrderNo = pco?.pc_number ?? null;
   }
 
-  // Created POSTED directly — no inventory IN is written.
   const { data: header, error: hErr } = await sb.from('purchase_consignment_receives').insert({
-    company_id: activeCompanyId(c), // multi-company: stamp the active company
+    company_id: activeCompanyId(c),
     receive_number: receiveNumber,
     purchase_consignment_order_id: pcOrderId,
     pc_order_no: pcOrderNo,
@@ -907,9 +730,6 @@ purchaseConsignmentReceives.post('/', async (c) => {
   const { error: iErr } = await sb.from('purchase_consignment_receive_items').insert(stampCompany(rows, c));
   if (iErr) { await sb.from('purchase_consignment_receives').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
 
-  /* Post-insert over-receipt verification — the pre-check above is a read-then-
-     write race. Re-sum live received per PC Order line; if any now exceeds cap,
-     THIS receive broke it → delete it + 409. */
   {
     const over = await verifyPcReceiveOverReceipt(sb, h.id, items.map((it) => (it.pcOrderItemId as string | undefined) ?? null));
     if (over) {
@@ -919,23 +739,13 @@ purchaseConsignmentReceives.post('/', async (c) => {
     }
   }
 
-  // Roll up qty_accepted to PC Order items + book the inventory IN (both inside
-  // postPcReceiveAndRollup). Best-effort.
   const posted = await postPcReceiveAndRollup(sb, h.id);
-  // Populate header money rollups from the inserted lines.
   await recomputePcReceiveTotals(sb, h.id);
 
   const postedErrs = posted.ok && posted.movementErrors?.length ? posted.movementErrors : undefined;
   return c.json({ id: h.id, grnNumber: h.receive_number, ...(postedErrs ? { movementErrors: postedErrs } : {}) }, 201);
 });
 
-// ── POST /from-pcos ─────────────────────────────────────────────────────
-// Batch-convert multiple PC Orders into ONE PC Receive (same supplier).
-// Pre-fills qty_received + qty_accepted with the outstanding qty per line.
-/* Exported so the company-scope tests can drive it without the supabaseAuth
-   bridge, which cannot run in the vitest harness. Same reason
-   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
-   are exported; the route registration below is unchanged. */
 export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   /* company-scope: both source reads below are SCOPED, so another company's PC
      Order is not visible here at all; the by-id writes are this handler's own
@@ -946,17 +756,6 @@ export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env;
   const pcoIds = body.purchaseConsignmentOrderIds ?? [];
   if (pcoIds.length === 0) return c.json({ error: 'pco_ids_required' }, 400);
 
-  /* SOURCE LOAD, SCOPED — the PC Order ids arrive in the request body, so this
-     is the read that decides what this conversion can see. Scoped, so another
-     company's PC Order resolves to NO ROW and falls out at `pcos_not_found`.
-     REPLACED an isCrossCompanySource loop that ran right after this load and can
-     no longer fire.
-
-     THE COST: a hand-crafted request naming the other company's PC Order gets
-     `pcos_not_found` instead of "that consignment order belongs to 2990, switch
-     company" — the trade the PO's /:id/convert-from-so already records, taken for
-     the same reason: naming the other company needs an UNSCOPED read this
-     handler otherwise never makes. */
   const { data: pcos, error: pcoErr } = await scopeToCompany(sb.from('purchase_consignment_orders')
     .select('id, pc_number, supplier_id, status, company_id')
     .in('id', pcoIds), c);
@@ -970,10 +769,6 @@ export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env;
   }
   const supplierId = [...supplierIds][0]!;
 
-  // LINE-level half of the same source document — scoped under the same
-  // predicate as the header read above. `.in('purchase_consignment_order_id',
-  // pcoIds)` is id-keyed, and an id-keyed read on a converter is the shape this
-  // sweep exists for, so it carries the predicate rather than inheriting it.
   const { data: items } = await scopeToCompany(sb.from('purchase_consignment_order_items')
     .select('id, purchase_consignment_order_id, material_kind, item_code, material_name, qty, received_qty, unit_price_sen, ' +
       'item_group, description, description2, uom, variants, gap_inches, divan_height_inches, divan_price_sen, ' +
@@ -996,7 +791,7 @@ export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env;
 
   const pcoNumbersJoined = pcoList.map((p) => p.pc_number).join(', ');
   const { data: header, error: hErr } = await sb.from('purchase_consignment_receives').insert({
-    company_id: activeCompanyId(c), // multi-company: stamp the active company
+    company_id: activeCompanyId(c),
     receive_number: receiveNumber,
     purchase_consignment_order_id: pcoList[0]!.id,
     pc_order_no: pcoList[0]!.pc_number,
@@ -1065,7 +860,6 @@ export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env;
 purchaseConsignmentReceives.post('/from-pcos', createPcReceiveFromPcosHandler);
 
 purchaseConsignmentReceives.patch('/:id/post', async (c) => {
-  // Kept as a no-op endpoint for backward compat — receives are created POSTED.
   const sb = c.get('supabase'); const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1075,30 +869,15 @@ purchaseConsignmentReceives.patch('/:id/post', async (c) => {
   if (row.status === 'POSTED') {
     return c.json({ receive: row });
   }
-  /* Audit 2026-06-20 — a CANCELLED PC Receive is FINAL: its inventory IN was
-     already reversed by the cancel resync. Re-posting would re-book the stock IN
-     (on-hand permanently inflated). Create a new receive instead. */
   if (row.status === 'CANCELLED') {
     return c.json({ error: 'receive_cancelled_final', message: 'A cancelled PC Receive cannot be re-posted — its stock was already reversed. Create a new receive.' }, 409);
   }
   const res = await postPcReceiveAndRollup(sb, id);
   if (!res.ok) return c.json({ error: 'post_failed', reason: res.reason }, 500);
-  /* maybeSingle: a company-scoped by-id read can legitimately match zero rows (a
-     cancel that raced in behind the post), and .single() turns that into a
-     PGRST116 error — a post that COMMITTED answering 500. */
   const { data } = await scopeToCompanyId(sb.from('purchase_consignment_receives').select('id, status, posted_at').eq('id', id), co.companyId).maybeSingle();
-  /* recountError surfaced, matching the GRN post which returns the same field.
-     The receive IS posted — a stale received_qty on the parent PC Order must not
-     un-post it — but the operator and /inventory/reconcile now learn that the
-     roll-up did not land, instead of a clean 200 hiding it. */
   return c.json({ receive: data, ...(res.recountError ? { recountError: res.recountError } : {}), ...(res.movementErrors?.length ? { movementErrors: res.movementErrors } : {}) });
 });
 
-/* ── PATCH /:id/cancel — cancel a PC Receive ────────────────────────────────
-   Cancelling a PC Receive sets status='CANCELLED' and recounts received_qty onto
-   the parent PC Order lines (so this receive's lines drop out and the PC Order
-   re-opens). Inventory is reversed too (on-ledger since 2026-06-05): the resync
-   drives the booked IN back to zero. */
 export const cancelPurchaseConsignmentReceiveHandler = async (c: any) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');
@@ -1116,20 +895,14 @@ export const cancelPurchaseConsignmentReceiveHandler = async (c: any) => {
     return c.json({ receive: data ?? { id, status: 'CANCELLED' } });
   }
 
-  // Child-lock: can't cancel a receive that has a downstream PC Return — the
-  // return must be deleted first.
   const childLock = await pcReceiveHasDownstream(sb, id);
   if (childLock) return c.json(childLock, 409);
 
-  // Load the receive lines once — needed for the PC Order recount below.
   const { data: lines } = await sb.from('purchase_consignment_receive_items')
     .select('pc_order_item_id')
     .eq('pc_receive_id', id);
   const lineList = (lines ?? []) as Array<{ pc_order_item_id: string | null }>;
 
-  /* ATOMIC single ACTIVE→CANCELLED transition — two concurrent cancels race on
-     the row and only ONE flips it (the other gets no row back → idempotent
-     no-op), so the PC Order recount below runs exactly once. */
   const { data: updRow, error: updErr } = await scopeToCompanyId(sb.from('purchase_consignment_receives')
     .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
     .eq('id', id), co.companyId).neq('status', 'CANCELLED').select('id').maybeSingle();
@@ -1139,15 +912,10 @@ export const cancelPurchaseConsignmentReceiveHandler = async (c: any) => {
     return c.json({ receive: data ?? { id, status: 'CANCELLED' } });
   }
 
-  // Recount received_qty on each linked PC Order item from live receive lines —
-  // this cancelled receive's lines now drop out, auto-releasing the PC Order.
   try {
     await recomputePcoReceived(sb, lineList.map((it) => it.pc_order_item_id));
-  } catch { /* best-effort */ }
+  } catch { }
 
-  // Inventory reversal (2026-06-05, now on-ledger) — the status is now CANCELLED,
-  // so the resync drives every bucket's net back to 0 (STOCK_TRANSFER OUT).
-  // Best-effort.
   try {
     await resyncReceiveInventory(sb, id, c.get('user')?.id ?? null);
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[pc-receive] cancel reversal failed:', e); }
@@ -1157,15 +925,7 @@ export const cancelPurchaseConsignmentReceiveHandler = async (c: any) => {
 };
 purchaseConsignmentReceives.patch('/:id/cancel', cancelPurchaseConsignmentReceiveHandler);
 
-/* ════════════════════════════════════════════════════════════════════════
-   PC Receive CRUD (PATCH header + line add / edit / delete) — mirrors the GRN
-   detail page editing. The editable line quantity is qty_received;
-   line_total_sen = qty_received * unit_price_sen - discount_sen;
-   recomputePcReceiveTotals rolls the header subtotal/total. Line CRUD recounts
-   received_qty onto the PC Order AND resyncs the inventory IN (on-ledger).
-   ════════════════════════════════════════════════════════════════════════ */
 
-/* ── PATCH /:id — header update ── */
 purchaseConsignmentReceives.patch('/:id', async (c) => {
   const id = c.req.param('id');
   let body: Record<string, unknown>;
@@ -1182,8 +942,6 @@ purchaseConsignmentReceives.patch('/:id', async (c) => {
   ] as const) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
-  /* A cleared received-date posts "" and this loop wrote it through to the
-     date column, which Postgres rejects and 500s the save. */
   coerceEmptyDates(updates);
   /* Header inherited-field lock (owner 2026-08-20, §8 GAP-1): supplier + currency
      freeze once a live PC Return exists; received date / delivery-note ref / notes
@@ -1206,7 +964,6 @@ purchaseConsignmentReceives.patch('/:id', async (c) => {
   return c.json({ receive: data });
 });
 
-/* ── POST /:id/items — add one receive_item. qty maps to qty_received. ── */
 purchaseConsignmentReceives.post('/:id/items', async (c) => {
   const receiveId = c.req.param('id');
   let it: Record<string, unknown>;
@@ -1217,11 +974,8 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* The child is stamped with the active company; the parent it hangs off must
-     be this company's too, or a line lands on another company's PC Receive. */
   const { data: parent } = await scopeToCompanyId(sb.from('purchase_consignment_receives').select('id').eq('id', receiveId), co.companyId).maybeSingle();
   if (!parent) return c.json(NOT_THIS_COMPANY, 404);
-  // Child-lock: a receive with any downstream PC Return is read-only.
   const childLock = await pcReceiveHasDownstream(sb, receiveId);
   if (childLock) return c.json(childLock, 409);
 
@@ -1230,8 +984,6 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
   const discountSen = Number(it.discountSen ?? 0);
   const lineTotal = (qtyReceived * unitPriceSen) - discountSen;
 
-  /* Over-receipt guard — a PC-order-linked added line can't accept more than the
-     PC Order line's remaining (qty - received_qty). Manual lines uncapped. */
   const addLinePcoItemId = (it.pcOrderItemId as string) ?? null;
   if (addLinePcoItemId) {
     const xl = await assertSourceLinesInCompany(sb, c, 'purchase_consignment_order_items', [addLinePcoItemId]);
@@ -1277,10 +1029,6 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
   const { data, error } = await sb.from('purchase_consignment_receive_items').insert({ company_id: activeCompanyId(c), ...row }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
 
-  /* POST-INSERT over-receipt verification — the pre-check is a read-then-write
-     race. After committing, re-read the PC Order line's qty + the LIVE sum of
-     qty_accepted across all non-cancelled receive lines for it; if that now
-     exceeds qty, OUR insert broke the cap → delete it + 409. */
   if (addLinePcoItemId) {
     const inserted = data as unknown as { id: string } | null;
     const { data: pcoItem } = await sb.from('purchase_consignment_order_items')
@@ -1309,16 +1057,13 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
   }
 
   await recomputePcReceiveTotals(sb, receiveId);
-  // Roll the added line's qty onto the PC Order. Best-effort.
-  try { await recomputePcoReceived(sb, [addLinePcoItemId]); } catch { /* best-effort */ }
-  // Book the added line's stock IN — refusals ride the response (audit A11).
+  try { await recomputePcoReceived(sb, [addLinePcoItemId]); } catch { }
   let movementErrors: string[] = [];
   try { movementErrors = await resyncReceiveInventory(sb, receiveId, c.get('user')?.id ?? null); }
   catch (e) { movementErrors = [`resync failed: ${e instanceof Error ? e.message : 'unknown'}`]; }
   return c.json({ item: data, ...(movementErrors.length ? { movementErrors } : {}) }, 201);
 });
 
-/* ── PATCH /:id/items/:itemId — partial line update. qty → qty_received. ── */
 purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
   const receiveId = c.req.param('id'); const itemId = c.req.param('itemId');
   let it: Record<string, unknown>;
@@ -1327,7 +1072,6 @@ purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // Child-lock: a receive with any downstream PC Return is read-only.
   const childLock = await pcReceiveHasDownstream(sb, receiveId);
   if (childLock) return c.json(childLock, 409);
 
@@ -1338,9 +1082,6 @@ purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
 
   const qtyReceived = it.qty !== undefined ? Number(it.qty) : (prev as { qty_received: number }).qty_received;
 
-  /* Over-receipt guard on edit — a PC-order-linked line can't be raised past the
-     PC Order line's headroom = qty - (received_qty - this line's current
-     receipt). Manual lines uncapped. */
   {
     const pcoItemId = (prev as { pc_order_item_id: string | null }).pc_order_item_id;
     const prevQty = (prev as { qty_received: number }).qty_received ?? 0;
@@ -1379,7 +1120,6 @@ purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
     if (it[from] !== undefined) updates[to] = it[from];
   }
   coerceEmptyDates(updates);
-  /* description2 is server-owned: recompute from effective itemGroup + variants. */
   {
     const effGroup = (it.itemGroup ?? (prev as { item_group?: string }).item_group) as string | null | undefined;
     const effVariants = (it.variants ?? (prev as { variants?: unknown }).variants) as Record<string, unknown> | null | undefined;
@@ -1390,42 +1130,30 @@ purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   await recomputePcReceiveTotals(sb, receiveId);
-  // Editing qty_accepted changes how much the PC Order counts as received —
-  // recount it. Best-effort.
-  try { await recomputePcoReceived(sb, [(prev as { pc_order_item_id: string | null }).pc_order_item_id]); } catch { /* best-effort */ }
-  // Adjust inventory by the qty/variant delta — refusals ride the response (audit A11).
+  try { await recomputePcoReceived(sb, [(prev as { pc_order_item_id: string | null }).pc_order_item_id]); } catch { }
   let movementErrors: string[] = [];
   try { movementErrors = await resyncReceiveInventory(sb, receiveId, c.get('user')?.id ?? null); }
   catch (e) { movementErrors = [`resync failed: ${e instanceof Error ? e.message : 'unknown'}`]; }
   return c.json({ ok: true, ...(movementErrors.length ? { movementErrors } : {}) });
 });
 
-/* ── DELETE /:id/items/:itemId — remove a line + roll back its PC Order receipt. ──
-   Reads the line's pc_order_item_id BEFORE delete, then recounts the PC Order's
-   received_qty from live lines and resyncs inventory (the deleted line's IN is
-   driven back out). Blocked by the child-lock (any downstream PC Return). */
 purchaseConsignmentReceives.delete('/:id/items/:itemId', async (c) => {
   const receiveId = c.req.param('id'); const itemId = c.req.param('itemId');
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // Child-lock: a receive with any downstream PC Return is read-only.
   const childLock = await pcReceiveHasDownstream(sb, receiveId);
   if (childLock) return c.json(childLock, 409);
 
-  /* Scoped delete doubles as the tenancy gate and hands back the line's
-     pc_order_item_id for the PC Order recount below. */
   const { data: del, error } = await scopeToCompanyId(sb.from('purchase_consignment_receive_items').delete().eq('id', itemId), co.companyId).select('pc_order_item_id').maybeSingle();
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   if (!del) return c.json(NOT_THIS_COMPANY, 404);
 
   const l = del as { pc_order_item_id: string | null };
-  // Recount the PC Order receipt for the removed line's source (best-effort).
-  try { await recomputePcoReceived(sb, [l.pc_order_item_id]); } catch { /* best-effort */ }
+  try { await recomputePcoReceived(sb, [l.pc_order_item_id]); } catch { }
 
   await recomputePcReceiveTotals(sb, receiveId);
-  // Give the deleted line's stock back OUT (self-healing resync). Best-effort.
-  try { await resyncReceiveInventory(sb, receiveId, c.get('user')?.id ?? null); } catch { /* best-effort */ }
+  try { await resyncReceiveInventory(sb, receiveId, c.get('user')?.id ?? null); } catch { }
   return c.body(null, 204);
 });

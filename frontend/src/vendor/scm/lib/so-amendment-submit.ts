@@ -1,52 +1,16 @@
-// ----------------------------------------------------------------------------
-// so-amendment-submit — what pressing the primary button on a PROCESSING-LOCKED
-// SO should actually do. PURE: no React, no I/O. Desktop SalesOrderDetail and
-// mobile MobileNewSO both classify through here so the answer cannot drift.
-//
-// WHY THIS EXISTS (2026-08-21). An edit on a locked SO has TWO halves
-// (so-amendment-header.ts): FREE fields save directly, CONTROLLED fields and
-// line changes ride an amendment. Both surfaces had ONE early-return covering
-// BOTH halves — it asked only "is there anything for the AMENDMENT?" and
-// answered "No changes to submit" when there was not. Neither surface asked
-// whether the DIRECT half had anything, so each got it wrong in its own way:
-//
-//   * Desktop returned BEFORE handle.save() ran, so a contact-only edit was
-//     silently DISCARDED — while the banner on the same screen promised those
-//     details "save straight away".
-//   * Mobile PATCHed the direct half BEFORE the check, so the edit landed and
-//     the operator was then told "No changes to submit". Saved, reported failed.
-//
-// Same missing question, opposite symptoms. The rule is one line: an amendment
-// is needed only for the approval half; the direct half is saved either way;
-// and "nothing to submit" is true only when BOTH halves are empty.
-// ----------------------------------------------------------------------------
 
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover } from './amendment-approver';
 
 /** What the operator's in-flight edit adds up to. */
 export type AmendmentSubmitPlan =
-  /** Neither half has a change — the only case that is a genuine error. */
   | 'NOTHING'
-  /** Only FREE fields moved. Save them directly; raise no amendment. */
   | 'DIRECT_ONLY'
-  /** Lines and/or CONTROLLED header fields moved: direct half first, then the
-      amendment for approval. */
   | 'AMENDMENT';
 
 export type AmendmentSubmitInput = {
-  /** buildAmendmentLines() returned at least one ADD / EDIT / REMOVE. */
   hasLineChanges: boolean;
-  /** hasAmendmentHeaderChanges(getLockedHeaderChanges()) — CONTROLLED columns. */
   hasFrozenHeaderChanges: boolean;
-  /** The FREE half is dirty: customer name / phone / email / note — anything
-      the header PATCH still writes directly while the SO is locked. */
   hasDirectHeaderChanges: boolean;
-  /** Mobile stages payments in the same form and posts them at the end of this
-      same submit. A payment needs no approval, but it IS a change: without this
-      a payment-only edit on a locked SO was refused "No changes to submit" and
-      could never be booked from that screen — the row survives in the form, so
-      every retry hit the same wall. Desktop books payments from their own card
-      and passes false. */
   hasStagedPayments?: boolean;
 };
 

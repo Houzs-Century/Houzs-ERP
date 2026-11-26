@@ -20,7 +20,6 @@ export function ScmHub() {
   const navigate = useNavigate();
   const { can, pageAccess } = useAuth();
 
-  // Mirror Sidebar.filterTab so the Hub and the nav never drift on visibility.
   const visible = (t: NavTab): boolean => {
     if (t.perm && !can(t.perm)) return false;
     if (t.anyPerm || t.anyAccess) {
@@ -47,7 +46,6 @@ export function ScmHub() {
         description="All supply-chain modules in one place — sales, consignment, procurement, warehouse and finance."
       />
 
-      {/* Why-this-changed note — keeps the amber "intentional warning slot". */}
       <div className="mb-5 flex items-start gap-2 rounded-lg border border-warning-text/20 bg-warning-bg px-3.5 py-2.5 text-[12px] text-warning-text">
         <Info size={14} className="mt-0.5 shrink-0" />
         <span>
@@ -65,7 +63,6 @@ export function ScmHub() {
             const GIcon = group.icon;
             return (
               <section key={group.groupId || group.label}>
-                {/* Group header — mono uppercase label + icon + hairline rule. */}
                 <div className="mb-2.5 flex items-center gap-2">
                   <GIcon size={14} className="shrink-0 text-ink-muted" />
                   <h2 className="font-mono text-[10px] font-bold uppercase tracking-brand text-ink-muted">
@@ -75,7 +72,6 @@ export function ScmHub() {
                   <span className="font-mono text-[10px] text-ink-muted">{kids.length} modules</span>
                 </div>
 
-                {/* Module cards — 4-col grid; hover lifts + petrol border. */}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   {kids.map((k) => {
                     const KIcon = k.icon;

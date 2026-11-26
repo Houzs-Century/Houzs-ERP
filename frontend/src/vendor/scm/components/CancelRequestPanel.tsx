@@ -51,15 +51,10 @@ import {
 
 export type CancelRequestPanelProps = {
   docType: CancelDocType;
-  /** `doc_no` for the Sales Order, `id` for the Purchase Order. */
   docKey: string | null | undefined;
-  /** What the person calls it. */
   docNumber: string;
-  /** The page's own cancel — run after the second signature, and by "Cancel now". */
   onExecute?: () => void | Promise<unknown>;
-  /** True while the page's cancel mutation is in flight. */
   executing?: boolean;
-  /** Compact layout for the mobile detail. */
   compact?: boolean;
 };
 
@@ -89,8 +84,6 @@ export function CancelRequestPanel({ docType, docKey, docNumber, onExecute, exec
 
   const viewer = { userId: user?.id ?? null, can };
   const level = pendingLevel(open.status);
-  /* A Sales Order takes two signatures, a Purchase Order one — the final
-     signature is the one that cancels, whichever number it carries. */
   const final = level != null && isFinalLevel(docType, level);
   const approved = open.status === 'APPROVED';
   const pending = busy || approve.isPending || reject.isPending || withdraw.isPending || !!executing;

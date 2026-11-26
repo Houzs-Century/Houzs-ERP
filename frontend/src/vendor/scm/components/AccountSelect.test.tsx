@@ -26,12 +26,12 @@ describe('AccountSelect — headers and control accounts never appear', () => {
     render(<AccountSelect accounts={accounts} value="" onChange={() => {}} />);
     fireEvent.focus(screen.getByRole('combobox'));
     const options = screen.getAllByRole('option').map((o) => String(o.textContent));
-    expect(options.some((t) => t.includes('310-0010'))).toBe(true);   // the bank leaf books
-    expect(options.some((t) => t.includes('900-A002'))).toBe(true);   // the expense books
-    expect(options.some((t) => t.includes('310-0000'))).toBe(false);  // header hidden
-    expect(options.some((t) => t.includes('300-0000'))).toBe(false);  // debtor control hidden
-    expect(options.some((t) => t.includes('400-0000'))).toBe(false);  // creditor control hidden
-    expect(options.some((t) => t.includes('330-0000'))).toBe(false);  // stock control hidden
+    expect(options.some((t) => t.includes('310-0010'))).toBe(true);
+    expect(options.some((t) => t.includes('900-A002'))).toBe(true);
+    expect(options.some((t) => t.includes('310-0000'))).toBe(false);
+    expect(options.some((t) => t.includes('300-0000'))).toBe(false);
+    expect(options.some((t) => t.includes('400-0000'))).toBe(false);
+    expect(options.some((t) => t.includes('330-0000'))).toBe(false);
   });
 });
 

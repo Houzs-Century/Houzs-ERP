@@ -34,8 +34,6 @@ import { getSupabaseService } from '../../db/supabase';
 import { readFeedScope, type FeedScope } from './venture-portal-feed-flag';
 import { classifyVpResponse, readVpConfig } from './venture-portal-outbox';
 
-/* The SCM PostgREST client is untyped at every call site in this tree; a typed
-   signature here would describe a contract nothing else keeps. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
 export type ScmClient = SupabaseClient<any, any, any>;
 
@@ -73,8 +71,6 @@ export type VpCatalogueOutcome = ReturnType<typeof classifyVpResponse>['outcome'
 
 export type VpCatalogueCompanyResult = {
   companyId: number;
-  /** unchanged / refused_unchanged: nothing was sent. build_failed: the SQL did
-   *  not answer, nothing was sent, next run tries again. */
   action: 'unchanged' | 'refused_unchanged' | 'build_failed' | VpCatalogueOutcome;
   digest: string | null;
   parts: number;
@@ -103,8 +99,6 @@ export function vpSiblingUrl(salesOrdersUrl: string, endpoint: 'products' | 'sal
   } catch {
     return null;
   }
-  /* https only, as PUT /connection enforces for the order feed: the shared
-     secret travels in a header. */
   if (u.protocol !== 'https:' || u.search !== '' || u.hash !== '') return null;
   const m = /^(.*)\/sales-orders\/?$/.exec(u.pathname);
   if (!m) return null;
@@ -242,8 +236,6 @@ export function planVpCatalogueParts(
   const sections = VP_CATALOGUE_SECTIONS.filter((s) => body[s] !== undefined && body[s] !== null);
   const prefix = `{"companyId":${JSON.stringify(body.companyId)},"full":true,"snapshotAt":${JSON.stringify(snapshotAt)}`;
   const pieces = new Map(sections.map((s) => [s, `,${JSON.stringify(s)}:${JSON.stringify(body[s])}`] as const));
-  /* UTF-8 lengths add up across concatenation, so each piece is encoded once
-     and a candidate part is sized by addition. */
   const pieceBytes = new Map(sections.map((s) => [s, enc.encode(pieces.get(s)).length] as const));
   const frameBytes = enc.encode(prefix).length + 1;
   const bytesOf = (group: VpCatalogueSection[]) =>
@@ -269,9 +261,6 @@ export function planVpCatalogueParts(
   return groups.map(make);
 }
 
-/* The four helpers below are exported for the Sales Attending push
-   (venture-portal-attendance.ts), which is gated, posted and answered the same
-   way — one copy of each, not two that drift. */
 export function inScope(scope: FeedScope, companyId: number): boolean {
   if (scope === 'off') return false;
   if (scope === 'all') return true;
@@ -282,8 +271,6 @@ export function inScope(scope: FeedScope, companyId: number): boolean {
  *  means the list could not be read, which is not the same as "none". */
 export async function companiesFor(sb: ScmClient, scope: Exclude<FeedScope, 'off'>): Promise<number[] | null> {
   if (scope !== 'all') return [...scope];
-  /* public.companies is the companies MASTER; the SCM client is pinned to the
-     scm schema, so it has to be asked for by name (scm/lib/doc-no.ts). */
   const { data, error } = await sb.schema('public').from('companies').select('id').order('id', { ascending: true });
   if (error) return null;
   return ((data as { id: number | string }[] | null) ?? [])
@@ -343,12 +330,6 @@ export async function postPart(
 /** How many marks one run clears. A burst beyond it is cleared by the next run. */
 export const VP_CATALOGUE_CHANGES_BATCH = 1_000;
 
-/**
- * Clear the change marks this run covers. Called FIRST by every push — the kick
- * and the cron alike — so a mark written while the run builds survives it and
- * earns the next one, and the table stays small even while the feed is off.
- * A failure is logged and ignored: a mark left behind costs one more digest.
- */
 async function clearCatalogueChanges(sb: ScmClient): Promise<void> {
   const { data, error } = await sb
     .from('venture_portal_catalogue_changes')
@@ -407,8 +388,6 @@ export async function pushVenturePortalCatalogue(
 
   const url = vpCatalogueUrl(cfg.url);
   if (!url) {
-    /* [vp-catalogue] is the string to alert on. The status page shows the same
-       fact (catalogue.url is null), so nobody has to read a log to find it. */
     console.error(`[vp-catalogue] ${VP_CATALOGUE_URL_PROBLEM}; nothing sent`);
     return { skipped: 'catalogue_url_unknown', companies: [] };
   }
@@ -429,8 +408,6 @@ export async function pushVenturePortalCatalogue(
 
   const results: VpCatalogueCompanyResult[] = [];
   for (const companyId of companies) {
-    /* Re-read per company (cached 30 s): off must stop the next delivery, not
-       finish the round. */
     if (!inScope(await readFeedScope(sb), companyId)) break;
 
     const result: VpCatalogueCompanyResult = {
@@ -452,9 +429,6 @@ export async function pushVenturePortalCatalogue(
       }
     }
 
-    /* The body AND its digest from one build: the digest recorded below always
-       describes the bytes that were sent, even if the catalogue changed since
-       the digest was asked for above. */
     const { data: snap, error: snapErr } = await sb.rpc('vp_catalogue_snapshot', { p_company_id: companyId });
     const snapshot = snap as { digest?: unknown; body?: unknown } | null;
     if (
@@ -498,9 +472,6 @@ export async function pushVenturePortalCatalogue(
       companyId, digest, verdict, httpStatus: result.httpStatus, note: result.note,
       bytes: result.bytes, parts: result.parts, portalResult: answers, now,
     });
-    /* A lost write leaves the previous record in place, so the next run sees a
-       digest it never recorded as delivered and normally sends again. It is
-       reported in the result and the log, not retried here. */
     const { error: writeErr } = await sb
       .from('venture_portal_catalogue_state')
       .upsert(row, { onConflict: 'company_id' });

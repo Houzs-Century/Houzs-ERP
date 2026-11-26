@@ -1,8 +1,3 @@
-/* Creating an order on the phone with a SOFFIO (8030-) line asks the rep to
- * check the code first: a fully extend sofa is SOFFIO 2.0 (5562-). "Go back"
- * sends nothing; "Yes, it is SOFFIO" creates the order; no 8030 line, no ask.
- * Same harness as MobileNewSO.copyAsNew.test.tsx (the copy seeds the form).
- */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";

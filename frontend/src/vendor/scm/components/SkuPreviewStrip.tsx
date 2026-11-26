@@ -1,8 +1,3 @@
-// Vendored EXTRACT of the SkuPreviewStrip export from
-// apps/backend/src/pages/SupplierDetail.tsx (the bulk-map preview chip-row the
-// ProductModels modular-assign dialog renders). It is a pure presentational
-// component — inline styles + brand CSS vars only, zero I/O — so it is lifted
-// here verbatim rather than dragging in the 3900-line SupplierDetail page.
 
 export function SkuPreviewStrip({
   toMap, alreadyBound, previewMap,

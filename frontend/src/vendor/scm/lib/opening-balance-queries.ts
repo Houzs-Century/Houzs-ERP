@@ -23,7 +23,6 @@ export type OpeningPaper = {
 };
 export type OpeningParty = {
   partyId: string; code: string | null; name: string; control?: string;
-  /** Bills (what the party owes, or what we owe a supplier) and credits, in sen. */
   owingSen: number; creditSen: number; netSen: number;
   papers: OpeningPaper[];
 };

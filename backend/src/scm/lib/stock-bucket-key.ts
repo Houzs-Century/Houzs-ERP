@@ -38,7 +38,6 @@ export type StockKeyLine = {
   item_code: string | null;
   item_group: string | null;
   variants: unknown;
-  /** The warehouse the movement lands in. Null = no bucket lookup (computed key only). */
   warehouse_id: string | null;
 };
 
@@ -92,7 +91,7 @@ export async function productCategoryMap(
       const cat = String(r.category ?? '').trim().toLowerCase();
       if (cat) out.set(r.code, cat);
     }
-  } catch { /* fail-soft, see header */ }
+  } catch { }
   return out;
 }
 

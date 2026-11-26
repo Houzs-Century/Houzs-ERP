@@ -59,8 +59,8 @@ export function orderAddressLines(h: OrderAddressFields): string[] {
     (h.customer_state ?? '').trim(),
   ]) {
     if (!part) continue;
-    if (addressHaystack.includes(part.toLowerCase())) continue;   // already inside an address line
-    if (localityParts.some((p) => p.toLowerCase() === part.toLowerCase())) continue; // e.g. city == state (KL)
+    if (addressHaystack.includes(part.toLowerCase())) continue;
+    if (localityParts.some((p) => p.toLowerCase() === part.toLowerCase())) continue;
     localityParts.push(part);
   }
   const seenAddressLines = new Set<string>();

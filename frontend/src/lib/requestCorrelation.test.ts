@@ -1,7 +1,3 @@
-// correlateError must ATTACH a request id, never change what the error IS.
-// Callers downstream branch on `name === "AbortError"` to tell a superseded
-// request apart from a real failure; flattening the error there turns a
-// cancellation into a retry and a user-visible network error.
 import { describe, expect, it } from "vitest";
 import { correlateError, requestIdFromError } from "./requestCorrelation";
 

@@ -1,18 +1,3 @@
-// /api/push — device-token registry for the native iOS app.
-//
-// POST   /devices { token }   — upsert the CALLER's device. A token that moves
-//                               between accounts (shared phone) follows the most
-//                               recent signer: the unique token row is re-pointed
-//                               at the new user and re-enabled.
-// DELETE /devices/:token      — called on logout (the api client's del() takes
-//                               no body; APNs tokens are hex, so path-safe).
-//                               Scoped to the caller's own rows; deleting
-//                               another user's token is a no-op.
-//
-// Both are personal-data operations on the caller's own device — any
-// authenticated user, no matrix permission (same widening rationale as
-// /api/notifications). What a push may CONTAIN is decided by the sender job
-// (services/pushFleetReminders.ts), which checks permissions itself.
 
 import { Hono } from "hono";
 import { eq, and } from "drizzle-orm";
@@ -24,8 +9,6 @@ const app = new Hono<{ Bindings: Env }>();
 
 const nowUtcText = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
-// APNs tokens are hex; length varies by OS era. Bound it rather than pinning an
-// exact width Apple has changed before.
 const TOKEN_RE = /^[0-9a-f]{16,512}$/i;
 
 app.post("/devices", async (c) => {

@@ -1,8 +1,3 @@
-// Finance's To do page (the owner's Claude Design redesign, Finance-1a-To-do,
-// 2026-11-02): it draws what the server raised — the jobs in their groups with
-// how long they waited, the money that can move today, the month's checklist —
-// and says when part of it could not be read. authed-fetch is mocked at the
-// module seam; the rules themselves are pinned in backend acc/finance-todo.test.ts.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -118,7 +113,6 @@ describe('tasks and routines', () => {
       task: { id: 't1', occursOn: '2026-11-02', due: '2026-11-02', kind: 'task', action: 'done', remarkCount: 2, repeats: false, done: false,
         link: { type: 'AP invoice', no: 'HCAPI-2610-024', name: '', to: '/scm/ap-invoices?open=x' } },
     });
-    /* Every read answers the page; the done POST only needs to succeed. */
     mockedFetch.mockResolvedValue({ ...PAGE, mine: [t], others: [], done: [] });
     renderPage();
     const pay = await screen.findByLabelText('Payments');
@@ -134,7 +128,6 @@ describe('tasks and routines', () => {
   });
 });
 
-/* To do's Payment requests drawer (the owner's Claude Design, batch 4 step 10). */
 describe("To do's Payment requests drawer", () => {
   const REQ = {
     id: 'pr-1', request_no: 'HC-PRQ-2611-001', requested_by: 9, requested_by_name: 'Jason Tan', payee_name: 'MLE EVENTS SDN BHD',

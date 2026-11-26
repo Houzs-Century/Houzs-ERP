@@ -2,20 +2,7 @@ import { useMemo } from "react";
 import { formatDate } from "../lib/utils";
 import { getHolidaysOn } from "../lib/holidays";
 
-/* ------------------------------------------------------------------ *
- * Mobile PMS Gantt (timeline) — a phone port of desktop ProjectGantt.
- *
- * Same layout MATH as the desktop component: a Monday-anchored week axis
- * auto-ranged from the project start/end (and any task due_date) padded
- * one week each side, one swim-lane per checklist section, a diamond per
- * task on its due_date coloured by status, Malaysia holiday bands and a
- * today line. Rendered onto the approved .hz-m mockup markup (.seg /
- * .gantt / .glane / .gtrack / .gcell / .dia / .today), so what shipped
- * matches the sign-off. No backend — the data is already in the PMS
- * payload MobilePMS loads.
- * ------------------------------------------------------------------ */
 
-// Structural subsets — MobilePMS passes its own checklist/section rows.
 export interface GanttSection {
   id: number;
   name: string;
@@ -30,7 +17,7 @@ export interface GanttSectionProgress {
 export interface GanttTask {
   id: number;
   title: string;
-  status: string | null; // pending | done | na | blocked | review | ...
+  status: string | null;
   due_date: string | null;
   section_id: number | null;
   required_perm?: string | null;
@@ -48,19 +35,16 @@ interface Props {
 const DAY_MS = 86_400_000;
 const UNCAT_LANE_ID = -1;
 
-// Status -> diamond colour. Verbatim from the approved mockup legend, all
-// .hz-m tokens: pending amber, overdue red, done green, N/A mut, blocked ink.
-const COL_PENDING = "#8a6a2e"; // --amber
-const COL_OVERDUE = "#b23a3a"; // --red
-const COL_DONE = "#2f8a5b"; // --green
-const COL_NA = "#9aa093"; // --mut2
-const COL_BLOCKED = "#11140f"; // --ink
+const COL_PENDING = "#8a6a2e";
+const COL_OVERDUE = "#b23a3a";
+const COL_DONE = "#2f8a5b";
+const COL_NA = "#9aa093";
+const COL_BLOCKED = "#11140f";
 
 function isoOnly(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 function startOfWeek(d: Date): Date {
-  // Monday-anchored weeks (matches desktop ProjectGantt + PnlCalendar).
   const x = new Date(d);
   const day = x.getUTCDay();
   const diff = day === 0 ? -6 : 1 - day;
@@ -87,9 +71,6 @@ export function MobileGantt({
 }: Props) {
   const today = isoOnly(new Date());
 
-  // ── Timeline range ─────────────────────────────────────────
-  // Anchor to project dates, extend to cover any out-of-range task due_date,
-  // then snap to Monday weeks padded one week on each side.
   const range = useMemo(() => {
     const anchors: number[] = [];
     if (projectStart) anchors.push(new Date(projectStart).getTime());
@@ -106,7 +87,6 @@ export function MobileGantt({
     return { start, end, totalDays, totalWeeks };
   }, [projectStart, projectEnd, tasks]);
 
-  // Week header labels — short numeric D/M (desktop parity, numeric-only rule).
   const weeks = useMemo(() => {
     const out: { label: string; hol: boolean }[] = [];
     for (let w = 0; w < range.totalWeeks; w++) {
@@ -120,7 +100,6 @@ export function MobileGantt({
     return out;
   }, [range]);
 
-  // ── Group tasks per lane ───────────────────────────────────
   const lanes = useMemo(() => {
     const out: Array<{ id: number; name: string; tasks: GanttTask[]; prog?: GanttSectionProgress }> = [];
     const ordered = [...sections].sort((a, b) => a.sort_order - b.sort_order);
@@ -145,7 +124,6 @@ export function MobileGantt({
     );
   }
 
-  // Position of a due_date as a percentage across the whole track (day-centred).
   const leftPct = (iso: string): number => {
     const d = diffDays(range.start, new Date(iso));
     return ((d + 0.5) / range.totalDays) * 100;
@@ -154,7 +132,6 @@ export function MobileGantt({
   const todayDate = new Date(today);
   const todayInRange = todayDate >= range.start && todayDate <= range.end;
 
-  // Each week wants a readable min column; 68px echoes the mockup (520 / ~6).
   const gridCols = `112px repeat(${range.totalWeeks}, 1fr)`;
   const trackCols = `repeat(${range.totalWeeks}, 1fr)`;
   const minWidth = 112 + range.totalWeeks * 68;
@@ -190,7 +167,7 @@ export function MobileGantt({
                 ))}
                 {todayInRange && <div className="today" style={{ left: `${leftPct(today)}%` }} />}
                 {lane.tasks.map((task) => {
-                  if (!task.due_date) return null; // no due date -> no placement
+                  if (!task.due_date) return null;
                   const status = (task.status ?? "").toLowerCase();
                   const overdue = status === "pending" && task.due_date < today;
                   const color = overdue

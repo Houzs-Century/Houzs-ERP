@@ -1,5 +1,3 @@
-// The AI Usage page against a mocked API: this month's total, the partial-month
-// note, and the per-feature / per-company tables follow the selected month.
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

@@ -1,9 +1,3 @@
-// What an SO says it has been paid, everywhere it says it.
-// 1. A payment on the order refreshes the order's detail (it carries paid_sen_total): the SO PDF listed both
-//    payments under PAYMENTS RECEIVED but printed "Paid to date" from before the second, because only the lists
-//    were marked stale.
-// 2. The PDF's "Paid to date" is the rows it prints plus any legacy deposit outside the ledger.
-// 3. The SO list never falls back to the stored balance_sen (the gross total) or paid_sen (never written).
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';

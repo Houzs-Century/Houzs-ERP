@@ -1,20 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseConsignmentReturnFromReceive — LINE-LEVEL, QUANTITY-BASED Purchase
-// Consignment Receive → Return picker. Mirrors DeliveryReturnFromDo on the
-// purchase-consignment side: the operator picks individual PC Receive LINES,
-// each with a return qty 1..remaining (remaining = qty_accepted − returned,
-// derived LIVE by the server). A line can be returned across several returns
-// until remaining reaches 0.
-//
-// A supplier-lock keeps the merge clean: once one line is ticked, lines of a
-// DIFFERENT supplier grey out — a return is for ONE supplier.
-//
-// Continue stashes the picked lines in the scoped SCM handoff store
-// and opens the normal New Purchase Consignment Return form prefilled for review
-// (?fromPicks=1). No inventory moves until Create.
-//
-// Routing: /purchase-consignment-return/from-receive.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';

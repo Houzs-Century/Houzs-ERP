@@ -35,7 +35,6 @@ export function normalizePlate(raw: string | null | undefined): string {
 export interface PlateRow {
   id: string;
   plate: string;
-  /** Referenced-row counts across every table pointing at this lorry. */
   refs?: number;
   active?: boolean;
   createdAt?: string | null;
@@ -44,7 +43,6 @@ export interface PlateRow {
 /** One canonical plate that more than one row claims. */
 export interface DuplicateGroup {
   canonical: string;
-  /** The row the others should merge INTO. See pickSurvivor for the rule. */
   survivor: PlateRow;
   losers: PlateRow[];
 }
@@ -116,7 +114,7 @@ export function findRenames(rows: readonly PlateRow[]): Array<{ id: string; from
   for (const r of rows) {
     const c = normalizePlate(r.plate);
     if (!c || c === r.plate) continue;
-    if ((counts.get(c) ?? 0) > 1) continue;   // that is a merge, not a rename
+    if ((counts.get(c) ?? 0) > 1) continue;
     out.push({ id: r.id, from: r.plate, to: c });
   }
   return out.sort((a, b) => (a.to < b.to ? -1 : 1));

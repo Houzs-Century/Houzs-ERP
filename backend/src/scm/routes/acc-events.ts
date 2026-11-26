@@ -56,7 +56,6 @@ accEvents.use('*', supabaseAuth);
 
 const NO_PERM = { error: "You don't have permission to do that." };
 
-/* ── GET /options ─────────────────────────────────────────────────────────── */
 export const eventOptionsHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -77,7 +76,6 @@ export const eventOptionsHandler = async (c: any): Promise<Response> => {
 };
 accEvents.get('/options', eventOptionsHandler);
 
-/* ── GET /costs ───────────────────────────────────────────────────────────── */
 const monthStart = (ymd: string) => `${ymd.slice(0, 7)}-01`;
 const monthEnd = (ymd: string) => {
   const d = new Date(`${ymd.slice(0, 7)}-01T00:00:00Z`);
@@ -94,9 +92,6 @@ export const eventCostsHandler = async (c: any): Promise<Response> => {
   const to = dateOrNull(c.req.query('to')) ?? monthEnd(today);
   if (from > to) return c.json({ error: 'bad_range', message: 'The From date is after the To date.' }, 400);
 
-  /* The events that START in the range — archived ones too, so money already
-     tagged to an event the office later withdrew still shows (buildEventCosts
-     drops an archived event only when nothing is on it). */
   let events: EventRow[];
   try {
     const res = await c.env.DB.prepare(
@@ -158,15 +153,6 @@ accEvents.get('/departments/operation', departmentsOperationHandler);
 accEvents.get('/departments/lines', departmentLinesHandler);
 accEvents.put('/departments/rate', saveDepartmentRateHandler);
 
-/* ── POST /pv-lines/:lineId/event ─────────────────────────────────────────────
-   A voucher is locked from Check on, and an approved one cannot be edited at
-   all — cancelling a paid voucher to fix a tag would undo a payment the bank
-   has already seen. The event is not money: it moves no amount, account or
-   date, so it changes in place — on the voucher line and, once posted, on the
-   one journal leg that line wrote (pvLines writes line N as leg N), with the
-   change in the voucher's history. The leg is checked against the line
-   (account and amount) before it is touched; a leg that does not match is
-   refused, never guessed. */
 export const retagPvLineHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write') && !hasHouzsPerm(c, 'scm.payment_voucher.post')) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -193,8 +179,6 @@ export const retagPvLineHandler = async (c: any): Promise<Response> => {
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: pv.id, action: 'UPDATE', companyId: co.companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  /* The leg first, then the line: a retry after a half-done change finds the
-     line still old and walks the same two steps again. */
   if (pv.status === 'POSTED') {
     const { data: jes, error: jeErr } = await sb.from('journal_entries')
       .select('id, je_no, reversed').eq('company_id', co.companyId).eq('source_type', 'PV').eq('source_doc_no', pv.pv_number);

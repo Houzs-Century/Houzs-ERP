@@ -1,20 +1,3 @@
-/**
- * Supplier Portal — service request view.
- *
- * Card-based layout matching PortalCaseDetail (customer portal) so the
- * two portals feel like the same shell. Sections top→bottom:
- *   - Header: ASSR no + stage pill + supplier name + dates + PO/Ref
- *   - Items under service
- *   - Reported issue
- *   - Goods Returned Note (read-only, from Houzs)
- *   - Service Note (editable, supplier owns)
- *   - Photos & evidence (Service issue + Operation QC checked)
- *   - Add a remark (one-off messages, fire-and-forget to Houzs)
- *   - Update job status (Picked up / Repair complete / Returned)
- *
- * Auth: token in URL (/portal/supplier/:token). No localStorage —
- * link IS the auth, matching the customer portal model.
- */
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Package, Printer, Trash2, Upload } from "lucide-react";
@@ -35,7 +18,6 @@ import { formatCurrency } from "../../lib/utils";
 const ALLOWED_EXT = ["jpg", "jpeg", "png", "webp"];
 const MAX_SIZE = 10 * 1024 * 1024;
 
-// ── Types (mirror backend supplierPortal.ts response) ──────────────
 
 type SupplierCase = {
   case: {
@@ -60,11 +42,8 @@ type SupplierCase = {
     creditor_code: string | null;
     stage_entered_at: string | null;
     stage_target_days: number | null;
-    // Mig 106 — the supplier owns supplier_service_note; goods_returned_note
-    // is read-only for them (surfaced so they know what came in).
     supplier_service_note: string | null;
     goods_returned_note: string | null;
-    // Mig 108 — Accept job + Submit quote (design handoff).
     supplier_accepted_at: string | null;
     supplier_quote_labour: number | null;
     supplier_quote_materials: number | null;
@@ -104,17 +83,9 @@ const STAGE_LABEL: Record<string, string> = {
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Delivery / Service",
   completed: "Completed",
-  // Read, not retyped. This exact string had six hand-written homes and the
-  // customer portal's copy — the only one a customer reads — had none at all
-  // and printed the raw slug. (The rows ABOVE are this screen's short pill
-  // vocabulary, a different question, and still a hand-written copy shared
-  // with the other pill screens — see BUG-HISTORY, not yet unified.)
   voided: ASSR_STAGE_LABEL.voided,
 };
 
-// Map stage → StatusPill palette so the supplier header uses the
-// same visual vocabulary as the customer portal (server-side
-// `status_color` isn't returned on the supplier endpoint).
 const STAGE_COLOR: Record<string, PortalStatusColor> = {
   pending_review: "grey",
   under_verification: "amber",
@@ -125,8 +96,6 @@ const STAGE_COLOR: Record<string, PortalStatusColor> = {
   completed: "green",
 };
 
-// Read-only 5-step job progress (set by Houzs, never by the supplier).
-// Internal 9 stages collapse into the supplier-facing buckets.
 const SUPPLIER_STEPS = [
   "Inspection",
   "Pickup",
@@ -143,7 +112,6 @@ function supplierStepFor(cs: { stage: string; items_ready_at: string | null }): 
     case "pending_item_ready":
       return cs.items_ready_at ? 4 : 3;
     case "pending_supplier_pickup":
-    // Retired stage (mig 0110) — legacy alias for mid-flight links.
     case "pending_item_pickup":
       return 2;
     default:
@@ -152,14 +120,11 @@ function supplierStepFor(cs: { stage: string; items_ready_at: string | null }): 
 }
 
 
-// ── Page ───────────────────────────────────────────────────────────
 
 export function PortalSupplierCasePage() {
   const { token = "" } = useParams();
   const nav = useNavigate();
   const dialog = useDialog();
-  /* Declared up here, above the loading / error early returns, so the hook
-     count is stable — the Print preview it drives renders far below. */
   const print = usePrintPreview(() => window.print());
 
   const [data, setData] = useState<SupplierCase | null>(null);
@@ -172,9 +137,6 @@ export function PortalSupplierCasePage() {
   const [remark, setRemark] = useState("");
   const [savingRemark, setSavingRemark] = useState(false);
   const [uploadingSlot, setUploadingSlot] = useState<string | null>(null);
-  // Mig 106 — supplier-owned service record. Draft lives in local
-  // state until they press Save; last saved value is echoed back from
-  // the API on reload.
   const [serviceNoteDraft, setServiceNoteDraft] = useState("");
   const [savingServiceNote, setSavingServiceNote] = useState(false);
 
@@ -195,10 +157,6 @@ export function PortalSupplierCasePage() {
     load();
   }, [token]);
 
-  // Keep the service-note textarea in sync with what the API returned.
-  // Only overwrite the draft when the incoming value differs from what
-  // we last had — protects the supplier from losing an unsaved edit if
-  // another tab reload lands mid-typing.
   useEffect(() => {
     const incoming = data?.case?.supplier_service_note ?? "";
     setServiceNoteDraft((prev) => (prev === "" ? incoming : prev));
@@ -266,15 +224,8 @@ export function PortalSupplierCasePage() {
     }
   }
 
-  // Two upload slots render side by side, so pasted files are routed by
-  // the hovered dropzone (no document-wide paste here); this guard only
-  // keeps a missed drop from navigating the SPA to the file.
   useStrayFileDropGuard();
 
-  // Upload a photo into one of the two PictureBlock slots. Category
-  // maps to the existing assr_attachments CHECK constraint:
-  //   evidence   → "Service Issue" slot
-  //   completion → "Operation QC Checked" slot
   async function uploadPhoto(raw: File, category: "evidence" | "completion") {
     if (!ALLOWED_EXT.includes((raw.name.split(".").pop() || "").toLowerCase())) {
       setErr(`Unsupported file type: .${(raw.name.split(".").pop() || "").toLowerCase()}`);
@@ -283,8 +234,6 @@ export function PortalSupplierCasePage() {
     setUploadingSlot(category);
     setErr(null);
     try {
-      // WO-7 — suppliers shoot these on phones; compress before the 10 MB
-      // gate. The prepared name carries the re-encoded ext (webp allowed).
       const { file: f } = await prepareImageForUpload(raw, { wantThumb: false });
       if (f.size > MAX_SIZE) {
         setErr("File exceeds 10 MB");
@@ -307,8 +256,6 @@ export function PortalSupplierCasePage() {
     }
   }
 
-  // Multi-file entry for drop / paste (the picker forwards a single file
-  // through here too) — sequential so uploadingSlot stays honest.
   async function uploadPhotos(raws: File[], category: "evidence" | "completion") {
     for (const raw of raws) await uploadPhoto(raw, category);
   }
@@ -350,8 +297,6 @@ export function PortalSupplierCasePage() {
 
   const stageColor = STAGE_COLOR[cs.stage] ?? "grey";
   const currentStep = supplierStepFor(cs);
-  // "Your due date" = current stage's entry + its SLA target. Soft
-  // guidance only — the supplier can't see any other SLA machinery.
   const dueDate = (() => {
     if (!cs.stage_entered_at || cs.stage_target_days == null) return null;
     const d = new Date(cs.stage_entered_at.endsWith("Z") ? cs.stage_entered_at : cs.stage_entered_at + "Z");
@@ -363,8 +308,6 @@ export function PortalSupplierCasePage() {
 
   return (
     <PortalFrame>
-      {/* Header — assr_no + stage pill + supplier name on the left;
-          due date + Accept job on the right (per design). */}
       <div className="rounded-lg border border-border bg-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -415,9 +358,6 @@ export function PortalSupplierCasePage() {
         )}
       </div>
 
-      {/* Job progress — READ-ONLY, set by Houzs. Replaces the old
-          "Update job status" buttons (design: supplier can't advance
-          the workflow; their levers are quote / note / photos). */}
       <section className="mt-5 rounded-lg border border-border bg-surface p-5">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-[13px] font-bold text-ink">Job progress</h2>
@@ -465,7 +405,6 @@ export function PortalSupplierCasePage() {
         </div>
       </section>
 
-      {/* Items under service */}
       <section className="mt-5 rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
           Items under service
@@ -486,7 +425,6 @@ export function PortalSupplierCasePage() {
         )}
       </section>
 
-      {/* Reported issue */}
       <section className="mt-5 rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
           Reported issue
@@ -499,8 +437,6 @@ export function PortalSupplierCasePage() {
         )}
       </section>
 
-      {/* Submit your quote — labour + materials (RM). Houzs reviews
-          before the customer sees any price. Warranty cases may be 0. */}
       {cs.stage !== "completed" && (
         <section className="mt-5 rounded-lg border border-border bg-surface p-5">
           <h2 className="text-[13.5px] font-bold text-ink">Submit your quote</h2>
@@ -560,7 +496,6 @@ export function PortalSupplierCasePage() {
         </section>
       )}
 
-      {/* Goods Returned Note — read-only, from Houzs */}
       <section className="mt-5 rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
           Goods Returned Note <span className="ml-1 normal-case tracking-normal text-ink-muted/70">from Houzs</span>
@@ -572,7 +507,6 @@ export function PortalSupplierCasePage() {
         </div>
       </section>
 
-      {/* Service Note — editable, supplier owns */}
       <section className="mt-5 rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
           Service Note
@@ -603,7 +537,6 @@ export function PortalSupplierCasePage() {
         </div>
       </section>
 
-      {/* Photos — Service Issue + Operation QC Checked */}
       <section className="mt-5 rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
           Photos &amp; evidence
@@ -635,7 +568,6 @@ export function PortalSupplierCasePage() {
         </div>
       </section>
 
-      {/* Remarks — one-off messages */}
       <section className="mt-5 rounded-lg border border-border bg-surface p-5">
         <h2 className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
           Add a remark
@@ -663,8 +595,6 @@ export function PortalSupplierCasePage() {
         </div>
       </section>
 
-      {/* Progress note — the stage is advanced by Houzs, not the
-          supplier (replaces the old "Update job status" buttons). */}
       <section className="mt-5 flex items-center gap-3 rounded-lg border border-border bg-bg/60 p-4 print:hidden">
         <span className="shrink-0 text-[15px] text-ink-muted" aria-hidden>ⓘ</span>
         <p className="text-[12.5px] leading-relaxed text-ink-secondary">
@@ -674,7 +604,6 @@ export function PortalSupplierCasePage() {
         </p>
       </section>
 
-      {/* Footer actions */}
       <div className="mt-5 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center sm:gap-3 print:hidden">
         <Button variant="secondary" onClick={print.openPreview} icon={<Printer size={14} />}>
           Print
@@ -683,8 +612,6 @@ export function PortalSupplierCasePage() {
           Back
         </Button>
       </div>
-      {/* The same Print preview the ERP's documents open. This page prints
-          itself (no jspdf document behind it), so Print is the only exit. */}
       <PrintPreviewModal
         open={print.open}
         onClose={print.close}
@@ -710,7 +637,6 @@ export function PortalSupplierCasePage() {
   );
 }
 
-// ── Building blocks ────────────────────────────────────────────────
 
 function PictureBlock({
   title,
@@ -843,8 +769,6 @@ function SupplierPhoto({
 }
 
 function SupplierCaseSkeleton() {
-  // Placeholder shapes match the card sections of the real page so the
-  // load-in doesn't jump.
   return (
     <>
       <Skeleton className="h-24 w-full rounded-lg" />

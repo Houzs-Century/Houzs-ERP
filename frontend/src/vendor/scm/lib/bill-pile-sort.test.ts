@@ -42,7 +42,6 @@ describe('bill-pile-sort', () => {
     expect(isClaimForm(form)).toBe(true);
     expect(isNotABill(form)).toBe(false);
     expect(voucherLinesOf(form, 'X')).toEqual(rows);
-    /* A row whose amount was not read leaves the rows short: still a listing. */
     const short = ex({ documentKind: 'summary', totalSen: 202403, lines: [rows[0]!, { description: 'Haier', amountSen: null }] });
     expect(isClaimForm(short)).toBe(false);
     expect(isNotABill(short)).toBe(true);

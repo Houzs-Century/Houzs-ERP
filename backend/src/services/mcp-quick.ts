@@ -33,7 +33,6 @@ export function pctChange(cur: number, prev: number): number | null {
   return Math.round(((cur - prev) / prev) * 1000) / 10;
 }
 
-// ── dates ────────────────────────────────────────────────────────────────────
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const PERIOD = /^(\d{4})(?:-(\d{2})|-Q([1-4]))?$/;
@@ -106,7 +105,6 @@ export function singleMonth(w: Range): string | null {
   return w.from.slice(0, 7) === w.to.slice(0, 7) ? w.from.slice(0, 7) : null;
 }
 
-// ── sales ────────────────────────────────────────────────────────────────────
 
 type Group = { name: string; orders: number; salesRm: number };
 
@@ -187,7 +185,6 @@ export function summariseSales(w: Window, cur: unknown, prev: unknown, analysis:
   };
 }
 
-// ── delivery ─────────────────────────────────────────────────────────────────
 
 /**
  * Delivery answer from the Logistic Overview
@@ -238,7 +235,6 @@ export function summariseDelivery(w: Window, cur: unknown, prev: unknown) {
   };
 }
 
-// ── erp_get fields ───────────────────────────────────────────────────────────
 
 /** Keep only the named keys at every object level (rows stay rows). Empty list = unchanged. */
 export function pickFields(v: unknown, fields: readonly string[]): unknown {
@@ -263,10 +259,6 @@ export function pickFields(v: unknown, fields: readonly string[]): unknown {
   return walk(v, 0);
 }
 
-// ── search / fetch (the shape ChatGPT requires) ─────────────────────────────
-// ChatGPT outside Developer Mode only accepts a connector with a `search` and a
-// `fetch` tool, and deep research uses only those two: search returns
-// {results:[{id,title,url}]}, fetch returns one {id,title,text,url,metadata}.
 
 const enc = encodeURIComponent;
 
@@ -341,7 +333,6 @@ export function docTitle(kind: string, rowId: string, doc: unknown): string {
   return `${typeWord(kind)} ${rowId}`;
 }
 
-// ── prompts (ready-made questions shown in the AI app) ──────────────────────
 
 export const PROMPTS = [
   {

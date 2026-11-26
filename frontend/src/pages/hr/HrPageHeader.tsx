@@ -1,6 +1,3 @@
-/* The shared page header for every HR · Employees & Attendance page (redesign).
- * White, bottom border; a brass eyebrow line + kicker, a 24px title with an
- * inline muted subtitle, and right-aligned actions (secondary + one primary). */
 import type { ReactNode } from "react";
 
 export function HrPageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {

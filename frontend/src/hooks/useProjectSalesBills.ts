@@ -1,7 +1,3 @@
-/* The project's pasted sales report, read once per page and shared by the
- * Sales section (the block), Sales Attending (the red numbers) and the chat
- * (which messages are already saved). One key, so the three stay in step and
- * a save invalidates all of them at once. */
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";

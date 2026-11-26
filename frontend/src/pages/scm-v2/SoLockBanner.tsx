@@ -1,5 +1,3 @@
-/* The SO detail page's lock banner (moved out of SalesOrderDetail.tsx, which is
-   at its size ceiling) plus the DEV-32 "Edit SO after DO" notice under it. */
 import type { CSSProperties } from 'react';
 import { Lock, Truck } from 'lucide-react';
 import { Button } from '../../components/Button';
@@ -37,10 +35,8 @@ export function SoLockBanner({
 }: {
   status: string;
   cancelled: boolean;
-  /** Non-null = the order is carried over from AutoCount and view-only. */
   migratedReason: string | null;
   overridden: boolean;
-  /** Called with the typed reason; the caller unlocks only once the server has kept it. */
   onOverride: (reason: string) => void;
   onRelock: () => void;
   afterDo: AfterDoMode;

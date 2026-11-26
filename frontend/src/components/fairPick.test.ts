@@ -14,8 +14,6 @@ import {
 
 const MLE: LinkedFair = { venue: 'MID VALLEY', organizer: 'MLE', solo: false, startDate: '2026-08-08', endDate: '2026-08-09' };
 
-/* One edit session, both surfaces' shape: the baseline is built from the loaded
-   order, the outgoing payload from whatever the picker now holds. */
 const session = (orderVenue: string | null, linked: LinkedFair | null, day: string | null = null) => {
   const seeded = fairPickValue(orderVenue, linkedEvent(orderVenue, linked, day));
   const baseline = fairEditPatch(linkedEvent(orderVenue, linked, day));
@@ -45,9 +43,6 @@ describe('an edit save and the Fair picker', () => {
   });
 
   it('the unchanged parts of the new event travel too — never half an event', () => {
-    /* Same venue and end date as the linked MLE fair, another organizer and
-       start. Sent by halves, the server would read the missing end as a
-       one-day fair and match nothing. */
     const s = session('MID VALLEY', MLE);
     expect(s.sent({ venue: 'MID VALLEY', organizer: 'REX', startDate: '2026-08-07', endDate: '2026-08-09', day: null }))
       .toEqual({ fairVenue: 'MID VALLEY', fairOrganizer: 'REX', fairStart: '2026-08-07', fairEnd: '2026-08-09', fairDate: null, fairProjectId: null });
@@ -88,9 +83,6 @@ describe('linkedEvent — the link is shown only under its own venue', () => {
   });
 
   it('a link to a fair at ANOTHER venue is not shown as this order\'s event', () => {
-    /* HC-SO-2609-081 on 2026-09-24: venue KUALA LUMPUR CONVENTION CENTRE, linked to
-       a fair at IOI MALL PUTRAJAYA. Showing that event under the order's venue
-       would present a contradiction as one answer. */
     expect(linkedEvent('KUALA LUMPUR CONVENTION CENTRE', { ...MLE, venue: 'IOI MALL PUTRAJAYA' }, null)).toBeNull();
   });
 
@@ -103,8 +95,6 @@ describe('linkedEvent — the link is shown only under its own venue', () => {
 
 describe('fairElsewhereLine — the FAIR an order is placed at, when not at its own venue (owner 2026-10-19)', () => {
   it('names the fair, never the project, and says the venue differs', () => {
-    /* The same HC-SO-2609-081 shape: the link is real and must be seen, beside
-       the order's own venue rather than in place of it. */
     expect(fairElsewhereLine('KUALA LUMPUR CONVENTION CENTRE', { ...MLE, venue: 'IOI MALL PUTRAJAYA' }))
       .toBe('Placed at: IOI MALL PUTRAJAYA — MLE (08/08 - 08/09) · Venue differs');
   });
@@ -181,7 +171,6 @@ describe('fairDayCheck — what the submit check is asked about the day', () => 
 
   it('an old order opened and left alone is not asked for a day it was saved without', () => {
     expect(fairDayCheck(event(null), event(null))).toEqual({});
-    /* The phone seeds the venue from the master's spelling. */
     expect(fairDayCheck({ ...event(null), fairVenue: 'Mid Valley' }, event(null))).toEqual({});
   });
 

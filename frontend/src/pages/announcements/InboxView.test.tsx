@@ -11,13 +11,6 @@ import {
 } from "./InboxView";
 import type { Announcement } from "./announcementModel";
 
-/* ────────────────────────────────────────────────────────────────────────────
-   InboxView — the reading mode of /announcements (design handoff 2026-09-04).
-   Pins the three-group list (Needs your confirmation / Recent / SOP Library),
-   the reading pane's acknowledge bar (only for a notice pending for ME), the
-   one-postponement rule on that bar, and that the read-receipts card is a
-   writer-only affordance.
-   ──────────────────────────────────────────────────────────────────────────── */
 
 vi.mock("../../components/AnnouncementMedia", () => ({
   AnnouncementMedia: () => <div data-testid="media" />,
@@ -81,9 +74,6 @@ function props(over: Partial<InboxViewProps> = {}): InboxViewProps {
   };
 }
 
-// jsdom's PointerEvent carries no clientX through fireEvent, so the drag is
-// driven with MouseEvents of the pointer type names — React's onPointerDown
-// and the window listeners only key on the event type.
 function pointer(target: EventTarget, type: string, clientX: number) {
   act(() => {
     target.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX, button: 0 }));
@@ -113,7 +103,6 @@ describe("InboxView list column width (owner ask 2026-09-05: resizable, rows wra
     expect(grid.style.gridTemplateColumns).toBe(`${LIST_WIDTH_DEFAULT + 100}px 7px minmax(0,1fr)`);
     expect(JSON.parse(localStorage.getItem(listWidthStorageKey(1)) ?? "0")).toBe(LIST_WIDTH_DEFAULT + 100);
 
-    // Past the maximum stops at the maximum; a double-click resets.
     pointer(handle, "pointerdown", 500);
     pointer(window, "pointermove", 5000);
     pointer(window, "pointerup", 5000);
@@ -121,7 +110,6 @@ describe("InboxView list column width (owner ask 2026-09-05: resizable, rows wra
     fireEvent.doubleClick(handle);
     expect(handle.getAttribute("aria-valuenow")).toBe(String(LIST_WIDTH_DEFAULT));
 
-    // Keyboard: arrows nudge, Home resets.
     fireEvent.keyDown(handle, { key: "ArrowLeft" });
     expect(handle.getAttribute("aria-valuenow")).toBe(String(LIST_WIDTH_DEFAULT - 16));
     fireEvent.keyDown(handle, { key: "Home" });
@@ -144,7 +132,6 @@ describe("InboxView list column width (owner ask 2026-09-05: resizable, rows wra
     const rows = container.querySelectorAll("[role='button'][aria-pressed]");
     expect(rows.length).toBeGreaterThan(0);
     rows.forEach((r) => expect(r.className).toContain("grid-cols-[3px_minmax(0,1fr)]"));
-    // The SOP row's title wraps (no truncate) and keeps its doc number.
     const sop = screen.getByText("Bin transfer freeze rules");
     expect(sop.className).not.toContain("truncate");
     expect(sop.className).toContain("break-words");
@@ -159,9 +146,7 @@ describe("InboxView", () => {
     expect(screen.getByText("SOP Library · never expires")).toBeTruthy();
     expect(screen.getByText("Warehouse")).toBeTruthy();
     expect(screen.getByText("Needs you 1")).toBeTruthy();
-    // The acknowledged SOP sits in the library, not in Recent.
     expect(screen.getByText("Bin transfer freeze rules")).toBeTruthy();
-    // The read notice carries its Confirmed / Unread status pill.
     expect(screen.getByText("Unread")).toBeTruthy();
   });
 

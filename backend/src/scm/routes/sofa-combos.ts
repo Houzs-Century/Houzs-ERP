@@ -42,12 +42,6 @@ sofaCombos.use('*', supabaseAuth);
 
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
-// Combo pricing is staff-curated, not open to every authenticated user. Houzs
-// gates on the flat permission key `scm.config.write` against the REAL caller
-// (the 2990 staff_role lookup is dead in Houzs — the SCM bridge pins every
-// caller to one super_admin row). Owner + IT Admin pass via `*`; grant
-// the key to a ROLE under Team > Roles & Permissions. GET stays open (the
-// POS salesperson must read combos to price builds); only writes are gated.
 
 async function requireWriteRole(c: AppContext): Promise<{ ok: true } | { ok: false; res: Response }> {
   if (!canWriteScmConfig(c)) {
@@ -65,7 +59,7 @@ type Tier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4' | null;
 type Row = {
   id: string;
   base_model: string;
-  modules: ComboSlots;   // jsonb string[][] — OR-set per slot
+  modules: ComboSlots;
   tier: Tier;
   customer_id: string | null;
   supplier_id: string | null;
@@ -120,8 +114,6 @@ function rowToWire(r: Row) {
  */
 export function validateComboModules(v: unknown): ComboSlots | null {
   if (!Array.isArray(v) || v.length === 0) return null;
-  // Reject mixed/garbage entries up front; the canonicalizer handles the
-  // string vs string[] coercion + trimming + intra-slot/slot sort.
   for (const entry of v) {
     if (Array.isArray(entry)) {
       if (entry.some((c) => typeof c !== 'string')) return null;
@@ -143,14 +135,6 @@ export function validatePricesByHeight(v: unknown): Record<string, number | null
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const out: Record<string, number | null> = {};
   for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
-    // Height keys come from the Maintenance Sizes pool: numeric seat heights
-    // ("24", "37") or named ones like "Flat". Accept alphanumeric labels (with
-    // an optional space/dash); reject empty or symbol-only keys. The old
-    // /^\d+$/ rejected the entire payload the moment "Flat" entered the pool.
-    // The inch mark is allowed too: the pool also holds `25"` / `27"` / `29"`,
-    // and since the composer sends every pool height, rejecting `"` refused
-    // EVERY combo save (BUG-46). Keys stay verbatim so they match the SO
-    // line's seatHeight, which is picked from the same pool.
     if (!/^[A-Za-z0-9][A-Za-z0-9 _"'-]*$/.test(k)) return null;
     if (raw === null || raw === undefined || raw === '') {
       out[k] = null;
@@ -172,19 +156,6 @@ export const comboHasChargedPrice = (
   cost: Record<string, number | null> | null | undefined,
 ): boolean => Object.values(comboChargedPrices(selling, cost)).some((v) => v !== null);
 
-// ── GET / ──────────────────────────────────────────────────────────────
-// List currently-active combos (one row per scope tuple — the row with the
-// latest effective_from ≤ today, deleted_at IS NULL).
-//
-// Query params:
-//   baseModel?  — filter to one base model
-//   customerId? — filter to one customer ('' or '__all__' = NULL scope only)
-//   supplierId? — filter to one supplier's purchasing-scope combos. When
-//                 omitted the list returns the sales-side / master combos
-//                 (supplier_id IS NULL) so the Products page is unaffected by
-//                 supplier rows.
-//   includeAll? — '1' to skip the "active only" reducer (returns every row;
-//                 used by the History drawer).
 sofaCombos.get('/', async (c) => {
   const supabase = c.get('supabase');
   const baseModel = (c.req.query('baseModel') ?? '').trim();
@@ -216,9 +187,6 @@ sofaCombos.get('/', async (c) => {
     }
   }
 
-  // Supplier scope. Provided = that supplier's combos. Omitted (or explicitly
-  // the NULL sentinels) = sales-side / master combos so the Products page
-  // never sees supplier rows.
   if (supplierIdRaw !== undefined && supplierIdRaw !== '' && supplierIdRaw !== 'null') {
     q = q.eq('supplier_id', supplierIdRaw);
   } else {
@@ -234,9 +202,6 @@ sofaCombos.get('/', async (c) => {
     return c.json({ rules: rows.map(rowToWire) });
   }
 
-  // Reduce to "currently active per scope tuple". Scope = (base_model,
-  // sorted-modules, tier, customer_id). The first row encountered per
-  // tuple (already sorted DESC by effective_from then created_at) wins.
   const today = todayIso();
   const seen = new Set<string>();
   const out: Row[] = [];
@@ -254,12 +219,6 @@ sofaCombos.get('/', async (c) => {
     out.push(r);
   }
 
-  // ── Combo Pricing derive-status (A1) ──────────────────────────────────────
-  // For the MASTER view (supplier_id IS NULL), tell each combo whether its COST
-  // auto-derives from a supplier (and WHICH — the dearest whole set, same rule
-  // as recomputeMasterComboCostFromSuppliers), or is a GAP (no supplier combo,
-  // owner fills it in the binding), or is MANUAL (has cost, no supplier combo).
-  // Gated on the auto-derive flag so a flag-OFF read is byte-identical to before.
   const scopeKeyOf = (r: Row) => JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? []), r.tier, r.customer_id]);
   const isMasterView = !(supplierIdRaw !== undefined && supplierIdRaw !== '' && supplierIdRaw !== 'null');
   let winnerByScope: Map<string, { supplierId: string; supplierName: string | null }> | null = null;
@@ -277,11 +236,8 @@ sofaCombos.get('/', async (c) => {
       else sq = sq.eq('customer_id', customerIdRaw);
     }
     const { data: supData, error: supErr } = await sq;
-    // Best-effort enrichment: a failed supplier-combo read just omits the
-    // derive-status — it never 500s the combo list.
     if (supErr) return c.json({ rules: out.map(rowToWire) });
 
-    // Latest supplier row per (scope, supplier), then group by scope.
     const supSeen = new Set<string>();
     const byScope = new Map<string, Array<{ supplier_id: string; prices_by_height: Record<string, number | null> | null }>>();
     for (const r of ((supData ?? []) as unknown as Row[])) {
@@ -304,7 +260,6 @@ sofaCombos.get('/', async (c) => {
     const nameById = new Map<string, string>();
     if (wantedIds.size > 0) {
       const { data: sup, error: nameErr } = await scopeToCompany(supabase.from('suppliers').select('id, name'), c).in('id', [...wantedIds]);
-      // Best-effort: on a name-lookup failure the anchor still shows by id.
       if (!nameErr) for (const s of ((sup ?? []) as Array<{ id: string; name: string | null }>)) nameById.set(s.id, s.name ?? '');
     }
     winnerByScope = new Map();
@@ -335,10 +290,6 @@ sofaCombos.get('/', async (c) => {
   return c.json({ rules: out.map(withDeriveStatus) });
 });
 
-// ── GET /history ───────────────────────────────────────────────────────
-// All effective-dated rows for one scope tuple. Caller passes the same
-// (baseModel, modules, tier, customerId) used to build a logical combo
-// and gets every row's effectiveFrom + prices history.
 sofaCombos.get('/history', async (c) => {
   const supabase = c.get('supabase');
   const baseModel = (c.req.query('baseModel') ?? '').trim();
@@ -350,9 +301,6 @@ sofaCombos.get('/history', async (c) => {
   if (!baseModel) return c.json({ error: 'base_model_required' }, 400);
   if (!modulesRaw) return c.json({ error: 'modules_required' }, 400);
 
-  // `modules` arrives as a JSON-encoded slot-set (string[][]). Fall back to
-  // the legacy CSV flat form (`a,b,c`) so older callers keep working — each
-  // code becomes a singleton slot via normalizeComboModules.
   let parsedModules: unknown;
   try {
     parsedModules = JSON.parse(modulesRaw);
@@ -386,8 +334,6 @@ sofaCombos.get('/history', async (c) => {
     q = q.eq('customer_id', customerIdRaw);
   }
 
-  // Supplier scope — same convention as GET /: provided = that supplier;
-  // omitted / NULL sentinels = sales-side history (supplier_id IS NULL).
   if (supplierIdRaw !== undefined && supplierIdRaw !== '' && supplierIdRaw !== 'null') {
     q = q.eq('supplier_id', supplierIdRaw);
   } else {
@@ -405,12 +351,6 @@ sofaCombos.get('/history', async (c) => {
 });
 
 
-/* Auto-derive stage 5b (owner Option 1, COST-ONLY): after a SUPPLIER-scoped
-   combo write, derive the MASTER combo's COST grid (prices_by_height) from the
-   most-expensive supplier combo for the same scope tuple and append a master row
-   — preserving the master's SELLING grid (selling_prices_by_height, POS). No
-   supplier combo -> nothing derived (a gap the owner fills). This replaces the
-   sofa_combo_anchor mirror. Best-effort; flag-gated by the caller. */
 async function recomputeMasterComboCostFromSuppliers(
   supabase: SupabaseClient,
   savedRow: Row,
@@ -465,17 +405,6 @@ async function recomputeMasterComboCostFromSuppliers(
   }
 }
 
-// ── POST / ─────────────────────────────────────────────────────────────
-// Create a new combo row. body: {
-//   baseModel, modules: string[][], tier?: SofaPriceTier | null,
-//   customerId?: uuid | null, pricesByHeight: { '<inch>': centi | null },
-//   label?: string, effectiveFrom: 'YYYY-MM-DD', notes?: string
-// }
-// `modules` is the OR-set slot-set (string[][]); a flat string[] is also
-// accepted for back-compat (each code → a singleton slot).
-// Always INSERTs (append-only). To "edit" an existing combo, POST a new
-// row with the same scope tuple + a fresher effectiveFrom.
-// Exported so a test can drive it without the supabaseAuth bridge.
 export const sofaComboCreateHandler = async (c: AppContext) => {
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
@@ -522,7 +451,6 @@ export const sofaComboCreateHandler = async (c: AppContext) => {
       ? null
       : body.customerId;
 
-  // Supplier scope — null when absent = sales-side / master combo.
   const supplierId =
     body.supplierId === null || body.supplierId === '' || body.supplierId === undefined
       ? null
@@ -531,7 +459,6 @@ export const sofaComboCreateHandler = async (c: AppContext) => {
   const supabase = c.get('supabase');
   const user = c.get('user');
 
-  // SELLING prices (Master Admin) — what the customer pays.
   const sellingProvided = body.sellingPricesByHeight !== undefined;
   const selling = sellingProvided ? validatePricesByHeight(body.sellingPricesByHeight) : null;
   if (sellingProvided && !selling) return c.json({ error: 'selling_prices_by_height_invalid' }, 400);
@@ -542,34 +469,21 @@ export const sofaComboCreateHandler = async (c: AppContext) => {
   const pwpPrices = pwpProvided ? validatePricesByHeight(body.pwpPricesByHeight) : null;
   if (pwpProvided && !pwpPrices) return c.json({ error: 'pwp_prices_by_height_invalid' }, 400);
 
-  // COST prices (Backend / PO benchmark). Three cases (Chairman 2026-05-31):
-  //   1. client sends pricesByHeight        → use it (Backend keys / overrides).
-  //   2. client omits it but sends selling  → AUTO-DETECT = Σ module SKU costs
-  //      (base_price_sen) for every height the selling covers. A combo is just
-  //      existing module SKUs assembled, so its cost = the sum of those SKUs'
-  //      cost (auto key-in; Backend can override later via PUT). A height the
-  //      module costs can't price stays null (no phantom cost).
-  //   3. client omits both                  → reject (nothing to price).
   let prices: Record<string, number | null> | null;
   if (body.pricesByHeight !== undefined) {
     prices = validatePricesByHeight(body.pricesByHeight);
     if (!prices) return c.json({ error: 'prices_by_height_invalid' }, 400);
   } else if (selling) {
     const moduleCosts = await loadModelSofaModuleCosts(supabase, baseModel, activeCompanyId(c));
-    const costSen = sofaComboCostSen(modules, moduleCosts); // sen == combo centi scale
+    const costSen = sofaComboCostSen(modules, moduleCosts);
     prices = {};
     for (const h of Object.keys(selling)) prices[h] = costSen > 0 ? costSen : null;
   } else {
     return c.json({ error: 'prices_by_height_required' }, 400);
   }
 
-  // SELLING defaults to cost when not supplied (no silent free combo).
   const sellingPrices = selling ?? prices;
 
-  // Never persist an all-null combo — there must be a price to charge. At least
-  // one height needs a non-null CHARGED value (selling, else cost). The
-  // Create-Combo POS modal always sends one; this rejects hand-crafted all-null
-  // payloads (Phase 5 review).
   if (!comboHasChargedPrice(sellingPrices, prices)) {
     return c.json({ error: 'selling_prices_all_null', message: 'At least one height needs a price' }, 400);
   }
@@ -613,9 +527,6 @@ export const sofaComboCreateHandler = async (c: AppContext) => {
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
 
-  // R8 — if this base model is anchored to a supplier, mirror the just-saved
-  // combo to the other side (master ⇄ that supplier). Best-effort: a mirror
-  // failure leaves the primary row intact and just reports mirrored:false.
   const savedRow = data as unknown as Row;
   let mirrored = false;
   // Auto-derive (flag-gated): a supplier-scope write derives the MASTER combo
@@ -630,12 +541,6 @@ export const sofaComboCreateHandler = async (c: AppContext) => {
 };
 sofaCombos.post('/', sofaComboCreateHandler);
 
-// ── PUT /:id ───────────────────────────────────────────────────────────
-// Convenience alias: edit by id = read the row's tuple + insert a NEW row
-// with the supplied effectiveFrom / prices / etc. The caller can also use
-// POST directly with the tuple — this just saves the round-trip when the
-// UI already has a row id.
-// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
 export const sofaComboPutHandler = async (c: any) => {
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
@@ -643,11 +548,6 @@ export const sofaComboPutHandler = async (c: any) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
 
-  /* Company scope. sofa_combo_pricing carries company_id NOT NULL + FK since
-     migration 0083, and requireWriteRole above checks the scm_config_write
-     PERMISSION only — no tenancy. An unscoped read-by-id let this edit-by-id
-     alias clone ANOTHER company's combo price into a new row for the active
-     company. Mirror the scoped DELETE /:id below. */
   const { data: orig, error: findErr } = await scopeToCompany(supabase
     .from('sofa_combo_pricing')
     .select('base_model, modules, tier, customer_id, supplier_id, selling_prices_by_height, pwp_prices_by_height, default_free_gifts')
@@ -655,8 +555,6 @@ export const sofaComboPutHandler = async (c: any) => {
     .maybeSingle();
   if (findErr) return c.json({ error: 'load_failed', reason: findErr.message }, 500);
   if (!orig) return c.json({ error: 'not_found' }, 404);
-  // An edit re-saves the combo's own modules, so a wrong shape is refused
-  // here too: change its modules (recompose) or retire it instead.
   const shape = onePieceSetRefusal(orig.modules ?? []);
   if (shape) return c.json(shape, 400);
 
@@ -679,24 +577,11 @@ export const sofaComboPutHandler = async (c: any) => {
   const prices = validatePricesByHeight(body.pricesByHeight);
   if (!prices) return c.json({ error: 'prices_by_height_invalid' }, 400);
 
-  // SELLING prices (Master Admin). Audit (ported from 2990 21163bde) — the
-  // Backend Combo Pricing COST editor sends ONLY pricesByHeight (no
-  // sellingPricesByHeight). The old default (sellingPrices = the freshly-
-  // submitted COST map) silently OVERWROTE the customer SELLING price with cost
-  // on every cost edit, collapsing the charged price down to cost downstream
-  // (comboChargedPrices) = silent revenue loss. Carry the ORIGINAL selling map
-  // forward when the body omits it (mirrors the PWP carry-forward below); only an
-  // explicit sellingPricesByHeight changes it. Falls back to the cost map only
-  // for a legacy row that has no selling.
   const sellingPrices = body.sellingPricesByHeight === undefined
     ? ((orig as { selling_prices_by_height: Record<string, number | null> | null }).selling_prices_by_height ?? prices)
     : validatePricesByHeight(body.sellingPricesByHeight);
   if (!sellingPrices) return c.json({ error: 'selling_prices_by_height_invalid' }, 400);
 
-  // Audit (ported from 2990 21163bde) — mirror the POST all-null guard: never
-  // persist an all-null combo. An empty / all-null edit would become the newest
-  // effective row and match no height in the lookup, silently disabling the
-  // combo (build reverts to à-la-carte with no error).
   if (!comboHasChargedPrice(sellingPrices, prices)) {
     return c.json({ error: 'selling_prices_all_null', message: 'At least one height needs a price' }, 400);
   }
@@ -714,9 +599,6 @@ export const sofaComboPutHandler = async (c: any) => {
     return c.json({ error: 'effective_from_required', message: 'YYYY-MM-DD' }, 400);
   }
 
-  // Supplier scope is part of the combo's identity, so the new effective row
-  // stays in the SAME supplier scope as the original (same as customer_id).
-  // An explicit supplierId in the body may override it (null = sales-side).
   const supplierId =
     body.supplierId === undefined
       ? (orig as { supplier_id: string | null }).supplier_id
@@ -754,8 +636,6 @@ export const sofaComboPutHandler = async (c: any) => {
 
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
 
-  // Auto-derive (flag-gated): a supplier-scope write derives the master combo
-  // COST from the most-expensive supplier. Anchor mirror removed (see POST).
   const savedRow = data as unknown as Row;
   const mirrored = false;
   if (savedRow.supplier_id != null && (await autoDeriveEnabled(supabase, activeCompanyId(c)))) {
@@ -765,15 +645,7 @@ export const sofaComboPutHandler = async (c: any) => {
 };
 sofaCombos.put('/:id', sofaComboPutHandler);
 
-// ── DELETE /:id ────────────────────────────────────────────────────────
-// Soft-delete. The History drawer still shows the row; pricing lookup
-// skips it (the picker filters deleted_at IS NULL).
 sofaCombos.delete('/:id', async (c) => {
-  /* Company scope. sofa_combo_pricing carries company_id NOT NULL + FK since
-     migration 0083, and requireWriteRole above checks the scm_config_write
-     PERMISSION only — no tenancy — so an unscoped soft-delete by id retired
-     another company's combo price. Verified 2026-08-13: read the gate, then the
-     table's DDL, before changing anything. */
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
 
@@ -794,10 +666,6 @@ sofaCombos.delete('/:id', async (c) => {
   return c.body(null, 204);
 });
 
-// ── Batch writes ───────────────────────────────────────────────────────
-// A combo on the screen is one model + module set across Price 1 to 4 and every
-// supplier; the rows below it are that combo's tuples. These three routes write
-// at that level, so one save or one Excel file is one atomic insert.
 
 const COMBO_COLUMNS =
   'id, base_model, modules, tier, customer_id, supplier_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, default_free_gifts, label, ' +
@@ -848,7 +716,6 @@ const rederiveMasters = async (c: AppContext, rows: readonly Row[]): Promise<voi
   if (rows.length === 0 || !(await autoDeriveEnabled(c.get('supabase'), companyId))) return;
   const done = new Set<string>();
   for (const r of rows) {
-    // A wrong-shaped supplier combo must not mint a master row of its shape.
     if (isOnePieceSetCombo(r.modules)) continue;
     const key = JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? []), r.tier, r.customer_id]);
     if (done.has(key)) continue;
@@ -893,11 +760,6 @@ function parseApplyItem(raw: unknown): ApplyItem | string {
   };
 }
 
-// POST /apply — body { items: [{ baseModel, modules, tier, supplierId, prices,
-// effectiveFrom, label?, notes? }] }. `prices` names only the cells to change;
-// null takes a price away. {} on a combo that does not exist yet opens it with no
-// price, which every pricing path skips (pickComboMatch needs a number), and is a
-// no-op on one that does, so assigning twice adds nothing.
 export const sofaComboApplyHandler = async (c: AppContext) => {
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
@@ -955,8 +817,6 @@ export const sofaComboApplyHandler = async (c: AppContext) => {
     const labelChanged = item.label !== undefined && item.label !== (prior?.label ?? null);
     if (prior && !queued && !merged.changed && !labelChanged) continue;
 
-    // The engine reads every row of a tuple, so a height emptied on a new row would
-    // fall through to the older row's price. Taking a price away has to retire them.
     const removing = merged.removed.length > 0;
     if (removing) retire.push(...tuple.map((r) => r.id));
     pending.set(key, {
@@ -997,10 +857,6 @@ export const sofaComboApplyHandler = async (c: AppContext) => {
 };
 sofaCombos.post('/apply', sofaComboApplyHandler);
 
-// POST /retire — body { items: [{ baseModel, modules }], supplierId }. Takes the whole
-// combo away, every Price and every old row (retiring only the newest row would bring
-// the older one back). Without a supplier it is the master combo, and every supplier's
-// copy goes with it: a supplier combo has nothing to connect to once the combo is gone.
 export const sofaComboRetireHandler = async (c: AppContext) => {
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
@@ -1031,7 +887,6 @@ export const sofaComboRetireHandler = async (c: AppContext) => {
   const hit = live.rows.filter((r) =>
     wanted.has(JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? [])]))
     && (supplierId === null || r.supplier_id === supplierId));
-  // Nothing of this company matched: say so, rather than "0 deleted" read as done.
   if (hit.length === 0) return c.json(NOT_THIS_COMPANY, 404);
 
   const failed = await softDeleteRows(c, hit.map((r) => r.id));
@@ -1041,10 +896,6 @@ export const sofaComboRetireHandler = async (c: AppContext) => {
 };
 sofaCombos.post('/retire', sofaComboRetireHandler);
 
-// POST /recompose — body { baseModel, from, to, supplierId, label? }. Changing the
-// modules makes a different tuple, so each Price's current row moves to the new one
-// with its prices, from today, and the old tuple is retired. Without a supplier every
-// supplier follows the master, or their combos would stop matching it.
 export const sofaComboRecomposeHandler = async (c: AppContext) => {
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
@@ -1060,8 +911,6 @@ export const sofaComboRecomposeHandler = async (c: AppContext) => {
   const from = validateComboModules(body.from);
   const to = validateComboModules(body.to);
   if (!from || !to) return c.json({ error: 'modules_required' }, 400);
-  // Moving a wrong-shaped combo to a proper set is how it gets fixed, so only
-  // the NEW modules are held to the shape.
   const shape = onePieceSetRefusal(to);
   if (shape) return c.json(shape, 400);
   const supplierId = typeof body.supplierId === 'string' && body.supplierId ? body.supplierId : null;
@@ -1086,7 +935,6 @@ export const sofaComboRecomposeHandler = async (c: AppContext) => {
     const key = JSON.stringify([r.tier, r.customer_id, r.supplier_id]);
     tuples.set(key, [...(tuples.get(key) ?? []), r]);
   }
-  // A marker row on the tuple's own date, so a price dated ahead stays ahead.
   const marker = (r: Row, modules: ComboSlots, note: string | null) => ({
     company_id: companyId,
     base_model: baseModel,
@@ -1123,8 +971,6 @@ export const sofaComboRecomposeHandler = async (c: AppContext) => {
     return c.json({ error: 'combo_exists', message: 'This model already has a combo with these modules.' }, 409);
   }
 
-  // Every row moves, not only the newest: history reads by module set, so anything
-  // left behind would vanish from it, and a price dated ahead keeps its date.
   const moved = [...old]
     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
     .map((r) => ({
@@ -1157,8 +1003,6 @@ export const sofaComboRecomposeHandler = async (c: AppContext) => {
 };
 sofaCombos.post('/recompose', sofaComboRecomposeHandler);
 
-// GET /assign-targets?baseModel= — who a model's combos can go to: which suppliers
-// carry the model, and the combos each already holds (comboSlotsKey values).
 sofaCombos.get('/assign-targets', async (c) => {
   const baseModel = (c.req.query('baseModel') ?? '').trim();
   if (!baseModel) return c.json({ error: 'base_model_required' }, 400);

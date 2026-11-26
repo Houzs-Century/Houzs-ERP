@@ -1,13 +1,3 @@
-/* The frontend half of the ONE "PO price vs invoice price" rule.
- *
- * The editor, the detail page, the list marker and the phone all decide when a
- * purchase-invoice line's price "differs" from its purchase order's. The server
- * decides it too, for the list endpoint. Two hand-written copies of that
- * decision drift — this repo's own position (check-shared-mirrors.mjs) — so the
- * rule is ONE byte-identical file in both trees and this test is the referee.
- *
- * The file sits at the top level of vendor/scm/lib on purpose: the mirror
- * checker matches by basename, non-recursively, against backend/src/scm/lib. */
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';

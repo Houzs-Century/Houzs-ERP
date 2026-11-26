@@ -12,7 +12,6 @@ export interface SourcePoNoteProps {
   inGroup: boolean;
 }
 
-/* A line with 55 POs filled a whole screen; show a few and fold the rest. */
 export const SOURCE_PO_PREVIEW = 3;
 
 /* HC-0158: the PO(s) behind the bucket's open lots, so sofa / bedframe stock
@@ -28,8 +27,6 @@ export function SourcePoNote({ sourcePos, systemQty, inGroup }: SourcePoNoteProp
   const hidden = sourcePos.length - SOURCE_PO_PREVIEW;
   const shown = showAll || hidden <= 0 ? sourcePos : sourcePos.slice(0, SOURCE_PO_PREVIEW);
   return (
-    /* Wraps between POs: a line with 55 POs on one unbreakable row made the
-       Variant column 6,000px wide and pushed the Qty columns off screen. */
     <div data-testid="source-po-note" style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', display: 'flex', flexWrap: 'wrap', columnGap: 8 }}>
       {shown.map((p) => (
         <span key={p.po} style={{ whiteSpace: 'nowrap' }}>

@@ -26,8 +26,6 @@ const line = (over: Record<string, unknown>) => ({
   counted_by: null, counted_at: null, added_on_count: false, est_unit_cost_sen: 50_000, ...over,
 });
 
-/* ONE object for every render — a fresh one per call would re-fire the page's
-   [detail.data] effect forever. */
 const RACKS = { data: [{ id: 'r1', rack: 'Rack L5.1', zone: null }, { id: 'r2', rack: 'Rack R1.1', zone: null }] };
 const DETAIL = {
   isPending: false, error: null, refetch: () => Promise.resolve(),
@@ -112,7 +110,6 @@ describe('Stock Take detail — round 2', () => {
     expect(updateLines).toHaveBeenCalledWith(
       { id: 'st-1', lines: [expect.objectContaining({ id: 'l2', notes: 'torn box' })] },
     );
-    /* A note alone must not re-send the count (that re-stamps Counted By). */
     expect(updateLines.mock.calls[0][0].lines[0]).not.toHaveProperty('countedQty');
   });
 
@@ -126,8 +123,6 @@ describe('Stock Take detail — round 2', () => {
     expect(updateLines).not.toHaveBeenCalled();
   });
 
-  /* Owner's KL WAREHOUSE take froze: a <select> per line put 704 x 77 options
-     on the sheet. The rack box must add no options per line. */
   test('the rack column puts no dropdown options on the sheet', () => {
     draw();
     expect(document.querySelectorAll('[aria-label^="Rack for"] option').length).toBe(0);
@@ -147,7 +142,7 @@ describe('Stock Take detail — round 2', () => {
     const page = new File(['%PDF-1.4'], 'page1.pdf', { type: 'application/pdf' });
     fireEvent.change(screen.getByLabelText('Sheet pages'), { target: { files: [page] } });
     fireEvent.click(screen.getByRole('button', { name: /Read 1 page/ }));
-    await screen.findByText(/Apply 1 to the sheet/); // the unclear reading starts unticked
+    await screen.findByText(/Apply 1 to the sheet/);
     expect(readSheet).toHaveBeenCalledWith('st-1', expect.objectContaining({ mime: 'application/pdf' }));
     expect(screen.getByText(/GHOST/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Apply 1 to the sheet/ }));

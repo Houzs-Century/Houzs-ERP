@@ -48,11 +48,6 @@ export type SoWarehouseMasters = {
   stateMappings: StateWarehouseMappingRow[];
 };
 
-/* Canonicalise a state name the same tolerant way deriveWarehouseIdFromState
-   does (trim + lowercase + collapse whitespace + the known aliases), so a
-   mapping row written "Penang" still matches an SO carrying "Pulau Pinang". The
-   alias list is copied from that function deliberately: if the two ever
-   disagree, a line's warehouse would differ between the write path and MRP. */
 const STATE_ALIASES: Record<string, string> = {
   'wilayah persekutuan kuala lumpur': 'kuala lumpur',
   'wp kuala lumpur': 'kuala lumpur',
@@ -67,10 +62,6 @@ export function canonicalizeStateKey(s: string | null | undefined): string {
   return STATE_ALIASES[t] ?? t;
 }
 
-/* sales_location -> warehouse id. Case-insensitive exact match on CODE or NAME,
-   the same rule resolveWarehouseId uses on the SO->PO convert path
-   (routes/mfg-purchase-orders.ts). Exact, never fuzzy: a near-match here would
-   land stock in the wrong building. */
 export function warehouseIdFromSalesLocation(
   salesLocation: string | null | undefined,
   warehouses: WarehouseRow[],
@@ -85,7 +76,6 @@ export function warehouseIdFromSalesLocation(
   return hit?.id ?? null;
 }
 
-/* customer_state -> warehouse id, via state_warehouse_mappings. */
 export function warehouseIdFromState(
   state: string | null | undefined,
   mappings: StateWarehouseMappingRow[],
@@ -149,16 +139,9 @@ export function warehousesDiffer(
  *  warehouse that contradicts the header text. That case keeps today's NULL
  *  and the [null-warehouse] signal keeps naming it. */
 export function chooseCreateWarehouseDefault(i: {
-  /** body.salesLocation, trimmed — null when the caller sent none. */
   explicitSalesLocation: string | null;
-  /** explicitSalesLocation resolved against the warehouse master, if sent. */
   salesLocationWarehouseId: string | null;
-  /** customer_state resolved through state_warehouse_mappings. */
   stateWarehouseId: string | null;
-  /** The creating operator's scm.staff.showroom_warehouse_id — already
-   *  verified to exist in the ACTIVE company's warehouse master (the staff
-   *  row is shared across companies, so an unverified id could bind a Houzs
-   *  order to a 2990 showroom). */
   operatorStoreWarehouseId: string | null;
 }): { warehouseId: string | null; usedOperatorStore: boolean } {
   const derived = i.salesLocationWarehouseId ?? i.stateWarehouseId;
@@ -170,17 +153,6 @@ export function chooseCreateWarehouseDefault(i: {
   return { warehouseId: null, usedOperatorStore: false };
 }
 
-/* ── Loaders ────────────────────────────────────────────────────────────────
-   Kept apart from the rule above so callers that already hold the masters (MRP
-   loads the warehouse list for its own labels) do not re-read them. `scope`
-   is the caller's own company-scoping wrapper — MRP's `scoped()`, or
-   scopeToCompany bound to a Context — so this file never needs a Context and
-   works from the headless write paths too.
-
-   `scope` is REQUIRED. It used to default to "no filter", and every company has
-   its own "KL WAREHOUSE": an unscoped name match bound Houzs order lines to
-   another company's warehouse (HC-SO-013495), which the Houzs MRP cannot see,
-   so the order showed "—" and split into two POs. */
 type Scope = <T>(q: T) => T;
 
 export async function loadSoWarehouseMasters(

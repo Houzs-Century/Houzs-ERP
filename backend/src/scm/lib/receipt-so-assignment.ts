@@ -21,9 +21,7 @@ import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 export interface StockReceipt { key: string; grnId: string; poItemId: string; itemCode: string; qty: number; receivedAt: string }
 export interface DemandLine {
   soItemId: string; soDocNo: string; itemCode: string; soDate: string; needDate: string | null; qty: number;
-  /** Quantity that went out on a shipped DO, and when. */
   delivered: Array<{ date: string; qty: number }>;
-  /** Quantity already given to receipts (stored assignments). */
   assigned: number;
 }
 export interface Assignment { key: string; grnId: string; poItemId: string; soItemId: string; soDocNo: string; itemCode: string; qty: number; needDate: string | null; receivedAt: string }
@@ -78,9 +76,6 @@ export async function loadStockDemand(sb: any, companyId: number, itemCodes: str
   const soOf = (r: Row) => (Array.isArray(r.so) ? r.so[0] : r.so) as Row | null;
   const live = lines.data.filter((r) => { const so = soOf(r); return !!so && !terminal.has(String(so.status)) && (day(so.so_date) ?? '9999') <= asOf; });
   const ids = live.map((r) => String(r.id));
-  /* A few ids (one goods receipt): batch them into the filter. Thousands (the
-     overview's estimate over a year): read every line tied to an order and keep
-     the ones wanted - a few pages instead of hundreds of uuid batches. */
   const idSet = new Set(ids);
   const byIds = async (table: string, select: string) => {
     if (ids.length <= 2000) return chunkIn<Row>(ids, (b, f, t) => scopeToCompanyId(sb.from(table).select(select).in('so_item_id', b), companyId).order('id').range(f, t));
@@ -107,9 +102,6 @@ export async function loadStockDemand(sb: any, companyId: number, itemCodes: str
   return live.filter((r) => !boughtFor.has(String(r.id))).map((r) => {
     const so = soOf(r) as Row;
     const needDate = day(so.amended_delivery_date) ?? day(so.customer_delivery_date);
-    /* An order delivered before the ERP kept delivery orders (imported, no DO
-       line) went out on its delivery date — else it would look open forever
-       and swallow every later receipt. */
     const dos = deliveredOf.get(String(r.id)) ?? [];
     const delivered = dos.length || !closed.has(String(so.status)) ? dos : [{ date: needDate ?? (day(so.so_date) as string), qty: num(r.qty) }];
     return {

@@ -1,7 +1,3 @@
-/* New Consignment Order refuses a Processing / Delivery date in the past, and
-   the date pickers start at today. "Today" is the Malaysian day: at 01:30 on
-   10 Nov (Malaysia), on a machine whose clock zone is UTC, the 9th was still
-   offered and accepted. Run with TZ=UTC. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -42,7 +38,7 @@ import { NotifyProvider } from "../../vendor/scm/components/NotifyDialog";
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-11-09T17:30:00Z")); // 01:30 on 10 Nov in Malaysia
+  vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));
 });
 afterEach(() => {
   cleanup();

@@ -13,9 +13,6 @@ import { fakeSb, type Row } from './fake-postgrest';
 
 const asSb = (sb: unknown) => sb as Parameters<typeof readSoPoDocNos>[0];
 
-/* HC-SO-012411 was made into two purchase orders: one carried over from the book
-   (PO-009995) and one the ERP made (HC-PO-2609-122). A third was cancelled, and a
-   fourth has not reached the book yet. */
 const world = (extra: Record<string, Row[]> = {}) => fakeSb({
   mfg_sales_orders: [{ doc_no: 'HC-SO-012411', company_id: 1, status: 'CONFIRMED', linked_ac_docno: 'SO-012411' }],
   mfg_sales_order_items: [

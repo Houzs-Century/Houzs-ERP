@@ -1,40 +1,3 @@
-// ---------------------------------------------------------------------------
-// chunkActionRecovery — a PRINT that hit a missing chunk reloads once onto the
-// live build and reopens the same print preview.
-//
-// THE INCIDENT (2026-09-14): staff on HC-SO-012016 pressed Print in the preview
-// and got "PDF generation failed — Failed to fetch dynamically imported module:
-// https://erp.houzscentury.com/assets3/sales-order-pdf-C9QaiR37.js". That URL
-// answered 404 because the tab's build had been replaced by a later deploy
-// (Cloudflare Pages deploys are atomic). staleBuild.ts raised the "this tab is on
-// an older version" banner, but pressing Print again failed identically: a print
-// is an `await import()` inside a click handler, so no React boundary ever sees
-// it and nothing reloads.
-//
-// THE ROOT FIX IS NOT HERE. deploy.yml now carries the previous builds' hashed
-// files into every new deployment (frontend/scripts/retain-previous-assets.mjs),
-// so a tab on a recent build keeps finding its chunks. This file is the safety
-// net for a tab OLDER than that retention window.
-//
-// WHEN IT RELOADS — all of these, or it leaves the banner to do its job:
-//   • the failure is PROOF a module could not be fetched (staleBuild's narrow
-//     isDeployStaleEvidence, never the broad matcher);
-//   • it landed while a print the operator started is in flight
-//     (trackPrintAction) — a background prefetch miss must never reload a tab;
-//   • the page can put the operator back where they were: a detail page whose
-//     preview reopens from a resume (registerUrlPrintOpener, wired into
-//     useOpenPrintPreviewFromUrl), or the list's right-click print chain;
-//   • nothing on screen holds unsaved work (unsavedWork.ts);
-//   • no automatic reload of this kind happened in the last
-//     ACTION_RELOAD_COOLDOWN_MS (sessionStorage mark; if storage refuses, no
-//     reload — an attempt we cannot remember is an attempt that repeats);
-//   • one probe of the chunk gets an answer — "unknown" means the network is
-//     down, and reloading into a dead network loses the page for nothing.
-//
-// The reload fires `beforeunload`, so a page with its own guard still asks.
-// The resume reopens the PREVIEW, not the PDF: a new-tab PDF opened with no user
-// gesture is popup-blocked, and the preview is one click from any exit.
-// ---------------------------------------------------------------------------
 
 import type { PrintTarget } from "./printChain";
 import { chunkUrlFrom, isDeployStaleEvidence, probeChunk, type ChunkProbe } from "./staleBuild";
@@ -69,9 +32,6 @@ export type ActionRecoveryDeps = {
 };
 
 let intent: { resume: PrintResume; at: number } | null = null;
-/** A resumable print this listener declined to reload for (unsaved work, the
- *  cooldown, a network it could not reach). The banner's own Refresh button is
- *  the operator choosing to reload anyway, so it reopens this print too. */
 let blocked: { resume: PrintResume; at: number } | null = null;
 const urlOpeners = new Set<() => void>();
 
@@ -89,8 +49,6 @@ export function trackPrintAction<T>(resume: PrintResume, run: () => T, now: () =
     if (intent === mine) intent = null;
   };
   if (result && typeof (result as { then?: unknown }).then === "function") {
-    // A side chain, never returned: its handlers swallow, so it cannot become an
-    // unhandled rejection, and `result` itself is untouched.
     (result as unknown as PromiseLike<unknown>).then(clear, clear);
   }
   return result;
@@ -112,8 +70,6 @@ export function peekPrintResume(path: string, now: number): StoredPrintResume | 
   try {
     const raw = sessionStorage.getItem(PRINT_RESUME_KEY);
     if (!raw) return null;
-    // Read as unknown: the stored value is only as trustworthy as whatever last
-    // wrote this key, which may be an older build of this module.
     const parsed = JSON.parse(raw) as { kind?: unknown; path?: unknown; at?: unknown };
     if (parsed.path !== path) return null;
     if (!(now - Number(parsed.at) <= PRINT_RESUME_TTL_MS)) return null;
@@ -128,7 +84,6 @@ export function clearPrintResume(): void {
   try {
     sessionStorage.removeItem(PRINT_RESUME_KEY);
   } catch {
-    // Nothing stored can be read back either, so there is nothing to clear.
   }
 }
 
@@ -230,7 +185,6 @@ export function installActionChunkRecovery(deps: ActionRecoveryDeps): () => void
   return dispose;
 }
 
-// The banner's Refresh button: reopen a print this listener declined to reload for.
 onBeforeManualReload(() => {
   if (typeof window !== "undefined") rememberBlockedPrintForReload(Date.now(), window.location);
 });

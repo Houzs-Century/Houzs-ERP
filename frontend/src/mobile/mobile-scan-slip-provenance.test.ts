@@ -1,21 +1,3 @@
-/* A slip scanned on the phone must produce an order that CARRIES the slip.
-
-   ── THE BUG ────────────────────────────────────────────────────────────────
-   `/scan-so/extract` answers with `imageKey` + `receiptImageKey` — the R2 keys
-   of the photos it just read — and `MobileScan.buildPrefill` dropped both, so
-   the client-side draft create (`createDraftFromPrefill`) sent neither. Desktop
-   carries them (`SalesOrderNew` → `slipImageKey` / `receiptImageKey`, stored by
-   the create handler as `slip_image_key` / `receipt_image_key`), and
-   `MobileSODetail` already renders a "Scanned photos" card off exactly those
-   columns — permanently empty for a phone-scanned order.
-
-   ── HONEST SCOPE ───────────────────────────────────────────────────────────
-   The PRIMARY mobile path is `POST /scan-so/enqueue`, where the draft is minted
-   SERVER-side and `backend/src/scm/routes/scan-so.ts` already sets both keys on
-   the create body. The gap is the CLIENT-side path — `submitLegacy`, taken when
-   `/enqueue` answers 404 from a stale worker — which re-implements the same
-   create and lost the provenance on the way. That is the desktop-vs-mobile
-   re-implementation this fixes; it is not "every phone scan". */
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -75,8 +57,6 @@ describe('createDraftFromPrefill carries the scan provenance', () => {
   });
 
   test('a scan with no receipt photo sends no receipt key — never an empty string', () => {
-    /* The create handler stores `body.receiptImageKey ?? null`; an empty string
-       would be stored verbatim and the detail card would try to fetch "". */
     return createDraftFromPrefill(prefill({ receiptImageKey: null })).then(() => {
       const body = bodyOfLastPost();
       expect(body.slipImageKey).toBe('scan-slips/abc');

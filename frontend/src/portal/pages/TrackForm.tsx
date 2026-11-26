@@ -4,9 +4,6 @@ import { Search } from "lucide-react";
 import { PortalFrame } from "../components/PortalFrame";
 import { portalApi } from "../portalApi";
 
-// Public page at /track. Customer enters their ASSR number + phone.
-// On match, backend issues a 30-min token and we redirect to the
-// self-contained portal case URL.
 
 export function TrackForm() {
   const [assrNo, setAssrNo] = useState("");

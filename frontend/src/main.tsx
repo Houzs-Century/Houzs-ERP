@@ -3,10 +3,6 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import App, { preloadRouteChunks } from "./App";
 import "./index.css";
-// Vendored 2990's brand tokens (CSS custom properties only — the global
-// body/h1/table element resets from 2990's main.css are deliberately NOT
-// imported, so the rest of Houzs is unaffected). Scopes via :root variables
-// that the vendored /scm/* pages + design-system read from.
 import "./vendor/design-system/tokens.css";
 import "./theme.css";
 import { ToastProvider } from "./hooks/useToast";
@@ -33,9 +29,6 @@ import { readAuthToken } from "./lib/authToken";
 import { canonicalRedirectUrl } from "./lib/canonicalHost";
 import { appSurfaceForPath, useAppSurface } from "./routing/appSurface";
 
-// index.html already set <html data-theme> before first paint; this only
-// keeps it in step with later changes (Auto, other tabs). Loaded lazily to
-// stay off the first-load budget.
 void import("./lib/theme").then((m) => m.initTheme());
 
 // Canonical-domain guard (owner 2026-07: "我要全部看到 .houzscentury.com").
@@ -61,11 +54,6 @@ void import("./lib/theme").then((m) => m.initTheme());
 const canonicalTarget = canonicalRedirectUrl(window.location.href);
 if (canonicalTarget) window.location.replace(canonicalTarget);
 
-// The public surfaces (survey, customer/supplier portal, password reset)
-// are split out of the staff bundle — staff never download them, and the
-// public flows skip the whole dashboard bundle in return.
-// Lazy so the initial bundle does not carry it; it wraps the router a moment
-// after first paint, before anyone has typed into a form.
 const LeaveGuardBridge = lazy(() => import("./components/LeaveGuardBridge").then((m) => ({ default: m.LeaveGuardBridge })));
 const SurveyPublic = lazy(() => import("./pages/SurveyPublic").then((m) => ({ default: m.SurveyPublic })));
 const PortalApp = lazy(() => import("./portal/PortalApp").then((m) => ({ default: m.PortalApp })));
@@ -73,8 +61,6 @@ const MeetingBook = lazy(() => import("./pages/MeetingBook").then((m) => ({ defa
 const PublicDoScan = lazy(() => import("./pages/PublicDoScan").then((m) => ({ default: m.PublicDoScan })));
 const PublicDoScanBasket = lazy(() => import("./pages/PublicDoScanBasket").then((m) => ({ default: m.PublicDoScanBasketPage })));
 const ResetPassword = lazy(() => import("./pages/ResetPassword").then((m) => ({ default: m.ResetPassword })));
-// Invite acceptance rides in the unauthenticated-screens chunk (see
-// auth/AuthGate.tsx) — same split, same reason: staff sessions never load it.
 const AcceptInviteScreen = lazy(() => import("./auth/AuthScreens").then((m) => ({ default: m.AcceptInviteScreen })));
 const PrivacyPolicy = lazy(() => import("./pages/PrivacyPolicy").then((m) => ({ default: m.PrivacyPolicy })));
 const ContractorCalendar = lazy(() => import("./pages/ContractorCalendar").then((m) => ({ default: m.ContractorCalendar })));
@@ -84,39 +70,12 @@ function PublicFallback() {
   return <div className="flex min-h-screen items-center justify-center text-sm text-ink-muted">Loading</div>;
 }
 
-// Register the service worker + capture installability events.
-// Safe on every page (survey/portal/supplier all benefit too).
-//
-// Skipped when we are mid-redirect to the canonical domain: `location.replace`
-// does not halt script execution, so without this guard we would install a
-// service worker on the very origin we are abandoning — leaving a cached shell
-// behind on `houzs-erp.pages.dev` for a host nobody should be using.
 if (!canonicalTarget) registerPwa();
 
-// Self-hosted client error reporting: window error + unhandledrejection
-// listeners, batched to POST /api/client-errors. Installed BEFORE React renders
-// so even a first-render crash is captured. Prod builds only; reporting never
-// changes behaviour (see lib/errorReporter.ts).
 installGlobalErrorReporting();
 loadDeferredFontStylesheet(document, CJK_FONT_STYLESHEET);
-/* The other half of that: a dynamic import() that rejects inside an async event
-   handler is CAUGHT by that handler, so it is never an unhandledrejection and
-   installGlobalErrorReporting above cannot see it, and no React boundary sees it
-   either. Vite's preload wrapper is the one place every dynamic import in the
-   build passes through. Installed here, before React mounts, so a failure during
-   boot is not missed. See lib/staleBuild.ts for exactly what is and is not
-   covered. */
 installChunkFailureWatch();
-// Lazy: not needed for first paint, and the entry chunk sits at its size ceiling.
 void import("./lib/numberInputWheel").then((m) => m.installNumberInputWheelGuard());
-/* A PRINT that hits a chunk a deploy deleted reloads once and reopens its
-   preview (lib/chunkActionRecovery.ts). That listener installs itself on the
-   first tracked print, so it is not imported here: it would add ~0.9 KB gzip to
-   the initial bundle for code only a print needs. */
-/* One-shot: drop the persisted table sorts a bug made permanent, so nobody has
-   to find the Columns drawer and press Reset on every list page and device.
-   Guarded by its own marker — a sort chosen deliberately after this ships is
-   never touched. */
 clearStaleTableSorts();
 
 // Multi-window company hand-off (owner 2026-07-23): the company switcher's
@@ -144,46 +103,21 @@ const LOGIN_AS_HOSTS = new Set([
 if (LOGIN_AS_HOSTS.has(window.location.hostname)) {
   const m = /[#&]login-as=([^&]+)/.exec(window.location.hash);
   if (m) {
-    // Through tokenStore, not a hand-rolled pair of storage calls: it owns the
-    // persistent/session split, and open-coding it here is what let this path
-    // drift. persistent=false keeps the "never remember me" intent.
     tokenStore.set(decodeURIComponent(m[1]), false);
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
   }
 
-  // POS→Houzs SSO handoff (2026-07-22): a POS button opens
   //   https://erp.houzscentury.com/#sso=<token>&next=<path>
-  // where <token> came from POST /api/pos/exchange-web-session (mints a fresh
-  // desktop session for the same user). Store the token session-only, jump to
-  // <next>, and scrub the hash — so the salesperson lands on the Houzs page
-  // (Manual SO / Service Case) already logged in, no email+password prompt.
-  // Same tokenStore + `persistent: false` semantics as the login-as flow above.
   const sso = /[#&]sso=([^&]+)/.exec(window.location.hash);
   if (sso) {
     tokenStore.set(decodeURIComponent(sso[1]), false);
     const next = /[#&]next=([^&]+)/.exec(window.location.hash);
-    // Safe next: same-origin path only (starts with a single '/', not '//' to
-    // rule out protocol-relative). Falls back to '/' otherwise.
     const rawNext = next ? decodeURIComponent(next[1]) : "/";
     const safeNext = /^\/(?!\/)/.test(rawNext) ? rawNext : "/";
     window.history.replaceState(null, "", safeNext);
   }
 }
 
-// Public routes that must bypass the staff AuthGate entirely:
-//   /survey/:token       — tokenized customer satisfaction survey
-//   /d/:token            — the printed delivery-order QR (no login, owner's call)
-//   /d/scan              — the pile scanner: scan several, press once (2026-08-27)
-//   /track               — public case-lookup form (ASSR no + phone)
-//   /portal/case/:token  — customer-facing case view scoped by token
-// The selection is made from the LIVE Router location. It used to be frozen
-// here at module evaluation, so navigate("/") changed the address bar but left
-// reset/invite users trapped inside the old public-only route tree.
-// Invitation acceptance is a real public route (/invite/:token) so the
-// set-password screen works even when a session already exists (e.g. the
-// owner clicking the link while logged in). It needs AuthProvider for
-// acceptInvite(), but renders OUTSIDE AuthGate so a live session doesn't
-// short-circuit it into the dashboard.
 function RootApp() {
   const surface = useAppSurface();
   if (surface === "survey") {
@@ -208,8 +142,6 @@ function RootApp() {
     );
   }
   if (surface === "doscanbasket") {
-    /* The pile scanner, on its own page and outside the AuthGate for the same
-       reason /d/:token is: the storekeeper holding the papers has no account. */
     return (
       <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <PublicDoScanBasket />
@@ -217,8 +149,6 @@ function RootApp() {
     );
   }
   if (surface === "contractor") {
-    /* A booth contractor's own confirmed schedule, outside AuthGate for the same
-       reason /d/:token is: the contractor has no Houzs account. */
     return (
       <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <ContractorCalendar />
@@ -226,7 +156,6 @@ function RootApp() {
     );
   }
   if (surface === "book") {
-    /* A meeting-room booking link: the guest has no account, so it is outside AuthGate like /c/. */
     return (
       <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <MeetingBook />
@@ -234,7 +163,6 @@ function RootApp() {
     );
   }
   if (surface === "brand") {
-    /* A brand's own confirmed schedule — same no-login token rule as /c/. */
     return (
       <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <BrandCalendar />
@@ -278,57 +206,23 @@ function RootApp() {
       <AuthGate>
         <App />
       </AuthGate>
-      {/* OUTSIDE AuthGate, not inside App: AuthGate renders MobileApp INSTEAD of
-          App, so the banner mounted in App() covered the desktop shell only and
-          all 28 lazy mobile screens got no deploy warning whatsoever. One mount
-          here covers both surfaces. */}
       <NewVersionBanner />
     </AuthProvider>
   );
 }
 
-/* Boot head start for a signed-in staff session (2026-11-11). Measured on
-   production, a cold /scm/delivery-planning ran its work strictly in series:
-   entry chunks -> /api/auth/me -> SCM shell chunk -> page chunk -> board data,
-   ~15 s before the board's first request. None of those steps needs the one
-   before it to have FINISHED to start downloading, so start them now:
-     - /api/auth/me goes out before React mounts (AuthProvider takes it over);
-     - the landing route's chunks (page + SCM shell) download while that
-       request is in flight — the phone shell instead on a phone.
-   Only the ONE route in the address bar is warmed, never a list. No token
-   (login screen) or a public surface: nothing is started. A refused guard or a
-   failed chunk changes nothing: render still owns the real load and the
-   existing ChunkReloadBoundary ladder still handles a stale chunk. */
 if (!canonicalTarget && readAuthToken() && appSurfaceForPath(window.location.pathname) === "staff") {
   primeAuthMe();
   if (mobileShellEnabled(isMobileViewportNow())) preloadMobileApp();
   else preloadRouteChunks(window.location.pathname);
 }
 
-/* Native biometric session restore (flag-gated, default OFF — see
-   lib/nativeSession.ts). Awaited BEFORE mount so the first authed request
-   already carries the restored token, rather than firing unauthenticated and
-   bouncing the user to a login screen they did not need.
-
-   The safety property that makes an await here acceptable on the boot path:
-   restoreNativeSession can only ADD a token, never remove or replace one, and
-   it never throws. Off the app, or with the flag off, it returns on its first
-   line — so the web boot is unchanged, synchronous in effect, and cannot be
-   made slower by a Keychain that is not there. */
 await restoreNativeSession();
 
-/* Keep the APNs registration fresh on every authed boot (iOS can rotate the
-   device token; the server row carries last_seen_at). NOT awaited — boot must
-   not wait on a permission dialog or the network. Only runs with a session
-   present: an already-granted permission re-registers silently, a denied one
-   returns, and a user who has never signed in is never prompted at boot. */
 if (readAuthToken()) void registerNativePush();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {/* Top-level boundary: any render error (in Layout, Sidebar, a provider, or
-        a route) shows a friendly reload panel instead of a white screen, and
-        auto-reloads once on a stale-chunk error after a deploy. */}
     <ChunkReloadBoundary>
     <QueryClientProvider client={queryClient}>
     <BrowserRouter>

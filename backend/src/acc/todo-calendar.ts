@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// acc/todo-calendar — the To do's month calendar (the owner's Claude Design
-// redesign, Finance-1a-To-do, batch 2): what falls on each day — payments due,
-// money due in, routines, tasks, and what went late — and the next 7 days.
-// Pure; the reads are scm/routes/accounting-todo-calendar.ts.
-//
-// The design's kinds and rules, kept: a task or routine may be dragged to
-// another day ("this time only"); a bill or invoice keeps the date its own
-// document gives; a late item clears when the thing arrives.
-// ----------------------------------------------------------------------------
 
 import { fmtDate } from '../scm/shared/format';
 import { addDays, occurrenceDays, repeatText, type TaskLink, type TaskOccurrence, type TodoTask } from './todo-tasks';
@@ -16,20 +6,15 @@ export type CalKind = 'pay' | 'in' | 'routine' | 'task' | 'late';
 
 export type CalEvent = {
   key: string;
-  /** Where it shows: the day it falls, or where it was moved. */
   day: string;
   kind: CalKind;
   label: string;
-  /** The chip's few words. */
   short: string;
   detail: string;
   amountSen: number | null;
   done: boolean;
-  /** Where its button goes (a bill, a voucher, a page). */
   to: string | null;
-  /** A task or routine — the page can open, mark or move it. */
   task: { id: string; occursOn: string; kind: 'task' | 'routine'; action: TodoTask['action']; link: TaskLink | null; mine: boolean } | null;
-  /** A supplier bill — dragged to another day, its planned payment date moves (step 7); its due date stays. */
   bill?: { kind: 'API' | 'PI'; id: string; no: string; due: string | null; planned: string | null };
 };
 
@@ -54,7 +39,6 @@ export function taskEvents(
   for (const t of tasks) {
     if (t.isOff) continue;
     const touched = new Map((occurrences[t.id] ?? []).map((o) => [o.occursOn, o]));
-    /* An occurrence moved INTO the month may fall outside it: look two months either side. */
     const days = new Set(occurrenceDays(t, addDays(from, -62), addDays(to, 62)));
     for (const o of touched.values()) if (o.movedTo) days.add(o.occursOn);
     for (const d of days) {

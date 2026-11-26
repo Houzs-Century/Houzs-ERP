@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// sales-order-pdf-render — the Sales Order document's LAYOUT, shared by the
-// browser (sales-order-pdf.ts: the ERP page's Print / PDF) and the Worker (the
-// AI Connector's get_pdf, backend/src/services/mcp-pdf.ts). One copy of the
-// drawing code, so the two cannot drift. Worker-safe by rule: no DOM, no React,
-// no api client — the print-time lookups arrive as `SoPdfSources`.
-// ----------------------------------------------------------------------------
 
 import { formatPhone } from '@2990s/shared/phone';
 import { buildVariantSummary, withFabricSupplierCode } from '@2990s/shared';
@@ -52,55 +45,15 @@ import { FABRIC_VARIANT_KEYS } from './supplier-doc-data-core';
 
 /** The print-time lookups a Sales Order needs, from whoever runs the render. */
 export type SoPdfSources = {
-  /** internal fabric code → fabric_description (fail-soft: empty map). */
   fabricDescriptionMap(codes: string[]): Promise<Map<string, string>>;
-  /** internal fabric code → supplier external colour code (fail-soft: empty map). */
   fabricSupplierMap(codes: string[]): Promise<Map<string, string>>;
-  /** One line photo's bytes by its FULL R2 key (thumb or original); throws when absent. */
   linePhoto(docNo: string, itemId: string, fullKey: string): Promise<Blob>;
-  /** Photo bytes → an image jsPDF can embed; null = skip the photo. */
   photoImage(blob: Blob): Promise<PdfPhotoImage | null>;
-  /** Make the company letterhead (and its logo) ready before drawing. */
   letterheadReady(): Promise<void>;
-  /** The resolved brand's logo; null = fall back to the company logo. */
   brandLogo(key: string): Promise<PdfLogo | null>;
-  /** The product category registry (section headings print its names); [] = headings read the Title Case code. */
   productCategories(): Promise<readonly ProductCategory[]>;
 };
 
-// ----------------------------------------------------------------------------
-// Sales Order PDF generator — dynamic jspdf import so it doesn't bloat the
-// main bundle. ~430 kB on its own (gzipped 143 kB); rendered into a vendor
-// chunk by Vite's automatic chunk-splitter.
-//
-// 2026-06-12 REBUILD — layout mirrors the POS customer printout
-// (apps/pos/src/pages/SalesOrderPrint.tsx), the document the owner signed
-// off as the SO gold standard. INTERNAL + CUSTOMER-facing: our codes only,
-// NO supplier data ever.
-//
-// Layout (A4 portrait):
-//   1. Header: real letterhead (pdf-common COMPANY = legal.ts COMPANY_LEGAL)
-//      left; SALES ORDER + SO no / date / status right
-//   2. ORDER REFERENCE / DELIVERY ESTIMATE meta blocks (processing date +
-//      delivery date — "To be confirmed" when null, like POS)
-//   3. BILL TO / SOLD BY columns (delivery address = ship_to_address ??
-//      address1-4; phone; family/emergency contact; agent + sales location)
-//   4. Line items table: ONE ROW PER SO LINE ITEM (no sofa-build folding),
-//      ordered SOFA+MATTRESS → BEDFRAME → ACCESSORY → others → SERVICE last.
-//      SKU | Description (desc / description2 or remark / specs line —
-//      fabric code enriched with the fabric_trackings description; PWP
-//      notes after) | Qty | Unit | Disc | Line Total. A line carrying
-//      photo_urls appends " (photo)" to its first description line.
-//   4b. ITEM PHOTOS — row-number-keyed thumbnail groups for the
-//      lines that carry photos (shared pdf-item-photos module); absent when
-//      no line has photos
-//   5. PAYMENTS RECEIVED ledger (mfg_sales_order_payments rows)
-//   6. Totals: SUBTOTAL / PAID TO DATE / TOTAL / BALANCE DUE
-//   7. Customer signature (stored signature_b64 image when present) +
-//      name · phone, company authorised signature
-//   8. Numbered terms — RECEIPT_TERMS wording from apps/pos/src/lib/legal.ts
-//   9. Footer: doc no · portal label · page n of m
-// ----------------------------------------------------------------------------
 
 type SoHeader = {
   doc_no: string;
@@ -112,7 +65,6 @@ type SoHeader = {
   branding: string | null;
   venue: string | null;
   ref: string | null;
-  /* The CO form writes the customer's reference here, not in `ref`. */
   customer_so_no?: string | null;
   po_doc_no: string | null;
   phone: string | null;
@@ -125,15 +77,10 @@ type SoHeader = {
   accessories_sen: number;
   others_sen: number;
   local_total_sen: number;
-  /* Expected deposit target the commander sets on the SO. Distinct from
-     amounts actually collected — those live in the payments ledger below. */
   deposit_sen?: number;
   line_count: number;
   currency: string;
   note: string | null;
-  /* 2026-06-12 rebuild — POS-printout parity fields. All optional: every
-     caller passes the raw GET /mfg-sales-orders/:docNo row verbatim, and the
-     Consignment Order reuse path (no such columns) simply omits them. */
   sales_location?: string | null;
   customer_po?: string | null;
   customer_delivery_date?: string | null;
@@ -143,29 +90,14 @@ type SoHeader = {
   city?: string | null;
   postcode?: string | null;
   customer_state?: string | null;
-  /* Second/family contact — the SO schema has no phone2/contact column; the
-     emergency_contact_* trio (POS handover "Emergency" phase) is the family
-     contact and prints as such. */
   emergency_contact_name?: string | null;
   emergency_contact_phone?: string | null;
   emergency_contact_relationship?: string | null;
-  /* Owner batch 2026-07 — ORDER DETAILS additions. Stamped by GET /:docNo
-     (scm.staff lookup on salesperson_id); optional so the Consignment Order
-     reuse path (no such columns) simply omits them and the rows don't print. */
   salesperson_name?: string | null;
   salesperson_phone?: string | null;
-  /* Authoritative received-to-date rollup stamped by GET /:docNo (ledger +
-     legacy header deposit). Falls back to summing `payments` when absent. */
   paid_sen_total?: number | null;
-  /* The part of paid_sen_total outside the payments ledger (a legacy header deposit), stamped by GET /:docNo. */
   paid_outside_ledger_sen?: number | null;
-  /* POS handover customer signature (data-URL or bare base64 PNG). */
   signature_b64?: string | null;
-  /* Owner 2026-07 — brand letterhead. Stamped by GET /:docNo (SOFA→ZANOTTI,
-     else first-item description-prefix match against project_brands). When
-     set, the SO letterhead prints THIS brand's logo instead of the company
-     logo (company stays the fallback). Optional so the Consignment Order
-     reuse path simply omits it. */
   resolvedBrandLogoKey?: string | null;
   resolved_brand_logo_key?: string | null;
 };
@@ -183,23 +115,10 @@ type SoItem = {
   total_sen: number;
   variants: Record<string, unknown> | null;
   remark?: string | null;
-  /* A retired line. GET /:docNo returns cancelled rows along with the live ones
-     (it is the SO's history), so every caller hands them to this generator —
-     see the filter at the top of renderSalesOrderInto. Optional because older
-     callers pass rows that predate the column. */
   cancelled?: boolean | null;
-  /* Line reference photos (R2 keys, mfg_sales_order_items.photo_urls).
-     Optional so callers that predate the column (Consignment Order reuse)
-     stay valid. When present the row's first description line gains the
-     " (photo)" marker and the ITEM PHOTOS block prints the `.thumb` siblings. */
   photo_urls?: string[] | null;
 };
 
-/* Mirrors flow-queries.ts `SoPayment`. Re-declared here to keep the PDF
-   helper free of TanStack/Supabase imports — it's called from both the
-   detail page (where the hook supplies the data) and the list page (where
-   a one-shot fetch supplies it). Fields the PDF doesn't render are still
-   accepted so callers can pass the row verbatim. */
 type SoPayment = {
   paid_at: string;
   /* 2026-06-06 payment-method unify — 'installment' is first-class;
@@ -209,9 +128,6 @@ type SoPayment = {
   /* A negative converted row is money that LEFT (owner 2026-09-16). */
   converted_to_so_doc_no?: string | null;
   refund_pv_id?: string | null;
-  /* Task #122 (cascade) — merchant_provider / installment_months are now
-     open string + integer (driven by the so_dropdown_options cascade
-     categories). online_type is the new Online sub-type column. */
   merchant_provider: string | null;
   installment_months: number | null;
   online_type?: string | null;
@@ -222,10 +138,6 @@ type SoPayment = {
   note: string | null;
 };
 
-/* Numbered T&C — copied verbatim from apps/pos/src/lib/legal.ts
-   RECEIPT_TERMS (the POS printout is the legal record; keep in sync). */
-/* `noun` lets the Consignment Order reuse this template without printing
-   "sales order" wording (Commander 2026-06-19 — same fix Hookka shipped). */
 const receiptTerms = (noun: string): readonly string[] => [
   `This ${noun} becomes a binding tax invoice once goods are delivered and full payment is reconciled.`,
   'Balance due is payable in full before delivery. Bank transfer, DuitNow QR, and cheque accepted.',
@@ -249,10 +161,6 @@ export const CONSIGNMENT_LOAN_TERMS: readonly string[] = [
   'By signing below, the customer accepts this temporary provision and agrees to the terms above.',
 ];
 
-/* The letter ended with "contact us at <phone> / <email>". Read live from the
-   company's customer-service desk (headline phone / email when no desk is
-   set, as the letterhead does), so the CO never carries another company's
-   number. Inserted before the signature line. */
 export function consignmentLoanTerms(): readonly string[] {
   const phone = COMPANY.csPhone || COMPANY.phone;
   const email = COMPANY.csEmail || COMPANY.email;
@@ -263,9 +171,6 @@ export function consignmentLoanTerms(): readonly string[] {
   return [...CONSIGNMENT_LOAN_TERMS.slice(0, -1), help, CONSIGNMENT_LOAN_TERMS[CONSIGNMENT_LOAN_TERMS.length - 1]!];
 }
 
-/* The one place the Consignment Order's PDF framing lives — the detail page
-   and the list both print through it, so the title, label and terms cannot
-   drift apart. */
 export const CONSIGNMENT_ORDER_PDF_OPTS = {
   docTitle: 'CONSIGNMENT ORDER',
   docNoLabel: 'CO No',
@@ -279,11 +184,7 @@ export const CONSIGNMENT_ORDER_PDF_OPTS = {
   money: false,
 } as const;
 
-/* The variant keys that can carry an internal fabric code: supplier-doc-data's
-   FABRIC_VARIANT_KEYS (one home). The SO PDF maps each present code to
-   "CODE — fabric_trackings.fabric_description" (customer-readable). */
 
-/** Collect internal fabric codes riding in the items' variants JSONB. */
 const collectFabricCodes = (items: SoItem[]): string[] => {
   const codes = new Set<string>();
   for (const it of items) {
@@ -297,11 +198,6 @@ const collectFabricCodes = (items: SoItem[]): string[] => {
   return [...codes];
 };
 
-/* Specs line for an item: the shared buildVariantSummary (same string every
-   grid shows — fabric / DIVAN+LEG / GAP / SEAT / SPECIAL) with each fabric
-   code enriched to "EZ-001 — <fabric_description>" when the Fabric Tracking
-   master knows it. Returns '' when the line has no variants object —
-   description2 prints on its own line, so no fallback to it here. */
 const variantLine = (
   it: SoItem,
   fabricDescMap: Map<string, string>,
@@ -315,10 +211,10 @@ const variantLine = (
     const raw = v[key];
     if (typeof raw === 'string' && raw.trim()) {
       const code = raw.trim();
-      const ext = fabricExtMap.get(code);   // supplier's EXTERNAL colour code
-      const desc = fabricDescMap.get(code);  // our fabric_description
+      const ext = fabricExtMap.get(code);
+      const desc = fabricDescMap.get(code);
       if (ext || desc) {
-        if (mapped === v) mapped = { ...v }; // clone once, on demand
+        if (mapped === v) mapped = { ...v };
         // Owner format ruling 2026-07-24 (screenshots, "还是有很多个地方没有跟着改
         // 过来"): the PDF must print the SAME final fabric format as the shared
         // on-screen summary — description joined bare, supplier parens LAST:
@@ -332,7 +228,6 @@ const variantLine = (
           ? desc.slice(code.length).trim()
           : desc;
         mapped[key] = `${code}${cleanDesc ? ` ${cleanDesc}` : ''}`;
-        // The fresh lookup wins over a stamp saved on the line (2990-0067).
         if (ext && !stamped) { mapped = withFabricSupplierCode(mapped, ext); stamped = true; }
       }
     }
@@ -347,22 +242,12 @@ const variantLine = (
    PDF prints. */
 const groupRank = soLineGroupRank;
 
-/* Human-readable method label for the PDF Payments table.
-   - merchant → "Merchant (GHL)" or "Merchant (GHL) · 6m installment"
-   - transfer → "Online (TNG)" etc.
-   - cash     → "Cash"
-   Mirrors the on-screen METHOD_LABEL + provider/installment pill in
-   SalesOrderDetail's PaymentCard but flattened to a single cell. */
 const methodLabel = (p: SoPayment): string => {
   if (p.method === 'merchant') {
     const base = p.merchant_provider ? `Merchant (${p.merchant_provider})` : 'Merchant';
     return p.installment_months ? `${base} · ${p.installment_months}m installment` : base;
   }
-  /* Task #122 (cascade) — surface the Online sub-type (Bank Transfer /
-     TNG / Cheque / DuitNow) so the printed PDF reads as the user actually
-     filed it, not a generic "Bank Transfer". */
   if (p.method === 'transfer') return p.online_type ? `Online (${p.online_type})` : 'Online';
-  /* 2026-06-06 payment-method unify — installment rows print their term. */
   if (p.method === 'installment') {
     const base = p.merchant_provider ? `Installment (${p.merchant_provider})` : 'Installment';
     return p.installment_months ? `${base} · ${p.installment_months}m` : base;
@@ -376,26 +261,13 @@ const methodLabel = (p: SoPayment): string => {
 type JsPdf = import('jspdf').jsPDF;
 type AutoTableFn = (typeof import('jspdf-autotable'))['default'];
 
-/* Draw ONE sales order's content into `doc` (letterhead → meta → items →
-   payments → totals → signatures → terms → footer). Does NOT create the doc,
-   save / output / preview — the caller finalizes ONCE, so several SOs can share
-   one doc (batch "Export PDF" → one combined file). Mirrors the
-   renderPurchaseOrderInto precedent in purchase-order-pdf.ts.
-
-   The footer loop iterates ONLY this doc's pages (`startPage`…end), so the
-   per-SO doc no / portal label / "Page p of N" line stays correct when several
-   SOs are appended to one document. */
 export async function drawSalesOrderInto(
   doc: JsPdf,
   autoTable: AutoTableFn,
-  /* Where the print-time lookups come from: the browser's session
-     (sales-order-pdf.ts) or the AI Connector's user on the Worker. */
   sources: SoPdfSources,
   header: SoHeader,
   allItems: SoItem[],
   payments: SoPayment[] = [],
-  /* PWP vouchers this SO's trigger items issued (GET /:docNo `pwpCodes`) —
-     used to mark trigger lines. Optional so older callers stay valid. */
   pwpCodes: SoPwpCodeRow[] = [],
   opts?: { docTitle?: string; docNoLabel?: string; docNoun?: string; refLabel?: string; terms?: readonly string[]; money?: boolean },
 ): Promise<void> {
@@ -414,28 +286,12 @@ export async function drawSalesOrderInto(
      See docs/autocount-line-retirement-plan.md gap 4. */
   const items = allItems.filter((l) => !l.cancelled);
 
-  // First page this SO occupies — the footer loop numbers from here so a
-  // combined doc doesn't re-stamp earlier SOs' pages.
   const startPage = doc.getNumberOfPages();
 
-  /* Fabric Tracking lookup (fail-soft, before any drawing): internal fabric
-     code → fabric_description so the customer reads "EZ-001 — <description>"
-     instead of a bare internal code. */
-  // Section headings print the category name; fail-soft in the sources, an empty list prints the Title Case code.
   const categories = await sources.productCategories();
   const fabricDescMap = await sources.fabricDescriptionMap(collectFabricCodes(items));
-  /* Internal fabric code → supplier EXTERNAL colour code (Fabric Tracking), so
-     the SO shows both like the supplier docs: "EZ-001 (KN390-1) — <desc>"
-     (Commander 2026-06-16 — Fabric internal + external on the SO too). */
   const fabricExtMap = await sources.fabricSupplierMap(collectFabricCodes(items));
 
-  /* Printed row order, resolved BEFORE any drawing: the ITEM PHOTOS block is
-     keyed by the row numbers the items table prints (#1, #2-4…) and the photo
-     bytes must be in hand before drawing starts, so the ordering the table
-     used to compute inline moved up here — the table below reads this same
-     const. (Within a buildKey group the module rows print LEFT-TO-RIGHT, Loo
-     2026-06-12 — the create path persists that order on new SOs; the in-place
-     permute fixes SOs booked before it without moving any other row.) */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     [...items].sort((a, b) => groupRank(a.item_group) - groupRank(b.item_group)),
   );
@@ -465,12 +321,6 @@ export async function drawSalesOrderInto(
       )
     : new Map<string, PdfPhotoImage>();
 
-  /* Before ANY drawing, and after the print-time lookups so their text counts
-     too: a customer name / delivery address / remark carrying CJK needs the
-     font embedded up front, or helvetica paints the whole field as mojibake.
-     No-op for a pure-WinAnsi SO. The photo marker + heading are WinAnsi by
-     rule (pdf-item-photos.ts header) — a CJK char there re-fonts every
-     photo-carrying document, which the owner refused on his first print. */
   await ensurePdfCjkFont(doc, [
     header, items, payments, fabricDescMap, fabricExtMap,
   ]);
@@ -478,23 +328,11 @@ export async function drawSalesOrderInto(
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
 
-  /* Branding logo — make sure the module-level memo is warm BEFORE drawing
-     (drawHeader reads it synchronously). Memoized + fail-soft inside: a
-     multi-SO combined export awaits a resolved promise after the first doc,
-     and a broken logo just renders the historic text-only header. */
   await sources.letterheadReady();
-  /* Brand letterhead (owner 2026-07) — GET /:docNo stamps the resolved brand
-     logo key (SOFA→ZANOTTI, else first-item description-prefix match). Warm
-     the per-key memo and pass the image to drawHeader IN PLACE OF the company
-     logo. Fail-soft end to end: a missing/broken brand logo leaves the memo
-     empty (getBrandLogoCache → null) and drawHeader falls back to the company
-     logo, then the text-only header. Dual-read camelCase ?? snake_case (#1
-     recurring bug). */
   const brandLogoKey =
     (header.resolvedBrandLogoKey ?? header.resolved_brand_logo_key ?? null) || null;
   const brandLogo = brandLogoKey ? await sources.brandLogo(brandLogoKey) : null;
 
-  // ── Header (shared pdf-common letterhead) ─────────────────────────
   let y = drawHeader(doc, {
     docTitle: opts?.docTitle ?? 'SALES ORDER',
     rightMeta: [
@@ -504,13 +342,11 @@ export async function drawSalesOrderInto(
     logo: brandLogo,
   });
 
-  // ── Resolve processing + delivery dates (folded into ORDER DETAILS below).
   /* Owner 2026-06-12 — Processing Date lives in processing_date: one column
      (0189), one name (0284). */
   const processingDate = header.processing_date ?? null;
   const deliveryDate = header.customer_delivery_date ?? null;
 
-  // ── BILL TO + ORDER DETAILS (unified Hookka-tidy info block) ──────
   /* DELIVERY address rule (owner): ship_to_address wins; otherwise mirror
      the Detail page's Customer card EXACTLY — Address line 1, Address line 2,
      then ONE locality line "postcode city state" where city = city ?? address3
@@ -525,9 +361,6 @@ export async function drawSalesOrderInto(
      The rule lives in order-address.ts — the Deposit Invoice prints the same
      lines off the same order. */
   const addressLines = orderAddressLines(header);
-  /* Family / second contact = the emergency_contact_* trio (POS handover
-     "Emergency" phase). The SO schema has NO phone2/contact-person column —
-     this is the only second-contact field family, so it prints here. */
   const familyContact = (header.emergency_contact_name ?? '').trim() || (header.emergency_contact_phone ?? '').trim()
     ? [
         (header.emergency_contact_name ?? '').trim(),
@@ -536,11 +369,6 @@ export async function drawSalesOrderInto(
       ].filter(Boolean).join(' · ')
     : null;
   const statusText = statusLabel('so', header.status);
-  /* Owner batch 2026-07 — ORDER DETAILS additions. Dual-read camelCase ??
-     snake_case (repo #1 recurring bug) since these fields are stamped onto the
-     GET /:docNo payload. Blank values are skipped by drawInfoColumns, so a CO
-     header (which has none of these) or a phone-less salesperson prints no
-     empty ": -" row. */
   const hx = header as unknown as Record<string, unknown>;
   const s = (camel: string, snake: string): string => {
     const v = hx[camel] ?? hx[snake];
@@ -561,9 +389,6 @@ export async function drawSalesOrderInto(
       address: addressLines.join(', '),
       phone: header.phone ? formatPhone(header.phone) : null,
       email: header.email,
-      /* Family / second contact is SO-only (POS handover's Emergency phase);
-         slots into the party block via extras so the shared helper stays
-         narrow to the canonical bill-to shape. */
       extras: [['Family', familyContact]],
       note: header.note,
     }),
@@ -580,9 +405,6 @@ export async function drawSalesOrderInto(
         ['Agent', header.agent],
         ['Sales Location', header.sales_location],
         ['Venue', header.venue],
-        /* Owner batch 2026-07 — salesperson name (· phone when scm.staff has
-           one) + the customer's emergency contact phone. Value-gated: rows
-           with no data don't print (drawInfoColumns skips blanks). */
         ['Salesperson', salespersonText],
         ['Emergency Contact', emergencyText],
         ['Branding', header.branding],
@@ -594,7 +416,6 @@ export async function drawSalesOrderInto(
     },
   );
 
-  // ── Line items table ─────────────────────────────────────────────
   /* Owner correction 2026-06-12 — ONE ROW PER SO LINE ITEM, exactly the
      items as stored ("有几个 SKU 就有几行"): no sofa-build folding, every
      SKU prints its own qty / unit price / disc / line total. Rows ordered
@@ -604,12 +425,6 @@ export async function drawSalesOrderInto(
        2. description2 / remark (when present)
        3. specs — fabric code — description / SEAT / LEG (variantLine)
      PWP notes (reward voucher consumed / trigger codes issued) come after. */
-  /* orderedItems is computed up top (before drawing) so this table and the
-     ITEM PHOTOS block share ONE row order — the photo chips point at these
-     row numbers. */
-  /* Each issued voucher prints ONCE across the whole doc — two lines of the
-     same trigger SKU used to repeat the full list under both (SO-2606-013,
-     Loo 2026-06-12). */
   const triggerNotesByLine = allocatePwpTriggerNotes(
     orderedItems.map((it) => [it.item_code]),
     pwpCodes,
@@ -619,12 +434,6 @@ export async function drawSalesOrderInto(
       pwpRewardNote(it.variants),
       ...(triggerNotesByLine[itIdx] ?? []),
     ].filter((n): n is NonNullable<typeof n> => n != null).map((n) => n.text);
-    /* Description cell — the stored description2 and the recomputed `specs`
-       (variantLine) are both buildVariantSummary outputs, so on a variant line
-       they fully overlap. composeSoLineDescription prints the variant summary
-       ONCE (the fresh, fabric-expanded `specs` preferred over the stored
-       description2) so a split-sofa module line no longer shows SEAT/SPECIAL
-       twice (Loo 2026-06-13); it also keeps the legacy remark dedup. */
     const composed = composeSoLineDescription({
       description: it.description ?? it.item_code,
       description2: (it.description2 ?? '').trim(),
@@ -634,8 +443,6 @@ export async function drawSalesOrderInto(
       remark: stripBookText(typeof it.remark === 'string' ? it.remark : null) || null,
       notes,
     });
-    /* Owner spec: a row carries NO image — the " (photo)" marker on the first
-       description line points the reader at the ITEM PHOTOS block below. */
     const lines = photoKeysOf(it.photo_urls).length > 0
       ? appendPhotoMarker(composed)
       : composed;
@@ -680,10 +487,6 @@ export async function drawSalesOrderInto(
     rowPageBreak: 'avoid',
     styles: { ...DOC_TABLE_STYLES, fontSize: 8 },
     headStyles: DOC_TABLE_HEAD_STYLES,
-    /* Money cells must stay on ONE line ("MYR 2,990.00", never wrapped):
-       numeric columns are 7.5 pt, right-aligned. Fixed widths sum to ~114 mm of
-       182 usable (A4 − 2×14 margins), leaving ~68 mm for Description ('auto',
-       the only column allowed to wrap). */
     columnStyles: {
       0: { cellWidth: 8, halign: 'right', fontSize: 7.5 },
       1: { cellWidth: 28 },
@@ -695,20 +498,8 @@ export async function drawSalesOrderInto(
     },
     margin: { left: margin, right: margin },
   });
-  // jspdf-autotable mutates doc by assigning the finished Table to
-  // `doc.lastAutoTable`, whose `finalY` is the y the table ended on. jsPDF's
-  // own types do not declare it, so read it off the shim. Verified against
-  // jspdf-autotable 5.0.8 (tableDrawer.ts sets `table.finalY = cursor.y;
-  // jsPDFDoc.lastAutoTable = table` on every autoTable() call, so the SECOND
-  // read below picks up the payments table, not this one).
-  // Covered by pdf-money-layout.test.ts.
   let ty = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
 
-  // ── ITEM PHOTOS (owner spec 2026-08) ───────────────────
-  /* One block per document, AFTER the items table and BEFORE the payments
-     ledger. Row-number chips key each group back to the table above; a group
-     never splits across pages (it moves whole, under a continued heading).
-     Absent entirely when no photo actually fetched. */
   if (photoImages.size > 0) {
     const photoRes = drawItemPhotosBlock(doc, photoGroups, photoImages, {
       margin,
@@ -727,9 +518,6 @@ export async function drawSalesOrderInto(
      noise on a document the customer signs for goods they will give back
      (owner 2026-10-05). `money: false` drops the whole block. */
   if (opts?.money !== false) {
-    // ── PAYMENTS RECEIVED ledger ──────────────────────────────────────
-    // Sources transactions from the payments ledger (mfg_sales_order_payments)
-    // instead of the legacy single-row header columns (deprecated PR-C).
     if (ty > 250) { doc.addPage(); ty = margin; }
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
@@ -771,11 +559,6 @@ export async function drawSalesOrderInto(
       ty = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? ty) + 6;
     }
 
-    // ── Totals: SUBTOTAL / PAID TO DATE / TOTAL / BALANCE DUE ─────────
-    /* POS-printout parity: the SO model has no separate subtotal — the grand
-       total stands in (add-ons ride inside the line totals). Paid-to-date is
-       the rows printed above plus any legacy deposit outside the ledger
-       (soPdfPaidSen). */
     const subtotalSen = header.local_total_sen;
     const paidSen = soPdfPaidSen(header, payments);
     /* SIGNED (owner 2026-08-16) — over-collection is allowed, so the print must
@@ -795,8 +578,6 @@ export async function drawSalesOrderInto(
       doc.text(val, pageW - margin, ry, { align: 'right' });
     };
     drawRow('Subtotal',     fmtRm(subtotalSen, header.currency), ty);     ty += 4;
-    /* Standard-checklist tax line — the SO model carries no header tax (prices
-       are tax-inclusive / exempt), so this prints as a dash, not a number. */
     drawRow('Tax',          '—',                                   ty);     ty += 4;
     drawRow('Total',        fmtRm(subtotalSen, header.currency), ty);     ty += 4;
     drawRow('Paid to date', fmtRm(paidSen,     header.currency), ty);     ty += 2;
@@ -811,8 +592,6 @@ export async function drawSalesOrderInto(
     );
     ty += 12;
 
-    // Expected-deposit line — only shown when the commander has set one
-    // on the header. Keeps the "target vs. collected" distinction visible.
     if ((header.deposit_sen ?? 0) > 0) {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9);
@@ -825,7 +604,6 @@ export async function drawSalesOrderInto(
       ty += 5;
     }
 
-    // Amount in words (left, aligned with the totals block).
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80);
     doc.text(
       doc.splitTextToSize(`Amount in words: ${amountInWordsMyr(subtotalSen)}`, totalsX - margin - 8) as string[],
@@ -835,7 +613,6 @@ export async function drawSalesOrderInto(
 
   }
 
-  // ── Signature boxes — customer (with stored POS signature) + company ──
   if (ty > 225) { doc.addPage(); ty = margin; }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   doc.text('Customer Signature', margin, ty);
@@ -847,18 +624,14 @@ export async function drawSalesOrderInto(
   doc.rect(margin, ty, sigW, 22);
   doc.rect(pageW / 2 + 5, ty, sigW, 22);
   doc.setLineDashPattern([], 0);
-  /* POS handover signature (signature_b64) renders INSIDE the customer box —
-     same as the POS printout. Fail-soft: a malformed image just leaves the
-     box blank for a wet-ink signature. */
   const rawSig = (header.signature_b64 ?? '').trim();
   if (rawSig) {
     try {
       const dataUrl = rawSig.startsWith('data:') ? rawSig : `data:image/png;base64,${rawSig}`;
       doc.addImage(dataUrl, 'PNG', margin + 2, ty + 1, sigW - 4, 20);
-    } catch { /* leave the box blank */ }
+    } catch { }
   }
   ty += 26;
-  // Name · phone under the customer box, mirroring SalesOrderPrint.tsx.
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80);
   doc.text(
     [header.debtor_name, header.phone ? formatPhone(header.phone) : null].filter(Boolean).join(' · '),
@@ -867,7 +640,6 @@ export async function drawSalesOrderInto(
   doc.setTextColor(0);
   ty += 6;
 
-  // ── Numbered terms (POS RECEIPT_TERMS wording) ────────────────────
   if (ty > 255) { doc.addPage(); ty = margin; }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
   doc.text('Terms & Conditions', margin, ty);
@@ -882,10 +654,6 @@ export async function drawSalesOrderInto(
   });
   doc.setTextColor(0);
 
-  // ── Footer: doc no · portal label · page n of m on every page ────
-  /* Number ONLY this SO's pages (startPage…end). For a combined doc this reads
-     per absolute page, which is acceptable (matches the PO precedent — we don't
-     over-engineer per-doc relative numbering). */
   const pageCount = doc.getNumberOfPages();
   for (let p = startPage; p <= pageCount; p += 1) {
     doc.setPage(p);

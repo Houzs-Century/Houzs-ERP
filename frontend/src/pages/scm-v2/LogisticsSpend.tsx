@@ -115,7 +115,6 @@ export function SpendView({ p, mode, period, months }: ViewProps) {
     });
     const total = cellsOf((sc) => lorries.reduce((t, e) => t + spendIn(e, sc, null), 0));
     const inHouseOf = (m: string) => p.perMonth.find((x) => x.month === m)?.rows.find((r) => r.key === 'inhouse_total')?.totalSen ?? 0;
-    /* The P&L spreads repairs and insurance: it checks the Spread columns only. */
     const books = cellsOf((sc) => (sc.figure === 'spread' ? sc.months.reduce((t, m) => t + inHouseOf(m), 0) : null));
     const diff = Object.fromEntries(Object.keys(total).map((k) => [k, books[k] == null ? null : (total[k] ?? 0) - books[k]!]));
     const off = Object.values(diff).some((v) => v != null && v !== 0);

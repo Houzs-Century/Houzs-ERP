@@ -51,9 +51,9 @@ const line = (id: string, amendmentId: string, itemId: string | null, extra: Row
 
 beforeEach(() => {
   sb.tables.so_amendments = [
-    am('p1', 'HC-SO-1', 'LINES'),                                   // price only: 1.00 -> 2,060.00
-    am('q2', 'HC-SO-2', 'LINES'),                                   // qty change the PO follows
-    am('s3', 'HC-SO-3', 'LINES'),                                   // price + colour
+    am('p1', 'HC-SO-1', 'LINES'),
+    am('q2', 'HC-SO-2', 'LINES'),
+    am('s3', 'HC-SO-3', 'LINES'),
     am('d4', 'HC-SO-4', 'DELIVERY', { header_changes: { address2: 'Unit 9' } }),
     am('r5', 'HC-SO-5', 'PRICE'),
     am('x6', 'HC-SO-6', 'LINES', { status: 'SO_APPROVED' }),

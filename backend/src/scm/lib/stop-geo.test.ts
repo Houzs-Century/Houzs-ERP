@@ -110,7 +110,6 @@ describe('parseGeocode — a country- or state-only answer is no pin', () => {
   });
 });
 
-/* A fake scm client: a geocode_cache table read by .in(), written by .upsert(). */
 function fakeSb(cache: Partial<Record<string, { lat: number; lng: number }>>) {
   const reads: string[][] = [];
   const sb = {
@@ -155,7 +154,7 @@ describe('locateStops — cache-first, first hit wins, area fallback approximate
     vi.stubGlobal('fetch', fetchSpy);
     const cands = new Map([['ASSR/1#delivery', [{ address: 'nowhere lane 9', approximate: false }, { address: area, approximate: true }]]]);
     expect((await locateStops(sb, { GOOGLE_MAPS_API_KEY: 'k' }, cands)).get('ASSR/1#delivery')).toMatchObject({ ok: true, approximate: true, address: area });
-    await locateStops(sb, { GOOGLE_MAPS_API_KEY: 'k' }, cands); // the next page open
+    await locateStops(sb, { GOOGLE_MAPS_API_KEY: 'k' }, cands);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 

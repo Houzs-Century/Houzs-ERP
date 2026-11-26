@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-backlog-cover-queries — Finance › Reports › SO conversion & backlog (owner
-// 2026-11-24): the month's orders by Processing Date, this month's and the
-// backlog's, the backlog at the 1st, the two backlog cover rates and their
-// averages, by amount and by order count. Server:
-// backend/src/scm/routes/accounting-so-backlog-cover.ts over
-// acc/so-backlog-cover.ts.
-// ----------------------------------------------------------------------------
 
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -24,7 +16,6 @@ export type CoverRow = {
   processedOn: string;
   dateFrom: DateFrom;
   customer: string | null;
-  /** The order came over from AutoCount at the cutover. */
   imported: boolean;
   part: CoverPart;
   amountSen: number;
@@ -33,21 +24,17 @@ export type CoverRow = {
 export type Count = { orders: number; amountSen: number };
 
 export type CoverTotal = Count & {
-  /** Share of the month's processed total, one decimal; null when nothing was processed. */
   pct: number | null;
 };
 
 /** The two cover rates, one decimal, of amounts or of order counts. */
 export type CoverRates = {
-  /** Backlog processed ÷ the backlog at the 1st; null with no backlog. */
   onBacklog: number | null;
-  /** Backlog processed ÷ everything processed in the month; null when nothing was processed. */
   onMonth: number | null;
 };
 
 export type CoverMonth = {
   month: string;
-  /** Orders raised before the month and not processed by its 1st. */
   backlog: Count;
   backlogProcessed: Count;
   processed: Count;
@@ -61,13 +48,10 @@ export type SoBacklogCoverData = {
   to: string;
   total: Count;
   parts: Record<CoverPart, CoverTotal>;
-  /** The backlog at the month's 1st. */
   backlog: Count;
   cover: { amount: CoverRates; orders: CoverRates };
   average: { from: string; to: string; amount: CoverRates; orders: CoverRates };
-  /** Where the average starts when the reader picks nothing. */
   defaultFrom: string;
-  /** The months the average covers, oldest first; the last is this month. */
   months: CoverMonth[];
   rows: CoverRow[];
 };

@@ -1,29 +1,6 @@
-/* ---------------------------------------------------------------------------
- * Pure readers and formatters for a service-case row on the phone.
- *
- * WHY THEY ARE HERE. Two reasons, and the second is the load-bearing one:
- *
- * 1. `MobileServiceCase.tsx` sits AT its recorded size ceiling
- *    (`scripts/file-size-ceilings.json`), which may only fall. Anything added to
- *    that screen has to be paid for by taking something out, and a block of
- *    pure functions with no JSX and no hooks is the cheapest thing to move and
- *    the safest to verify — `tsc -b` finds every call site.
- * 2. They had no test of their own, because nothing could import them. Out
- *    here, `dm` / `slaText` / `get` are directly assertable rather than only
- *    reachable through a 3,400-line screen.
- *
- * `get` is the one to understand before using any of the rest. The Postgres
- * driver camelCases result columns, so the SAME field arrives as `assrNo` on
- * one path and `assr_no` on another depending on which query produced the row.
- * Every read goes through `get(row, 'camelCase', 'snake_case')`, and it treats
- * `''` as absent as well as `null`/`undefined` — a blank column is not a value.
- * ------------------------------------------------------------------------- */
 import { formatDate, formatDateTime } from "../lib/utils";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 
-/* A case row is whatever the driver returned: camelCase on one path,
-   snake_case on another, and the columns differ per query. `get` below exists
-   precisely because the shape is not knowable at compile time. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
 export type Any = Record<string, any>;
 
@@ -59,13 +36,9 @@ export const RESOLUTION_LABELS: Record<string, string> = {
 };
 export const resolutionLabel = (v: string) => RESOLUTION_LABELS[v] ?? cap(v.replace(/_/g, " "));
 
-/* The `voided` literal is gone: STAGES has no row for a terminal alt-outcome so
-   mobile carried the word itself. STAGES still answers the ORDER question. */
 export const prettyStage = (stage: string) =>
   ASSR_STAGE_LABEL[stage] ?? (cap(stage.replace(/_/g, " ")) || "—");
 
-/* Numeric DD/MM/YYYY (+ HH:mm) via the shared formatter — house rule, and it
-   UTC-tags bare SQLite timestamps so they don't shift by the device timezone. */
 export const dm = (d: string | null | undefined) => formatDate(d);
 export const dtm = (d: string | null | undefined) => formatDateTime(d);
 

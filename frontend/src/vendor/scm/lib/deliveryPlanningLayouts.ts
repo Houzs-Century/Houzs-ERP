@@ -18,10 +18,6 @@
 
 import type { LayoutSeed, StoredLayout } from "../../../lib/tableLayouts";
 
-/** Full column order shared by Delivery Date / Delivery Details / SG Order —
- *  status -> who/what/worth -> dates + amend -> house/address -> remarks/docs ->
- *  send status, then the default-hidden crew / cross-border tail. EM Order pulls
- *  the shipping legs up next to the dates, so it carries its own order. */
 const BASE_ORDER: readonly string[] = [
   "delivery_message_status", "row_type", "company_code", "so_doc_no", "do",
   "so_date", "so_ref", "branding", "debtor_name", "phone", "region",
@@ -38,8 +34,6 @@ const BASE_ORDER: readonly string[] = [
   "bs_remarks", "ctn",
 ];
 
-/** EM Order — the two 3PL legs (ESB sea freight, BS last mile) sit right after
- *  the delivery dates; amend/house/crew fall to the hidden tail. */
 const EM_ORDER: readonly string[] = [
   "delivery_message_status", "row_type", "company_code", "so_doc_no", "do",
   "so_date", "so_ref", "branding", "debtor_name", "phone", "region",

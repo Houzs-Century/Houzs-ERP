@@ -9,7 +9,6 @@ import { useMemo } from "react";
 import { useActiveTripLocations, type TripLocation } from "./trip-locations-queries";
 
 export type VehiclePosition = {
-  /** Stable marker key: the lorry when known, else the run. */
   key: string;
   lorryId: string | null;
   tripId: string;

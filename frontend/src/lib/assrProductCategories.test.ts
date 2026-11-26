@@ -16,13 +16,10 @@ describe("assr product categories — the shared rule both surfaces read", () =>
     expect(splitCategories(" Sofa ")).toEqual(["Sofa"]);
     expect(splitCategories(null)).toEqual([]);
     expect(splitCategories("")).toEqual([]);
-    // A trailing comma must not become an empty bucket.
     expect(splitCategories("Sofa,")).toEqual(["Sofa"]);
   });
 
   it("keeps a value the lookup no longer offers, rather than dropping it", () => {
-    // A retired category, or a legacy string from before mig 0112. Discarding
-    // it on open would delete data the operator never touched.
     expect(categoryChipList(["Mattress", "Bedframe"], ["Bedframe", "Divan Only"])).toEqual([
       "Mattress",
       "Bedframe",

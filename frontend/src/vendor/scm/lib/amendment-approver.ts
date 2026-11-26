@@ -50,16 +50,9 @@ export const AMENDMENT_APPROVER_LABEL: Record<AmendmentApprover, string> = {
   LEGACY: 'Legacy',
 };
 
-/* Not a status tone on purpose: Requested / Approved / Rejected already own the
-   burnt, green and red pills on the desktop row, and the phone paints Requested
-   teal — so Purchaser is a clear blue, not a blue-grey that reads as teal on a
-   small card. The approver must not read as a fourth status. */
 export const AMENDMENT_APPROVER_TONE: Record<AmendmentApprover, { bg: string; fg: string }> = {
   PURCHASER: { bg: 'rgba(53, 82, 163, 0.14)', fg: '#3552a3' },
   LOGISTIC: { bg: 'rgba(123, 63, 120, 0.14)', fg: '#7b3f78' },
-  // Finance is a deep teal — clear of Purchaser blue and Logistic purple, and of
-  // every status colour (success is green, Requested burnt), so it never reads as
-  // a fourth status pill.
   FINANCE: { bg: 'rgba(15, 118, 110, 0.14)', fg: '#0f766e' },
   LEGACY: { bg: 'rgba(34, 31, 32, 0.08)', fg: '#6b6f66' },
 };

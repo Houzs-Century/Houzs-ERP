@@ -28,10 +28,10 @@ describe("parseOtSegment", () => {
 describe("confirmedOtMinutes", () => {
   test("sums only CONFIRMED rows", () => {
     const rows = [
-      { status: "CONFIRMED", start_min: 480, end_min: 540 }, // 60
-      { status: "PENDING", start_min: 1230, end_min: 1290 }, // ignored
-      { status: "CONFIRMED", start_min: 1410, end_min: 1470 }, // 60
-      { status: "REJECTED", start_min: 0, end_min: 600 }, // ignored
+      { status: "CONFIRMED", start_min: 480, end_min: 540 },
+      { status: "PENDING", start_min: 1230, end_min: 1290 },
+      { status: "CONFIRMED", start_min: 1410, end_min: 1470 },
+      { status: "REJECTED", start_min: 0, end_min: 600 },
     ];
     expect(confirmedOtMinutes(rows)).toBe(120);
   });
@@ -39,7 +39,7 @@ describe("confirmedOtMinutes", () => {
 
 describe("punchOtMinutes (HC-0125 hybrid)", () => {
   const r = toAttendanceRules(DEFAULT_PAY_RULES);
-  const shiftLen = r.standardWorkMin + r.lunchMin; // span of a plain full day
+  const shiftLen = r.standardWorkMin + r.lunchMin;
   test("staying one hour past a full day earns 60 minutes", () => {
     expect(punchOtMinutes(shiftLen + 60, r.standardWorkMin, r.lunchMin)).toBe(60);
   });
@@ -47,7 +47,6 @@ describe("punchOtMinutes (HC-0125 hybrid)", () => {
     expect(punchOtMinutes(shiftLen, r.standardWorkMin, r.lunchMin)).toBe(0);
   });
   test("a late start nets the overtime down, never below zero", () => {
-    // present only as long as a full day, but it started late, so no net OT.
     expect(punchOtMinutes(shiftLen, r.standardWorkMin, r.lunchMin)).toBe(0);
     expect(punchOtMinutes(shiftLen - 30, r.standardWorkMin, r.lunchMin)).toBe(0);
   });
@@ -116,10 +115,9 @@ describe("a confirmed AUTO claim pays exactly like a reported claim of the same 
   const monthly: PayEmployee = { payMode: "MONTHLY", salarySen: 260000, dailyRateSen: 0, workingDaysPerMonth: 26, workingHoursPerDay: 9, otMultiplier: 1.5, resignedOn: "" };
   const r = toAttendanceRules(DEFAULT_PAY_RULES);
   test("same window minutes -> same weekday OT pay", () => {
-    // A punch 90 minutes past a full day yields an AUTO window of 90 minutes.
     const otMin = punchOtMinutes(r.standardWorkMin + r.lunchMin + 90, r.standardWorkMin, r.lunchMin);
     const win = autoOtWindow(r.endMin, otMin);
-    const autoHours = (win.endMin - win.startMin) / 60; // exactly what computePeriod derives for a CONFIRMED claim
+    const autoHours = (win.endMin - win.startMin) / 60;
     expect(autoHours).toBe(1.5);
     const pay = (hoursByDate: Map<string, number>) =>
       computeMonthlyPay({

@@ -1,7 +1,3 @@
-// A small palette dialog for the Delivery Planning row colour mark (owner
-// 2026-09-26). Opened from a row's context menu; picking a swatch paints the row
-// for everyone, "Clear" removes the mark. Cosmetic — it stores a colour, nothing
-// else.
 import { ROW_MARK_PALETTE, useSetRowMark, useClearRowMark, type RowMarkColour } from '../../vendor/scm/lib/delivery-row-mark';
 
 export function RowColorModal({ rowKey, title, currentColour, onClose }: {

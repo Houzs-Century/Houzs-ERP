@@ -49,47 +49,23 @@
 // cast has no behavioural effect to mirror.
 // ----------------------------------------------------------------------------
 
-/** One prior OUT movement in a single (warehouse, product, variant) + company
- *  bucket, with the ledger facts the reconcile decision depends on. */
 import { pgrestIn } from './pgrest-in-list';
 
 export type RetroOutMovement = {
   movementId: string;
-  /** Source DO id (source_doc_id). Collected for the COGS re-stamp. */
   doId: string;
-  /** Requested OUT qty (inventory_movements.qty; stored as a positive count). */
   qty: number;
-  /** inventory_movements.created_at (ISO). The temporal anti-theft key. */
   createdAt: string;
-  /** delivery_orders.is_dropship — drop-ship coverage is owned by 0088. */
   isDropship: boolean;
-  /** Migration 0230 — a line of this OUT's DO commits this movement's batch in
-   *  this variant AND is STRICT-BATCH (a sofa dye lot). Those belong to
-   *  fn_reconcile_dropship_batch alone; costing them from any open lot here
-   *  would mix dye lots.
-   *
-   *  ⚠ NON-strict commitments (mattress / bedframe / accessory) are NOT excluded
-   *  — deliberately. They have no dye lot, and their bound PO can die (cancelled,
-   *  re-raised under a new number, superseded by a transfer or a stock take)
-   *  without any reconcile noticing. If they were excluded, the batch-agnostic
-   *  repair would step over them permanently and their COGS would stay at RM0 —
-   *  a worse version of the very bug 0230 was written to end. Optional so every
-   *  pre-0230 caller and fixture keeps its meaning (undefined = not strict). */
   strictBatchCommitted?: boolean;
-  /** delivery_orders.status — a CANCELLED DO's OUT was already reversed. */
   doStatus: string;
-  /** Σ inventory_lot_consumptions.qty_consumed already booked for this movement
-   *  (ship-time partial + any prior reconcile). Drives idempotent shortfall. */
   alreadyConsumedQty: number;
-  /** Σ inventory_lot_consumptions.total_cost_sen already booked for this movement
-   *  — the OUT's current total_cost_sen, the base the restamp adds onto. */
   alreadyCostedSen: number;
 };
 
 /** One open FIFO lot in the bucket (inventory_lots, qty_remaining > 0). */
 export type RetroLot = {
   lotId: string;
-  /** inventory_lots.received_at (ISO). FIFO consumption order. */
   receivedAt: string;
   qtyRemaining: number;
   unitCostSen: number;
@@ -98,23 +74,16 @@ export type RetroLot = {
 export type RetroPlanLine = {
   movementId: string;
   doId: string;
-  /** Units retro-costed now (0 excluded from the plan). */
   retroQty: number;
-  /** Cost booked now (sen), from the lots' real unit costs — never a fallback. */
   retroCostSen: number;
-  /** The OUT movement's total_cost_sen after the restamp (base + retro). */
   newTotalCostSen: number;
-  /** Residual shortfall left uncosted because no lot was available — retro-costed
-   *  by a LATER receipt (still idempotent). */
   stillShortQty: number;
 };
 
 export type RetroPlan = {
   lines: RetroPlanLine[];
-  /** Lots with qty_remaining decremented by what the plan consumed. */
   lotsAfter: RetroLot[];
   totalRetroQty: number;
-  /** Distinct DOs whose OUT COGS changed — the ones to re-stamp. */
   affectedDoIds: string[];
 };
 
@@ -142,7 +111,6 @@ export function planUncostedRetrocost(
   lots: RetroLot[],
   cutoffTs: string,
 ): RetroPlan {
-  // Work on a copy of the lots, FIFO-ordered, so the caller's array is untouched.
   const lotsAfter: RetroLot[] = lots
     .map((l) => ({ ...l }))
     .sort((a, b) =>
@@ -166,8 +134,6 @@ export function planUncostedRetrocost(
   let totalRetroQty = 0;
 
   for (const m of eligible) {
-    // Idempotent shortfall — abs() mirrors the SQL (qty is a positive count, but
-    // guard the sign so a defensively-signed OUT can't invert the shortfall).
     let short = Math.abs(m.qty) - m.alreadyConsumedQty;
     if (short <= 0) continue;
 
@@ -182,7 +148,7 @@ export function planUncostedRetrocost(
       retroCostSen += take * lot.unitCostSen;
       short -= take;
     }
-    if (retroQty === 0) continue; // no lot available — leave for a later receipt
+    if (retroQty === 0) continue;
 
     lines.push({
       movementId: m.movementId,
@@ -233,7 +199,6 @@ export async function reconcileUncostedOuts(
   cutoffTs: string,
   performedBy: string | null,
 ): Promise<{ ok: boolean; reconciled: number; affectedDoIds: string[]; reason?: string }> {
-  // One call per distinct (warehouse, product, variant) bucket.
   const seen = new Set<string>();
   const distinct = buckets.filter((b) => {
     const k = `${b.warehouse_id}::${b.item_code}::${b.variant_key ?? ''}`;
@@ -246,11 +211,6 @@ export async function reconcileUncostedOuts(
   let reconciled = 0;
   for (const b of distinct) {
     try {
-      /* p_product_code, not p_item_code: PostgREST matches an RPC by its
-         argument NAMES, and 0307 renamed the columns but kept this function's
-         parameter name. The call sent p_item_code from 18 Aug 2026 on, every
-         reconcile answered "function not found", and the guard below took that
-         for "migration not applied yet" and said nothing. */
       const { data, error } = await sb.rpc('fn_reconcile_uncosted_out', {
         p_warehouse_id: b.warehouse_id,
         p_product_code: b.item_code,
@@ -270,12 +230,6 @@ export async function reconcileUncostedOuts(
     }
   }
 
-  // Collect the non-drop-ship DOs with a prior OUT in any reconciled bucket, so
-  // the caller can re-stamp their actual COGS (the reconcile bumped those OUT
-  // movements' total_cost_sen from the arriving lots). Bounded to created_at <
-  // cutoff — the same prior-shipment window the reconcile used — so a later
-  // order's DO is never dragged into the re-stamp. Re-stamp is idempotent, so a
-  // DO that happened not to be short recomputes the same cost (harmless).
   const affectedDoIds = new Set<string>();
   if (reconciled > 0) {
     try {
@@ -294,9 +248,6 @@ export async function reconcileUncostedOuts(
       const bucketKeys = new Set(distinct.map((b) => `${b.warehouse_id}::${b.item_code}::${b.variant_key ?? ''}`));
       for (const m of (outs ?? []) as Array<{ source_doc_type: string | null; source_doc_id: string | null; item_code: string; warehouse_id: string; variant_key: string | null; created_at?: string | null }>) {
         if ((m.source_doc_type ?? '').toUpperCase() !== 'DO' || !m.source_doc_id) continue;
-        // Belt-and-suspenders on the temporal window: never re-stamp a DO that
-        // shipped at/after the receipt (the query already bounds this — re-check
-        // in JS so a dropped filter can't widen a money re-stamp to a later order).
         if (m.created_at != null && m.created_at >= cutoffTs) continue;
         const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}`;
         if (!bucketKeys.has(k)) continue;
@@ -310,33 +261,6 @@ export async function reconcileUncostedOuts(
   return { ok: true, reconciled, affectedDoIds: [...affectedDoIds] };
 }
 
-// ----------------------------------------------------------------------------
-// reconcileUncostedAfterIn — the SHARED post-IN entry point (2026-07-29).
-//
-// WHY. reconcileUncostedOuts above was wired to exactly ONE caller, the GRN post
-// handler. Lots are opened by MANY other paths (stock transfer, stock take,
-// manual adjustment, consignment receive, and every return / resync / reversal
-// that books goods back onto the shelf), and none of them retro-costed the prior
-// short. An accessory oversold via "ship anyway" and then replenished by an
-// inter-warehouse transfer or a positive count stayed at RM0 COGS forever —
-// `docs/inventory-costing-oversell-coe.md`, BUG-HISTORY 2026-07-24.
-//
-// WHAT. Give every stock-IN path the SAME reconcile the GRN post runs, in one
-// line: hand it the movement rows that were just committed and it derives the
-// lot-opening buckets, reconciles, and re-stamps the affected DO lines + Sales
-// Invoices. No costing logic lives here — it delegates to reconcileUncostedOuts,
-// which delegates to scm.fn_reconcile_uncosted_out (migration 0154). No schema
-// or SQL change: the function's signature is unchanged, only who calls it.
-//
-// NEVER THROWS. A retro-cost is a repair, never a precondition of the receipt
-// that triggered it: a failure here must not roll back a legitimate stock IN.
-// Everything is swallowed and logged, exactly like the GRN callsite, and the
-// shortfall is simply retried (idempotently) on the next IN into that bucket.
-//
-// The GRN post keeps its own inline block deliberately: there the oversell
-// reconcile must run AFTER reconcileDropshipBatches, and its cutoff is captured
-// before that call, so the ordering is load-bearing and is left untouched.
-// ----------------------------------------------------------------------------
 
 /** A movement row as any stock-IN path writes it. Typed loose on purpose so both
  *  the strongly-typed writeMovements payloads and the raw
@@ -387,9 +311,6 @@ export async function reconcileUncostedAfterIn(
     }
     if (buckets.length === 0) return none;
 
-    /* Cutoff = now, i.e. after the IN committed. Only OUTs that shipped BEFORE
-       this may draw on the arriving lots; a later order consumes them through the
-       normal FIFO trigger at its own ship time (coverage-theft guard, 0154). */
     const cutoffTs = new Date().toISOString();
     const res = await reconcileUncostedOuts(sb, buckets, cutoffTs, performedBy);
     if (res.affectedDoIds.length > 0) {
@@ -398,7 +319,7 @@ export async function reconcileUncostedAfterIn(
         const { restampSiFromDo } = await import('./recost');
         for (const doId of res.affectedDoIds) {
           await restampDoActualCost(sb, doId);
-          try { await restampSiFromDo(sb, doId); } catch { /* best-effort */ }
+          try { await restampSiFromDo(sb, doId); } catch { }
         }
       } catch (e) { /* eslint-disable-next-line no-console */ console.error('[oversell] DO restamp failed:', e); }
     }

@@ -39,7 +39,6 @@ describe('groupProposalsByDay — day cards with no lorry dimension', () => {
       p({ ref: 'SO-2', lorryId: 'b', plate: 'BBB' }),
     ]);
     expect(days).toHaveLength(1);
-    /* No lorry field survives the fold, on the day or on its orders. */
     for (const day of days) {
       expect(day).not.toHaveProperty('lorryId');
       expect(day).not.toHaveProperty('plate');

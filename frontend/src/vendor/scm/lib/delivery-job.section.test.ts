@@ -1,5 +1,3 @@
-/* Last Mile stop drawer: a DP job showed its address, contact and date in the
-   drawer, then again in the embedded job panel's Job section. */
 import { describe, expect, it } from "vitest";
 import { jobSectionRows } from "./delivery-job";
 

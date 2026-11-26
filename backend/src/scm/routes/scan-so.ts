@@ -38,10 +38,6 @@ import { paginateAll } from '../lib/paginate-all';
 import { getBranding } from '../../services/branding';
 import { postPersonalNotice } from '../../services/personalNotice';
 import { recordAi, requestAiTag, type AiUsageTag } from '../../services/aiUsage';
-// Background scan job — the DRAFT SO is created through mfg-sales-orders'
-// factored create core (PRICING-CRITICAL; never reimplemented here), and each
-// scanned payment RECEIPT becomes a payments-ledger row through the same
-// factored insert+audit core the interactive POST /:docNo/payments route uses.
 import { createDraftSalesOrder, recordSoPaymentRow } from './mfg-sales-orders';
 import { todayMyt } from '../lib/my-time';
 import { activeCompanyId, scopeToCompany, scopeToCompanyIdOrOpen } from '../lib/companyScope';
@@ -68,7 +64,6 @@ import { isDroppedBlankLine } from '../lib/scan-slip-fields';
 import { ttlCached } from '../lib/ttl-cache';
 import { keepScanFile, linkScanFiles } from '../lib/scan-files';
 import { variantNotAllowedSentence } from '../lib/allowed-options-check';
-// Document-type-agnostic OCR transport, shared with the GR/PI scanners.
 import {
   CLAUDE_MODEL,
   modelRequestFields,
@@ -82,52 +77,19 @@ import {
   type ContentBlock,
   type UploadedImage,
 } from '../lib/scan-ocr';
-// GR / PI scan pipelines — the SO queue consumer delegates GR/PI-typed jobs here.
 import { processGrnScanQueueMessage } from './scan-gr';
 import { processPiScanQueueMessage } from './scan-pi';
 
-// The scm-scoped service client (getSupabaseService, db:{schema:'scm'}) and the
-// middleware-attached c.get('supabase') are both schema-parameterised clients.
-// Use the loosely-typed form (matches scm/env.ts Variables.supabase) so the
-// scm-schema client is assignable wherever the ported code expects a client.
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
 export const scanSo = new Hono<{ Bindings: Env; Variables: Variables }>();
 scanSo.use('*', supabaseAuth);
 
-// ---------------------------------------------------------------------------
-// Phone normalisation for an extracted slip — E.164, via the SAME normalizePhone
-// every other write path uses.
-//
-// This used to be a local normalizeMyPhone() that returned the bare national
-// part "under the +60 prefix" and stripped a leading 60/0. It DESTROYED any
-// number that was not Malaysian. A slip reading "+65 6123 4567" became the
-// digits "6561234567" — which starts with neither 60 nor 0, so it fell through
-// untouched — and every consumer then treated it as a Malaysian national part
-// and put +60 in front of it: +606561234567. The number was corrupted
-// server-side, so no amount of UI work could have saved it, and there is no way
-// to recover the original from the stored value.
-//
-// normalizePhone keeps an explicit +xx country code and assumes Malaysia only
-// for a bare local form, which is exactly the rule the slip needs: the operator
-// writes "012-345 6789" for a local customer and "+65 …" when they mean
-// Singapore. Returning E.164 also removes the "+60" + digits concatenation from
-// every consumer — the value that comes out of the scan is now the value that
-// gets stored.
-// ---------------------------------------------------------------------------
 function normalizeSlipPhone(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string') return null;
   return normalizePhone(raw);
 }
 
-// ---------------------------------------------------------------------------
-// Google Geocoding — turn the raw handwritten address text into accurate
-// state / city / postcode. The LLM frequently mis-parses Malaysian areas
-// (e.g. "Melawati" sits in KL/Setapak ~53100, not Ampang/Selangor 68000), so
-// when GOOGLE_MAPS_API_KEY is present we geocode the raw address and prefer the
-// returned components over the LLM guess. Fail-soft: missing key / network
-// error / no confident result → return null and keep the LLM parse.
-// ---------------------------------------------------------------------------
 type GeocodeParts = { state: string | null; city: string | null; postcode: string | null };
 async function geocodeAddress(
   rawAddress: string | null | undefined,
@@ -154,7 +116,6 @@ async function geocodeAddress(
       return (c?.long_name ?? '').trim() || null;
     };
     const state = pick('administrative_area_level_1');
-    // City: prefer locality, fall back to the postal town / admin level 2.
     const city = pick('locality') ?? pick('postal_town') ?? pick('administrative_area_level_2');
     const postcode = pick('postal_code');
     if (!state && !city && !postcode) return null;
@@ -164,21 +125,7 @@ async function geocodeAddress(
   }
 }
 
-// JSON-coercion recovery (ported verbatim from HOOKKA scan-po.ts) — Claude
-// sometimes wraps the result in fences, sometimes adds a "Looking at the
-// image…" preamble, sometimes both. Parse a best-effort substring rather
-// than fail the whole extraction.
-// ===========================================================================
-// Catalog — pulled live from Supabase on every /extract call.
-// ===========================================================================
 type CatalogFabric = { code: string; description: string | null };
-// SOFA Special Add-ons (scm.special_addons, migration 0134) — the configured
-// specials the SO line editor's accordion offers. ACTIVE rows only; injected
-// into the cached prompt prefix so the OCR can map a slip remark ("change nylon
-// cover") to a configured special CODE and mark it on the line instead of
-// dumping it in notes. allowedModels = the SOFA model_codes whose
-// allowed_options.specials includes this code (validateSlip uses it to keep a
-// matched special only when the line's resolved model actually offers it).
 type CatalogSpecial = {
   code: string;
   label: string;
@@ -201,12 +148,12 @@ type CatalogSpecial = {
 // select". The `venue` category rows are left in the table and still served by
 // /so-dropdown-options; the scan simply no longer reads them.
 const OPTION_CATEGORIES = [
-  'payment_method',     // L1 method — locked three: Merchant / Online / Cash
-  'payment_merchant',   // L2 merchant banks (MBB / CIMB / Public / …)
-  'online_type',        // L2 online sub-types (Bank Transfer / TNG / Cheque / DuitNow)
-  'installment_plan',   // L2 plans (One Shot / 3 / 6 / 12 / 24 / 36 months)
-  'customer_type',      // New / Existing
-  'building_type',      // Condo / Landed / …
+  'payment_method',
+  'payment_merchant',
+  'online_type',
+  'installment_plan',
+  'customer_type',
+  'building_type',
 ] as const;
 type OptionCategory = (typeof OPTION_CATEGORIES)[number];
 type CatalogOption = { value: string; label: string };
@@ -224,24 +171,11 @@ const emptyOptions = (): CatalogOptions => ({
 type Catalog = {
   skus: CatalogSku[];
   fabrics: CatalogFabric[];
-  // Configured SOFA Special Add-ons (active special_addons rows) — feeds the
-  // OCR's specialsMatch so a slip remark resolves to a configured special code.
   specials: CatalogSpecial[];
-  // SKU code → the special CODES its Model offers (allowed_options.specials).
-  // validateSlip resolves a line's model from skuMatch.code and keeps only a
-  // matched special the model actually allows (else it would render "retired").
   specialsByModelSku: Map<string, Set<string>>;
-  // SKU code → its BEDFRAME Model's total_heights pool (null = unrestricted).
   totalHeightsByModelSku: Map<string, string[] | null>;
   sofaSizes: string[];
   sofaLegHeights: string[];
-  // BEDFRAME variant pools from the SAME Products -> Maintenance master the SO
-  // line editor's dropdowns render (ACTIVE entries only). The OCR reads these
-  // axes as bare INCH NUMBERS off the slip, so they are NOT injected into the
-  // prompt (formatCatalog deliberately omits them — adding them would change
-  // buildCachedPrefix and bust the 1h prompt cache for zero benefit). They exist
-  // purely so buildDraftSoBodyFromSlip can VALIDATE an OCR-read number against
-  // the live config before writing it onto a draft line.
   legHeights: string[];
   divanHeights: string[];
   gaps: string[];
@@ -266,10 +200,6 @@ type Catalog = {
      venueIdUuid guard in mfg-sales-orders.ts), so the venue TEXT column is what
      actually carries the value. */
   venues: string[];
-  // Distinct delivery STATES from scm.my_localities — the same vocabulary the
-  // New SO form's State <select> renders. Injected as an allowed-values list so
-  // the OCR's address parse snaps STATE to a real catalog state (never a free
-  // text string the form's dropdown can't select).
   states: string[];
   // The rest of the SAME my_localities master, keyed by the step ABOVE it in
   // the form's cascade (State -> City -> Postcode):
@@ -288,8 +218,6 @@ type Catalog = {
   postcodesByStateCity: Map<string, Set<string>>;
 };
 
-/* Cascade key for postcodesByStateCity — STATE|CITY, case/whitespace-normalised
-   on both the build and the lookup side. */
 function localityKey(state: string, city: string): string {
   return `${state.trim().toUpperCase()}|${city.trim().toUpperCase()}`;
 }
@@ -316,24 +244,6 @@ function optionValues(arr: unknown): string[] {
     .filter(Boolean);
 }
 
-/* ACTIVE venue names from public.project_venues — the venue master (see
-   Catalog.venues). Reads through env.DB, NOT the supabase client: project_venues
-   lives in the PUBLIC schema, which the scm-scoped client cannot reach (the same
-   reason /api/scm/venues and the venue-by-project autofill both use env.DB).
-
-   Deliberately NOT company-scoped, matching every other read in loadCatalog (see
-   the mig-0089 note there): this feeds buildCachedPrefix, which must stay
-   byte-identical across /extract, /warm and the headless cron + queue job — none
-   of which carry a request scope. Per-company OCR catalogs need their own
-   cached-prefix design first.
-
-   FAILS SOFT to an empty pool rather than throwing, mirroring the create core's
-   "non-fatal — leave venue NULL if the project lookup fails" precedent. env.DB is
-   Hyperdrive-backed and can cold-start (see BUG-HISTORY "DB cold-start 503"); a
-   blip must not turn a scan into a hard failure. An empty pool clears the venue
-   axis, and a null venue is the SELF-HEALING state — the create core's
-   venue-by-active-project autofill resolves it from the salesperson's current
-   exhibition project. */
 async function loadVenueNames(db: D1Database): Promise<string[]> {
   try {
     const rows = await db
@@ -362,18 +272,10 @@ const CATALOG_TTL_MS = 60_000;
 const catalogCache = new Map<string, { at: number; v: Catalog }>();
 function loadCatalog(sb: SupabaseClient, db: D1Database, companyId: number | null): Promise<Catalog> {
   return ttlCached(catalogCache, String(companyId ?? 'all'), CATALOG_TTL_MS, () => loadCatalogFresh(sb, db, companyId),
-    // an empty SKU or venue list is a failed read that fails soft: never keep it
     (cat) => cat.skus.length > 0 && cat.venues.length > 0);
 }
 async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: number | null): Promise<Catalog> {
-  // PostgREST's default 1000-row cap silently truncates the OCR validation
-  // catalogue (mfg_products is 1141 ACTIVE SKUs live, my_localities 2933) — a
-  // truncated catalogue makes the OCR reject valid SKUs/states as "unknown".
-  // Page each list read with .range(); cfgRes stays a single .maybeSingle().
   const [prodRes, fabRes, cfgRes, optRes, locRes, spcRes, modRes, venueNames] = await Promise.all([
-    // Company-scoped: the OCR matcher resolves a scanned SKU string against
-    // this list, so the other company's catalogue would let a foreign code onto
-    // a draft SO — which the (now scoped) pricing read then cannot price.
     paginateAll((from, to) => {
       let q = sb
         .from('mfg_products')
@@ -382,8 +284,6 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
       if (companyId != null) q = q.eq('company_id', companyId);
       return q.order('category').order('code').range(from, to);
     }),
-    // Migration 0167 — ACTIVE fabrics only: a deactivated fabric must not
-    // re-enter on NEW scanned orders (existing docs keep their stored code).
     paginateAll((from, to) => sb
       .from('fabric_trackings')
       .select('fabric_code, fabric_description')
@@ -397,15 +297,6 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle(),
-    // SO Maintenance vocab — ACTIVE rows only (the maintenance page's
-    // soft-deleted options must never re-enter via OCR).
-    // Multi-company note (mig 0089): deliberately NOT company-scoped. This
-    // catalog feeds buildCachedPrefix, which must stay BYTE-IDENTICAL across
-    // the request path, /warm and the headless cron/scan-job (no request scope
-    // there) — scoping only the request path would bust the prompt cache on
-    // every scan. Same treatment as this loader's other 0083-stamped tables
-    // (mfg_products / fabric_trackings / special_addons). Per-company OCR
-    // catalogs need their own cached-prefix design first.
     paginateAll((from, to) => sb
       .from('so_dropdown_options')
       .select('category, value, label')
@@ -414,20 +305,11 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
       .order('sort_order', { ascending: true })
       .order('label', { ascending: true })
       .range(from, to)),
-    // Delivery STATE / CITY / POSTCODE — the same scm.my_localities master the
-    // New SO form's cascading State -> City -> Postcode selects render. Only the
-    // distinct state names reach the OCR's allowed-values list; city + postcode
-    // are loaded so validateSlip can snap them to the master too (the background
-    // scan job persists a draft with no form in the loop, so "the frontend
-    // reconciles them" never happens on that path).
     paginateAll((from, to) => sb
       .from('my_localities')
       .select('state, city, postcode')
       .order('state', { ascending: true })
       .range(from, to)),
-    // Configured Special Add-ons (migration 0134) — ACTIVE rows only (a
-    // deactivated special must never re-enter on a NEW scanned order). The OCR
-    // maps a slip remark to one of these CODES via specialsMatch.
     paginateAll((from, to) => sb
       .from('special_addons')
       .select('code, label, so_description, categories')
@@ -435,9 +317,6 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
       .order('sort_order', { ascending: true })
       .order('code', { ascending: true })
       .range(from, to)),
-    // SOFA Models — allowed_options.specials is the per-model ON/OFF authority
-    // for which specials each model offers. Used to build the SKU→allowed-codes
-    // map so validateSlip keeps only a special the line's model actually allows.
     paginateAll((from, to) => {
       let q = sb
         .from('product_models')
@@ -446,7 +325,6 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
       if (companyId != null) q = q.eq('company_id', companyId);
       return q.order('model_code').range(from, to);
     }),
-    // The venue master (public.project_venues, ACTIVE) — env.DB, not `sb`.
     loadVenueNames(db),
   ]);
 
@@ -466,7 +344,6 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
   let gaps: string[] = [];
   const cfg = (cfgRes.data as { config?: Record<string, unknown> } | null)?.config;
   if (cfg && typeof cfg === 'object') {
-    // optionValues filters inactive entries (plain strings = active).
     sofaSizes = optionValues(cfg.sofaSizes);
     sofaLegHeights = optionValues(cfg.sofaLegHeights);
     legHeights = optionValues(cfg.legHeights);
@@ -483,9 +360,6 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     }
   }
 
-  // Distinct, de-duped state names (the my_localities table has one row per
-  // postcode, so the same state repeats thousands of times) + the city /
-  // postcode pools hanging off each cascade step.
   const stateSeen = new Set<string>();
   const states: string[] = [];
   const citiesByState = new Map<string, Map<string, string>>();
@@ -504,11 +378,7 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     if (!ct) continue;
     let cityPool = citiesByState.get(stKey);
     if (!cityPool) { cityPool = new Map(); citiesByState.set(stKey, cityPool); }
-    // First spelling in wins — the read is ordered, and a duplicate city row
-    // only differs by postcode.
     if (!cityPool.has(ct.toUpperCase())) cityPool.set(ct.toUpperCase(), ct);
-    // Postcodes are stored as 5 digits; strip any stray separator so the
-    // membership test matches what validateSlip normalises the OCR read to.
     const pc = (row.postcode ?? '').replace(/[^\d]/g, '');
     if (pc.length !== 5) continue;
     const lk = localityKey(st, ct);
@@ -527,11 +397,7 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     categories: Array.isArray(s.categories) ? s.categories : [],
   }));
 
-  // model_code → the special CODES that model's allowed_options.specials lists
-  // (uppercased for case-insensitive lookup). allowed_options is jsonb; PostgREST
-  // may return it camelCased — dual-read either casing.
   const specialsByModelCode = new Map<string, Set<string>>();
-  // model_code → the BEDFRAME Model's total_heights pool (null = unrestricted).
   const totalHeightsByModelCode = new Map<string, string[] | null>();
   for (const row of (modRes.data as Array<Record<string, unknown>> | null) ?? []) {
     const modelCode = (row.modelCode ?? row.model_code) as string | undefined;
@@ -551,9 +417,6 @@ async function loadCatalogFresh(sb: SupabaseClient, db: D1Database, companyId?: 
     for (const v of list) if (typeof v === 'string' && v.trim() !== '') set.add(v.toUpperCase());
     specialsByModelCode.set(modelCode.toUpperCase(), set);
   }
-  // SKU code → its Model's allowed special codes. SOFA SKUs are
-  // `{model_code}-{compartment}` with base_model = model_code; resolve each
-  // SKU's allowed set off base_model so validateSlip can gate per line.
   const specialsByModelSku = new Map<string, Set<string>>();
   for (const s of skus) {
     if (!s.baseModel) continue;
@@ -585,9 +448,6 @@ function formatCatalog(c: Catalog): string {
   for (const cat of scanCatalogCategoryOrder(c.skus)) {
     const list = byCategory.get(cat);
     if (!list || list.length === 0) continue;
-    // Slim: code | name only (base_model dropped 2026-06-23). The model name in
-    // `name` is enough for fuzzy matching; dropping base_model shrinks the cached
-    // prefix (1141 SKUs) so the first/warm call is faster and the cache cheaper.
     lines.push(`=== ${cat} SKUS (code | name) ===`);
     for (const s of list) {
       lines.push(`${s.code} | ${s.name}`);
@@ -599,8 +459,6 @@ function formatCatalog(c: Catalog): string {
   for (const f of c.fabrics) lines.push(`${f.code} | ${f.description ?? ''}`);
   lines.push('');
 
-  // Configured SOFA Special Add-ons — the specialsMatch rule (LINE ITEMS) maps a
-  // slip remark to one of these CODES (left side), copied character-for-character.
   lines.push('=== SOFA SPECIAL ADD-ONS (code | label) ===');
   if (c.specials.length === 0) lines.push('—');
   for (const s of c.specials) lines.push(`${s.code} | ${s.label}`);
@@ -613,16 +471,10 @@ function formatCatalog(c: Catalog): string {
   lines.push(c.sofaLegHeights.join(', ') || '—');
   lines.push('');
 
-  // Delivery STATES allowed-values list — the addressStateMatch in the system
-  // prompt must return one of these EXACTLY (the form's State <select> only
-  // accepts a real my_localities state).
   lines.push('=== DELIVERY STATES (allowed values) ===');
   lines.push(c.states.join(', ') || '—');
   lines.push('');
 
-  // SO Maintenance allowed-values lists — the OPTION MATCHING rules in the
-  // system prompt reference these section names. value | label per row;
-  // the VALUE (left side) is what option matches must return.
   const optionSection = (title: string, cat: OptionCategory) => {
     lines.push(`=== ${title} (allowed values: value | label) ===`);
     const rows = c.options[cat];
@@ -637,15 +489,6 @@ function formatCatalog(c: Catalog): string {
   optionSection('CUSTOMER TYPES',    'customer_type');
   optionSection('BUILDING TYPES',    'building_type');
 
-  /* VENUES allowed-values list — the venue MASTER (public.project_venues), the
-     same list SO Maintenance shows and the New-SO Venue dropdown renders (owner
-     ruling 2026-07-16). This section used to be emitted by optionSection over
-     so_dropdown_options.venue; re-sourcing it is a ONE-TIME cached-prefix change
-     (see Catalog.venues). Kept under the SAME "VENUES" heading the prompt's
-     locationMatch rule already names, so no prompt rule moves.
-
-     One name per line, not comma-joined like DELIVERY STATES: a venue name is
-     free text from Project Maintenance and may itself contain a comma. */
   lines.push('=== VENUES (allowed values) ===');
   if (c.venues.length === 0) lines.push('—');
   for (const v of c.venues) lines.push(v);
@@ -654,24 +497,10 @@ function formatCatalog(c: Catalog): string {
   return lines.join('\n').trimEnd();
 }
 
-// Cached prefix = SYSTEM_PROMPT + catalog. Identical across calls until the
-// catalog changes → Anthropic prompt-cache hit (~90% discount). The cache is
-// shared per-API-key + per-identical-prefix across all users, so /warm and
-// /extract MUST build this BYTE-IDENTICALLY (same function, same inputs) or
-// they warm/read different caches. SINGLE SOURCE OF TRUTH — never inline this
-// string anywhere else. Few-shot/rep-rule/alias blocks stay OUTSIDE this prefix
-// (after the cache boundary) so a new sample doesn't invalidate the cache.
 export function buildCachedPrefix(catalog: Catalog, companyName: string): string {
   return `${buildSystemPrompt(companyName)}\n\nCATALOG\n=======\n${formatCatalog(catalog)}`;
 }
 
-// Warm the Anthropic prompt cache with the catalog prefix so the next real
-// /extract reads a hot cache instead of paying full price on a cold catalog.
-// ONE minimal Claude call: the IDENTICAL cachedPrefix (same model, same
-// cache_control ttl, same beta header as /extract) plus a tiny 'warm' tail,
-// max_tokens:1. Shared by the /scan-so/warm endpoint AND the keep-warm cron so
-// neither can drift from /extract. Graceful: no key → { ok:false, reason }; any
-// fetch failure is caught and returned, never thrown.
 type WarmResult = { ok: boolean; reason?: string; cacheCreated?: boolean; cacheRead?: boolean };
 async function warmCatalogCache(
   sb: SupabaseClient,
@@ -696,8 +525,6 @@ async function warmCatalogCache(
         'content-type': 'application/json',
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
-        // MUST match /extract — same beta header or the cache is a different
-        // bucket and warming is pointless.
         'anthropic-beta': 'extended-cache-ttl-2025-04-11',
       },
       body: JSON.stringify({
@@ -708,8 +535,6 @@ async function warmCatalogCache(
           {
             role: 'user',
             content: [
-              // BYTE-IDENTICAL cached block to /extract (same text, same
-              // cache_control ttl) so this writes the cache /extract then reads.
               { type: 'text', text: cachedPrefix, cache_control: { type: 'ephemeral', ttl: '1h' } },
               { type: 'text', text: 'warm' },
             ],
@@ -740,34 +565,12 @@ async function warmCatalogCache(
   }
 }
 
-// Cron-callable warm: same logic as the /warm endpoint but takes an Env
-// (cron has no Hono context). getSupabaseService is the same scm-scoped service
-// client scan-so uses internally — RLS-bypass is fine for a read-only catalog
-// load. Exported for index.ts's scheduled handler so the cron and the endpoint
-// share ONE Claude call.
-//
-// env.DB carries the venue master read (project_venues). The scheduled handler
-// wraps its env in withPgDb() before calling this, so DB points at Postgres here
-// exactly as it does on the request path — the cached prefix stays byte-identical.
 export async function warmCatalogCacheForCron(env: Env): Promise<WarmResult> {
   const branding = await getBranding(env);
-  /* The keep-warm CRON has no request and so no active company: it warms the
-     UNSCOPED catalogue. That is a prompt-cache HIT-RATE concern only (/extract
-     and the job now send a company-scoped catalogue, so the warmed prefix stops
-     matching once the two companies' catalogues diverge) — never a correctness
-     one. Fixing it needs a per-company warm loop; flagged, not done here.  */
   return warmCatalogCache(getSupabaseService(env), env.DB, env.ANTHROPIC_API_KEY, branding.companyName, null,
     { env, feature: 'cache_warm', model: scanSoModel(env), companyId: null, userId: null, waitUntil: null });
 }
 
-// ===========================================================================
-// Prompt
-// ===========================================================================
-// The OCR system prompt anchors itself to the company name. It used to be a
-// hardcoded "Houzs Century"; it now comes from the central Branding config
-// (getBranding) so the literal lives in ONE place. The company name is STABLE
-// (seeded, rarely edited), so injecting it keeps buildCachedPrefix() byte-
-// identical across /warm + /extract + the cron — the prompt cache still holds.
 const buildSystemPrompt = (companyName: string) => `You extract structured data from photos of HANDWRITTEN showroom sale-order slips at ${companyName}, a Malaysian furniture retailer. The slips are carbon-copy order forms (Zanotti / AKEMI style): a printed header block (customer name, contact, address, delivery date) filled in by hand, a handwritten line-item table (description, qty, price), and a footer with totals, deposit, payment method, and the salesperson's name.
 
 The handwriting is often rushed, slanted, abbreviated, and mixed-case. Phone photos may be skewed, shadowed, or low-contrast. Read carefully; prefer extracting a raw transcription over guessing.
@@ -931,24 +734,12 @@ Return STRICT JSON, no markdown fences, no prose:
   }]
 }`;
 
-// ===========================================================================
-// Types
-// ===========================================================================
 type SkuMatch = { code: string; confidence: number; reason: string };
-// SO-Maintenance option match — value is the so_dropdown_options row VALUE.
 type OptionMatch = { value: string; confidence: number; reason: string };
-// Per-input-image classification — which uploaded image is the handwritten
-// order slip vs the printed card-terminal payment receipt. Drives which buffer
-// gets stored under image_key (`scan-slips/{id}`) vs receipt_image_key
-// (`scan-slips/{id}-receipt`) in the /extract handler.
 type ImageKind = 'order_slip' | 'payment_receipt';
 type ImageClass = { index: number; kind: ImageKind };
 type ExtractedLine = {
   rawText: string;
-  // Verbatim SPECIFICATION text for the row (bedframe/sofa variant string such
-  // as "divan10+4/gap12") — mirrors HOOKKA scan-po.ts's rawSpec. Feeds the
-  // server-side reparseSpec regex pass that overrules the model's numbers
-  // (LLMs occasionally truncate 12" to 1 even at temperature 0).
   rawSpec: string | null;
   // BEDFRAME variant numbers. Model-reported first, then OVERRULED by
   // reparseSpec(rawSpec) in validateSlip for non-SOFA/ACCESSORY lines.
@@ -960,30 +751,17 @@ type ExtractedLine = {
   legHeightInches: number | null;
   gapInches: number | null;
   noLeg: boolean;
-  // SOFA seat-height in inches read from the slip (e.g. "(28")"). Applies to
-  // EVERY compartment of the sofa. buildDraftSoBodyFromSlip snaps it to the
-  // sofaSizes pool and maps it to variants.seatHeight, so a scanned sofa seeds
-  // the seat axis the same way a hand-keyed one does. null when absent or not a
-  // sofa row. PRICING NOTE: itemGroup='sofa' reprices from seat height in the
-  // create core — an OCR'd seat height therefore MOVES the sofa price. Verify
-  // against real slips before trusting the read.
   seatHeightInches: number | null;
   qtyGuess: number;
   priceRmGuess: number | null;
   skuMatch: SkuMatch | null;
   fabricMatch: SkuMatch | null;
-  // Configured SOFA special add-ons the row asks for (active special_addons
-  // codes; validateSlip drops any not in the catalog or not allowed by the
-  // line's resolved model). [] when none.
   specialsMatch: SkuMatch[];
   notes: string | null;
 };
 type ExtractedSlip = {
   customerName: string | null;
   address: string | null;
-  // Structured address parts (the form fills State / City / Postcode from
-  // these). addressLine1 is the street portion; addressStateMatch is snapped to
-  // the live my_localities state list (validateSlip clears a non-listed state).
   addressLine1: string | null;
   city: string | null;
   postcode: string | null;
@@ -991,58 +769,28 @@ type ExtractedSlip = {
   phones: string[];
   location: string | null;
   deliveryDate: string | null;
-  /* THE SLIP'S OWN DATE — the date the rep wrote on the handwritten order slip.
-     It is NOT the Sales Order's Processing Date (`internal_expected_dd`, the
-     factory-start date the operator keys at review) and it is NOT a receipt's
-     printed transaction date (that is ExtractedPayment.receiptTxnDate). All
-     three used to be called "processingDate", which is exactly how the wrong
-     one kept getting picked. Consumed by: the duplicate probe (same phone +
-     same slip date + same total) and, as a LAST-RESORT fallback only, the
-     payment planner's paid_at when a receipt printed no date of its own. */
   slipDate: string | null;
   salesRep: string | null;
-  // The customer's own reference number for this order (usually top-right of the
-  // slip, e.g. "HC14032") — seeds the form's "Customer SO Ref" field.
   customerSoRef: string | null;
   paymentMethod: string | null;
   depositRm: number | null;
   totalRm: number | null;
   remarks: string | null;
-  // Card-terminal approval / reference number on the payment line (e.g. the
-  // parenthesized "(001586)") — seeds the Payments-panel draft's approvalCode.
   approvalCode: string | null;
-  // SO Maintenance vocab matches (active so_dropdown_options values only —
-  // validateSlip clears anything outside the live lists).
   paymentMethodMatch: OptionMatch | null;
   bankMatch: OptionMatch | null;
   onlineTypeMatch: OptionMatch | null;
   installmentPlanMatch: OptionMatch | null;
   customerTypeMatch: OptionMatch | null;
   buildingTypeMatch: OptionMatch | null;
-  // NOT a so_dropdown_options value — validateSlip snaps this to an ACTIVE
-  // public.project_venues NAME (the venue master the pickers bind to; owner
-  // ruling 2026-07-16) and clears it when the slip's venue isn't on that list.
   locationMatch: OptionMatch | null;
-  // Per-input-image classification (order_slip vs payment_receipt). Used only
-  // by /extract to decide which uploaded buffer to store under image_key vs
-  // receipt_image_key — not surfaced in the modal's review form.
   images: ImageClass[];
-  // MULTI-RECEIPT — one entry per PAYMENT-RECEIPT image the model read, each
-  // with its OWN amount / bank / method / approval / date, keyed by the image's
-  // `index`. The background job books ONE ledger row per entry (deposit +
-  // balance, split card terminals). Empty when the scan carried no receipt, OR
-  // for a legacy parse that only filled the singular payment fields above — the
-  // planner then falls the FIRST receipt back to those singulars, so the
-  // pre-multi behaviour is preserved byte-for-byte.
   payments: ExtractedPayment[];
   lines: ExtractedLine[];
 };
 
 type Warning = { field: string; value: string; message: string; lineIdx?: number };
 
-// Defensive normalisation — Claude occasionally omits fields or returns the
-// wrong primitive type. Coerce into the ExtractedSlip shape so the frontend
-// never sees undefined where it expects an array.
 function normalizeSlip(raw: unknown): ExtractedSlip {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const str = (v: unknown): string | null =>
@@ -1059,8 +807,6 @@ function normalizeSlip(raw: unknown): ExtractedSlip {
       reason: typeof m.reason === 'string' ? m.reason : '',
     };
   };
-  // Option matches use { value } instead of { code } — tolerate Claude
-  // returning either key.
   const optionMatch = (v: unknown): OptionMatch | null => {
     if (!v || typeof v !== 'object') return null;
     const m = v as Record<string, unknown>;
@@ -1092,10 +838,6 @@ function normalizeSlip(raw: unknown): ExtractedSlip {
           priceRmGuess: num(li.priceRmGuess),
           skuMatch: match(li.skuMatch),
           fabricMatch: match(li.fabricMatch),
-          // specialsMatch — keep only well-formed { code, confidence, reason }
-          // entries (same shape/coercion as skuMatch); a missing/garbled array
-          // normalises to []. validateSlip then enforces never-invent + the
-          // line's model allowed_options.specials gate.
           specialsMatch: Array.isArray(li.specialsMatch)
             ? (li.specialsMatch as unknown[])
                 .map((s) => match(s))
@@ -1105,9 +847,6 @@ function normalizeSlip(raw: unknown): ExtractedSlip {
         };
       })
     : [];
-  // Image classification — keep only well-formed { index:number, kind } entries
-  // (kind one of the two known values). Anything else is dropped; the /extract
-  // handler's positional fallback covers a missing/garbled array.
   const images: ImageClass[] = Array.isArray(r.images)
     ? (r.images as unknown[])
         .map((x) => {
@@ -1118,11 +857,6 @@ function normalizeSlip(raw: unknown): ExtractedSlip {
         })
         .filter((x): x is ImageClass => x !== null)
     : [];
-  // Per-receipt payments — keep only entries with a numeric imageIndex; each
-  // carries its own amount / matches (option VALUES). Option matches ride as
-  // { value } like the singular fields; store the VALUE string (validateSlip
-  // enforces never-invent on the singulars; the per-receipt values are the
-  // model's read of the SAME catalog-bound vocabulary).
   const optionValueOf = (v: unknown): string | null => optionMatch(v)?.value ?? null;
   const payments: ExtractedPayment[] = Array.isArray(r.payments)
     ? (r.payments as unknown[])
@@ -1135,10 +869,6 @@ function normalizeSlip(raw: unknown): ExtractedSlip {
             imageIndex,
             amountRm: num(o.amountRm),
             approvalCode: str(o.approvalCode),
-            // `processingDate` is the pre-rename key for this SAME field (the
-            // receipt's own printed transaction date). Read it as a fallback so a
-            // model echoing an older few-shot example's key still books its date
-            // instead of silently falling through to the slip date / today.
             receiptTxnDate: str(o.receiptTxnDate) ?? str(o.processingDate),
             paymentMethodValue: optionValueOf(o.paymentMethodMatch),
             bankValue: optionValueOf(o.bankMatch),
@@ -1148,10 +878,6 @@ function normalizeSlip(raw: unknown): ExtractedSlip {
         })
         .filter((p): p is ExtractedPayment => p !== null)
     : [];
-  // BACK-FILL the SINGULAR payment fields from the FIRST receipt when the model
-  // filled only payments[] — so the header deposit + the modal review form (both
-  // read the singulars) still reflect the primary receipt, and a legacy single-
-  // receipt read is unchanged (payments[0] equals the singulars there).
   const primaryPay = payments[0] ?? null;
   const depositRm = num(r.depositRm) ?? (primaryPay ? primaryPay.amountRm : null);
   const approvalCode = str(r.approvalCode) ?? (primaryPay ? primaryPay.approvalCode : null);
@@ -1174,10 +900,6 @@ function normalizeSlip(raw: unknown): ExtractedSlip {
       : [],
     location: str(r.location),
     deliveryDate: str(r.deliveryDate),
-    // `processingDate` is the pre-rename key for this SAME field (the slip's own
-    // written date). Stored so_scan_samples blobs still carry it, and those blobs
-    // are fed back verbatim as few-shot examples, so the model can echo the old
-    // key — read it as a fallback rather than losing the slip date.
     slipDate: str(r.slipDate) ?? str(r.processingDate),
     salesRep: str(r.salesRep),
     customerSoRef: str(r.customerSoRef),
@@ -1197,28 +919,16 @@ function normalizeSlip(raw: unknown): ExtractedSlip {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Server-side spec re-parser — overrules Claude on BEDFRAME number extraction.
-// Ported from HOOKKA scan-po.ts reparseSpec (their BUG class: LLMs
-// occasionally truncate "10" to 1 or 12" to 1 even at temperature 0; regex on
-// the verbatim rawSpec line is bulletproof for these patterns).
-// ---------------------------------------------------------------------------
 function reparseSpec(line: ExtractedLine): void {
   if (!line.rawSpec) return;
   const spec = line.rawSpec;
 
-  // No-leg first — many specs read "8inch + No Legs" or "no leg" or "NOLEG".
-  // If matched, leg is null regardless of any number.
   const noLegRe = /\b(no\s*leg(?:s)?|noleg(?:s)?)\b/i;
   const noLegMatch = noLegRe.test(spec);
 
-  // Divan height: number that follows "divan" / "drawer" keyword.
-  // Examples: "Divan10+4" -> 10. "Divan:8inch" -> 8. "DRAWER:12"" -> 12.
   const divanRe = /(?:divan|drawer)[\s:.-]*(\d+(?:\.\d+)?)/i;
   const divanMatch = spec.match(divanRe);
 
-  // Leg height: number that follows the "+" or "leg" keyword. Skip when
-  // noLeg is true. Patterns: "Divan10+4" -> 4. "8"DIVAN+2"LEG" -> 2.
   let legMatch: RegExpMatchArray | null = null;
   if (!noLegMatch) {
     legMatch =
@@ -1226,7 +936,6 @@ function reparseSpec(line: ExtractedLine): void {
       spec.match(/(\d+(?:\.\d+)?)\s*"?\s*leg/i);
   }
 
-  // Gap: number after gap-family keywords.
   const gapRe =
     /(?:m['.\s]*gap|m\s*gap|mattress\s*gap|mattressgap|gap)[\s:.-]*(\d+(?:\.\d+)?)/i;
   const gapMatch = spec.match(gapRe);
@@ -1251,14 +960,6 @@ function reparseSpec(line: ExtractedLine): void {
   }
 }
 
-// Normalize a code for tolerant matching: uppercase, drop every
-// non-alphanumeric separator, then strip leading zeros from each numeric run.
-// Examples (all collapse to the same key):
-//   "KN-390-01" -> "KN3901"
-//   "KN.390-001" -> "KN3901"
-//   "KN 390-1" -> "KN3901"
-// Used as a fallback when the exact-uppercase lookup misses (ported from
-// HOOKKA scan-po.ts normalizeForMatch).
 function normalizeForMatch(s: string): string {
   return s
     .toUpperCase()
@@ -1268,25 +969,11 @@ function normalizeForMatch(s: string): string {
     .join('');
 }
 
-// Catalog-bound validation: a skuMatch/fabricMatch whose code is NOT in the
-// live catalog is cleared to null (never-invent rule, enforced server-side —
-// same belt-and-braces as HOOKKA's validateAndEnrichPO). Case-insensitive
-// snap to the canonical catalog casing on hit; TOLERANT fallbacks (ported
-// from HOOKKA scan-po.ts) before clearing:
-//   SKU:    exact-upper → drop a "1" before a trailing letter group
-//           ("8030-1L(LHF)" → "8030-L(LHF)") → add one ("8030-L(LHF)" →
-//           "8030-1L(LHF)") → separator/leading-zero-stripped lookup.
-//   Fabric: exact-upper → separator/leading-zero-stripped lookup
-//           ("KN.390-001" / "KN 390-1" → the canonical "KN-390-01").
-// Every hit snaps the code to the catalog's canonical casing.
 function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
   const warnings: Warning[] = [];
   const skuCanon = new Map(catalog.skus.map((s) => [s.code.toUpperCase(), s.code]));
   const fabricCanon = new Map(catalog.fabrics.map((f) => [f.code.toUpperCase(), f.code]));
   const specialCanon = new Map(catalog.specials.map((s) => [s.code.toUpperCase(), s.code]));
-  // Tolerant lookup tables — separator-stripped + leading-zero-stripped key →
-  // canonical catalog code. Built AFTER the exact maps so an exact hit always
-  // wins (the norm key can collide across near-identical codes; first in wins).
   const skuCanonByNorm = new Map<string, string>();
   for (const s of catalog.skus) {
     const k = normalizeForMatch(s.code);
@@ -1297,7 +984,6 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
     const k = normalizeForMatch(f.code);
     if (!fabricCanonByNorm.has(k)) fabricCanonByNorm.set(k, f.code);
   }
-  // Category by canonical code — gates the bedframe reparseSpec pass below.
   const categoryByCode = new Map(catalog.skus.map((s) => [s.code.toUpperCase(), s.category]));
 
   slip.lines.forEach((line, i) => {
@@ -1305,12 +991,10 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
       const upper = line.skuMatch.code.toUpperCase();
       let canon = skuCanon.get(upper);
       if (!canon) {
-        // "8030-1L(LHF)" → "8030-L(LHF)"
         const dropOne = upper.replace(/-1([A-Z])/, '-$1');
         if (dropOne !== upper) canon = skuCanon.get(dropOne);
       }
       if (!canon) {
-        // "8030-L(LHF)" → "8030-1L(LHF)"
         const addOne = upper.replace(/-([A-Z])(\(|$)/, '-1$1$2');
         if (addOne !== upper) canon = skuCanon.get(addOne);
       }
@@ -1327,12 +1011,6 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
         line.skuMatch = null;
       }
     }
-    // Regex re-parse the verbatim spec to overrule any Claude truncation
-    // mistakes (12" read as 1). Bedframe-family only — skipped for SOFA /
-    // ACCESSORY where the spec format is different (same gate as HOOKKA).
-    // Runs AFTER the SKU snap so the category gate reads the canonical code;
-    // lines with no resolved SKU still reparse (the divan/leg/gap regexes
-    // only fire on bedframe spec keywords, so non-bedframe text is inert).
     {
       const cat = line.skuMatch ? categoryByCode.get(line.skuMatch.code.toUpperCase()) ?? '' : '';
       if (cat !== 'SOFA' && cat !== 'ACCESSORY') reparseSpec(line);
@@ -1342,7 +1020,6 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
       let canon = fabricCanon.get(upper);
       if (!canon) canon = fabricCanonByNorm.get(normalizeForMatch(line.fabricMatch.code));
       if (canon) {
-        // Snap to the catalog's canonical casing (HOOKKA fabric-casing rule).
         line.fabricMatch.code = canon;
       } else {
         warnings.push({
@@ -1354,13 +1031,6 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
         line.fabricMatch = null;
       }
     }
-    // specialsMatch — same never-invent enforcement as skuMatch, PLUS a model
-    // gate. Drop any special whose code is not in catalog.specials (case-
-    // insensitive snap on hit), then keep only specials the line's resolved
-    // Model actually offers (allowed_options.specials). The model is resolved
-    // off the line's skuMatch.code via catalog.specialsByModelSku; with no
-    // resolved SKU there is no model authority, so all matched specials are
-    // dropped (a special can't render checked on a line with no product).
     if (Array.isArray(line.specialsMatch) && line.specialsMatch.length > 0) {
       const allowedForModel = line.skuMatch
         ? catalog.specialsByModelSku.get(line.skuMatch.code.toUpperCase()) ?? null
@@ -1393,9 +1063,6 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
     }
   });
 
-  // SO-Maintenance option matches — same never-invent enforcement: a value
-  // outside the ACTIVE allowed list is cleared (case-insensitive snap to the
-  // canonical casing on hit).
   const optionFields: Array<{
     field: keyof Pick<ExtractedSlip,
       'paymentMethodMatch' | 'bankMatch' | 'onlineTypeMatch' | 'installmentPlanMatch' |
@@ -1408,8 +1075,6 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
     { field: 'installmentPlanMatch', category: 'installment_plan' },
     { field: 'customerTypeMatch',    category: 'customer_type' },
     { field: 'buildingTypeMatch',    category: 'building_type' },
-    // locationMatch is NOT here — it validates against the venue MASTER
-    // (project_venues), not so_dropdown_options. See the block below.
   ];
   for (const { field, category } of optionFields) {
     const m = slip[field];
@@ -1428,12 +1093,6 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
     }
   }
 
-  // Per-receipt payment option values (multi-receipt) — the SAME never-invent
-  // snap as the singular payment matches above, so every booked receipt row
-  // carries only catalog-valid vocabulary (and the first receipt's values match
-  // the validated singulars). A value outside the ACTIVE list is CLEARED to
-  // null (deriveLedgerMethod then treats a null method as an assumed card
-  // terminal), never invented.
   if (slip.payments.length > 0) {
     const canonFor = (category: OptionCategory): Map<string, string> =>
       new Map(catalog.options[category].map((o) => [o.value.toUpperCase(), o.value]));
@@ -1484,9 +1143,6 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
     }
   }
 
-  // Delivery STATE — same never-invent enforcement against the live
-  // my_localities state list. A state outside the catalog (or empty list) is
-  // cleared so the form never seeds a State the dropdown can't select.
   if (slip.addressStateMatch) {
     const stateCanon = new Map(catalog.states.map((s) => [s.toUpperCase(), s]));
     const hit = stateCanon.get(slip.addressStateMatch.value.toUpperCase());
@@ -1544,9 +1200,6 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
     }
   }
   if (slip.postcode) {
-    // Only a postcode the master actually files under the resolved state+city
-    // survives; anything else (including a plausible-looking 5-digit misread)
-    // is cleared rather than guessed onto the draft.
     const pcPool = cascadeState && slip.city
       ? catalog.postcodesByStateCity.get(localityKey(cascadeState, slip.city))
       : undefined;
@@ -1567,14 +1220,6 @@ function validateSlip(slip: ExtractedSlip, catalog: Catalog): Warning[] {
   return warnings;
 }
 
-// Service-role client — sample-row reads/writes bypass RLS so extraction
-// works regardless of policy state (same pattern as mfg-sales-orders.ts's
-// admin client). Auth is already enforced by supabaseAuth on the router.
-//
-// Houzs CRITICAL fix: getSupabaseService(env) returns a client scoped to the
-// `scm` schema (db:{schema:'scm'}), so every sb.from('so_scan_samples' /
-// 'so_scan_rules' / 'mfg_products' / …) resolves to scm.*, NOT public.*. The
-// 2990's original used createClient(...) defaulting to public.
 function serviceClient(env: Env): SupabaseClient {
   return getSupabaseService(env);
 }
@@ -1582,8 +1227,6 @@ function serviceClient(env: Env): SupabaseClient {
 function isMissingTable(err: { code?: string; message?: string } | null): boolean {
   return (
     err?.code === '42P01' ||
-    // PostgREST reports an unknown relation as PGRST205 ("Could not find the
-    // table '…' in the schema cache"), not the raw Postgres 42P01.
     err?.code === 'PGRST205' ||
     /so_scan_samples.*does not exist|relation .* does not exist|could not find the table/i.test(err?.message ?? '')
   );
@@ -1592,80 +1235,21 @@ function isMissingTable(err: { code?: string; message?: string } | null): boolea
 const TABLE_MISSING_MSG =
   'scan-so tables missing — apply src/db/migrations-pg/0023_so_scan_samples.sql to this database.';
 
-// ===========================================================================
-// Sample review outcomes (so_scan_samples.status — free-text, NO check
-// constraint, so this vocabulary needs no migration).
-//
-//   EXTRACTED — the AI read it; no human has reviewed it yet.
-//   CONFIRMED — the operator reviewed AND CHANGED something. `corrected` and
-//               `extracted` DIFFER, so the pair carries a teachable diff.
-//   ACCEPTED  — the operator reviewed and took the extraction AS-IS. Ground
-//               truth, but the pair has NO diff.
-//   FAILED    — the extraction itself errored.
-//
-// Why the split matters: the two consumers of this pool want OPPOSITE things.
-// The distillers MINE THE DIFF ("wherever they differ, the AI misread") — a
-// zero-diff pair teaches them nothing and, inside their LIMIT window, would
-// push a real correction out of the pool. The few-shot pool shows the model
-// GOOD OUTPUT — there both outcomes are equally true, and corrected-only was
-// a biased sample of the AI's own failures. So: distill on CONFIRMED, few-shot
-// on both (CONFIRMED first — HOOKKA ae0f7e6d's `ORDER BY isGold DESC` shape).
-//
-// Back-compat: every pre-existing CONFIRMED row was written through the
-// `if (!changed) return` edit-gate, so it IS diff-bearing by construction.
-// The vocabulary classifies history correctly with no backfill.
-// ===========================================================================
 const SAMPLE_CORRECTED = 'CONFIRMED';
 const SAMPLE_ACCEPTED = 'ACCEPTED';
 
-// ===========================================================================
-// Per-SALESPERSON rule distillation — ported from HOOKKA's ocr-distill.ts
-// (per-customer, D1) and adapted to per-salesperson on Supabase, with the
-// rules ORGANIZED BY PRODUCT CATEGORY (each rep's notation differs between
-// sofa / mattress / bedframe slips).
-// ===========================================================================
 
-// `ilike` with no wildcards = case-insensitive exact match, BUT % and _ in
-// the value would still act as wildcards — escape them so a rep literally
-// named "A_B" can't match "AXB".
 function ilikeExact(v: string): string {
   return v.replace(/([\\%_])/g, '\\$1');
 }
 
-// Salesperson KEY normalization — applied on EVERY write and read of the
-// so_scan_samples / so_scan_rules / scan_jobs salesperson column so that
-// case / whitespace variants of one rep's name share ONE learning pool
-// (" aaron " / "Aaron" / "aaron  tan" vs "Aaron Tan"). HOOKKA
-// BUG-2026-06-07-012 class: their exact-name mismatch wasted 92% of gold
-// samples. Trim + collapse internal whitespace; CASE is handled on the read
-// side (every lookup goes through ilikeExact, which is case-insensitive) and
-// on the rules-write side (the distill upserts onto the existing row's
-// canonical casing), so the display casing the rep typed is preserved.
 function normalizeRepKey(v: unknown): string {
   return typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : '';
 }
 
-// Reserved so_scan_rules key for the GLOBAL shared product-alias dictionary
-// (cross-rep: "Bamboo Cruise" vs "Cruise" → one SKU). Just a row — no
-// migration. The /salespeople listing filters it out; the weekly cron and
-// rep enumeration must never treat it as a salesperson.
 const GLOBAL_ALIAS_KEY = '__GLOBAL__';
-// Reserved so_scan_rules key for the CROSS-REP SHARED RULES blob — common,
-// NON-rep-specific extraction patterns distilled from CONFIRMED corrections
-// across ALL salespeople ("one rep's learnings benefit every rep"). Sibling to
-// __GLOBAL__ (which is aliases only); this layer is the shared GENERAL/category
-// rules every scan — including a brand-new rep's first scan — benefits from.
-// Same table/shape (just another reserved row), so NO migration.
 const GLOBAL_RULES_KEY = '__GLOBAL_RULES__';
-// Reserved so_scan_rules key for HAND-WRITTEN shared rules - knowledge the
-// distiller can never produce because it is not in the corrections. The sofa
-// sketch grammar forced it: the drawing on a slip carries the compartment
-// layout, and no amount of diffing extracted JSON against corrected JSON
-// teaches that a hatched strip on a box edge is the armrest. Injected exactly
-// like the distilled layer and NEVER regenerated.
 const GLOBAL_MANUAL_KEY = '__GLOBAL_MANUAL__';
-// Either reserved row must be kept out of the salesperson datalist / per-rep
-// enumeration / weekly per-rep pass.
 const isGlobalKey = (v: string): boolean => {
   const k = v.trim().toUpperCase();
   return k === GLOBAL_ALIAS_KEY || k === GLOBAL_RULES_KEY || k === GLOBAL_MANUAL_KEY;
@@ -1711,10 +1295,6 @@ type DistillResult = {
   sampleCount?: number;
 };
 
-// Feed extracted→corrected PAIRS so the model learns from the DIFFS (what
-// the AI got wrong vs what the human fixed). Each side is truncated to keep
-// the worst case token-bounded; typical slip JSON is ~1-2k chars so
-// truncation rarely fires. Shared by per-rep rules + global alias distills.
 const PAIR_SIDE_MAX = 4_000;
 function pairExamplesText(samples: Array<{ extracted: unknown; corrected: unknown }>): string {
   const sideText = (v: unknown): string => {
@@ -1730,8 +1310,6 @@ function pairExamplesText(samples: Array<{ extracted: unknown; corrected: unknow
     .join('\n\n');
 }
 
-// One prose-distill Claude call (temperature 0, fences stripped). Returns
-// the cleaned text or an error string — never throws.
 async function claudeDistillCall(
   apiKey: string,
   system: string,
@@ -1749,7 +1327,6 @@ async function claudeDistillCall(
       body: JSON.stringify({
         model: CLAUDE_MODEL,
         max_tokens: 2048,
-        // Determinism: same sample pool → same distilled output.
         temperature: 0,
         system,
         messages: [{ role: 'user', content: [{ type: 'text', text: userPayload }] }],
@@ -1769,8 +1346,6 @@ async function claudeDistillCall(
       return { text: '', error: `Anthropic: ${parsedResp.error.type}: ${parsedResp.error.message}` };
     }
     const firstText = parsedResp.content?.find((b) => b.type === 'text')?.text ?? '';
-    // Distill output is plain prose, not JSON — strip fences only.
-    // (Do NOT slice to first/last brace — that would truncate prose.)
     let cleaned = firstText.trim();
     const m = cleaned.match(/^```(?:\w+)?\s*\n?([\s\S]*?)\n?```\s*$/);
     if (m?.[1]) cleaned = m[1].trim();
@@ -1780,14 +1355,6 @@ async function claudeDistillCall(
   }
 }
 
-/**
- * Regenerate so_scan_rules for one salesperson from their latest ≤50
- * corrected samples. REPLACES any existing rules row (regenerate-from-pool,
- * not merge — same contract as HOOKKA's distillCustomerRules).
- *
- * Cheap-skip: fewer than 2 corrected samples → skip WITHOUT an Anthropic
- * call, so the fire-and-forget trigger on /confirm is always safe.
- */
 async function distillSalespersonRules(
   svc: SupabaseClient,
   apiKey: string | undefined,
@@ -1797,9 +1364,6 @@ async function distillSalespersonRules(
 ): Promise<DistillResult> {
   const rep = normalizeRepKey(salesperson);
   if (!rep) return { status: 'error', reason: 'Missing salesperson.' };
-  // Reserved keys route to their own cross-rep distillers, never a per-rep
-  // rules pass: '__GLOBAL__' → shared alias dictionary,
-  // '__GLOBAL_RULES__' → shared cross-rep rules blob.
   if (rep.toUpperCase() === GLOBAL_RULES_KEY) return distillGlobalRules(svc, apiKey, companyName, usage);
   if (isGlobalKey(rep)) return distillGlobalAliases(svc, apiKey, companyName, usage);
   if (!apiKey) {
@@ -1809,10 +1373,6 @@ async function distillSalespersonRules(
     };
   }
 
-  // DIFF-BEARING only. This prompt derives rules from extracted→corrected
-  // diffs, so an ACCEPTED (zero-diff) row contributes nothing and would only
-  // consume a slot in the 50-row window. `corrected IS NOT NULL` is kept for
-  // the partial index (idx_so_scan_samples_salesperson).
   const { data: rows, error: selErr } = await svc
     .from('so_scan_samples')
     .select('extracted, corrected')
@@ -1848,13 +1408,8 @@ async function distillSalespersonRules(
   if (errorMsg || !distilledText) {
     return { status: 'error', reason: errorMsg ?? 'Claude returned empty rules.' };
   }
-  // Soft cap — keep the injected prompt block bounded (same 32k ceiling as
-  // HOOKKA's distill).
   if (distilledText.length > 32_000) distilledText = distilledText.slice(0, 32_000);
 
-  // Canonical PK casing: if a rules row already exists under a different
-  // casing ("aaron" vs "Aaron"), upsert onto THAT key instead of creating a
-  // case-variant duplicate.
   let key = rep;
   const { data: existing } = await svc
     .from('so_scan_rules')
@@ -1883,13 +1438,6 @@ async function distillSalespersonRules(
   return { status: 'distilled', rulesGenerated: distilledText, sampleCount: samples.length };
 }
 
-// ===========================================================================
-// GLOBAL shared product-alias dictionary — stored under the reserved
-// '__GLOBAL__' so_scan_rules row. Cross-rep learning: the SAME product gets
-// written differently by different reps ("Bamboo Cruise" / "Cruise" /
-// "B.Cruise" → one SKU), so one rep's corrections should teach everyone.
-// Per-rep STYLE notes stay in the per-rep rule rows; this is aliases only.
-// ===========================================================================
 const buildGlobalAliasMetaPrompt = (companyName: string) => `You are reviewing extraction sessions of HANDWRITTEN showroom sale-order slips at ${companyName}, a Malaysian furniture retailer. The examples below were written by MANY DIFFERENT salespeople. Each example is a PAIR: what the AI initially extracted, followed by what the human operator corrected it to (the confirmed truth).
 
 Your ONLY job is to build a SHARED PRODUCT-NAME ALIAS DICTIONARY that benefits every salesperson. The same product gets written many different ways across reps ("Bamboo Cruise", "Cruise", "B.Cruise" all mean one SKU). DERIVE THE ALIASES FROM THE DIFFS: wherever the operator corrected a line's skuMatch or fabricMatch, that line's rawText shows how the product was written and the corrected code is the catalog truth — record that variant → code mapping. rawText spellings the AI already matched correctly also confirm aliases worth recording when they differ from the catalog name.
@@ -1914,14 +1462,6 @@ DO write 100-400 words total: each section label exactly as above ("SOFA:", "MAT
 
 Output ONLY the dictionary text. The very first characters of your response must be a section label (e.g. "SOFA:"). Anything else will be stored verbatim into the prompt and corrupt downstream extractions.`;
 
-/**
- * Regenerate the '__GLOBAL__' shared alias dictionary from the latest ≤80
- * corrected samples ACROSS ALL salespeople. REPLACES the existing row
- * (regenerate-from-pool, not merge — same contract as the per-rep distill).
- *
- * Cheap-skip: fewer than 2 corrected samples total → skip WITHOUT an
- * Anthropic call, so the fire-and-forget trigger on /confirm is always safe.
- */
 async function distillGlobalAliases(
   svc: SupabaseClient,
   apiKey: string | undefined,
@@ -1935,9 +1475,6 @@ async function distillGlobalAliases(
     };
   }
 
-  // DIFF-BEARING only — same reason as the per-rep pass: the alias dictionary
-  // is derived from lines the operator RE-CODED, which a zero-diff row has
-  // none of.
   const { data: rows, error: selErr } = await svc
     .from('so_scan_samples')
     .select('extracted, corrected')
@@ -1969,8 +1506,6 @@ async function distillGlobalAliases(
   if (call.error || !distilledText) {
     return { status: 'error', reason: call.error ?? 'Claude returned empty aliases.' };
   }
-  // Soft cap — keep the injected prompt block bounded (same ceiling as the
-  // per-rep distill).
   if (distilledText.length > 32_000) distilledText = distilledText.slice(0, 32_000);
 
   const { error: upErr } = await svc
@@ -1991,18 +1526,6 @@ async function distillGlobalAliases(
   return { status: 'distilled', rulesGenerated: distilledText, sampleCount: samples.length };
 }
 
-// ===========================================================================
-// CROSS-REP SHARED RULES — stored under the reserved '__GLOBAL_RULES__'
-// so_scan_rules row. Where __GLOBAL__ holds product-name ALIASES, this holds
-// the COMMON, NON-rep-specific EXTRACTION PATTERNS distilled from CONFIRMED
-// corrections across ALL salespeople: how the operator consistently fixes
-// sizes, fabric-code casing, payment-note → option mapping, address splitting,
-// customerSoRef shape, etc. — patterns that recur regardless of who wrote the
-// slip. Injected into EVERY /extract so one rep's corrections raise the
-// baseline for everyone, INCLUDING brand-new reps with no rules of their own.
-// Per-rep STYLE (handwriting habits) stays in the per-rep rows; this is the
-// shared, universal-improvement layer.
-// ===========================================================================
 const buildGlobalRulesMetaPrompt = (companyName: string) => `You are reviewing extraction sessions of HANDWRITTEN showroom sale-order slips at ${companyName}, a Malaysian furniture retailer. The examples below were written by MANY DIFFERENT salespeople. Each example is a PAIR: what the AI initially extracted, followed by what the human operator corrected it to (the confirmed truth).
 
 Your job is to distill SHARED EXTRACTION RULES that apply to EVERY salesperson — the COMMON, RECURRING ways the operator corrects the AI that are NOT specific to one rep's handwriting. These rules raise the baseline accuracy for all reps, including brand-new ones. DERIVE THEM FROM THE DIFFS: wherever the operator repeatedly corrected the same KIND of field the same way across DIFFERENT reps, that is a shared pattern worth a rule (e.g. a size token consistently re-mapped, a fabric-code casing normalisation, a payment-note phrase that should map to a specific option value, an address part that's habitually mis-split, a customerSoRef shape that's commonly misread).
@@ -2025,16 +1548,6 @@ DO write 80-350 words total: each section label exactly as above ("LINE ITEMS:",
 
 Output ONLY the rule text. The very first characters of your response must be a section label (e.g. "LINE ITEMS:"). Anything else will be stored verbatim into the prompt and corrupt downstream extractions.`;
 
-/**
- * Regenerate the '__GLOBAL_RULES__' shared cross-rep rules blob from the
- * latest ≤80 corrected samples ACROSS ALL salespeople. REPLACES the existing
- * row (regenerate-from-pool, same contract as the alias + per-rep distills).
- *
- * Cheap-skip: fewer than 3 corrected samples total → skip WITHOUT an
- * Anthropic call (shared rules need a few reps' worth of signal to be
- * meaningful; keeps the fire-and-forget trigger on /confirm cheap + safe).
- * Fail-soft: every error path returns a DistillResult, never throws.
- */
 async function distillGlobalRules(
   svc: SupabaseClient,
   apiKey: string | undefined,
@@ -2048,8 +1561,6 @@ async function distillGlobalRules(
     };
   }
 
-  // DIFF-BEARING only — this pass looks for "the same KIND of field corrected
-  // the same way across DIFFERENT reps", which requires a correction to exist.
   const { data: rows, error: selErr } = await svc
     .from('so_scan_samples')
     .select('extracted, corrected')
@@ -2081,8 +1592,6 @@ async function distillGlobalRules(
   if (call.error || !distilledText) {
     return { status: 'error', reason: call.error ?? 'Claude returned empty shared rules.' };
   }
-  // Soft cap — keep the injected prompt block bounded (same ceiling as the
-  // alias + per-rep distills).
   if (distilledText.length > 32_000) distilledText = distilledText.slice(0, 32_000);
 
   const { error: upErr } = await svc
@@ -2125,8 +1634,6 @@ export async function distillAllSalespersonRules(
 ): Promise<{ distilled: number; skipped: number; errors: number; reps: number }> {
   const summary = { distilled: 0, skipped: 0, errors: 0, reps: 0 };
 
-  // Shared alias dictionary first — it benefits every rep's scans and its
-  // sample pool (all corrected rows) is a superset of any rep's.
   try {
     const g = await distillGlobalAliases(svc, apiKey, companyName, usage);
     if (g.status === 'distilled') summary.distilled += 1;
@@ -2140,9 +1647,6 @@ export async function distillAllSalespersonRules(
     console.error(`[scan-so weekly distill] __GLOBAL__ aliases threw: ${(e as Error).message}`);
   }
 
-  // Cross-rep shared RULES blob — also benefits every rep (and brand-new
-  // reps), distilled from the same all-reps corrected pool. Error-isolated
-  // like the alias pass so it can never block the per-rep loop below.
   try {
     const gr = await distillGlobalRules(svc, apiKey, companyName, usage);
     if (gr.status === 'distilled') summary.distilled += 1;
@@ -2156,14 +1660,6 @@ export async function distillAllSalespersonRules(
     console.error(`[scan-so weekly distill] __GLOBAL_RULES__ threw: ${(e as Error).message}`);
   }
 
-  // Distinct salespeople with ≥2 corrected rows. Supabase has no DISTINCT
-  // aggregate over the REST API, so pull the (small) salesperson column and
-  // count client-side, case-insensitively (matching the ilike used by
-  // distillSalespersonRules).
-  // Counts DIFF-BEARING rows only, so the ≥2 gate below stays the same
-  // question distillSalespersonRules asks. Without this a rep whose only
-  // samples were ACCEPTED (zero-diff) would be enumerated here and then
-  // cheap-skipped there — work scheduled for a rep with nothing to learn.
   const { data, error } = await paginateAll((from, to) => svc
     .from('so_scan_samples')
     .select('salesperson')
@@ -2183,7 +1679,6 @@ export async function distillAllSalespersonRules(
   for (const row of (data as Array<{ salesperson: string | null }> | null) ?? []) {
     const t = normalizeRepKey(row.salesperson);
     if (!t) continue;
-    // Belt-and-braces: the reserved global key is never a salesperson.
     if (isGlobalKey(t)) continue;
     const key = t.toUpperCase();
     const cur = counts.get(key);
@@ -2213,19 +1708,12 @@ export async function distillAllSalespersonRules(
   return summary;
 }
 
-// ===========================================================================
-// GET /scan-so/salespeople — distinct reps seen across samples + rules.
-// Feeds the modal's Salesperson datalist. Best-effort: tables missing →
-// empty list (the field is free-text anyway).
-// ===========================================================================
 scanSo.get('/salespeople', async (c) => {
   const svc = serviceClient(c.env);
-  const seen = new Map<string, string>(); // UPPER(name) -> display casing
+  const seen = new Map<string, string>();
   const add = (v: unknown) => {
     if (typeof v !== 'string') return;
     const t = v.trim();
-    // The reserved '__GLOBAL__' alias row lives in so_scan_rules but is NOT
-    // a salesperson — keep it out of the modal datalist.
     if (!t || isGlobalKey(t)) return;
     if (!seen.has(t.toUpperCase())) seen.set(t.toUpperCase(), t);
   };
@@ -2242,15 +1730,11 @@ scanSo.get('/salespeople', async (c) => {
     for (const r of (rulesRes.data as Array<{ salesperson: string | null }> | null) ?? []) add(r.salesperson);
     for (const r of (samplesRes.data as Array<{ salesperson: string | null }> | null) ?? []) add(r.salesperson);
   } catch {
-    /* best-effort */
   }
   const salespeople = Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
   return c.json({ success: true, data: { salespeople } });
 });
 
-// ===========================================================================
-// GET /scan-so/rules/:salesperson — view a rep's distilled rules.
-// ===========================================================================
 scanSo.get('/rules/:salesperson', async (c) => {
   const rep = normalizeRepKey(c.req.param('salesperson'));
   if (!rep) return c.json({ error: 'bad_request', reason: 'Missing salesperson.' }, 400);
@@ -2271,9 +1755,6 @@ scanSo.get('/rules/:salesperson', async (c) => {
   return c.json({ success: true, data });
 });
 
-// ===========================================================================
-// POST /scan-so/rules/:salesperson/distill — manual regeneration.
-// ===========================================================================
 scanSo.post('/rules/:salesperson/distill', async (c) => {
   const rep = normalizeRepKey(c.req.param('salesperson'));
   if (!rep) return c.json({ error: 'bad_request', reason: 'Missing salesperson.' }, 400);
@@ -2285,15 +1766,6 @@ scanSo.post('/rules/:salesperson/distill', async (c) => {
   return c.json({ success: true, data: res });
 });
 
-// ===========================================================================
-// GET /scan-so/slip-image?key=scan-slips/<sampleId> — serve the stored slip
-// image back as "Original Slip" proof on the SO detail page.
-//
-// Authed (supabaseAuth runs on the whole router). Mirrors the item-photo GET
-// proxy in mfg-sales-orders.ts: validate the key prefix, stream the R2 object
-// with its stored content-type, 404 when missing. The `scan-slips/` prefix
-// guard stops an attacker-supplied key from reaching an unrelated R2 object.
-// ===========================================================================
 scanSo.get('/slip-image', async (c) => {
   const key = c.req.query('key') ?? '';
   if (!key.startsWith('scan-slips/')) {
@@ -2307,24 +1779,11 @@ scanSo.get('/slip-image', async (c) => {
   return new Response(obj.body, {
     headers: {
       'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
-      // Immutable per sample (key is the sampleId), so a long browser cache
-      // is safe — matches the item-photo proxy cache policy.
       'cache-control': 'private, max-age=3600',
     },
   });
 });
 
-// ===========================================================================
-// POST /scan-so/warm — pre-warm the Anthropic catalog prompt-cache.
-//
-// The modal fires this on open (fire-and-forget) so the cache heats while the
-// operator readies their photo; the keep-warm cron fires the same logic during
-// business hours so the shared cache rarely goes cold. ONE minimal Claude call
-// sending the BYTE-IDENTICAL cachedPrefix /extract uses (same model, same
-// cache_control ttl, same beta header) — warms exactly the bucket /extract
-// reads. Returns fast. Graceful: no key → { ok:false, reason:'no_key' } (200);
-// any failure is caught and returned, never thrown.
-// ===========================================================================
 scanSo.post('/warm', async (c) => {
   const sb = c.get('supabase');
   const branding = await getBranding(c.env);
@@ -2332,16 +1791,6 @@ scanSo.post('/warm', async (c) => {
   return c.json(result);
 });
 
-// ===========================================================================
-// Shared OCR pipeline pieces — used by BOTH POST /scan-so/extract (the
-// client-driven flow, kept as the mobile fallback) and the background scan
-// job (POST /scan-so/enqueue → waitUntil pipeline). Factored MECHANICALLY out
-// of the /extract handler — same code, same order — so the two paths can
-// never drift. /extract's endpoint contract is unchanged.
-// ===========================================================================
-// Dynamic (post-cache-boundary) prompt blocks: shared alias dictionary,
-// cross-rep shared rules, the rep's own distilled rules, and the few-shot
-// pool. All best-effort — a missing row/table just skips that block.
 type PromptInjections = {
   globalAliasText: string;
   globalAliasApplied: boolean;
@@ -2352,9 +1801,6 @@ type PromptInjections = {
   fewShotText: string;
 };
 async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Promise<PromptInjections> {
-  // GLOBAL shared product-alias dictionary ('__GLOBAL__' so_scan_rules row)
-  // — injected for EVERY scan regardless of salesperson, AFTER the cache
-  // boundary and BEFORE the per-rep rules block.
   let globalAliasText = '';
   let globalAliasApplied = false;
   try {
@@ -2375,14 +1821,8 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
       globalAliasApplied = true;
     }
   } catch {
-    /* best-effort */
   }
 
-  // CROSS-REP SHARED RULES ('__GLOBAL_RULES__' so_scan_rules row) — common,
-  // rep-independent extraction patterns distilled from CONFIRMED corrections
-  // across ALL reps. Injected for EVERY scan (including a brand-new rep's
-  // first one), alongside the shared aliases and BEFORE the per-rep rules so
-  // a rep's own rules can still refine on top.
   let globalRulesText = '';
   let globalRulesApplied = false;
   try {
@@ -2404,15 +1844,8 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
       globalRulesApplied = true;
     }
   } catch {
-    /* best-effort */
   }
 
-  /* The HAND-WRITTEN shared layer, appended after the distilled one. The
-     distiller learns by diffing extracted JSON against corrected JSON, which
-     can never teach a reading TECHNIQUE — that a hatched strip on a box edge
-     in the slip's drawing IS the armrest, and which edge it sits on IS LHF or
-     RHF. That knowledge came from reading the slips; it lives here, and
-     distillGlobalRules never regenerates this row. */
   try {
     const { data: gmRow } = await svc
       .from('so_scan_rules')
@@ -2431,12 +1864,8 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
       globalRulesApplied = true;
     }
   } catch {
-    /* best-effort */
   }
 
-  // Per-rep distilled rules block (so_scan_rules). Injected AFTER the
-  // cache_control boundary so the catalog prefix stays cache-stable across
-  // reps.
   let repRulesText = '';
   let repRulesMeta: { salesperson: string; sampleCount: number } | null = null;
   if (repGiven) {
@@ -2458,47 +1887,14 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
         repRulesMeta = { salesperson: row.salesperson, sampleCount: row.sample_count ?? 0 };
       }
     } catch {
-      /* best-effort */
     }
   }
 
-  // Few-shot pool: 5 most recent operator-REVIEWED samples — THIS REP's first,
-  // topped up with global recents (deduped by id).
-  //
-  // Both review outcomes qualify here. A CONFIRMED (corrected) blob and an
-  // ACCEPTED (as-is) blob are equally operator-verified ground truth, and this
-  // prompt uses them as GOOD-OUTPUT exemplars, never as diffs — so nothing here
-  // needs the pair to differ. Including ACCEPTED also removes a survivorship
-  // bias baked in while the edit-gate was the only writer: the pool could only
-  // ever contain slips the AI got WRONG, so every example of "a slip like
-  // yours" was drawn exclusively from its own failures.
-  //
-  // RANKED, not flattened (HOOKKA ae0f7e6d's `ORDER BY isGold DESC` shape):
-  // rep before global, then CONFIRMED before ACCEPTED, then recency. A
-  // corrected exemplar encodes a resolution the model could NOT reach on its
-  // own, so it carries strictly more information than one it already produces
-  // correctly — it must never be displaced by an as-is sample that is merely
-  // newer.
-  //
-  // STATUS RANKS, IT DOES NOT FILTER (2026-08-05). This pool used to be gated on
-  // `status IN (CONFIRMED, ACCEPTED)`. `so_scan_samples.status` is free text with
-  // NO check constraint, so any row whose status is missing, legacy or merely
-  // spelled differently was silently deleted from the model's memory — with
-  // nothing anywhere to say so. Production had exactly that: 2 rows carrying a
-  // real `corrected` payload and 0 rows at CONFIRMED, so the only two examples in
-  // the system taught nothing. The pool's actual requirement is a corrected
-  // payload to SHOW the model; that is what is filtered on now, and status is
-  // used only to rank CONFIRMED ahead of the rest. A free-text column must never
-  // be the thing that decides whether the scanner can learn.
   let fewShotText = '';
   try {
     type FewShotRow = { id: string; corrected: unknown; status: string | null };
     const picked: Array<{ corrected: unknown; mine: boolean; gold: boolean }> = [];
     const pickedIds = new Set<string>();
-    // Ranked within a fetched page rather than in SQL: PostgREST cannot express
-    // a conditional ORDER BY, and over-fetching a few rows is cheaper on this
-    // hot path than the extra round-trip a status-scoped second query costs.
-    // Stable sort (ES2019+) keeps created_at DESC inside each tier.
     const goldFirst = (rows: FewShotRow[]): FewShotRow[] =>
       [...rows].sort(
         (a, b) =>
@@ -2536,8 +1932,6 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
       const blocks = picked
         .map((r, i) => {
           const who = repGiven ? (r.mine ? ` — written by ${repGiven}, weigh heavily` : ' — another rep') : '';
-          // Name the outcome: "corrected" tells the model a human had to fix
-          // this reading; "accepted as-is" that the AI's own reading stood.
           const how = r.gold ? 'operator-corrected' : 'operator-accepted as-is';
           return `Example ${i + 1} (${how}${who}):\n${JSON.stringify(r.corrected)}`;
         })
@@ -2549,7 +1943,6 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
         `matching judgement:\n\n${blocks}`;
     }
   } catch {
-    /* best-effort */
   }
 
   return {
@@ -2560,8 +1953,6 @@ async function loadPromptInjections(svc: SupabaseClient, repGiven: string): Prom
   };
 }
 
-// The ONE Claude vision call + JSON coercion. Timeout / retry / cache /
-// parse behaviour identical for /extract and the background job.
 type SlipExtractCall = {
   parsed: ExtractedSlip | null;
   errorMsg: string | null;
@@ -2587,40 +1978,22 @@ async function callClaudeSlipExtract(
   try {
     const resp = await recordAi(usage, anthropicFetchWithRetry({
       method: 'POST',
-      // Outbound timeout (110s, under the Worker's wall-clock budget) so a hung
-      // Anthropic call fails fast into the graceful 503 below instead of the
-      // request dangling until the platform kills it with an opaque error. The
-      // timeout bounds the whole retry window, not each attempt.
       signal: AbortSignal.timeout(110_000),
       headers: {
         'content-type': 'application/json',
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
-        // Houzs 2026-06-23 — Houzs is a RETAILER (1141 SKUs + 705 fabrics in the
-        // injected catalog vs HOOKKA's small maker catalog), so the cached prefix
-        // is large and the default 5-min ephemeral cache expires between scans
-        // spaced apart. Extend the cache to 1h so back-to-back and
-        // within-the-hour scans reuse the catalog prefix and stay fast.
         'anthropic-beta': 'extended-cache-ttl-2025-04-11',
       },
       body: JSON.stringify({
         model: usage.model,
         max_tokens: 8192,
-        // temperature=0 on Sonnet 4.6 — deterministic OCR. Same slip + same
-        // prompt must produce identical output so wrong fields are reproducible
-        // bugs, not a flaky lottery (lesson from the HOOKKA scan-po rollout).
-        // Sonnet 5.5 refuses temperature; see modelRequestFields.
         ...modelRequestFields(usage.model),
         messages: [
           {
             role: 'user',
             content: [
               { type: 'text', text: cachedPrefix, cache_control: { type: 'ephemeral', ttl: '1h' } },
-              // Shared aliases + shared rules + rep rules + few-shot live AFTER
-              // the cache boundary — they vary per distill/salesperson/sample and
-              // must not bust the prefix. Order: shared aliases → shared rules →
-              // rep rules → few-shot examples (rep-specific refines on the shared
-              // baseline; concrete examples come last).
               ...(inj.globalAliasText ? [{ type: 'text', text: inj.globalAliasText }] : []),
               ...(inj.globalRulesText ? [{ type: 'text', text: inj.globalRulesText }] : []),
               ...(inj.repRulesText ? [{ type: 'text', text: inj.repRulesText }] : []),
@@ -2664,7 +2037,6 @@ async function callClaudeSlipExtract(
       }
     }
   } catch (e) {
-    // AbortSignal.timeout fires a TimeoutError (older runtimes: AbortError).
     if ((e as Error).name === 'TimeoutError' || (e as Error).name === 'AbortError') {
       timedOut = true;
       errorMsg = 'OCR timed out — the slip took too long to read. Please try again.';
@@ -2676,8 +2048,6 @@ async function callClaudeSlipExtract(
   return { parsed, errorMsg, timedOut, claudeText, cacheHit, cacheCreated };
 }
 
-// Persist the sample row (status EXTRACTED, or FAILED with the error blob) —
-// the learning pool grows on every scan, background or interactive.
 async function insertScanSample(
   svc: SupabaseClient,
   args: {
@@ -2686,7 +2056,6 @@ async function insertScanSample(
     parsed: ExtractedSlip | null;
     errorMsg: string | null;
     claudeText: string;
-    // Which document type this learning sample belongs to ('SO' here).
     documentType: ScanDocumentType;
   },
 ): Promise<{ sampleId: string | null; sampleInsertError: string | null }> {
@@ -2717,18 +2086,6 @@ async function insertScanSample(
   return { sampleId, sampleInsertError };
 }
 
-// Original-image persistence (best-effort). The scan can carry TWO photos —
-// a HANDWRITTEN order slip and a PRINTED card-terminal payment receipt. Pick
-// which uploaded IMAGE is which from Claude's `images` classification, then
-// store up to two raw buffers in the SO_ITEM_PHOTOS R2 bucket:
-//   order slip    -> `scan-slips/${sampleId}`          (image_key, mig 0033)
-//   payment recpt -> `scan-slips/${sampleId}-receipt`  (receipt_image_key, mig 0034)
-// Both keys ride onto the created SO so the SO Detail page can serve them back
-// as "Order Slip" / "Payment Receipt" proof. CLASSIFICATION FALLBACK: when the
-// model's tags are missing/ambiguous, the first image = order slip and a
-// second image (if any) = receipt. PDFs are never stored (not inline-viewable)
-// and are excluded from uploadedImages. An R2/classify/DB failure must NEVER
-// fail the extraction — it's pure provenance.
 async function storeScanImages(
   bucket: R2Bucket | undefined,
   svc: SupabaseClient,
@@ -2738,12 +2095,8 @@ async function storeScanImages(
 ): Promise<{ imageKey: string | null; receiptImageKey: string | null }> {
   let imageKey: string | null = null;
   let receiptImageKey: string | null = null;
-  // const alias — narrowing on a `const` survives into the putImage closure
-  // below (a plain parameter's narrowing would not).
   const store = bucket;
   if (sampleId && uploadedImages.length > 0 && store) {
-    // Resolve order-slip + receipt images from the classification, falling back
-    // to positional order (1st = slip, 2nd = receipt) when tags don't cover it.
     const tagByIndex = new Map<number, ImageKind>();
     for (const img of parsed?.images ?? []) {
       if (!tagByIndex.has(img.index)) tagByIndex.set(img.index, img.kind);
@@ -2752,10 +2105,8 @@ async function storeScanImages(
       uploadedImages.find((u) => tagByIndex.get(u.index) === 'order_slip') ?? null;
     let receiptImg: UploadedImage | null =
       uploadedImages.find((u) => tagByIndex.get(u.index) === 'payment_receipt') ?? null;
-    // Guard against the model tagging the same image as both.
     if (slipImg && receiptImg && slipImg.index === receiptImg.index) receiptImg = null;
     if (!slipImg) {
-      // Positional fallback: first image not already taken as the receipt.
       slipImg = uploadedImages.find((u) => u.index !== receiptImg?.index) ?? null;
     }
     if (!receiptImg && uploadedImages.length > 1) {
@@ -2799,21 +2150,12 @@ async function storeScanImages(
   return { imageKey, receiptImageKey };
 }
 
-// Post-extraction enrichment + catalog-bound validation, IN PLACE on `parsed`:
-// phone normalisation, Google-geocode address correction (postcode-driven
-// city/state snap via my_localities), then validateSlip (never-invent
-// enforcement + tolerant SKU/fabric snapping + the bedframe reparseSpec
-// override). Returns the operator-facing warnings.
 async function postProcessSlip(
   parsed: ExtractedSlip,
   sb: SupabaseClient,
   googleMapsApiKey: string | undefined,
   catalog: Catalog,
 ): Promise<Warning[]> {
-  // Phone normalisation — E.164, the same form every write path stores and the
-  // form's PhoneInput consumes. Applies to every extracted phone (main +
-  // spouse/emergency). phones[0] is the primary; the rest ride along for the
-  // edit-gate.
   parsed.phones = parsed.phones
     .map((p) => normalizeSlipPhone(p))
     .filter((p): p is string => p !== null);
@@ -2830,14 +2172,10 @@ async function postProcessSlip(
       geocode: (address) => geocodeAddress(address, googleMapsApiKey),
     });
   } catch {
-    /* fail-soft — keep the LLM address parse */
   }
 
   const warnings = validateSlip(parsed, catalog);
 
-  // Phone plausibility (evidence 2026-07: the OCR dropped a doubled digit —
-  // "01137166720" read as "0113716720"). The length depends on the prefix:
-  // 011/015 mobiles have 8 subscriber digits, other mobiles 7 (lib/scan-phone-check).
   for (const p of parsed.phones) {
     if (hasUnexpectedDigitCount(p)) {
       warnings.push({
@@ -2850,9 +2188,6 @@ async function postProcessSlip(
   return warnings;
 }
 
-// ===========================================================================
-// POST /scan-so/extract
-// ===========================================================================
 scanSo.post('/extract', async (c) => {
   const apiKey = c.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -2869,8 +2204,6 @@ scanSo.post('/extract', async (c) => {
     return c.json({ error: 'bad_request', reason: `Invalid multipart body: ${(e as Error).message}` }, 400);
   }
 
-  // Build Claude content blocks (image or document per file) — shared with
-  // the background /enqueue path (parseScanFiles).
   const filesRes = await parseScanFiles(formData);
   if (!filesRes.ok) {
     return c.json({ error: 'bad_request', reason: filesRes.reason }, 400);
@@ -2879,61 +2212,33 @@ scanSo.post('/extract', async (c) => {
 
   const imageSha256 = firstBuffer ? await sha256Hex(firstBuffer) : null;
 
-  // Salesperson — operator-set in the modal BEFORE extract (free-text).
-  // When given, that rep's distilled rules + their own confirmed samples are
-  // injected; when blank, the AI's salesRep extraction backfills the sample
-  // row so the pool still grows per rep. Normalized (trim + single-space) so
-  // case/whitespace variants share one learning pool.
   const repGiven = normalizeRepKey(formData.get('salesperson'));
 
-  // Catalog via the user-scoped client (RLS applies, same visibility the
-  // operator already has on the SKU master screens). env.DB carries the venue
-  // master read (public.project_venues — unreachable by the scm client).
   const sb = c.get('supabase');
   const catalog = await loadCatalog(sb, c.env.DB, activeCompanyId(c) ?? null);
 
-  // Company name for the prompt anchor comes from the central Branding config
-  // (stable → the cached prefix below stays byte-identical to /warm + cron).
   const branding = await getBranding(c.env);
 
-  // Cached prefix = SYSTEM_PROMPT + catalog (shared builder — BYTE-IDENTICAL to
-  // what /scan-so/warm and the keep-warm cron send, so they warm the SAME cache
-  // /extract reads). Identical across calls until the catalog changes →
-  // Anthropic prompt-cache hit (~90% discount). Few-shot examples stay OUTSIDE
-  // the cache boundary so a new confirmed sample doesn't invalidate the cache.
   const cachedPrefix = buildCachedPrefix(catalog, branding.companyName);
 
   const svc = serviceClient(c.env);
 
-  // Dynamic prompt blocks (shared aliases / cross-rep shared rules / per-rep
-  // rules / few-shot) — loadPromptInjections, shared with the background job.
   const inj = await loadPromptInjections(svc, repGiven);
 
-  // ONE Claude vision call + JSON coercion — callClaudeSlipExtract, shared
-  // with the background job (timeout / retry / cache semantics inside).
   const { parsed, errorMsg, timedOut, claudeText, cacheHit, cacheCreated } =
     await callClaudeSlipExtract(apiKey, cachedPrefix, inj, fileBlocks, requestAiTag(c, 'scan_so', scanSoModel(c.env)));
 
-  // Persist the sample row (learning pool) — insertScanSample, shared with
-  // the background job. salesperson = operator's pick, else the AI's salesRep
-  // detection — keeps the per-rep pool growing even when the operator forgets
-  // the field.
   const sampleSalesperson = repGiven || normalizeRepKey(parsed?.salesRep) || null;
   const { sampleId, sampleInsertError } = await insertScanSample(svc, {
     imageSha256, salesperson: sampleSalesperson, parsed, errorMsg, claudeText,
-    // Interactive SO extract — the pipeline's default document type.
     documentType: DEFAULT_SCAN_DOCUMENT_TYPE,
   });
 
-  // Original slip / receipt R2 persistence — storeScanImages, shared with the
-  // background job (Claude image-classification fallback semantics inside).
   const { imageKey, receiptImageKey } = await storeScanImages(
     c.env.SO_ITEM_PHOTOS, svc, sampleId, uploadedImages, parsed,
   );
 
   if (!parsed) {
-    // A hung Anthropic call (caught by the 110s AbortSignal.timeout) maps to the
-    // graceful 503 {error, reason} so the modal shows "try again", not a 502.
     if (timedOut) {
       return c.json(
         { error: 'ocr_timeout', reason: errorMsg ?? 'OCR timed out. Please try again.', sampleId, imageKey, receiptImageKey },
@@ -2946,36 +2251,19 @@ scanSo.post('/extract', async (c) => {
     );
   }
 
-  // Phone normalisation + geocode enrichment + catalog-bound validation —
-  // postProcessSlip, shared with the background job.
   const warnings = await postProcessSlip(parsed, sb, c.env.GOOGLE_MAPS_API_KEY, catalog);
 
-  // Duplicate-upload warning — shared findDuplicateSo (same rules as the
-  // background job: recent same-photo sha256, or same phone + same slip
-  // ref / same slip date+total). Cheap indexed lookups; fail-soft null.
   const duplicate = await findDuplicateSo(svc, { imageSha256, excludeSampleId: sampleId, parsed }, activeCompanyId(c));
 
   return c.json({
     success: true,
     data: {
       sampleId,
-      // Suspected re-upload: { docNo, rule: 'image' | 'content' } of the SO
-      // this slip already became, else null. The modal can warn the operator
-      // before they create a second order.
       duplicate,
-      // Original-slip R2 key (null when the upload was a PDF or the put
-      // failed). The modal carries it onto the New SO create body.
       imageKey,
-      // Payment-receipt R2 key (null when no receipt was uploaded / classified
-      // or the put failed). Carried onto the New SO create body alongside.
       receiptImageKey,
       extracted: parsed,
       warnings,
-      // Slim catalog so the modal's SKU/fabric pickers work without a second
-      // round-trip. `options` = the SO Maintenance allowed-values lists the
-      // matches were validated against (feeds the modal's review selects).
-      // `states` = the my_localities state list the addressStateMatch was
-      // validated against (the modal carries the matched state to the form).
       catalog: {
         skus: catalog.skus,
         fabrics: catalog.fabrics,
@@ -3030,8 +2318,6 @@ scanSo.post('/extract', async (c) => {
 const SCAN_JOBS_MISSING_MSG =
   'scan-jobs table missing — apply src/db/migrations-pg/0067_scm_scan_jobs.sql to this database.';
 
-// Plain-language job failures (standing rule: user-facing error = one plain
-// sentence, never a raw exception / status code — those go to console.error).
 const JOB_MSG = {
   fallback: 'Something went wrong while processing the scan. Please enter this order manually.',
   noKey: 'Scanning is not set up on the server yet. Please enter this order manually.',
@@ -3073,8 +2359,6 @@ const DUP_LOOKBACK_DAYS = 30;
 export async function findRecentSoForSlipSha(
   svc: SupabaseClient,
   imageSha256: string,
-  // The sample the CURRENT scan just inserted — excluded or every scan would
-  // "duplicate" itself. null when nothing has been inserted yet (/enqueue).
   excludeSampleId: string | null,
 ): Promise<string | null> {
   const since = new Date(Date.now() - DUP_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -3125,15 +2409,11 @@ async function findDuplicateSo(
   svc: SupabaseClient,
   args: {
     imageSha256: string | null;
-    // The sample THIS scan just inserted — excluded or every scan would
-    // "duplicate" itself.
     excludeSampleId: string | null;
     parsed: ExtractedSlip | null;
   },
   companyId?: number,
 ): Promise<{ docNo: string; rule: 'image' | 'content' } | null> {
-  // A) Same slip photo already processed into an SO recently — the shared
-  //    findRecentSoForSlipSha core (also the /enqueue hard-reject probe).
   try {
     if (args.imageSha256) {
       const doc = await findRecentSoForSlipSha(svc, args.imageSha256, args.excludeSampleId);
@@ -3143,13 +2423,8 @@ async function findDuplicateSo(
     console.warn('[scan-so dup] image check failed:', (e as Error).message);
   }
 
-  // B) Same phone + (same slip serial OR same slip date + same total).
   try {
     const parsed = args.parsed;
-    // parsed.phones are already E.164 (postProcessSlip). They used to be bare
-    // national digits, which is why this line hardcoded a +60 in front — the
-    // one place a Singapore slip was guaranteed to be looked up as a Malaysian
-    // number, so its duplicate check could never match.
     const storedPhone = (parsed?.phones?.[0] ?? '').replace(/\s+/g, '');
     if (parsed && storedPhone) {
       const ref = (parsed.customerSoRef ?? '').trim().toUpperCase();
@@ -3159,15 +2434,12 @@ async function findDuplicateSo(
       const totalSen = typeof parsed.totalRm === 'number' && parsed.totalRm > 0
         ? Math.round(parsed.totalRm * 100)
         : null;
-      // Nothing comparable beyond the phone alone → phone-only would be far
-      // too noisy (repeat customers are normal); skip.
       if (ref || (slipDate && totalSen != null)) {
         let dupQ = svc
           .from('mfg_sales_orders')
           .select('doc_no, customer_so_no, so_date, total_revenue_sen')
           .eq('phone', storedPhone)
           .neq('status', 'CANCELLED');
-        // Multi-company: never link a scan to the OTHER company's SO by phone.
         if (companyId != null) dupQ = dupQ.eq('company_id', companyId);
         const { data } = await dupQ
           .order('created_at', { ascending: false })
@@ -3208,17 +2480,6 @@ async function findDuplicateSo(
 // as the payment slip; no copy. Never fails the job: the caller logs + notes.
 // ---------------------------------------------------------------------------
 
-// Slip payment header -> ledger method vocabulary. Mirrors the interactive
-// client's mapping (MobileNewSO PAY_METHOD_CODE + its scan prefill, which
-// folds a legacy 'Installment' L1 into Merchant): Merchant -> 'merchant' (+
-// bank + plan months), Online -> 'transfer' (+ online type), Cash -> 'cash'.
-// No/unknown method match -> 'merchant' (a printed card-terminal receipt IS a
-// Merchant transaction), flagged `guessed` so the row's note says so.
-// The uploaded-image indices the model classified as payment RECEIPTS, in
-// image order, deduped, filtered to indices that were actually uploaded. The
-// storeScanImages positional fallback is intentionally NOT applied — booking
-// money off an UNCLASSIFIED photo would be a guess; the operator can still add
-// the payment on the draft.
 function classifiedReceiptIndices(parsed: ExtractedSlip, uploadedImages: UploadedImage[]): number[] {
   const seen = new Set<number>();
   const out: number[] = [];
@@ -3237,10 +2498,7 @@ async function recordScanReceiptPayments(
     jobId: string;
     parsed: ExtractedSlip;
     uploadedImages: UploadedImage[];
-    // scan-jobs/{jobId}/{n} keys whose R2 put SUCCEEDED at enqueue time.
     storedImageKeys: string[];
-    // storeScanImages' receipt copy (scan-slips/{sampleId}-receipt) — the
-    // fallback slip reference when the enqueue-time put failed.
     receiptImageKey: string | null;
     salespersonId: string;
     salespersonName: string | null;
@@ -3250,12 +2508,6 @@ async function recordScanReceiptPayments(
   const receiptIdxs = classifiedReceiptIndices(parsed, args.uploadedImages);
   if (receiptIdxs.length === 0) return { recorded: 0, failed: 0, skippedDuplicate: 0, depositBooked: false };
 
-  // Double-book guard. The create core books its own is_deposit ledger row
-  // for the POS vocabulary (lowercase methods) — the scan draft's header
-  // method is a dropdown VALUE ('Merchant'/'Online'/'Cash') so it never
-  // matches today, but if the SO somehow already carries a payment row,
-  // recording again would double count. Skip + surface a plain note (owner
-  // 2026-07-04: "A matching payment was already recorded") instead.
   const { data: existingRows, error: existingErr } = await svc
     .from('mfg_sales_order_payments')
     .select('id')
@@ -3270,10 +2522,6 @@ async function recordScanReceiptPayments(
     return { recorded: 0, failed: 0, skippedDuplicate: receiptIdxs.length, depositBooked: false };
   }
 
-  // MULTI-RECEIPT — the pure planner decides the rows to book (one per receipt
-  // that carries a real amount), each with its OWN amount / method / approval /
-  // slip proof / deposit flag / date. 0 receipts → []; 1 receipt → the single
-  // pre-multi row; N receipts → N rows. See scan-receipt-plan.ts.
   const planned = planReceiptPayments({
     jobId: args.jobId,
     receiptIndices: receiptIdxs,
@@ -3327,8 +2575,6 @@ async function recordScanReceiptPayments(
       console.warn('[scan-job] payment key-lineage check threw:', (e as Error).message);
     }
   }
-  // Fingerprint set — one batched query over every approval code the planned
-  // rows carry, keyed "approvalCode|amountSen".
   const bookedFingerprints = new Set<string>();
   const approvalCodes = [...new Set(planned.map((p) => p.approvalCode).filter((a): a is string => !!a))];
   if (approvalCodes.length > 0) {
@@ -3357,8 +2603,6 @@ async function recordScanReceiptPayments(
   let skippedDuplicate = 0;
   let depositBooked = false;
   for (const row of planned) {
-    // A receipt that already backs a payment row books NOTHING — the caller
-    // appends the plain "matching payment already recorded" note instead.
     const keyDup = row.slipKey != null && alreadyBookedKeys.has(row.slipKey);
     const fpDup = row.approvalCode != null && bookedFingerprints.has(`${row.approvalCode}|${row.amountSen}`);
     if (keyDup || fpDup) {
@@ -3383,9 +2627,6 @@ async function recordScanReceiptPayments(
         note: noteParts.join('; '),
         createdBy: args.salespersonId,
         actorName: args.salespersonName,
-        // The first receipt row IS the header deposit — is_deposit stops the
-        // list/detail paid-rollup adding the header deposit_sen on top of
-        // this ledger row (double count).
         isDeposit: row.isDeposit,
         auditSource: 'automation',
         auditNote: 'Auto: payment recorded from scanned receipt (background scan job)',
@@ -3405,27 +2646,9 @@ async function recordScanReceiptPayments(
   return { recorded, failed, skippedDuplicate, depositBooked };
 }
 
-// Extracted slip -> DRAFT SO create body. Mirrors the SHIPPED headless client
-// mapping (MobileScan buildPrefill + MobileNewSO createDraftFromPrefill):
-// same header fields, same "+60" phone re-attachment, same named-line filter,
-// same itemGroup 'others' + null dates (the operator finishes category /
-// variants / payments when reviewing the draft). Additions the client flow
-// showed on screen instead: the verbatim slip row / fabric code / OCR notes
-// ride in the line remark, and the reparseSpec-hardened bedframe numbers seed
-// the divanHeight/legHeight/gap variant keys so nothing OCR'd is lost.
-// Validated option values (customerType / buildingType / state / venue /
-// payment fields) come straight from validateSlip's catalog-bound matches, so
-// the create handler's own dropdown re-validation accepts them.
-// Placeholder values a scan SHELL draft carries in the required fields the OCR
-// could not read. Clearly provisional so the rep knows to overwrite them; the
-// create core skips customer-identity resolution for _scanShell bodies so these
-// never spawn a phantom customer.
 const SHELL_NAME = 'Scan — please complete';
 const SHELL_PHONE = 'To be confirmed';
 
-/* A fully blank scan shell — used when the OCR produced NOTHING at all (blank
-   or unreadable photo). Still lands a draft carrying the slip photo so the rep
-   opens it and keys the order in by hand. */
 function buildEmptyShellBody(
   keys: { imageKey: string | null; receiptImageKey: string | null },
 ): Record<string, unknown> {
@@ -3463,9 +2686,6 @@ async function postScanNotice(
   },
 ): Promise<void> {
   if (opts.houzsUserId == null) return;
-  // Delegates to the shared personal-notice path (services/personalNotice.ts)
-  // so there is ONE announcements-insert path for system notices. Behaviour is
-  // unchanged: single-user USER_IDS notice, source='scan', 7-day self-clear.
   await postPersonalNotice(env, {
     userIds: [opts.houzsUserId],
     category: opts.category,
@@ -3485,7 +2705,6 @@ function buildDraftSoBodyFromSlip(
   const missing: string[] = [];
   let customerName = (parsed.customerName ?? '').trim();
   if (!customerName) missing.push('customer name');
-  // parsed.phones are already E.164 (postProcessSlip runs normalizePhone).
   let mainPhone = (parsed.phones[0] ?? '').trim();
   if (!mainPhone) missing.push('phone number');
   // Owner 2026-07-04: a scan missing the required name/phone must STILL land a
@@ -3513,28 +2732,7 @@ function buildDraftSoBodyFromSlip(
     // rule); the slip photo on the SO detail is the operator's reference.
     if (isDroppedBlankLine(l.rawText, sku !== undefined)) continue;
     const name = sku ? (sku.name ?? '').trim() : '';
-    // Owner (said many times): the line REMARK must stay CLEAN -- do NOT stuff
-    // the raw slip text / fabric code / specials / OCR notes into it. The
-    // operator reviews the draft against the order-slip photo (shown on the SO
-    // detail). Only genuine structured variant numbers ride along below.
     const cat = (sku?.category ?? 'OTHERS').toLowerCase();
-    // Bedframe numbers (reparseSpec-overruled) -> the same inch-string variant
-    // keys the New SO form writes, so the draft's line editor seeds correctly.
-    // Only seeded for a MATCHED line — an unmatched line stays a CLEAN empty
-    // general item (no product, no attributes) for the operator to fill in.
-    //
-    // EVERY axis is snapped to the live Maintenance pool first (owner
-    // 2026-07-16): an OCR number the config doesn't offer leaves the axis UNSET
-    // for the operator rather than seeding an option that does not exist. PR
-    // #580 closed this hole for the manual selectors (which intersect the master
-    // pool with the Model's allowed_options); the OCR path wrote the raw read
-    // straight through, so it stayed open. The per-Model gate in
-    // allowed-options-check does NOT cover this: an empty allowed_options pool
-    // reads as "no restriction", so an unrestricted Model accepted 8" happily.
-    //
-    // The sofa leg picker renders sofaLegHeights while the bedframe one renders
-    // legHeights, but BOTH write the same `legHeight` key (SoLineCard) — so the
-    // pool is chosen by the line's category, not by the key.
     const variants = buildScanLineVariants(l, {
       category: cat,
       skuCode: sku?.code ?? null,
@@ -3564,20 +2762,9 @@ function buildDraftSoBodyFromSlip(
   }
   applySlipTotalToUnpricedLines(items, parsed.totalRm);
 
-  // 'One Shot' -> null (no installment term); 'N months' -> N (the client's
-  // planToMonths rule).
   const planMonths = installmentPlanToMonths(parsed.installmentPlanMatch?.value);
   const paymentMethod = parsed.paymentMethodMatch?.value ?? null;
 
-  // NOTHING OCR'D IS LOST: fields the model extracted but the draft has no
-  // dedicated column for ride in the header note (the draft intentionally
-  // nulls the delivery-date columns — "1 month notice" isn't a date — and the
-  // slip's written grand total is the operator's cross-check against the line
-  // prices, which mostly arrive unpriced).
-  // Owner (said many times): the note carries ONLY the customer's genuine
-  // handwritten order remark -- NOT slip delivery text / grand total / any
-  // other OCR meta. Those each have their own place or are the operator's
-  // review-against-the-photo job.
   const noteParts: string[] = [];
   const remarkNote = (parsed.remarks ?? '').trim();
   if (remarkNote) noteParts.push(remarkNote);
@@ -3601,11 +2788,6 @@ function buildDraftSoBodyFromSlip(
     customerName,
     debtorName: customerName,
     customerSoNo: (parsed.customerSoRef ?? '').trim() || null,
-    // mainPhone is already E.164 (postProcessSlip). Route it through the shared
-    // normalizePhone once more — idempotent for a +60 number — so it is NEVER
-    // re-prefixed to "+6060..." (the double-country-code bug), whatever form the
-    // slip carried. normalizePhone handles every writing style (+60 / 60 / 0 /
-    // bare / spaced / dashed) into one canonical +60 number.
     phone: mainPhone ? (normalizePhone(mainPhone) ?? SHELL_PHONE) : SHELL_PHONE,
     customerType: parsed.customerTypeMatch?.value ?? null,
     buildingType: parsed.buildingTypeMatch?.value ?? null,
@@ -3614,21 +2796,12 @@ function buildDraftSoBodyFromSlip(
     customerState: parsed.addressStateMatch?.value ?? null,
     city: (parsed.city ?? '').trim() || null,
     postcode: (parsed.postcode ?? '').trim() || null,
-    // Delivery from the slip (today-or-later only); processing pinned to today.
     processingDate: scanProcDate,
     customerDeliveryDate: scanDelivDate,
-    // BUG-114: phones[1] is already E.164 like phones[0]; "+60" in front of it
-    // stored the emergency contact as "+6060...".
     emergencyContactPhone: normalizePhone(parsed.phones[1] ?? '') ?? null,
     /* No venue, no fair, no fair day (owner 2026-11-12): the slip's place and
        date are not carried onto the draft, and the create core fills none of
        them for a scan. A person picks all three before Confirm. */
-    // Payment header fields (validated matches; the operator reviews the
-    // draft before it becomes a real order). No payments[] in the create
-    // body — the ledger rows are booked AFTER the create by
-    // recordScanReceiptPayments (one per classified payment receipt),
-    // through the same recordSoPaymentRow core the interactive
-    // POST /:docNo/payments route uses.
     paymentMethod,
     merchantProvider: paymentMethod === 'Merchant' ? (parsed.bankMatch?.value ?? null) : null,
     // Method ⇒ sub-field mapping (owner 2026-07-16). The PLAN value itself is
@@ -3642,25 +2815,15 @@ function buildDraftSoBodyFromSlip(
     installmentMonths: paymentMethod === 'Merchant' ? planMonths : null,
     approvalCode: (parsed.approvalCode ?? '').trim() || null,
     depositSen: parsed.depositRm && parsed.depositRm > 0 ? Math.round(parsed.depositRm * 100) : 0,
-    // Provenance — the SO detail page serves these back as Order Slip /
-    // Payment Receipt proof (same keys the interactive flow carries).
     slipImageKey: keys.imageKey,
     receiptImageKey: keys.receiptImageKey,
-    // The whole point: land as DRAFT for the operator to review.
     asDraft: true,
-    // Shell = required fields were placeholdered; the create core skips the
-    // customer-identity upsert so placeholders never spawn a phantom customer.
     _scanShell: isShell,
     items,
   };
   return { body, missing };
 }
 
-// The waitUntil pipeline — runs AFTER /enqueue has responded. Every failure
-// path marks the job 'error' with a SHORT plain-language message (raw details
-// go to console.error only). Single Claude vision call; no retries beyond the
-// shared anthropicFetchWithRetry, keeping the whole run inside Workers'
-// waitUntil budget.
 async function runScanJob(
   env: Env,
   job: {
@@ -3669,16 +2832,11 @@ async function runScanJob(
     salespersonId: string;
     salespersonName: string | null;
     houzsUserId: number | null;
-    /** Which document type this job produces (SO here; GR/PI route in later slices). */
     documentType: ScanDocumentType;
-    /** Multi-company: the ACTIVE company captured on the scan_jobs row at
-     *  enqueue time — replayed onto the draft SO create. null = legacy row. */
     companyId: number | null;
     fileBlocks: ContentBlock[];
     uploadedImages: UploadedImage[];
     firstBuffer: ArrayBuffer | null;
-    // scan-jobs/{jobId}/{n} keys whose enqueue-time R2 put succeeded — the
-    // receipt-payment rows reference these as their slip proof.
     imageKeys: string[];
   },
 ): Promise<void> {
@@ -3699,8 +2857,6 @@ async function runScanJob(
   const fail = async (plainMsg: string): Promise<void> => {
     outcome = 'error';
     await touch({ status: 'error', error: plainMsg });
-    // A hard failure produced no draft — tell the rep privately so they know to
-    // scan again (system faults only now; unreadable slips land a shell draft).
     await postScanNotice(env, {
       houzsUserId: job.houzsUserId,
       category: 'WARNING',
@@ -3717,9 +2873,6 @@ async function runScanJob(
       return await fail(JOB_MSG.noKey);
     }
 
-    // EXACT /extract machinery, service-client flavoured (no request scope in
-    // waitUntil; catalog reads are the same data RLS shows any signed-in
-    // operator — same precedent as warmCatalogCacheForCron).
     const catalog = await loadCatalog(svc, env.DB, job.companyId);
     const branding = await getBranding(env);
     const cachedPrefix = buildCachedPrefix(catalog, branding.companyName);
@@ -3753,7 +2906,7 @@ async function runScanJob(
       const keys = await storeScanImages(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages, rawParsed);
       return { imageSha256, sampleId, ...keys };
     })(), parsed && postProcessSlip(parsed, svc, env.GOOGLE_MAPS_API_KEY, catalog).then(() => timer.mark('parse'))]);
-    timer.mark('save', 'sample'); // only the part of the sample save that outlasted postProcessSlip
+    timer.mark('save', 'sample');
 
     // Owner 2026-07-04: EVERY scan ends as a draft the rep can open — success,
     // duplicate, OR unreadable. A scan that could not be turned into a full
@@ -3765,17 +2918,11 @@ async function runScanJob(
     let dupDocNo: string | null = null;
 
     if (!parsed) {
-      // Nothing parsed at all (blank/unreadable photo, or the model timed out).
       console.error('[scan-job] extraction failed, creating blank draft:', job.id, call.errorMsg);
       const slipKey = imageKey ?? (job.imageKeys[0] ?? null);
       body = buildEmptyShellBody({ imageKey: slipKey, receiptImageKey });
       shellNote = 'The scan could not read this slip, so this draft is blank. Please open it and fill in the order from the photo.';
     } else {
-      // Multi-receipt manifest (migration 0141) — record WHICH uploads the OCR
-      // classified as payment receipts (the durable audit trail of "the
-      // receipts this scan turned into payments"). Keys are the enqueue-time R2
-      // objects (scan-jobs/{jobId}/{idx}) that survived; best-effort, never
-      // blocks the draft.
       const receiptKeys = classifiedReceiptIndices(parsed, job.uploadedImages)
         .map((idx) => `scan-jobs/${job.id}/${idx}`)
         .filter((k) => job.imageKeys.includes(k));
@@ -3789,11 +2936,8 @@ async function runScanJob(
       if (dup) { dupDocNo = dup.docNo; await touch({ duplicate_of: dup.docNo }); }
       timer.mark('save', 'dup');
 
-      // allowShell → always returns a body; missing required fields become
-      // placeholders and the body is tagged `_scanShell`.
       const draft = buildDraftSoBodyFromSlip(parsed, catalog, { imageKey, receiptImageKey }, { allowShell: true });
       if (!draft.body) {
-        // Defensive — allowShell should never return null.
         return await fail(
           `The scan could not read the ${draft.missing.join(' and ')} on the slip. Please enter this order manually.`,
         );
@@ -3802,12 +2946,6 @@ async function runScanJob(
       if (body._scanShell === true) {
         shellNote = `The scan could not read the ${draft.missing.join(' and ')} on this slip. Please open this draft and complete it from the photo.`;
       }
-      // Owner (standing rule): the SO NOTE holds ONLY the customer's genuine
-      // handwritten remark — never the "possible duplicate" warning. The
-      // duplicate signal already rides its OWN channels: the scan_jobs
-      // duplicate_of flag (touched above → the mobile Scan card's "Duplicate of
-      // <doc>" pill) AND the private scan Announcement posted below. So do NOT
-      // prefix body.note here; dupDocNo is carried into that notice instead.
     }
 
     /* PAID-ROLLUP INVARIANT (docs/bugs/0785-*) — header deposit_sen is safe ONLY
@@ -3839,9 +2977,6 @@ async function runScanJob(
       body.depositSen = safeDepositSen;
     }
 
-    // PRICING-CRITICAL create — the factored mfg-sales-orders core, replayed
-    // with the identities captured at enqueue time. Never reimplemented here.
-    // Each call is counted on the timer, so the save split shows a retried create.
     const replay = (b: Record<string, unknown>) => {
       timer.createAttempt();
       return createDraftSalesOrder(env, {
@@ -3853,12 +2988,6 @@ async function runScanJob(
       });
     };
     let outcome = await replay(body);
-    // Belt-and-suspenders TIER 1: if the create rejects AND we set slip dates,
-    // the date/variant pairing rules are the likely cause (a Processing Date
-    // needs complete line variants) — retry WITHOUT dates, KEEPING the full
-    // category lines (itemGroup/fabric/specials). The operator sets dates on
-    // review. This is what recovers a sofa with a delivery date but no seat
-    // height while preserving desktop-parity lines.
     if (
       outcome.status !== 201 &&
       (body.processingDate != null || body.customerDeliveryDate != null)
@@ -3868,11 +2997,6 @@ async function runScanJob(
       body.customerDeliveryDate = null;
       outcome = await replay(body);
     }
-    // TIER 2 last resort: the category-strict lines still reject (an OCR fabric
-    // not allowed on that model, a special not on the model, an incomplete sofa).
-    // Degrade EVERY line to a loose 'others' line (description + qty + price only,
-    // no variants) so the scanned order STILL lands as a draft — the operator
-    // re-picks the category variants against the slip photo. Never lose the scan.
     if (outcome.status !== 201 && Array.isArray(body.items) && (body.items as unknown[]).length > 0) {
       console.warn('[scan-job] category lines rejected, retrying as loose lines:', job.id, outcome.status);
       body.processingDate = null;
@@ -3893,11 +3017,7 @@ async function runScanJob(
       // HC-0006 T7. Never throws; runs alongside the payment pass (it links the 'so' rows,
       // the payment pass the 'payment' rows) and is awaited before the job reads done.
       const linked = linkScanFiles(svc, { companyId: job.companyId, kind: 'so', documentId: docNo, keys: job.imageKeys, sha256: null });
-      // Shell/blank draft — there is no reliable OCR payment to book. Record the
-      // plain "please complete" note so the Orders-open toast tells the rep, and
-      // stop here (no receipt-payment pass on a draft the model couldn't read).
       if (shellNote) {
-        // Write both the SO-specific and generic link column (same doc_no for SO).
         await linked;
         if (sampleId && rawParsed) await snapshotDraftBaseline(svc, { sampleId, docNo, extracted: rawParsed });
         await Promise.all([
@@ -3911,13 +3031,7 @@ async function runScanJob(
         ]);
         return;
       }
-      // Past the shell paths, a null parse has already returned above — narrow
-      // `parsed` to non-null for the receipt-payment pass (defensive fallback).
       if (!parsed) { await linked; await touch({ status: 'done', so_doc_no: docNo, linked_doc_no: docNo }); return; }
-      // Payments from receipt OCR — one ledger row per classified payment
-      // receipt, via the SAME recordSoPaymentRow core the interactive route
-      // uses. GUARD: never fail the job — the DRAFT stands; a failure only
-      // appends a plain note (job stays done with so_doc_no).
       let paymentNote: string | null = null;
       let depositBooked = false;
       try {
@@ -3935,8 +3049,6 @@ async function runScanJob(
         if (pay.failed > 0) {
           paymentNote = 'Draft created; the payment could not be recorded — please add it on the order.';
         } else if (pay.skippedDuplicate > 0) {
-          // Receipt dedup fired — the money row already exists somewhere, so
-          // nothing was booked twice. Plain note per the standing rule.
           paymentNote = 'A matching payment was already recorded, so it was not added again.';
         }
       } catch (e) {
@@ -3954,8 +3066,6 @@ async function runScanJob(
       }
       await linked;
       if (sampleId && rawParsed) await snapshotDraftBaseline(svc, { sampleId, docNo, extracted: rawParsed });
-      // Private "your scan is a draft now" notice. Duplicate/payment caveats
-      // ride in the body + bump it to WARNING so it stands out.
       const phoneWarnings = phoneDigitCountWarnings(parsed?.phones ?? []);
       const noticeExtras = [
         dupDocNo ? `This looks like a possible duplicate of ${dupDocNo}.` : null,
@@ -3982,8 +3092,6 @@ async function runScanJob(
       '[scan-job] draft create rejected:', job.id, outcome.status,
       JSON.stringify(outcome.body).slice(0, 600),
     );
-    // The create core's rejection reasons are already plain sentences (the
-    // plain-language-errors standard); fall back to a generic one otherwise.
     const reason =
       typeof outcome.body.reason === 'string' ? outcome.body.reason
       : typeof outcome.body.message === 'string' ? outcome.body.message
@@ -3998,17 +3106,6 @@ async function runScanJob(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Resolve the UPLOADER's own scm.staff id so the scanned draft's salesperson
-// defaults to whoever scanned it (standing rule: salesperson default-by-
-// uploader). The SCM auth bridge pins c.get('user').id to ONE shared SYSTEM
-// staff row (middleware/auth.ts), so that id can't attribute the SO — the real
-// person is the Houzs user behind houzsUser. Resolve their scm.staff row the
-// same way the interactive create does (mig 0066 user_id link), then fall back
-// to matching by email for a staff row that was never linked by user_id. When
-// nothing resolves we return null and the caller keeps the system id (today's
-// behaviour) — no regression, just correct attribution whenever it's knowable.
-// ---------------------------------------------------------------------------
 async function resolveScanUploaderStaffId(
   svc: SupabaseClient,
   houzsUserId: number | null,
@@ -4031,10 +3128,6 @@ async function resolveScanUploaderStaffId(
   }
 }
 
-// ---------------------------------------------------------------------------
-// POST /scan-so/enqueue — persist photos + job row, respond FAST, run the
-// pipeline in waitUntil. Same multipart contract as /extract.
-// ---------------------------------------------------------------------------
 scanSo.post('/enqueue', async (c) => {
   /* company-scope: the by-id reads the checker attributes to this handler are
      NOT in it — they belong to processScanQueueMessage, declared inside this
@@ -4044,9 +3137,6 @@ scanSo.post('/enqueue', async (c) => {
   try {
     formData = await c.req.formData();
   } catch (e) {
-    // Plain-language rule: the raw parser exception goes to the log, the
-    // operator sees one plain sentence naming the likely cause (a bad/partial
-    // upload) so they know to retake and retry rather than read internals.
     console.error('[scan-so enqueue] multipart parse failed:', (e as Error).message);
     return c.json(
       { error: 'bad_request', reason: 'The photos could not be uploaded — please retake them and try again.' },
@@ -4072,10 +3162,6 @@ scanSo.post('/enqueue', async (c) => {
     return s === '1' || s === 'true' || s === 'yes';
   })();
 
-  // Identities captured while the request is still authed — replayed into the
-  // headless SO create. user.id = scm.staff UUID (the SCM bridge identity);
-  // houzsUser.id = public users bigint (venue-by-project autofill). Never mix
-  // the two (staff-UUID vs bigint trap).
   const user = c.get('user');
   const houzsUser = c.get('houzsUser');
   const houzsUserId =
@@ -4085,10 +3171,6 @@ scanSo.post('/enqueue', async (c) => {
 
   const svc = serviceClient(c.env);
 
-  // Salesperson default-by-uploader: attribute the draft SO to the scanning
-  // user's OWN scm.staff row (resolved here while the request is still authed),
-  // NOT the shared SYSTEM bridge id. Falls back to user.id (system) only when
-  // the uploader has no resolvable staff row — same as before.
   const uploaderStaffId =
     (await resolveScanUploaderStaffId(svc, houzsUserId, houzsUser?.email)) ?? user.id;
 
@@ -4117,25 +3199,15 @@ scanSo.post('/enqueue', async (c) => {
     }
   }
 
-  // 1) Job row FIRST — the durable record the phone can poll even if it
-  //    disconnects the instant this response is sent.
   const { data: jobRow, error: jobErr } = await svc
     .from('scan_jobs')
     .insert({
       status: 'queued',
-      // The SO scanner is the pipeline's default document type. GR/PI enqueue
-      // routes (later slices) validate and stamp their own type here; the
-      // queue consumer and reaper replay whatever this column holds.
       document_type: DEFAULT_SCAN_DOCUMENT_TYPE,
       salesperson: repGiven || null,
-      // The uploader's own staff id (see resolveScanUploaderStaffId) so the
-      // headless create attributes the SO to whoever scanned it. The queue
-      // consumer + reaper both replay this column as the create identity.
       salesperson_id: uploaderStaffId,
       houzs_user_id: houzsUserId,
       image_keys: [],
-      // company_id is NOT NULL since 0083; an unstamped insert 500s (prod
-      // incident 2026-07-13). 0091 adds a HOUZS default as the safety net.
       company_id: activeCompanyId(c),
     })
     .select('id')
@@ -4143,8 +3215,6 @@ scanSo.post('/enqueue', async (c) => {
   const jobId = (jobRow as { id?: string } | null)?.id ?? null;
   if (jobErr || !jobId) {
     if (jobErr && isMissingTable(jobErr)) {
-      // Plain-language rule: the migration instruction (SCAN_JOBS_MISSING_MSG)
-      // is internal — log it, tell the operator scanning isn't set up here.
       console.error('[scan-so enqueue]', SCAN_JOBS_MISSING_MSG);
       return c.json(
         { error: 'table_missing', reason: 'Scanning is not set up on the server yet. Please enter this order manually.' },
@@ -4177,22 +3247,10 @@ scanSo.post('/enqueue', async (c) => {
   timer.mark('upload');
   timer.done(c.env, jobId, 'ok');
 
-  // 3) Hand the job to the Cloudflare Queue. The consumer (index.ts `queue()`)
-  //    rebuilds EVERYTHING from the scan_jobs row + R2 photos, so the message
-  //    carries only the job id. A queue-owned attempt survives a mid-run deploy
-  //    / isolate eviction (retried up to max_retries, then DLQ) — the whole
-  //    reason we moved off waitUntil, which Cloudflare evicts on the 60-110s
-  //    real-slip OCR calls, leaving jobs stuck 'running' forever.
-  //
-  //    FALLBACK: if SCAN_QUEUE is unbound (older deploy / test runtime), run the
-  //    pipeline in waitUntil exactly as before so nothing regresses.
   if (c.env.SCAN_QUEUE) {
     try {
       await c.env.SCAN_QUEUE.send({ jobId });
     } catch (e) {
-      // Send failed AFTER the row + photos are durable — the reaper will pick
-      // the job up (stale queued → one re-run). Log and still 202 so the phone
-      // shows a queued job it can poll.
       console.error('[scan-so enqueue] SCAN_QUEUE.send failed:', jobId, (e as Error).message);
     }
   } else {
@@ -4212,56 +3270,15 @@ scanSo.post('/enqueue', async (c) => {
     try {
       c.executionCtx.waitUntil(pipeline);
     } catch {
-      /* non-Workers runtime (tests) — let the floating promise run */
     }
   }
 
   return c.json({ job_id: jobId, status: 'queued' }, 202);
 });
 
-// ---------------------------------------------------------------------------
-// Stale-job reaper — a scan job stuck in queued/running for >3 minutes is
-// dead (isolate evicted / Worker DEPLOY killed the waitUntil, pipeline crashed
-// without reaching its own error-update). Deploys are the common cause, so a
-// stale job is NOT errored on first sight: it gets ONE automatic re-run
-// (retry_count 0 → 1, migration 0070) rebuilt from the R2 photo copies the
-// enqueue path already persisted (scan-jobs/{jobId}/{n}, image_keys on the
-// row). Only a job whose single retry is spent (retry_count >= 1) — or whose
-// photos never made it to R2 — is flipped to the terminal error.
-//
-// Staleness clock = updated_at (NOT created_at): the retry claim stamps
-// updated_at = now, giving the re-run its own fresh 3-minute window instead
-// of being re-reaped on the next poll. (First attempts are equivalent either
-// way — a job's updated_at only moves when the pipeline is actually alive.)
-//
-// Piggybacked on the two poll endpoints (no cron on this worker); the re-run
-// itself rides the poll's executionCtx.waitUntil. Fail-soft — a reaper error
-// must never break the poll itself. The claim update is conditional
-// (retry_count = 0 AND still queued/running), so two concurrent polls can
-// never double-run one job.
-// ---------------------------------------------------------------------------
-// 3 min (was 10): /extract carries a 110s AbortSignal.timeout, so a job still
-// queued/running past 3 minutes is a deploy/isolate-killed zombie, not a
-// slow-but-alive call — safe to retry (first pass) / error (terminal pass) at
-// 3 min. Both the RETRY-claim pass and the TERMINAL pass derive their cutoff
-// from this one constant, so this single change tightens both.
 const SCAN_JOB_STALE_MINUTES = 3;
 const STALE_JOB_ERROR = 'The scan took too long and was stopped. Please scan this slip again.';
 
-// ---------------------------------------------------------------------------
-// Cloudflare Queue consumer entry point (called from index.ts `queue()`). The
-// message carries ONLY { jobId } — everything else is rebuilt from the durable
-// scan_jobs row + the R2 photo copies the enqueue path persisted. This is the
-// reliable replacement for the old waitUntil pipeline: a queue-owned attempt
-// survives isolate eviction (Cloudflare retries up to max_retries, then DLQ).
-//
-// IDEMPOTENCY: a queue redelivery must NOT create a second draft. If the row is
-// already status='done' (the pipeline finished and wrote so_doc_no), return
-// without re-running so the caller acks. A missing row also acks (nothing to
-// do). Any other status re-runs runScanJob, whose own status writes stand — a
-// job stuck 'running' from an evicted attempt is safe to replay because the
-// draft-create only happened at the very end (a mid-run eviction means no draft
-// was written). runScanJob is otherwise unchanged from the enqueue path.
 export async function processScanQueueMessage(env: Env, jobId: string): Promise<void> {
   const id = String(jobId ?? '');
   if (!id) return;
@@ -4273,8 +3290,6 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
     .eq('id', id)
     .single();
   if (error) {
-    // Missing row (deleted / never inserted) — ack, nothing to run. Any other
-    // read error: throw so the message retries (transient DB blip).
     if ((error as { code?: string }).code === 'PGRST116') {
       console.warn('[scan-queue] job row not found, acking:', id);
       return;
@@ -4284,14 +3299,11 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
 
   const r = row as Record<string, unknown>;
   const status = typeof r.status === 'string' ? r.status : '';
-  // IDEMPOTENT ACK — the draft already exists; a redelivery must not make a 2nd.
   if (status === 'done') {
     console.warn('[scan-queue] job already done, skipping:', id);
     return;
   }
 
-  // Dual-read both casings (postgres.js / PostgREST camelCases result cols —
-  // the #1 recurring result-column bug class).
   const rawKeys = r.imageKeys ?? r.image_keys;
   const imageKeys = Array.isArray(rawKeys) ? rawKeys.map(String) : [];
   const salesperson = typeof r.salesperson === 'string' ? r.salesperson : '';
@@ -4300,16 +3312,9 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
   const houzsUserId = huRaw != null && Number.isFinite(Number(huRaw)) ? Number(huRaw) : null;
   const coRaw = r.companyId ?? r.company_id;
   const companyId = coRaw != null && Number.isFinite(Number(coRaw)) ? Number(coRaw) : null;
-  // An AI read (ai-read-jobs.ts) rides { aiRead }, never { jobId }; coercing
-  // its type would mis-run it as an SO scan.
   if (String(r.documentType ?? r.document_type ?? '').startsWith('AI_')) return;
-  // Legacy rows predating the column read back null -> coerce to 'SO'.
   const documentType = coerceScanDocumentType(r.documentType ?? r.document_type);
 
-  // GR / PI jobs run their own pipelines, not this SO one. One-way delegation
-  // (scan-gr / scan-pi never import scan-so, so no cycle); each consumer re-reads
-  // the row, loads its own photos and owns its own idempotency. A non-SO, non-GR,
-  // non-PI job is acked with a warning rather than mis-run as SO.
   if (documentType === 'GR') { await processGrnScanQueueMessage(env, id); return; }
   if (documentType === 'PI') { await processPiScanQueueMessage(env, id); return; }
   if (documentType !== 'SO') {
@@ -4319,9 +3324,6 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
 
   const files = salespersonId ? await loadScanJobFilesFromR2(env.SO_ITEM_PHOTOS, imageKeys) : null;
   if (!files) {
-    // No durable photos (enqueue-time R2 put failed / bucket unbound) or no
-    // replayable identity — the job can never run. Terminal error, then ack
-    // (retrying would loop to the DLQ for the same unrecoverable reason).
     console.warn('[scan-queue] job not replayable, erroring:', id);
     await svc
       .from('scan_jobs')
@@ -4333,8 +3335,6 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
   await runScanJob(env, {
     id,
     salesperson,
-    // The enqueue-time user_metadata name is not on the row; the normalized rep
-    // display name is the closest replay identity (same as the reaper).
     salespersonName: salesperson || null,
     salespersonId,
     houzsUserId,
@@ -4350,33 +3350,21 @@ export async function processScanQueueMessage(env: Env, jobId: string): Promise<
 async function reapStaleScanJobs(
   env: Env,
   svc: ReturnType<typeof serviceClient>,
-  // The calling poll handler's executionCtx.waitUntil (try/catch-wrapped for
-  // non-Workers test runtimes) — the retry pipeline must outlive the poll
-  // response, exactly like the enqueue path.
   runInBackground: (p: Promise<unknown>) => void,
 ): Promise<void> {
   try {
     const nowIso = new Date().toISOString();
     const cutoff = new Date(Date.now() - SCAN_JOB_STALE_MINUTES * 60 * 1000).toISOString();
 
-    // 1) RETRY pass — stale first-attempt jobs get one re-run. limit(5) bounds
-    //    the work a single poll can pick up; anything left is caught by the
-    //    next poll (the screen polls every 4s while jobs are active).
     const { data: retryRows, error: retryErr } = await svc
       .from('scan_jobs')
       .select('id, salesperson, salesperson_id, houzs_user_id, image_keys, retry_count, company_id, document_type')
       .in('status', ['queued', 'running'])
-      // GR/PI stale jobs are reaped by their own poll endpoints — this SO
-      // reaper must never replay one through the SO pipeline (mig 20260919T1000
-      // backfilled every existing row to 'SO', so no null slips through).
       .eq('document_type', 'SO')
       .lt('updated_at', cutoff)
       .eq('retry_count', 0)
       .limit(5);
     if (retryErr) {
-      // retry_count likely missing (migration 0070 not applied yet) — fall
-      // back to the pre-retry blanket reap so stale jobs still terminate
-      // instead of spinning forever.
       console.warn('[scan-so jobs] retry pass failed (blanket reap fallback):', retryErr.message);
       await svc
         .from('scan_jobs')
@@ -4390,8 +3378,6 @@ async function reapStaleScanJobs(
     for (const r of (retryRows ?? []) as Array<Record<string, unknown>>) {
       const id = String(r.id ?? '');
       if (!id) continue;
-      // CLAIM — conditional update; under concurrent polls Postgres row
-      // locking makes exactly one caller see a non-empty result.
       const { data: claimed, error: claimErr } = await svc
         .from('scan_jobs')
         .update({ status: 'queued', retry_count: 1, updated_at: nowIso })
@@ -4401,7 +3387,6 @@ async function reapStaleScanJobs(
         .select('id');
       if (claimErr || !claimed || claimed.length === 0) continue;
 
-      // Dual-read both casings (the #1 recurring result-column bug class).
       const rawKeys = r.imageKeys ?? r.image_keys;
       const imageKeys = Array.isArray(rawKeys) ? rawKeys.map(String) : [];
       const salesperson = typeof r.salesperson === 'string' ? r.salesperson : '';
@@ -4410,16 +3395,11 @@ async function reapStaleScanJobs(
       const houzsUserId = huRaw != null && Number.isFinite(Number(huRaw)) ? Number(huRaw) : null;
       const coRaw = r.companyId ?? r.company_id;
       const companyId = coRaw != null && Number.isFinite(Number(coRaw)) ? Number(coRaw) : null;
-      // Legacy rows predating the column read back null -> coerce to 'SO'.
       const documentType = coerceScanDocumentType(r.documentType ?? r.document_type);
 
-      // Heavy part (R2 reads + the whole pipeline) runs AFTER the poll
-      // responds — never inline in the GET.
       runInBackground((async () => {
         const files = salespersonId ? await loadScanJobFilesFromR2(env.SO_ITEM_PHOTOS, imageKeys) : null;
         if (!files) {
-          // No durable photos (enqueue-time R2 put failed / bucket unbound) or
-          // no replayable identity — the retry cannot run; terminal error now.
           console.warn('[scan-so jobs] retry not replayable, erroring:', id);
           await svc
             .from('scan_jobs')
@@ -4432,8 +3412,6 @@ async function reapStaleScanJobs(
           id,
           salesperson,
           salespersonId,
-          // The enqueue-time user_metadata name is not on the row; the
-          // normalized rep display name is the closest replay identity.
           salespersonName: salesperson || null,
           houzsUserId,
           documentType,
@@ -4446,7 +3424,6 @@ async function reapStaleScanJobs(
       })());
     }
 
-    // 2) TERMINAL pass — stale jobs whose single retry is already spent.
     await svc
       .from('scan_jobs')
       .update({ status: 'error', error: STALE_JOB_ERROR, updated_at: nowIso })
@@ -4459,10 +3436,6 @@ async function reapStaleScanJobs(
   }
 }
 
-// ---------------------------------------------------------------------------
-// GET /scan-so/jobs?salesperson= — latest 20 jobs, optionally one rep's
-// (normalized + case-insensitive match, same pool rule as the samples).
-// ---------------------------------------------------------------------------
 scanSo.get('/jobs', async (c) => {
   const rep = normalizeRepKey(c.req.query('salesperson'));
   const svc = serviceClient(c.env);
@@ -4470,14 +3443,13 @@ scanSo.get('/jobs', async (c) => {
     try {
       c.executionCtx.waitUntil(p);
     } catch {
-      /* non-Workers runtime (tests) — let the floating promise run */
     }
   });
   let q = svc
     .from('scan_jobs')
     .select('id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
     .eq('company_id', activeCompanyId(c))
-    .not('document_type', 'like', 'AI_%') // AI reads share the table; they are not scans
+    .not('document_type', 'like', 'AI_%')
     .order('created_at', { ascending: false })
     .limit(20);
   if (rep) q = q.ilike('salesperson', ilikeExact(rep));
@@ -4490,9 +3462,6 @@ scanSo.get('/jobs', async (c) => {
   return c.json({ success: true, data: { jobs } });
 });
 
-// ---------------------------------------------------------------------------
-// GET /scan-so/jobs/:id — poll one job (status / soDocNo / error).
-// ---------------------------------------------------------------------------
 scanSo.get('/jobs/:id', async (c) => {
   const id = (c.req.param('id') ?? '').trim();
   if (!id) return c.json({ error: 'bad_request', reason: 'Missing job id.' }, 400);
@@ -4501,10 +3470,8 @@ scanSo.get('/jobs/:id', async (c) => {
     try {
       c.executionCtx.waitUntil(p);
     } catch {
-      /* non-Workers runtime (tests) — let the floating promise run */
     }
   });
-  // Same company as the /jobs list: another company's job id answers 404.
   const { data, error } = await scopeToCompany(svc
     .from('scan_jobs')
     .select('id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at')
@@ -4519,19 +3486,6 @@ scanSo.get('/jobs/:id', async (c) => {
   return c.json({ success: true, data: { job: jobToJson(data as Record<string, unknown>) } });
 });
 
-// ---------------------------------------------------------------------------
-// POST /scan-so/jobs/clear-failed — the mobile "Clear" button on Recent scans.
-// Deletes terminal status='error' rows (sticky failure cards the rep has read
-// and dealt with). SELF-SCOPED: a normal caller only clears rows whose
-// salesperson matches their OWN normalized name (the same identity the mobile
-// screen scopes its list with — auth.ts stamps user_metadata.name = real name
-// ?? email, mirroring the frontend's user.name || user.email); a wildcard-'*'
-// caller (owner/admin, checked against houzsUser — NEVER scm.staff.role,
-// which is the pinned system row) clears every rep's failed rows. Done rows
-// carrying a warning note / duplicateOf are NOT touched — they point at a
-// real SO. No in-app confirm needed client-side: plain cleanup of already
-// terminal rows; nothing about the drafts themselves changes.
-// ---------------------------------------------------------------------------
 scanSo.post('/jobs/clear-failed', async (c) => {
   const svc = serviceClient(c.env);
   const houzsUser = c.get('houzsUser');
@@ -4562,17 +3516,6 @@ scanSo.post('/jobs/clear-failed', async (c) => {
   return c.json({ success: true });
 });
 
-// ===========================================================================
-// POST /scan-so/samples/:id/confirm — store the operator-reviewed JSON.
-// Called on save by the form the operator reviewed the scan in; the reviewed
-// blob becomes a few-shot example for future extractions.
-//
-// `accepted: true` means the operator changed NOTHING — the blob is the AI's
-// own reading, confirmed. It lands as ACCEPTED: a positive example for the
-// few-shot pool, but deliberately OUT of the diff-mining distill pools (see
-// the SAMPLE_* header). Absent/false ⇒ CONFIRMED (operator corrected
-// something), which is also what every pre-existing caller means.
-// ===========================================================================
 scanSo.post('/samples/:id/confirm', async (c) => {
   /* company-scope: scm.so_scan_samples is a GLOBAL OCR TRAINING POOL, not a
      business document — it has NO company_id column and mig 0083's sweep
@@ -4591,8 +3534,6 @@ scanSo.post('/samples/:id/confirm', async (c) => {
   }
   const acceptedAsIs = body.accepted === true;
   const sampleStatus = acceptedAsIs ? SAMPLE_ACCEPTED : SAMPLE_CORRECTED;
-  // Normalized rep key (trim + single-space) — case/whitespace variants must
-  // share one learning pool on write, same as /extract's stamp.
   const repGiven = normalizeRepKey(body.salesperson);
 
   const svc = serviceClient(c.env);
@@ -4601,16 +3542,9 @@ scanSo.post('/samples/:id/confirm', async (c) => {
     .update({
       corrected: body.corrected,
       status: sampleStatus,
-      // Operator-reviewed rep wins over whatever /extract stamped; blank
-      // leaves the extract-time value (operator pick or AI detection) alone.
       ...(repGiven ? { salesperson: repGiven } : {}),
     })
     .eq('id', id);
-  // No-downgrade: an ACCEPTED write must never bury a sample already CONFIRMED
-  // — that would relabel a real correction as "the AI got it right" and drop it
-  // out of the distill pool. The reverse (ACCEPTED then later CORRECTED, e.g.
-  // the operator saves a draft and edits it on a second pass) is an UPGRADE and
-  // rides through.
   if (acceptedAsIs) q = q.neq('status', SAMPLE_CORRECTED);
   const { data: updated, error } = await q.select('id, salesperson');
 
@@ -4621,23 +3555,12 @@ scanSo.post('/samples/:id/confirm', async (c) => {
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!updated || updated.length === 0) {
-    // Either the sample is gone, or the no-downgrade guard held. The latter is
-    // a legitimate no-op, not an error — the correction already on file wins.
     if (acceptedAsIs) return c.json({ success: true, skipped: 'already_corrected' });
     return c.json({ error: 'not_found', reason: 'Sample not found.' }, 404);
   }
 
-  // An accepted-as-is sample carries no diff, so it is NOT in any distill
-  // pool — re-distilling here would spend Anthropic calls to regenerate the
-  // identical rules from an unchanged pool. It reaches the few-shot pool
-  // directly (read live at extract time), so it still takes effect at once.
   if (acceptedAsIs) return c.json({ success: true });
 
-  // Rule distillation from this correction — see runConfirmDistills. It goes
-  // on SCAN_QUEUE: three sequential Claude calls over up to 50-80 sample
-  // pairs outlive waitUntil's 30 s after the response, so the later ones were
-  // cut off (gap review G19). waitUntil stays only as the fallback when the
-  // queue is unbound or the send fails. Never blocks/fails the confirm.
   const rep = repGiven || normalizeRepKey((updated[0] as { salesperson?: string | null }).salesperson);
   const tag = requestAiTag(c, 'scan_so_distill', CLAUDE_MODEL);
   if (c.env.SCAN_QUEUE) {
@@ -4652,19 +3575,11 @@ scanSo.post('/samples/:id/confirm', async (c) => {
   try {
     c.executionCtx.waitUntil(distillPromise);
   } catch {
-    /* non-Workers runtime (tests) — let the floating promise run */
   }
 
   return c.json({ success: true });
 });
 
-/* Learn from one confirmed correction: REGENERATE so_scan_rules for this rep
-   (latest ≤50 of their corrected samples), the '__GLOBAL__' shared alias
-   dictionary (latest ≤80 across ALL reps) and the cross-rep shared RULES. Each
-   cheap-skips without an API call when the pool is too small, so running on
-   every confirm is safe. Sequential, one Anthropic call at a time; every step
-   is non-fatal. Runs in the SCAN_QUEUE consumer (index.ts queue()), which has
-   minutes, not waitUntil's 30 s. */
 export async function runConfirmDistills(
   env: Env,
   svc: SupabaseClient,

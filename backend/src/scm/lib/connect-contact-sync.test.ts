@@ -32,9 +32,7 @@ describe('buildContactSyncEvent', () => {
       companyCode: 'HOUZS',
       callbackUrl: CALLBACK,
     });
-    // Fires the sentinel, so Connect upserts the fields and sends nothing.
     expect(contact.automation).toBe(CONNECT_SYNC_AUTOMATION);
-    // Headline (single-value) panel fields.
     expect(contact.attributes.reference_no).toBe('HC 11063');
     expect(contact.attributes.brand).toBe('AKEMI');
     expect(contact.attributes.purchase_venue).toBe('KL Showroom');
@@ -44,7 +42,6 @@ describe('buildContactSyncEvent', () => {
     expect(contact.attributes.disposal).toBe('Old mattress');
     expect(contact.attributes.customer_phone).toBe('+60126989616');
     expect(contact.attributes.client_delivery_date).toBe('2026/11/02');
-    // The delivery bundle rides along too.
     expect(contact.attributes.ref_1).toBe('HC-SO-2610-044');
     expect(contact.attributes.ref_no_1).toBe('HC 11063');
     expect(contact.attributes.brand_1).toBe('AKEMI');
@@ -52,7 +49,6 @@ describe('buildContactSyncEvent', () => {
     expect(contact.attributes.amount).toBe('1,500.00');
     expect(contact.attributes.order_amount).toBe('3572.65');
     expect(contact.attributes.company_code).toBe('HOUZS');
-    // A sync NEVER resets the conversation (would unlock the Delivery Lock).
     expect(contact.attributes.button_status).toBeUndefined();
     expect(contact.attributes.last_button).toBeUndefined();
   });
@@ -74,8 +70,6 @@ describe('buildContactSyncEvent', () => {
     expect(contact.attributes.reference_no).toBe('HC 1');
     expect(contact.attributes.order_total).toBe('2');
     expect(contact.attributes.ref_2).toBe('B2');
-    // No company resolved AND a sync does not reset: company_code is left unset
-    // (undefined), never blanked -- a prior send's value stays on the contact.
     expect(contact.attributes.company_code).toBeUndefined();
   });
 });

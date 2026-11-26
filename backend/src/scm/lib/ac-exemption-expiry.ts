@@ -27,18 +27,6 @@ export function acExemptionExpiryByDoc(
   return out;
 }
 
-/* `ac_sales_exemption_expiry` for a set of Delivery Planning SO rows: collect
-   each row's linked book doc no, read the AutoCount mirror once (the mirror lives
-   in the `public` schema — this client defaults to `scm` — and is HOUZS-only, so
-   on this cross-company queue the read widens to the caller's GRANTED companies;
-   2990 orders carry no linked_ac_docno and contribute nothing), then key it by
-   `so_doc_no` (absent when the order is not in AutoCount or the book
-   carries no expiry). A mirror blip is observed via noteDegradedRead and degrades
-   to blank — it never fails the board. Lives beside the keying so the board and the
-   SO list resolve the exemption one way; never touches the ERP's own
-   `sales_exemption_expiry`.
-   Both board paths use it: delivery-board-maps.ts reads it here, delivery-board-sql.ts
-   folds the same rows. */
 export async function loadAcExemptionExpiryByDoc(
   sb: Variables['supabase'],
   c: CompanyScopeCtx,

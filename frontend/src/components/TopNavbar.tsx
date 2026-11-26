@@ -19,7 +19,6 @@ import { Avatar } from "./Avatar";
 import { cn } from "../lib/utils";
 import { LazySlot } from "./LazySlot";
 
-// Loaded when the account menu opens: keeps it off the first-load budget.
 const ThemeChoice = lazy(() => import("./ThemeChoice"));
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
@@ -50,13 +49,8 @@ import { allowNextUnload, confirmLeaving, leaveGuardActive } from "../lib/leaveG
 export function TopNavbar() {
   const { user } = useAuth();
 
-  /* z-40, one above the DataTable's sticky thead / tfoot (z-30). The bar is a
-     stacking context, so its dropdowns can never rise above the bar's own
-     layer; at a z-30 tie the later-painted table header won and covered the
-     company / bell / profile menus. TopNavbar.layer.test.ts pins the order. */
   return (
     <header className="sticky top-0 z-40 hidden h-[52px] items-center border-b border-border bg-surface pl-3.5 pr-2 lg:flex">
-      {/* Workspace tabs (left; scrolls in place on overflow). */}
       <WorkspaceTabs />
 
       {/* Utility cluster (right): company / search / bell / profile — the
@@ -87,14 +81,6 @@ export function TopNavbar() {
   );
 }
 
-// ── Company switcher ───────────────────────────────────────
-// Multi-company (Phase 0c). Fetches GET /api/companies and renders a compact
-// dropdown of the active company's name. NO-OP by design: renders NOTHING until
-// the companies master exists and returns MORE THAN ONE company — so today
-// (single-company Houzs) it is invisible and no X-Company-Id header is sent.
-// Selecting a company writes the active-company store (persisted to
-// localStorage) and invalidates every query so the whole app refetches scoped
-// to the new company. Styling reuses the navbar's Ink & Petrol tokens.
 
 interface CompaniesResponse {
   companies: Array<{ id: number; code: string; name: string }>;
@@ -107,7 +93,6 @@ function CompanySwitcher() {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const dialog = useDialog();
 
-  // Persisted switcher pick (null = follow the backend hostname default).
   const stored = useSyncExternalStore(
     subscribeActiveCompany,
     getActiveCompanySnapshot,
@@ -137,18 +122,8 @@ function CompanySwitcher() {
     };
   }, [open]);
 
-  // No-op: hidden entirely until there is a real choice to make.
   if (companies.length <= 1) return null;
 
-  // Active = the stored pick when it's still a valid company, else the company
-  // the BACKEND says it actually resolved for this request (the hostname
-  // default when we sent no X-Company-Id).
-  //
-  // There is deliberately NO `companies[0]` fallback. Falling back to the first
-  // row is a positional guess: it labels the user with a company nobody has
-  // confirmed they are in, and every document they then raise is attributed
-  // somewhere else. When neither source can answer we say so — an unlabelled
-  // switcher is a prompt to choose; a wrong label is a silent misattribution.
   const resolvedByBackend = data?.activeCompanyId ?? null;
   const activeId =
     (stored !== null && companies.some((co) => co.id === stored) ? stored : null) ??
@@ -160,13 +135,6 @@ function CompanySwitcher() {
   async function pick(id: number) {
     setOpen(false);
     if (id === activeId) return;
-    // The switch below hard-reloads the whole app (see the block comment) to
-    // guarantee zero cross-company staleness — and a reload discards any unsaved
-    // edits. Confirm first, in our own words, so a mid-edit switch can't lose
-    // work; allowNextUnload() then stops the browser's own leave prompt
-    // (LeaveGuardBridge) asking the same question a second time.
-    // Only reached when the target company actually differs (same-company
-    // re-selects already returned above), so we never nag on a no-op pick.
     const ok = await dialog.confirm({
       title: "Switch company?",
       message:
@@ -174,25 +142,6 @@ function CompanySwitcher() {
       confirmLabel: "Switch company",
     });
     if (!ok) return;
-    // A company switch is a fundamental tenant-context change. Backend scoping
-    // already isolates each company's data (companyContext + X-Company-Id); the
-    // frontend must never leave the previous company's rows on screen for even
-    // one frame. In-place cache invalidation could not guarantee that: react-query
-    // keys don't include the company, invalidateQueries raced, and
-    // queryClient.clear() empties the cache but does NOT re-trigger a mounted
-    // observer to refetch — so a list kept showing the previous company until it
-    // happened to remount. A full page reload is the bulletproof fix: nothing
-    // stale can render because the whole app re-boots. We persist the new active
-    // company FIRST — setActiveCompanyId writes this tab's sessionStorage pick
-    // AND the durable per-user record synchronously — so after the reload the app
-    // boots under the new company and every request carries the new X-Company-Id
-    // header. Company switches are rare + deliberate, so the reload cost is an
-    // acceptable trade for guaranteed zero cross-company staleness.
-    //
-    // clearAllScmHandoffs drops the TRANSIENT navigation handoffs only. Staged
-    // payment-retry intents are company-scoped and stay put: they are money
-    // already collected, and switching company is not permission to destroy it
-    // (see lib/scmHandoffStorage).
     clearAllScmHandoffs();
     setActiveCompanyId(id);
     allowNextUnload();
@@ -213,8 +162,6 @@ function CompanySwitcher() {
         aria-expanded={open}
         title={active ? "Switch company" : "No company selected — choose one"}
       >
-        {/* Never a company NAME we have not confirmed. "Select company" reads as
-            an unanswered question, which is exactly what it is. */}
         <span
           className={cn("max-w-[9rem] truncate", !active && "italic text-warning-text")}
           data-company-unresolved={active ? undefined : "true"}
@@ -280,11 +227,6 @@ function CompanySwitcher() {
   );
 }
 
-// ── Profile menu ───────────────────────────────────────────
-// Nico 2026-07-14 — clicking the avatar in the top rail now opens a small
-// dropdown with Profile + Log out, instead of jumping straight to /profile
-// (which was a surprise for anyone reaching for a sign-out control). Follows
-// the CompanySwitcher popover pattern in this file: click-outside + Esc close.
 
 function ProfileMenu() {
   const { user, logout, can } = useAuth();
@@ -293,9 +235,6 @@ function ProfileMenu() {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const activeRoute = location.pathname === "/profile";
-  // 2b: the separate "N online" presence cluster is gone — the online state
-  // rides on the avatar as a green corner dot, and the live count surfaces
-  // through the trigger's title/aria-label.
   const { members } = usePresence();
   const onlineCount = members.length;
 
@@ -320,18 +259,11 @@ function ProfileMenu() {
 
   async function onLogout() {
     setOpen(false);
-    // Asked BEFORE logout(): the guard on the /login move would come after the
-    // session is already gone.
     if (leaveGuardActive() && !(await confirmLeaving())) return;
-    // Same rule as the company switcher: transient SCM navigation handoffs
-    // must not survive an SPA identity change, or the next user picks up the
-    // outgoing user's in-flight state.
     clearAllScmHandoffs();
     try {
       await logout();
     } finally {
-      // logout() clears the SPA session; route back to /login so the user
-      // lands somewhere sensible even when a stray page was open.
       navigate("/login", { replace: true });
     }
   }
@@ -362,8 +294,6 @@ function ProfileMenu() {
             email={user.email}
             size={30}
           />
-          {/* Online state as an avatar badge (2b) — you are online whenever
-              this chrome is rendered; the ring keeps it legible over photos. */}
           <span
             aria-hidden
             className="absolute -bottom-px -right-px h-[9px] w-[9px] rounded-full bg-synced ring-[1.5px] ring-surface"
@@ -390,9 +320,6 @@ function ProfileMenu() {
           aria-label="Account menu"
           className="absolute right-0 top-[calc(100%+6px)] z-40 w-[220px] overflow-hidden rounded-lg border border-border bg-surface shadow-slab animate-toast-in"
         >
-          {/* Identity strip — echoes who the menu belongs to; the chip alone
-              is easy to misread once the menu is open and the trigger's
-              hover state has dropped. */}
           <div className="flex items-center gap-2.5 border-b border-border-subtle px-3 py-2.5">
             <Avatar
               userId={user.id}

@@ -37,19 +37,6 @@ export type PoRelationshipHeader = {
   notes?: string | null;
 };
 
-/* The source SO doc numbers a PO's provenance note records.
- *
- * This was a hand-maintained twin of the backend's parser, with a comment
- * pointing at the writer and asking the reader to keep the two in step. As of
- * 2026-08-18 it is the SAME MODULE, mirrored into the frontend tree the way
- * every other shared rule here is (vendor/shared, refereed by
- * backend/scripts/check-shared-mirrors.mjs plus a byte-identity test).
- *
- * That matters more here than almost anywhere else: this node is the ONLY
- * place a pre-MRP PO's source Sales Order appears on screen, so a parser that
- * had learned the new label and forgotten the old one would not error — it
- * would quietly render an empty Sales Order node for every PO raised before
- * the rename. The shared module accepts both eras; see its comment. */
 export const parsePoNoteSos = parseProvenanceNote;
 
 const docCell = (labels: string[], plural: string, emptyDoc: string) =>
@@ -147,15 +134,9 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
   onNodeClick: (n: ChainNode) => boolean;
   amendments: AmendmentChip[];
   onAmendmentClick: (a: AmendmentChip) => boolean;
-  /* How this PO's SO hop is paired — 'floating' when any live MRP pairing
-     exists, 'provenance' when only stored raise-links do, null when neither.
-     The modal restyles the SO↔PO connector from it. */
   pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
   const notify = useNotify();
-  /* Several documents in one slot open a chooser whose every row clicks through
-     (2026-08-03) — naming them and pointing at a list the doc no cannot be
-     searched in left the operator copying numbers by hand. */
   const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const { can, pageAccess } = useAuth();
@@ -163,17 +144,9 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
   const poId = header?.id ?? null;
   const flow = useDocumentFlow('po', poId);
 
-  /* FLOATING pre-DO pairing ("soft until DO, hard from DO") — the SO doc
-     numbers the live MRP allocation currently assigns this PO to, read from
-     the SAME usePoSoCoverage query key the PO list drill-down and every other
-     coverage reader use. Common path = react-query cache hit; cold path = the
-     one normal coverage fetch. NEVER a new endpoint, never a computeMrp call
-     added to document-flow (owner constraint: zero new backend load). */
   const cov = usePoSoCoverage('po', poId);
   const floatingSos = useMemo(() => floatingSoDocNos(cov.data), [cov.data]);
 
-  /* Edge-walk off this PO's anchor (see header comment): its own GRNs, then
-     the invoices / returns those GRNs carry. */
   const { soNodes, grnNodes, piNodes, prNodes } = useMemo(() => {
     const nodes: FlowNode[] = flow.data?.nodes ?? [];
     const edges: FlowEdge[] = flow.data?.edges ?? [];
@@ -191,8 +164,6 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
     };
   }, [flow.data, poId]);
 
-  /* Note fallback fires only when the flow has LOADED and resolved no root SO
-     (pre-MRP PO) — a linked PO never shows note tokens over real nodes. */
   const flowLoaded = !flow.isLoading && flow.data != null;
   const noteSos = useMemo(
     () => (flowLoaded && soNodes.length === 0 ? parsePoNoteSos(header?.notes) : []),
@@ -202,8 +173,6 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
     () => (soNodes.length > 0 ? soNodes.map((n) => n.label) : noteSos),
     [soNodes, noteSos],
   );
-  // Floating SOs no stored link already names (a stored raise-link always
-  // paints the slot solid; the pairing HOP can still float — see `pairing`).
   const floatOnlySos = useMemo(
     () => floatingSos.filter((d) => !soLabels.includes(d)),
     [floatingSos, soLabels],
@@ -254,9 +223,6 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
     [openDoc],
   );
 
-  /* Route-gate mirrors (same OR-shape as ScmGuard): the SO detail route mounts
-     on scm.sales.orders, GRN / PI / PR on their procurement areas — never hand
-     the operator a node that navigates straight into <Forbidden>. */
   const canOpenSo = can('scm.access') || pageAccess('scm.sales.orders') !== 'none';
   const canOpenGrn = can('scm.access') || pageAccess('scm.procurement.grn') !== 'none';
   const canOpenPi = can('scm.access') || pageAccess('scm.procurement.pi') !== 'none';
@@ -289,10 +255,6 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
           });
           return false;
         }
-        /* MRP's orders first - where the goods are going now - then the orders
-           the PO was raised for that MRP has since moved them away from (owner
-           2026-11-19). Graph so-nodes navigate by doc_no (their id); note tokens
-           are the doc numbers verbatim. */
         const storedRows = soNodes.length > 0
           ? soNodes.map((so) => ({ id: so.id, label: so.label }))
           : noteSos.map((doc) => ({ id: doc, label: doc }));
@@ -310,10 +272,6 @@ export function usePoRelationshipMap(header: PoRelationshipHeader | null): {
           openDoc(`/scm/sales-orders/${encodeURIComponent(rows[0]!.id)}`);
           return true;
         }
-        /* Several SOs, one slot. The SO list searches its own refs, not a PO
-           number, so "go find them" landed nowhere — each SO is a row that opens
-           it. Graph so-nodes and note tokens are both doc numbers, so both route
-           the same way. */
         openChoice({
           title: mrpRows.length === 0 ? 'Raised for more than one sales order' : 'Sales orders for this PO',
           intro: mrpRows.length === 0

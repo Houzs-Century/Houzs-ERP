@@ -1,22 +1,3 @@
-/* This module exists because the create route's file is over the size ceiling,
- * and a module extracted for THAT reason arrives with nobody testing it — which
- * is how `scm/lib` went from 10 zero-coverage files to 12 on 2026-08-26 and
- * held main red. The extraction is not free; this is the price.
- *
- * Two behaviours are worth pinning beyond "it was called":
- *
- *  1. THE AUDIT ROW SPELLS OUT WHAT WAS ASKED FOR. The requested header changes
- *     are mapped through the route's payloadKey -> SO column vocabulary at
- *     REQUEST time. If that mapping is dropped, the History timeline still shows
- *     "an amendment was raised" and silently loses what it asked to change — and
- *     a rejected amendment then leaves no record of its own content at all.
- *
- *  2. THE SALESPERSON IS LOOKED UP ONCE, THE NOTICE FIRES PER LANE. Both halves
- *     of a split submission share one Sales Order, so a per-lane lookup would be
- *     a second round trip for an answer already held; and a single notice for
- *     two lanes would tell whichever desk read it that the work was already
- *     someone else's.
- */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 const audits: Array<Record<string, unknown>> = [];
@@ -71,8 +52,6 @@ describe('amendment-raised effects', () => {
     expect(audits[0].fieldChanges).toEqual([
       { field: 'amendment', from: null, to: 'SO-2608-043/A1' },
       { field: 'lane', to: 'DELIVERY' },
-      // The payloadKey is translated to the SO COLUMN — a reader of the History
-      // timeline should see the field they know, not the wire vocabulary.
       { field: 'requested_customer_delivery_date', from: '2026-09-10', to: '2026-09-20' },
       { field: 'requested_postcode', from: '43300', to: '47800' },
     ]);
@@ -99,7 +78,7 @@ describe('amendment-raised effects', () => {
       ],
     });
 
-    expect(staffLookups).toEqual(['staff-sales']);   // once, not once per lane
+    expect(staffLookups).toEqual(['staff-sales']);
     expect(notices.map((n) => [n.amendmentNo, n.lane])).toEqual([
       ['SO-2608-043/A1', 'LINES'],
       ['SO-2608-043/A2', 'DELIVERY'],
@@ -115,9 +94,6 @@ describe('amendment-raised effects', () => {
   });
 
   it('still notifies when the Sales Order has no linked salesperson', async () => {
-    // An AutoCount-imported staff row carries no user_id. The approvers must
-    // still hear about the amendment — a missing salesperson is one absent
-    // recipient, not a reason to tell nobody.
     await notifyAmendmentsRaised(ctx, null, {
       docNo: 'SO-2', salespersonStaffId: null,
       created: [{ amendment_no: 'SO-2/A1', lane: 'LINES' }],

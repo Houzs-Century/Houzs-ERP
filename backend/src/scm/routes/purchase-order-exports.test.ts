@@ -1,20 +1,3 @@
-// GET /mfg-purchase-orders/export/rows — every purchase order the list's filters
-// match (all pages), each with its lines, for the grid-driven export (owner
-// 2026-09-15: one row per line, the columns the grid shows, its filter and view).
-//
-// Harness follows changeLogRoute.test.ts: a bare Hono app whose middleware
-// injects the fake PostgREST client and a company context, mounting the
-// EXPORTED handler (the supabaseAuth bridge cannot run here).
-//
-// WHAT IS ASSERTED is the owner's requirement:
-//   1. The read follows the list's tab, search and sort — the SAME filter the
-//      list builds (lib/po-list-read.ts), not a copy of it.
-//   2. It holds every matching order, past PostgREST's response ceiling.
-//   3. Company scope holds on the header, line AND sales-order read, and the
-//      paired same-company request still returns rows.
-//   4. Each line carries the AutoCount-listing values: supplier item code,
-//      short location, estimate dates (line, else header), Item Description 2
-//      from the variants (stored text only as the fallback), remaining qty.
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import type { Env, Variables } from '../env';
@@ -210,8 +193,6 @@ describe('company scope', () => {
   it("never reads another company's orders or lines, and still reads its own", async () => {
     const mine = po({ company_id: 1 });
     const theirs = po({ company_id: 2, po_number: 'HC-PO-THEIRS' });
-    /* A line of company 2 hanging off company 1's PO id: a parent predicate is
-       not company scope (R105 b), so it must not ride along. */
     const planted = line(mine, { company_id: 2, supplier_sku: 'PLANTED' });
     const tables = { pos: [mine, theirs], lines: [line(mine), line(theirs), planted] };
 
@@ -264,7 +245,7 @@ describe('the line values', () => {
       line_no: 1,
       item_code: '9058-1A(LHF)',
       material_name: '9058 SOFA 1A LHF',
-      item_description: '9058 SOFA 1A LHF', // DG-9058 is not in the book's item master: the ERP name
+      item_description: '9058 SOFA 1A LHF',
       description2: 'FABRIC KN-12 / SEAT 18',
       notes: 'call before delivery',
       item_group: 'accessory',
@@ -276,10 +257,10 @@ describe('the line values', () => {
       unit_price_sen: 5.5,
       line_total_sen: 1650,
       delivery_date: '2026-09-20',
-      estimate_delivery_date_1: '2026-09-12', // header: the line is blank
-      estimate_delivery_date_2: '2026-09-25', // the line wins over the header
+      estimate_delivery_date_1: '2026-09-12',
+      estimate_delivery_date_2: '2026-09-25',
       estimate_delivery_date_3: '2026-10-01',
-      location: 'PG', // AutoCount's short code, as the book spells it
+      location: 'PG',
       so_doc_no: 'HC-SO-013389',
     } satisfies PoListLine]);
   });

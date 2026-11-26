@@ -1,8 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-bundle.ts — the pure half of the device bundle (GET /pos-device/prepare,
-// layout P15): which POS items an event's terminal gets, at what price, with
-// which barcodes, and the device token rule. Tested without a database.
-// ----------------------------------------------------------------------------
 
 export type BundleItemSource = {
   id: number;
@@ -23,7 +18,6 @@ export type BundleItem = {
   id: number;
   product_id: string;
   code: string;
-  /** The live SKU name when known, else the tagging-time snapshot. */
   name: string;
   receipt_name: string;
   uom: string;

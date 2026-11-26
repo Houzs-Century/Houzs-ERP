@@ -74,8 +74,6 @@ export const SectionTabs = ({ sections, areaCount, value, onChange }: {
 type Ladder = Extract<RuleBlock, { kind: 'ladder' }>;
 interface PriceGroup { id: string; title: string; cells: PriceCell[]; missing: FlatRuleType[] }
 
-/** One line of a category's price table: a price the card carries, or one it
- *  could carry and does not (added from its RM cell). */
 interface PriceLine { key: string; group: string; label: string; cell: PriceCell | null; missing: FlatRuleType | null }
 
 const priceLines = (groups: readonly PriceGroup[]): PriceLine[] => groups.flatMap((g) => [
@@ -97,11 +95,8 @@ const PricesPanel = ({ cardId, section, zones }: { cardId: string; section: Rule
   const missing = flatTypesOf(cat).filter((t) => !present.has(t));
   const groups: PriceGroup[] = ladders.map((b) => ({ id: b.id, title: b.title, cells: b.cells, missing: b.id === 'flat' ? missing : [] }));
   if (!ladders.some((b) => b.id === 'flat') && missing.length > 0) groups.push({ id: 'flat', title: flatTitle(cat), cells: [], missing });
-  /* Positions, cap overage and sofa brackets need more than an amount, so
-     Delivery keeps the full form; the other two take amounts only. */
   const needsForm = cat === 'DELIVERY';
   const lines = useMemo(() => priceLines(groups), [groups]);
-  /* A phone keeps the grid, not cards: cards drop the shaded kind rows. */
   const small = useSmallViewport();
   const columns = useMemo<Column<PriceLine>[]>(() => [
     { key: 'kind', label: 'Kind', defaultHidden: true, disableSort: true, getValue: (r) => r.group, render: (r) => r.group },
@@ -114,7 +109,6 @@ const PricesPanel = ({ cardId, section, zones }: { cardId: string; section: Rule
     {
       key: 'rm', label: 'RM', align: 'right', width: '170px', disableSort: true,
       getValue: (r) => (r.cell ? r.cell.rule.amountSen / 100 : null),
-      /* A charge on each DO may be a % of the goods, so it exports as it reads. */
       exportValue: (r) => (r.cell ? (r.cell.rule.ruleType === 'DO_CHARGE' ? chargeText(r.cell.rule) : r.cell.rule.amountSen / 100) : ''),
       render: (r) => (r.cell
         ? (r.cell.rule.ruleType === 'DO_CHARGE'
@@ -155,8 +149,6 @@ export const RateCardSection = ({ card, rules, areas, areaRules, unit, sections,
   if (section === 'PRICE_CHECK') return <PriceCheck card={card} rules={rules} areas={areas} areaRules={areaRules} form={checkForm} onForm={onCheckForm} />;
   const s = sections.find((x) => x.category === section);
   if (!s) return null;
-  /* Keyed by category: each tab starts with its own add form closed, rather
-     than one tab's open form following the user to the next. */
   return section === 'OUTSTATION'
     ? <OutstationPrices cardId={card.id} rules={rules} areas={areas} areaRules={areaRules} unit={unit} section={s} zones={zones} />
     : <PricesPanel key={section} cardId={card.id} section={s} zones={zones} />;

@@ -1,8 +1,3 @@
-/* The payment voucher page's redesign pieces (owner's Claude Design, batch 4):
-     • the stage reads off the four layers' marks on a DRAFT;
-     • the books line says whether it posted, debit to credit, the money, and
-       a foreign voucher's rate;
-     • the trail reads inline with the reasons a voucher was sent back. */
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';

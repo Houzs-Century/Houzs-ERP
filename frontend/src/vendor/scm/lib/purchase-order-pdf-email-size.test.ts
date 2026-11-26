@@ -1,12 +1,3 @@
-// A PO emailed to a supplier is refused outright by the send route above 5 MB,
-// and the PDF grows by every embedded photo (measured 2026-11-09 through the
-// real generator: ~360 kB per detailed 1536 px photo, so 15 photos = 5.28 MB).
-// The emailed PDF now steps down to 800 px photos, then to no photos, instead
-// of failing the send.
-//
-// Stubbed, as in purchase-order-pdf-photos.test.ts: the network and Chrome's
-// canvas. The stub encoder returns a JPEG whose size follows the canvas width
-// our code chose, so the step-down is driven by our own scaling rule.
 import { describe, expect, it, vi, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -24,7 +15,6 @@ vi.mock('./sales-order-queries', async (orig) => ({
   loadSofaCompartmentArtForPrint: async () => new Map(),
 }));
 
-/* Bytes per photo at a given encoded width: 1536 px -> 400 kB, 800 px -> 120 kB. */
 const bytesAt = (w: number) => (w >= 1536 ? 400_000 : w >= 800 ? 120_000 : 30_000);
 
 beforeAll(() => {

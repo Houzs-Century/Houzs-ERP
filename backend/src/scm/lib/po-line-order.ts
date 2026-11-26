@@ -34,7 +34,6 @@
    untouched document can never disagree.
    -------------------------------------------------------------------------- */
 
-/** Minimal shape of the PostgREST builder this applies to. */
 type Orderable<T> = { order(col: string, opts: { ascending: boolean; nullsFirst?: boolean }): T };
 
 /** Apply the canonical purchase-order line order. */
@@ -45,13 +44,6 @@ export function inPoLineOrder<T extends Orderable<T>>(q: T): T {
     .order('id', { ascending: true });
 }
 
-/** Minimal shape of the PostgREST client `nextPoLineNo` needs. The parameter
- *  is `unknown` and asserted to this INSIDE, not typed as this: the real
- *  supabase-js client's `from()` is generic over every table in the schema, and
- *  structurally matching it against a hand-written shape makes tsc give up with
- *  "Type instantiation is excessively deep" (TS2589) at the call site. The
- *  repo's usual escape is `sb: any`, which a new file cannot carry — its
- *  no-explicit-any ceiling is zero. */
 type LineNoReader = {
   from(table: string): {
     select(cols: string): {

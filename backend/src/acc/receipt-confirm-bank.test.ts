@@ -1,15 +1,3 @@
-/* Confirming a transfer into a bank that is not the default (Conts #476).
- *
- * A transfer is booked on the default bank (Hong Leong) when it is recorded.
- * Finance confirms it into Maybank: the receipt used to say Maybank while the
- * journal stayed on Hong Leong, so the Maybank reconciliation never showed the
- * money. Pinned: the confirm moves the entry first — one live entry, on
- * Maybank, on the payment's own date — then stamps the receipt; a confirm onto
- * the bank it is already on moves nothing; a payment matched on the Hong Leong
- * statement refuses the confirm and leaves the receipt a draft; a card
- * payment's receipt never moves its entry (its money leg is the clearing
- * account by design).
- */
 import { describe, expect, it } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import { postSoPayment, type SoPaymentRow } from './payments';

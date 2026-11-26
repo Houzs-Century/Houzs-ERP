@@ -1,10 +1,3 @@
-// The desktop Sales Orders list's second-level filters — the status pills stay
-// the FIRST filter; this bar sits beside them: one chip per applied row (click
-// to edit, x to remove) and a "Filters" button opening a panel with the same
-// MORE FILTERS rows, grouped field picker and [Clear] [Apply · n orders] footer
-// the phone sheet has. Presentation only: the rows, URL state, count preview and
-// server predicates are the shared layer (vendor/scm/lib/so-list-filter-state.ts
-// + vendor/shared/so-list-filter-model.ts), identical to mobile's.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   soFilterField,
@@ -56,7 +49,6 @@ export function SoListFilterBar({ q }: { q: string }) {
     place();
     const onScroll = () => place();
     window.addEventListener("resize", place);
-    // capture: <main> is the scroll container, and scroll doesn't bubble.
     window.addEventListener("scroll", onScroll, true);
     return () => {
       window.removeEventListener("resize", place);

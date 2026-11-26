@@ -1,20 +1,3 @@
-// ---------------------------------------------------------------------------
-// geocode.ts — address -> lat/lng, CACHED (scm.geocode_cache, migration 0197).
-//
-// The TMS Phase 3 scheduler geocodes each delivery stop's free-text address so
-// the Distance Matrix can measure travel time between stops. Geocoding is a PAID
-// Google call, and the same address is scheduled repeatedly, so every address is
-// geocoded exactly ONCE and then served from the cache table forever.
-//
-// GATED behind GOOGLE_MAPS_API_KEY, the SAME backend key maps.ts uses. With no
-// key a geocode returns null and NEVER calls Google — nothing bills until the
-// owner sets the key. Reuses the geocoder URL/key pattern already established in
-// scan-so.ts (region=my, components=country:MY); this file adds the lat/lng +
-// caching layer scan-so did not need (it only wanted state/city/postcode).
-//
-// The URL builder and the response parser are PURE and unit-tested; only the
-// thin fetch + cache wrapper touches the network / DB.
-// ---------------------------------------------------------------------------
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 
@@ -90,9 +73,6 @@ interface GeocodeBody {
   }>;
 }
 
-/** A result that is only the whole country or a whole state: Google's answer
- *  to an address it could not place. Pinning it would put the stop in the
- *  middle of Malaysia / the state, which is worse than listing it unlocated. */
 const TOO_COARSE = new Set(['country', 'administrative_area_level_1']);
 
 /**
@@ -117,11 +97,6 @@ export function parseGeocode(body: GeocodeBody): GeocodeHit | null {
   };
 }
 
-/* Addresses Google could not place, remembered per Worker isolate so the same
-   bad address is not re-billed on every page open. scm.geocode_cache keeps hits
-   only (lat/lng are NOT NULL), so a miss has no table row; six hours lets an
-   address fixed in the meantime be retried the same day. Bounded so a long-lived
-   isolate cannot grow it without limit. */
 const MISS_TTL_MS = 6 * 60 * 60 * 1000;
 const MISS_MAX = 5000;
 const recentMisses = new Map<string, number>();
@@ -165,7 +140,6 @@ export async function geocodeAddressCached(
   const key = normalizeAddress(raw);
   if (key === '') return null;
 
-  // Cache hit — no Google call.
   try {
     const { data } = await sb
       .from('geocode_cache')
@@ -185,7 +159,7 @@ export async function geocodeAddressCached(
         };
       }
     }
-  } catch { /* cache read is best-effort; fall through to a live geocode */ }
+  } catch { }
 
   const apiKey = env.GOOGLE_MAPS_API_KEY;
   if (!apiKey) return null;
@@ -197,12 +171,10 @@ export async function geocodeAddressCached(
     if (!resp.ok) return null;
     hit = parseGeocode((await resp.json()) as GeocodeBody);
   } catch {
-    return null; // a network failure is not a verdict on the address: not remembered
+    return null;
   }
   if (!hit) { rememberMiss(key, Date.now()); return null; }
 
-  // Cache the result — best-effort, ON CONFLICT the unique key is a no-op so a
-  // race just keeps whichever row landed first.
   try {
     await sb.from('geocode_cache').upsert(
       {
@@ -215,7 +187,7 @@ export async function geocodeAddressCached(
       },
       { onConflict: 'normalized_address', ignoreDuplicates: true },
     );
-  } catch { /* a cache write failure must never fail the geocode itself */ }
+  } catch { }
 
   return hit;
 }

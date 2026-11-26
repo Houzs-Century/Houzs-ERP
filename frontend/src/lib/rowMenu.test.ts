@@ -10,18 +10,12 @@ describe("buildRowMenu", () => {
       .toEqual(["Open", "—", "Transfer", "—", "Cancel"]);
   });
 
-  /* THE DIVIDER BUGS THIS EXISTS TO REMOVE. A row that does not qualify for a
-     group must leave no trace of it — five hand-written menus would each have
-     had to remember that, and on the day a status stops qualifying. */
   test("an empty group leaves no divider behind it", () => {
     expect(labels(buildRowMenu([it("Open")], [], [it("Cancel")])))
       .toEqual(["Open", "—", "Cancel"]);
   });
 
   test("a group emptied by its own predicates is the same as an absent one", () => {
-    /* From a function, not a literal `false`: a literal is dead code the linter
-       is right to flag, and the thing under test is a RUNTIME predicate — the
-       row-does-not-qualify case every menu in row-menus.ts is built on. */
     const canTransfer = (status: string) => status !== "DRAFT";
     expect(labels(buildRowMenu(
       [it("Open")],

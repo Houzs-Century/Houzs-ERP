@@ -1,6 +1,3 @@
-/* DEV-62 (Adrian): an RM 0 Unit Price, on a new line or a saved one being
- * edited, shows blank with "0.00" as the placeholder, so typing a price does
- * not begin with deleting "0.00". */
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';

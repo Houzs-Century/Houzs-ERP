@@ -7,17 +7,6 @@ import {
 } from "../../components/announcementCategory";
 import { announcementStatus } from "../../lib/announcementStatus";
 
-// ────────────────────────────────────────────────────────────────────────────
-// announcementModel — the pure rules behind the Announcements page (Inbox +
-// Manage), kept out of the React files so both modes, the tests and the
-// dashboard read ONE definition of "pending for me", "archived", "ack-rate
-// colour" and "which group does this notice sit in".
-//
-// Design handoff 2026-09-04 (design_handoff_announcements/README.md). Category
-// colours, labels, CTA wording and the "which categories block" rule live in
-// components/announcementCategory.ts (shared with the modal, the bell, the
-// dashboard and the phone) and are re-exported here for the page's convenience.
-// ────────────────────────────────────────────────────────────────────────────
 
 export {
   CATEGORY_META,
@@ -64,14 +53,11 @@ export type Announcement = {
   id: string;
   title: string;
   body: string;
-  /** Canonical rich fragment or null for a plain notice (lib/announcementRichText). */
   bodyHtml?: string | null;
   isActive: boolean;
   expiresAt: string | null;
   createdAt: string | null;
   createdBy: number | null;
-  /** Author's display name (mig 2026-09 — resolved server-side because
-   *  readers cannot load /api/users). */
   createdByName?: string | null;
   remindedAt: string | null;
   updatedAt: string | null;
@@ -82,41 +68,24 @@ export type Announcement = {
   targetPositionIds?: number[];
   targetUserIds?: number[];
   targetCompanyIds?: number[];
-  /** Divisions targeted on their own (mig 20260906T0639): {deptId, division}. */
   targetDivisions?: DivisionTarget[];
-  /** People carved out of the audience (mig 20260906T0639). */
   excludedUserIds?: number[];
-  /** Department names for targetDeptIds (mig 2026-09), same reason as above. */
   targetDeptNames?: string[];
-  /** "Operation › Driver Team" per targetDivisions entry, server-resolved. */
   targetDivisionNames?: string[];
   category?: AnnouncementCategory;
-  /** Per-notice "must acknowledge" flag (mig 2026-09). Absent = derive from
-   *  the category, see requiresAck(). */
   requireAck?: boolean | null;
-  /** Scheduled posting instant (mig 2026-09). Absent/null = posted at once. */
   scheduledAt?: string | null;
-  /** When the overdue escalation ran — the cron or the drawer's click (mig
-   *  20260906T0833). Absent/null = supervisors not notified yet. */
   escalatedAt?: string | null;
-  /** Approval workflow (mig 20260906T1509). Absent = APPROVED — a notice from
-   *  before the workflow. Nothing but APPROVED is served to readers. */
   approvalStatus?: ApprovalStatus;
   submittedBy?: number | null;
   submittedAt?: string | null;
   reviewedBy?: number | null;
   reviewedAt?: string | null;
-  /** Why the approver sent it back; set while REJECTED. */
   rejectReason?: string | null;
-  /** [DEPT]-ANN-[YYMM]-[NNNN], minted on approval; null until then. */
   refNo?: string | null;
-  /** Void (mig 20260907T1030): a submitted notice is never deleted, only
-   *  voided with a reason. voidedAt set = out of every reader surface. */
   voidedBy?: number | null;
   voidedAt?: string | null;
   voidReason?: string | null;
-  /** Document type (mig 20260908T0300): ANN or a registered code such as MEMO
-   *  — the [TYPE] segment of the reference number. Absent = ANN. */
   docType?: string | null;
 };
 
@@ -161,7 +130,6 @@ export function requiresAck(
   return requiresAcknowledgement(a);
 }
 
-// ── Status ─────────────────────────────────────────────────────────────────
 
 /** SOP never expires (permanent SOP Library); every other category is archived
  *  once hidden or past expiry and drops out of the default list. */
@@ -186,7 +154,6 @@ export function isScheduled(
   return Number.isFinite(t) && t > now;
 }
 
-// ── Ack-rate thresholds (README "Status colours") ─────────────────────────
 
 export function ackPercent(acked: number, total: number): number {
   if (total <= 0) return 0;
@@ -234,9 +201,6 @@ export function manageStatus(
   opts: { pendingForMe: boolean; pct: number | null },
   now: number = Date.now(),
 ): ManageStatus {
-  // A void is final and outranks everything (mig 20260907T1030); then the
-  // approval state: an unapproved notice has no audience yet, so "awaiting" /
-  // the ack rate have nothing to say about it.
   if (isVoided(a)) return "voided";
   const approval = approvalOf(a);
   if (approval === "DRAFT") return "draft";
@@ -248,7 +212,6 @@ export function manageStatus(
   return "complete";
 }
 
-// ── Inbox grouping ─────────────────────────────────────────────────────────
 
 export type InboxFilter =
   | "pending"
@@ -286,27 +249,19 @@ export function matchesSearch(a: Announcement, query: string): boolean {
 }
 
 export type InboxBuckets = {
-  /** Mandatory, addressed to me, not yet acknowledged — pinned on top. */
   pending: Announcement[];
-  /** Everything else that is live and not an SOP, after the filter. */
   recent: Announcement[];
-  /** The permanent SOP Library, grouped by department (first target dept). */
   sopGroups: Array<{ dept: string; items: Announcement[] }>;
-  /** Count of SOP notices across the groups. */
   sopCount: number;
 };
 
 export type InboxInput = {
   items: Announcement[];
-  /** Ids of notices ADDRESSED to me (the /banner human slice). A notice
-   *  outside this set is one I can read as a manager but never have to ack. */
   addressedIds: ReadonlySet<string>;
-  /** Ids I have acknowledged (server + this session). */
   ackedIds: ReadonlySet<string>;
   currentUserId: number | null;
   filter: InboxFilter;
   search: string;
-  /** Name lookups (writers only) — used for the SOP Library's department headings. */
   lookups?: NameLookups;
   now?: number;
 };
@@ -338,7 +293,6 @@ export function sopDepartmentLabel(a: Announcement, lookups: NameLookups = {}): 
     const looked = lookups.departments?.get(firstId);
     if (looked) return looked;
   }
-  // A division-only SOP files under its department (the label's first part).
   const divisionLabel = a.targetDivisionNames?.[0];
   if (divisionLabel) return divisionLabel.split(" › ")[0];
   if (a.targetType === "ALL_USERS" || !a.targetType) return "All departments";
@@ -395,7 +349,6 @@ export function bucketInbox(input: InboxInput): InboxBuckets {
   return { pending, recent: filteredRecent, sopGroups, sopCount: sops.length };
 }
 
-// ── Manage mode ────────────────────────────────────────────────────────────
 
 /** GET /api/announcements/:id/acks (extended 2026-09). */
 export type AckPerson = {
@@ -467,11 +420,8 @@ export function filterManageRows(input: Omit<InboxInput, "lookups">): Announceme
 export type ManageStats = {
   awaitingYou: number;
   liveNotices: number;
-  /** Mean ack percentage over live notices with a known audience; null = unknown yet. */
   avgAckRate: number | null;
-  /** Live notices below the 70% threshold. */
   escalated: number;
-  /** Notices waiting for an approver (mig 20260906T1509). */
   pendingApproval: number;
 };
 
@@ -491,7 +441,6 @@ export function manageStats(
   for (const a of items) {
     if (isPendingForMe(a, addressedIds, ackedIds, now)) awaitingYou += 1;
     if (approvalOf(a) === "PENDING_APPROVAL") pendingApproval += 1;
-    // An unapproved notice is not live: nobody is served it yet.
     if (!isApproved(a) || isArchived(a, now) || isScheduled(a, now)) continue;
     liveNotices += 1;
     const s = summary?.[a.id];
@@ -533,7 +482,6 @@ export function receiptsCsv(a: Announcement, acks: AcksData): string {
   return lines.join("\r\n");
 }
 
-// ── Labels ─────────────────────────────────────────────────────────────────
 
 /** Doc-number style id for the mono chips. */
 /** The number a notice shows: the reference number once approved, else the

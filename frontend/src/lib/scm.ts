@@ -1,7 +1,3 @@
-// Shared helpers for the ported 2990's SCM (furniture supply chain) pages.
-// All SCM endpoints live under /api/scm/* (the Hono routes ported from 2990's,
-// which talk to the `scm` Postgres schema). Money in the SCM layer is stored as
-// integer *_sen (sen, 1/100 of a currency unit), matching 2990's convention.
 
 export const SCM = "/api/scm";
 
@@ -10,10 +6,6 @@ const CURRENCY_SYMBOL: Record<string, string> = {
   SGD: "S$",
   USD: "US$",
   RMB: "¥",
-  // CNY is the ISO code for the same currency as RMB, and both are stored
-  // (mig 20260907T2330: the AutoCount book states CNY on 22 purchase orders and
-  // the migration copies rather than translates). Same symbol, because it is the
-  // same money — a missing entry here renders the bare code with no symbol.
   CNY: "¥",
 };
 
@@ -88,16 +80,12 @@ export function scmStatusClasses(status: string | null | undefined): string {
       return "bg-synced/15 text-synced border-synced/30";
     case "BLOCKED":
     case "CANCELLED":
-    // Legacy SO rows carry the bare verb "cancel" (see isCancelledDocStatus);
-    // keep it on the err branch so the pill matches the muted cancelled row.
     case "CANCEL":
       return "bg-err/10 text-err border-err/30";
     case "SUBMITTED":
     case "PARTIALLY_RECEIVED":
     case "PARTIALLY_PAID":
     case "DRAFT":
-      // `warning` token only defines bg/text sub-keys (no DEFAULT), so
-      // text-warning / bg-warning/15 don't resolve — use the explicit names.
       return "bg-warning-bg text-warning-text border-warning-text/30";
     default:
       return "bg-surface-dim text-ink-muted border-border";

@@ -34,9 +34,6 @@ describe('OrderSlipPhoto', () => {
   });
 
   it('says a failure OUT LOUD instead of rendering an empty card', async () => {
-    /* "This order has no slip" and "the slip would not load" look identical
-       when a failure is silent, and on a document the first one is a fact
-       about the order. */
     fetchSlip.mockRejectedValue(new Error('not found'));
     render(<OrderSlipPhoto imageKey="k3" />);
     await waitFor(() => {

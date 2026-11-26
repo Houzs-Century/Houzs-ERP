@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// notesModel — the rows of Money in › Credit / debit notes (the owner's Claude
-// Design, batch 5 §5): a customer's credit and debit notes, an other debtor's
-// credit note (OCN) and an other debtor's debit note (ODN — a bill of its own
-// kind, raised and received like a bill) as ONE kind of row; the segments
-// (credit · debit), the status chips, the search. Pure.
-// ----------------------------------------------------------------------------
 
 import type { ArListRow } from '../../../vendor/scm/lib/ar-invoice-queries';
 import type { CreditNote } from '../../../vendor/scm/lib/credit-note-queries';
@@ -19,15 +12,11 @@ export type NoteChip = 'any' | 'draft' | 'posted' | 'cancelled';
 /** One row: a note (CN, DN, OCN) or an other debtor's debit note (a bill). */
 export type NoteItem = {
   key: string;
-  /** Where it comes from: the notes table, or the debtor bills (ODN). */
   source: 'note' | 'bill';
   id: string;
   no: string;
-  /** CN or DN, as the design's Kind column says it. */
   kindWord: 'CN' | 'DN';
-  /** Credit (CN, OCN) or debit (DN, ODN). */
   side: 'credit' | 'debit';
-  /** An other debtor's note (OCN, ODN). */
   otherDebtor: boolean;
   date: string;
   party: string;
@@ -37,9 +26,7 @@ export type NoteItem = {
   cancelled: boolean;
   tag: Tag;
   journal: string | null;
-  /** What it knocks off: a posted credit note's knocked-off total and what is left; '—' when it knocks off nothing. */
   knocks: { appliedSen: number; leftSen: number } | null;
-  /** A close-out's final invoice — what the deposit note was knocked off against (it is no knock-off of its own). */
   closesInvoice: string | null;
   note?: CreditNote;
   bill?: ArListRow;

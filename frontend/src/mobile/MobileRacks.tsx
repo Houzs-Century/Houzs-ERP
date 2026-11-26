@@ -74,9 +74,6 @@ const STATUS_LABEL: Record<SlotStatus, string> = {
   empty: "Empty",
 };
 
-/* Status pill colours — control flow, not a colour table. Matches the desktop
-   pill semantics (occupied = brand, reserved = warning, empty = muted) using
-   the mobile palette variables. */
 function pillStyle(st: SlotStatus): { background: string; color: string } {
   if (st === "occupied") return { background: "var(--brand-bg)", color: "var(--brand-d)" };
   if (st === "reserved") return { background: "var(--hz-dk-warning-bg, #fdf2df)", color: "#8a5a12" };
@@ -180,8 +177,6 @@ export function MobileRacks({ onBack }: { onBack: () => void }) {
 
   const body = () => {
     if (query.isLoading) return <Note>Loading racks…</Note>;
-    /* A failed read must SAY so. Silently rendering "no racks" would tell a
-       storekeeper the bay is empty when the truth is the request failed. */
     if (query.isError) return <Note>Could not load the racks. Pull down or try again.</Note>;
     if (slots.length === 0) return <Note>No racks in any warehouse you can see.</Note>;
     if (rows.length === 0) return <Note>No rack matches that search.</Note>;
@@ -210,10 +205,6 @@ export function MobileRacks({ onBack }: { onBack: () => void }) {
         className="hz-scroll"
         style={{ flex: 1, overflowY: "auto", padding: 14, paddingBottom: 40, display: "flex", flexDirection: "column", gap: 12 }}
       >
-        {/* `.searchbar` carries `flex: 1` for the usual horizontal header row.
-            In this vertical column that makes it GROW into any free space, so a
-            search that leaves one rack stretched the box ~200px tall (seen in a
-            real 375px render). `flex: none` pins it to its content height. */}
         <div className="searchbar" style={{ flex: "none" }}>
           <input
             value={filters.q}
@@ -223,10 +214,6 @@ export function MobileRacks({ onBack }: { onBack: () => void }) {
           />
         </div>
 
-        {/* `flex: none` is load-bearing. `.chips` scrolls sideways (overflow-x),
-            which drops its flex min-height to 0, and this column is a shrinking
-            flex container — so without it the chip row collapses to a 2px
-            sliver. Seen in a real 375px render; jsdom cannot show it. */}
         <div className="chips" style={{ flex: "none" }}>
           {STATUS_CHIPS.map((c) => (
             <button

@@ -40,7 +40,6 @@ export const LISTS: ReadonlyArray<{ key: ListKey; label: string; sub: string; ex
 const dayGap = (from: string, to: string): number =>
   Math.max(0, Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000));
 
-/* ── Shared cells ─────────────────────────────────────────────────────────── */
 
 /** Money in RM, totalled at the foot, exported in ringgit. */
 export const moneyColumn = <T,>(key: string, label: string, sen: (r: T) => number, over: Partial<Column<T>> = {}): Column<T> => ({
@@ -51,7 +50,6 @@ export const moneyColumn = <T,>(key: string, label: string, sen: (r: T) => numbe
   ...over,
 });
 
-/** How long it has waited — red past two weeks. */
 const daysColumn = <T,>(key: string, age: (r: T) => number): Column<T> => ({
   key, label: 'Days', align: 'right',
   render: (r) => {
@@ -65,7 +63,6 @@ const daysColumn = <T,>(key: string, age: (r: T) => number): Column<T> => ({
 export const docLink = (source: string | null | undefined, docNo: string) =>
   (source === 'SOPAY' ? <Link to={`/scm/sales-orders/${encodeURIComponent(docNo)}`}>{docNo}</Link> : docNo);
 
-/* ── reports: merchant report lines nobody reconciled ─────────────────────── */
 
 export type ReportLineRow = {
   key: string;
@@ -81,12 +78,9 @@ export type ReportLineRow = {
   netSen: number;
   status: LineStatus;
   statusWords: string;
-  /** The sale the line claims, or the system's guess — Merchant Recon's own columns. */
   orders: ReturnType<typeof ordersOf>;
-  /** No sale shown: how many it could be. */
   possible: number;
   ageDays: number;
-  /** Merchant Recon at this report, on the tab the line sits in. */
   to: string;
 };
 
@@ -159,7 +153,6 @@ export const REPORT_COLUMNS: Column<ReportLineRow>[] = [
   { key: 'go', label: '', render: (r) => <Link to={r.to}>Merchant reports</Link> },
 ];
 
-/* ── payments: money recorded, not matched ────────────────────────────────── */
 
 const reportLink = (r: UnmatchedPayment, tab?: string): string => (r.report
   ? `/scm/merchant-recon?acq=${encodeURIComponent(r.report.acquirerCode)}&batch=${r.report.batchId}${tab ? `&tab=${tab}` : ''}`
@@ -258,7 +251,6 @@ export const PAYMENT_COLUMNS: Column<PaymentRow>[] = [
   { key: 'go', label: '', render: (r) => <Link to={STUCK[r.state].to(r)}>{STUCK[r.state].screen(r)}</Link> },
 ];
 
-/* ── bank: money in, no entry matched ─────────────────────────────────────── */
 
 export const BANK_KINDS: ReadonlyArray<{ key: BankLineWhat; label: string }> = [
   { key: 'CARD', label: 'Card payout' },

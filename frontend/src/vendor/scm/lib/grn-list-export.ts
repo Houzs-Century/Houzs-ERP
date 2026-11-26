@@ -38,7 +38,6 @@ const withQuery = (path: string, usp: URLSearchParams) => (usp.toString() ? `${p
 export type GrnListLine = {
   id: string;
   item_code: string | null;
-  /** AutoCount's ItemCode (bookLineItem with the supplier's bindings), else ours. */
   ac_item_code: string | null;
   book_description: string | null;
   book_item_group: string | null;
@@ -66,9 +65,6 @@ export type GrnListLine = {
   invoice_nos: string | null;
 };
 
-/* AutoCount's Goods Received Detail Listing captions, read from the company's
-   saved default layout "S" (FormGoodsReceivedNotePrintDetailListing) on
-   2026-09-15. The extras after them are this ERP's own columns. */
 export const GRN_LABELS = {
   docNo: 'Doc No',
   supplierDoNo: 'Supplier DO No',

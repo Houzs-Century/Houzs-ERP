@@ -1,18 +1,3 @@
-/* Description 2 composes in ONE canonical order on every surface (owner
- * 2026-09-22).
- *
- * A modular sofa SET is carried as several SO lines — one per compartment
- * (8030-1B(LHF), 8030-CNR, 8030-1NA, 8030-1A(RHF)) — that share the same
- * fabric, seat, leg and special orders. buildVariantSummary is the ONE composer
- * every surface (SO/PO/DO/GRN/PI editors, the PDFs, the *-description2 export
- * helpers) routes through, so pinning the order here pins it everywhere.
- *
- * The fixed attribute segments already emit in a fixed sequence (fabric → seat/
- * divan → gap → leg → SPECIAL → FREE). The one free axis was the specials WITHIN
- * the SPECIAL segment, which used to print in the operator's pick order and so
- * differed line to line. These pin the deterministic order and — the real
- * complaint — that two lines with the SAME picks in a DIFFERENT order compose an
- * identical string. */
 import { describe, expect, it } from 'vitest';
 import { buildVariantSummary, canonicalSpecialOrder, compareSpecialLabels } from './variant-summary';
 
@@ -38,8 +23,6 @@ describe('the SPECIAL segment prints in a canonical, pick-order-independent orde
   });
 
   it('the fixed attributes keep their fixed sequence: fabric / seat / leg / SPECIAL', () => {
-    // Whatever order the keys appear on the variants object, the segments order
-    // is fixed by the composer, not by the object.
     const s = buildVariantSummary('sofa', {
       specials: ['Wooden Arm'], legHeight: '2"', seatHeight: '30', fabricCode: 'BF-01',
     });
@@ -47,7 +30,6 @@ describe('the SPECIAL segment prints in a canonical, pick-order-independent orde
   });
 
   it('the free-text extra add-on note trails the sorted picks', () => {
-    // "AAA…" sorts first alphabetically but is a NOTE, so it must stay last.
     const s = buildVariantSummary('sofa', {
       fabricCode: 'BF-01', seatHeight: '30',
       specials: ['Nylon Fabric', 'Backcushion Firmer'],

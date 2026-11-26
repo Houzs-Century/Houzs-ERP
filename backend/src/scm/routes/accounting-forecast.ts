@@ -37,7 +37,6 @@ import {
 } from '../shared/forecast-pnl';
 
 type Ctx = any;
-/** The supabase-js client the SCM routes are handed (c.get('supabase')). */
 type Sb = any;
 type Row = Record<string, unknown>;
 
@@ -119,7 +118,6 @@ export async function loadGrid(sb: Sb, companyId: number): Promise<StoredForecas
   return { ok: true, grid, suppliers };
 }
 
-/* ── The suppliers a purchase line lists ─────────────────────────────────── */
 
 /** A supplier of the company as the page offers it: `recent` — the purchase
     accounts its bills (purchase invoices, AP invoices) landed on lately. */
@@ -246,9 +244,6 @@ export const forecastPutHandler = async (c: Ctx): Promise<Response> => {
   if (!accs.ok) return c.json({ error: 'load_failed', reason: accs.reason }, 500);
   const checked = validateGrid(body.months, accs.accounts);
   if (!checked.ok) return c.json({ error: 'bad_cell', cell: checked.cell, message: `${checked.cell}: ${checked.reason}` }, 400);
-  /* A page that predates the supplier split sends no `suppliers`: each kept
-     month keeps its supplier figures (the upsert below leaves the column
-     alone) rather than losing them to a tab opened before the deploy. */
   const sendsSuppliers = body.suppliers !== undefined;
   let suppliers: SupplierGrid | null = null;
   if (sendsSuppliers) {

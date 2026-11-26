@@ -50,13 +50,10 @@ export type MoneyRefundRequest = {
   requestNo: string;
   amountSen: number;
   state: RefundRequestState;
-  /** Why the money goes back, as the requester said it. */
   reason: string;
-  /** Finance's why, when it returned the request. */
   financeNote: string | null;
   requestedBy: string | null;
   requestedOn: string;
-  /** The refund voucher answering it, while one stands. */
   pvNumber: string | null;
 };
 
@@ -116,7 +113,6 @@ export async function refundRequestsOn(
   return { ok: true, byDoc };
 }
 
-/* ── Raising one ──────────────────────────────────────────────────────────── */
 
 /** The reason is a sentence or two to Finance, not a document. */
 export const REFUND_REASON_MAX = 500;

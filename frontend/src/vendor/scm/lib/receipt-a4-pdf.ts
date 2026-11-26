@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// receipt-a4-pdf — the A4 RECEIPT every Money-in receipt that is not an
-// official receipt prints on (the owner's Claude Design, batch 5 §9): a sundry
-// receipt and an other debtor's receipt. The A4 family's shape — the
-// letterhead with RECEIPT, its number and date on the right; RECEIVED FROM
-// beside RECEIPT DETAILS; the lines as the reader needs them (what it was
-// for and how much — our accounts stay off the paper); AMOUNT RECEIVED over a
-// double rule; the amount in words; a note; Received by and the company chop.
-// A voided receipt prints VOID across it, one not yet approved DRAFT.
-//
-// sundry-receipt-pdf.ts and debtor-receipt-pdf.ts turn their receipts into
-// this paper; several print as ONE document, a page each, in list order.
-// ----------------------------------------------------------------------------
 
 import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, amountInWordsMyr, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes,
@@ -21,17 +8,13 @@ import { PDF_COMPRESS } from './pdf-options';
 /** One receipt as the A4 paper draws it. */
 export type A4ReceiptPaper = {
   number: string;
-  /** ISO date. */
   date: string;
-  /** RECEIVED FROM — label, value; a blank value is left out. */
   from: Array<[string, string | null | undefined]>;
-  /** RECEIPT DETAILS — label, value; a blank value is left out. */
   details: Array<[string, string | null | undefined]>;
   lines: Array<{ description: string; amountSen: number }>;
   totalSen: number;
   note?: string | null;
   watermark?: 'DRAFT' | 'VOID' | null;
-  /** The file's name, before `.pdf`. */
   fileStem: string;
 };
 
@@ -40,7 +23,6 @@ type AutoTable = (doc: JsPdf, options: Record<string, unknown>) => void;
 
 /** Draw one receipt from the CURRENT page of `doc` (A4 portrait). */
 export async function renderA4ReceiptInto(doc: JsPdf, autoTable: AutoTable, p: A4ReceiptPaper): Promise<void> {
-  /* A Chinese payer or description needs the font up front, or helvetica paints mojibake. */
   await ensurePdfCjkFont(doc, p);
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -68,7 +50,6 @@ export async function renderA4ReceiptInto(doc: JsPdf, autoTable: AutoTable, p: A
   });
   let ty = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
 
-  /* AMOUNT RECEIVED over a double rule — what the paper is for. */
   const totalsX = pageW - margin - 80;
   doc.setDrawColor(0);
   doc.line(totalsX, ty - 2, pageW - margin, ty - 2);
@@ -94,7 +75,6 @@ export async function renderA4ReceiptInto(doc: JsPdf, autoTable: AutoTable, p: A
 
   drawSignatureBoxes(doc, ty + 4, 'Received by', 'Company chop');
 
-  /* The watermark LAST, over everything: a voided or unapproved receipt must read as one from across the counter. */
   if (p.watermark) {
     doc.saveGraphicsState();
     doc.setGState(doc.GState({ opacity: 0.14 }));

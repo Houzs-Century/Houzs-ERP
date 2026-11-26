@@ -81,9 +81,7 @@ export function appendPhotoMarker(lines: readonly string[]): string[] {
 }
 
 export type PhotoGroupInput = {
-  /** The small code printed beside the chip (item code / supplier code). */
   code: string;
-  /** The line's photo keys, printed order preserved. */
   photoKeys: string[];
 };
 
@@ -99,9 +97,6 @@ export type PhotoGroup = {
 const sameKeys = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((k, i) => k === b[i]);
 
-/* Label for a merged range: the codes' common prefix when it is meaningful
-   (a sofa set's module lines read "XAMMAR-L(LHF)", "XAMMAR-2A"… → "XAMMAR"),
-   else the first line's code. */
 export function rangeLabel(codes: readonly string[]): string {
   const first = codes[0] ?? '';
   if (codes.length <= 1) return first;
@@ -206,10 +201,6 @@ export function layoutPhotoGroups(
         rowH = 0;
       }
       const fits = curX + s.w <= region.w && rowTop + s.h <= region.bottom;
-      /* A group bigger than a whole fresh page can never fit anywhere: place
-         it at the top of a fresh page rather than loop forever (needs ~60
-         photos on one line — not a real document, but not an infinite loop
-         either). */
       const lastResort = hops > regions.length && curX === 0 && rowTop === region.y;
       if (fits || lastResort) {
         placements.push({ x: region.x + curX, y: rowTop, page });
@@ -233,7 +224,6 @@ export function layoutPhotoGroups(
   return { placements, pagesAdded: page, endY: rowTop + rowH };
 }
 
-/* ── Image bytes → something jsPDF can embed ─────────────────────────────── */
 
 /** `w`/`h` are the ENCODED pixel dimensions, carried so the tile can letterbox
  *  the image instead of stretching it. Present since the centre-crop was
@@ -330,7 +320,6 @@ export async function collectPhotoImages(
         const img = await toImage(await fetchThumbBlob(key));
         if (img) out.set(key, img);
       } catch {
-        // Skipped silently — a missing/broken thumb must never fail the PDF.
       }
     }
   };
@@ -340,7 +329,6 @@ export async function collectPhotoImages(
   return out;
 }
 
-/* ── Drawing ─────────────────────────────────────────────────────────────── */
 
 /** The narrow slice of jsPDF the block draws through — structural, so tests
  *  can drive the real layout/paging behaviour with a recording stub. */
@@ -405,18 +393,12 @@ function drawGroup(
     const tx = x + col * (THUMB_MM + THUMB_GAP_MM);
     const ty = y + GROUP_HEADER_MM + row * (THUMB_MM + THUMB_GAP_MM);
     try {
-      /* LETTERBOXED INSIDE THE SQUARE, not stretched to fill it. The tile stays
-         52mm so the grid and every height calculation below are untouched; the
-         image keeps its own proportions and sits centred in it. Stretching would
-         make a tape measure held against a panel read as a different length,
-         which is the one thing these photos exist to settle. */
       const ar = img.w > 0 && img.h > 0 ? img.w / img.h : 1;
       const dw = ar >= 1 ? THUMB_MM : THUMB_MM * ar;
       const dh = ar >= 1 ? THUMB_MM / ar : THUMB_MM;
       doc.addImage(img.dataUrl, img.format, tx + (THUMB_MM - dw) / 2, ty + (THUMB_MM - dh) / 2, dw, dh);
       doc.rect(tx, ty, THUMB_MM, THUMB_MM);
     } catch {
-      // Per-photo best-effort — a bad image skips its tile, never the doc.
     }
   });
 }
@@ -424,17 +406,10 @@ function drawGroup(
 export type DrawPhotoBlockOpts = {
   margin: number;
   contentW: number;
-  /** Top of the full-width zone (below whatever the document drew last). */
   startY: number;
-  /** Last usable y on a page before the footer zone. */
   pageBottom: number;
-  /** Where a continued page's heading starts. */
   pageTop: number;
-  /** Optional beside-zone (the PO lays groups beside the sofa layout);
-      null = full-width only. */
   side: PhotoRegion | null;
-  /** Called right after each addPage (the PO repaints its page header);
-      null = nothing beyond the continued heading. */
   onNewPage: (() => void) | null;
 };
 

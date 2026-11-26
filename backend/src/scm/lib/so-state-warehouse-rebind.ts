@@ -33,23 +33,14 @@
 // ----------------------------------------------------------------------------
 
 export type StateRebindLine = {
-  /** mfg_sales_order_items.id */
   id: string;
   itemCode: string;
-  /** The line's CURRENT warehouse (null = unbound; the CAS rebinds those
-   *  unconditionally, they are never a conflict). */
   warehouseId: string | null;
-  /** TRUE when a live downstream doc (non-cancelled PO or DO line) targets
-   *  this line's current warehouse — see loadSoLineDownstreamAnchors. */
   anchored: boolean;
 };
 
 export type StateRebindPlan = {
-  /** Anchored lines that block the State change — 409 with these named. */
   offenders: Array<{ id: string; itemCode: string; currentWarehouseId: string }>;
-  /** Line ids the header CAS should move to the new warehouse IN the same
-   *  transaction (p_rebind_line_ids). Empty whenever offenders is non-empty:
-   *  a blocked change moves nothing. */
   rebindLineIds: string[];
 };
 

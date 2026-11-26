@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// autocount-claim — who is sending a queue row RIGHT NOW.
-//
-// WHY IT IS ITS OWN MODULE. Two dispatchers now reach `dispatchOne`: the
-// 5-minute sweep and the AutoCount Sync page's "Send now". Until the second one
-// existed nothing in `scm.autocount_outbox` could express "somebody is sending
-// this" — the drain's SELECT takes no lock, `mark()` carries no status
-// predicate, and there was no lease column — and that was safe for exactly one
-// reason: a single caller cannot race itself. A human with a button spends that
-// safety, and the cost of losing it is one document written into a licensed
-// account book twice.
-//
-// So the claim is a rule about the TABLE rather than about either caller, and
-// it lives beside neither. `autocount-outbox.ts` is the composer and the drain;
-// `autocount-requeue.ts` is the re-send ladder. Both take the claim, neither
-// owns it.
-//
-// PURE-ISH: one Supabase client in, a boolean out. No env, no fetch, no payload
-// composition.
-// ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Sb = SupabaseClient<any, any, any>;
@@ -69,12 +49,7 @@ export async function claimOutboxRow(sb: Sb, rowId: string): Promise<boolean> {
   const { data, error } = await sb.from('autocount_outbox')
     .update({ claimed_at: new Date().toISOString() })
     .eq('id', rowId)
-    /* STILL PENDING. A row that reached `sent` or `failed` between the caller's
-       read and this write must not be dispatched, and this predicate is the only
-       thing that can notice. */
     .eq('status', 'pending')
-    /* UNCLAIMED. `is`, never `eq`: `claimed_at = NULL` is NULL and not true in
-       SQL, so an `eq` null test matches nothing and every claim would be lost. */
     .is('claimed_at', null)
     .select('id')
     .maybeSingle();
@@ -106,9 +81,5 @@ export async function releaseExpiredClaims(sb: Sb): Promise<void> {
   await sb.from('autocount_outbox')
     .update({ claimed_at: null })
     .eq('status', 'pending')
-    /* `lte` compares timestamps as PostgREST does for a timestamptz column, and
-       an exactly-on-the-boundary claim being released is the harmless direction:
-       it costs one extra dispatch attempt, never a duplicate, because the claim
-       itself is still the thing that decides who sends. */
     .lte('claimed_at', staleBefore);
 }

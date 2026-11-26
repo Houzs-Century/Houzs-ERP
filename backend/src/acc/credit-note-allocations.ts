@@ -42,22 +42,16 @@ type Row = Record<string, any>;
 export type CreditTargetKind = 'PI' | 'API' | 'ODB' | 'SI';
 export type CreditTarget = { kind: CreditTargetKind; id: string; amountSen: number };
 
-/* Each document a credit comes off, by the columns its own table names it with. */
 type DocTable = {
   table: string; column: 'purchase_invoice_id' | 'ap_invoice_id' | 'debtor_bill_id' | 'sales_invoice_id';
   owner: 'supplier_id' | 'debtor_id' | 'debtor_code'; number: string; paid: 'paid_sen' | 'received_sen'; ref: string | null; date: string;
-  /** The statuses that still owe. */
   owing: ReadonlySet<string>;
 };
 const SUPPLIER_OWING: ReadonlySet<string> = new Set(['POSTED', 'PARTIALLY_PAID']);
 const TABLE: Record<CreditTargetKind, DocTable> = {
   PI: { table: 'purchase_invoices', column: 'purchase_invoice_id', owner: 'supplier_id', number: 'invoice_number', paid: 'paid_sen', ref: 'supplier_invoice_ref', date: 'invoice_date', owing: SUPPLIER_OWING },
   API: { table: 'ap_invoices', column: 'ap_invoice_id', owner: 'supplier_id', number: 'invoice_number', paid: 'paid_sen', ref: 'supplier_invoice_ref', date: 'invoice_date', owing: SUPPLIER_OWING },
-  /* A debtor bill is POSTED until it is received in full (PAID). */
   ODB: { table: 'acc_debtor_bills', column: 'debtor_bill_id', owner: 'debtor_id', number: 'bill_number', paid: 'received_sen', ref: null, date: 'bill_date', owing: new Set(['POSTED']) },
-  /* A sales invoice is read by credit-note-si.ts — what it owes is not total
-     less paid (its order's deposit and the credit notes come off too), and its
-     customer is its AR party; only the names below are read here. */
   SI: { table: 'sales_invoices', column: 'sales_invoice_id', owner: 'debtor_code', number: 'invoice_number', paid: 'paid_sen', ref: 'so_doc_no', date: 'invoice_date', owing: new Set() },
 };
 const ALLOCATION_COLS = 'id, purchase_invoice_id, ap_invoice_id, debtor_bill_id, sales_invoice_id, amount_sen, applied_sen';
@@ -67,9 +61,6 @@ const docSelect = (kind: CreditTargetKind): string => {
   return ['id', t.number, t.owner, t.ref, t.date, 'total_sen', t.paid, 'status'].filter(Boolean).join(', ');
 };
 
-/* A sales invoice takes a credit note's knock-off as the row itself — nothing
-   is settled into it (its paid_sen feeds the overpayment rule) — so what was
-   asked, checked against what it owes first, is what it took. */
 const settle = (sb: Db, kind: CreditTargetKind, id: string, delta: number) =>
   kind === 'SI' ? Promise.resolve({ ok: true, appliedSen: delta, clampedSen: 0 } as { ok: boolean; appliedSen: number; clampedSen: number; reason?: string })
     : kind === 'PI' ? settlePiPaidSen(sb, id, delta) : kind === 'API' ? settleApInvoicePaidSen(sb, id, delta) : settleDebtorBillReceivedSen(sb, id, delta);
@@ -92,12 +83,10 @@ export const partyOfNote = (note: Row): CreditParty | null =>
 const words = (party: CreditParty) => (party.owner === 'debtor_id'
   ? { who: 'debtor', doc: 'bill' }
   : party.owner === 'customer' ? { who: 'customer', doc: 'invoice' } : { who: 'supplier', doc: 'invoice' });
-/** Where a credit a document could not take stays. */
 const staysWith = (kind: unknown): string => (kind === 'OCN' ? 'stays with the debtor' : kind === 'CN' ? 'stays as credit on the customer' : 'stays with the supplier');
 
 export type AllocationView = {
   id: string; kind: CreditTargetKind; docId: string; number: string | null;
-  /** The document's own date and total, for the note's print (KNOCKED OFF AGAINST). */
   docDate: string | null; docTotalSen: number | null;
   amountSen: number; appliedSen: number; createdAt: string | null; createdBy: string | null;
 };
@@ -357,18 +346,13 @@ async function giveBack(sb: Db, companyId: number, rows: Row[]): Promise<{ ok: t
 export type KnockOffRow = {
   kind: CreditTargetKind; id: string; number: string; invoiceRef: string | null; invoiceDate: string | null;
   totalSen: number;
-  /** What the document owes before THIS note — its outstanding, plus what this
-      note already took off it. The most this note can take from it. */
   owedSen: number;
-  /** What this note takes off it: applied once posted, planned while a draft. */
   noteSen: number;
   status: string;
 };
 
 type Take = { kind: CreditTargetKind; sen: number; rows: Row[] };
 
-/** Per document, what this note takes off it — applied once posted, planned
-    while a draft — and the rows that hold it. */
 async function noteTakes(sb: Db, companyId: number, note: Row): Promise<{ ok: true; takes: Map<string, Take> } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('acc_credit_note_allocations').select(ALLOCATION_COLS)
     .eq('company_id', companyId).eq('note_id', note.id);
@@ -407,8 +391,6 @@ export async function knockOffRows(sb: Db, companyId: number, p: { party: Credit
     const ids = [...noted.takes.entries()].filter(([id, t]) => t.kind === kind && !rows.has(id)).map(([id]) => id);
     if (ids.length === 0) continue;
     if (kind === 'SI') {
-      /* An invoice the note took in full (Paid now), or one that owes nothing
-         more — still the note's to untick. */
       const sis = await sisOwing(sb, companyId, ids);
       if (!sis.ok) return sis;
       for (const s of sis.value.values()) {
@@ -471,8 +453,6 @@ export async function checkKnockOff(
   }
   const numbers = new Map<string, string>();
   if (p.party.owner === 'customer') {
-    /* A sales invoice owes its total less its receipts, its order's deposit and
-       every credit note knocked off it — this note's own take counted back in. */
     const sis = await sisOwing(sb, p.companyId, p.targets.map((t) => t.id));
     if (!sis.ok) return refuse(500, 'load_failed', sis.reason);
     for (const t of p.targets) {
@@ -497,7 +477,6 @@ export async function checkKnockOff(
     }
     const doc = openView(t.kind, raw);
     const mine = p.posted ? (p.current.get(t.id)?.sen ?? 0) : 0;
-    /* Owing, or PAID by this very note — the one a posted note may still keep. */
     if (!TABLE[t.kind].owing.has(doc.status) && !(mine > 0 && doc.status === 'PAID')) {
       return refuse(409, 'invoice_not_owing', `${doc.number} is ${doc.status.toLowerCase()} — nothing is owed on it.`);
     }
@@ -569,15 +548,11 @@ export async function setNoteKnockOff(
     const to = want.get(id)?.amountSen ?? 0;
     const from = cur?.sen ?? 0;
     const rowsNow = cur?.rows.length ?? 0;
-    /* Unchanged is one row already holding it; a leftover row holding nothing
-       (a post cut short) is cleared like any other change. */
     if ((to === from && to > 0 && rowsNow === 1) || (to === 0 && rowsNow === 0)) continue;
     changes.push({ id, kind, from, to, rows: cur?.rows ?? [] });
   }
   changes.sort((a, b) => (a.to - a.from) - (b.to - b.from));
   const short: KnockOffShort[] = [];
-  /* What really moved, refusals included: a refusal part-way leaves the earlier
-     documents changed, and the trail must say so. */
   const done: KnockOffMove[] = [];
   const doc = (kind: CreditTargetKind) => (kind === 'ODB' ? 'The bill' : 'The invoice');
   try {
@@ -606,7 +581,6 @@ export async function setNoteKnockOff(
       if (moved.appliedSen < ch.to) short.push({ number, askedSen: ch.to, appliedSen: moved.appliedSen });
     }
   } finally {
-    /* A sales invoice's status follows what is knocked off it — whatever got written. */
     await refreshSiStatuses(sb, p.companyId, changes.filter((ch) => ch.kind === 'SI').map((ch) => ch.id));
   }
   return { ok: true, short, moved: done };
@@ -636,8 +610,6 @@ export async function carryOutPlan(sb: Db, p: { companyId: number; note: Row }):
       let number: string;
       let take: number;
       if (kind === 'SI') {
-        /* What it owes NOW — read one by one, as each knock-off just written
-           moves its order's deposit off the next invoice. */
         touched.push(id);
         const sis = await sisOwing(sb, p.companyId, [id]);
         const s = sis.ok ? sis.value.get(id) : undefined;

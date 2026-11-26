@@ -53,17 +53,12 @@ export async function piGrnSourceRefusal(
   const { data: giRows, error } = await sb.from('grn_items')
     .select('id, qty_accepted, invoiced_qty, returned_qty, item_code, grn:grns!inner ( grn_number, company_id )')
     .in('id', gids);
-  /* A failed read is not "no problems found". Every assertion below is taken
-     over these rows, so an unreadable source means NONE of them ran — and "we
-     could not check" must never be spelled the same way as "we checked and it
-     was fine". Same stance as remainingUnavailableResponse. */
   if (error) {
     return { body: { error: 'source_check_failed', reason: `grn_items: ${error.message}` }, status: 503 };
   }
   const giList = (giRows ?? []) as unknown as GiRow[];
   const parentOf = (g: GiRow) => (Array.isArray(g.grn) ? g.grn[0] : g.grn) ?? null;
 
-  // isCrossCompanySource is false for a null company_id, so a hit is never null.
   const foreign = giList.map(parentOf).find((p) => isCrossCompanySource(p?.company_id, c));
   if (foreign) {
     return { body: crossCompanyConversionBlocked(foreign.grn_number ?? null, foreign.company_id, c) as unknown as Record<string, unknown>, status: 409 };

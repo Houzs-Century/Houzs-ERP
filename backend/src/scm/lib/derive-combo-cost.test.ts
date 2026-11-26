@@ -16,9 +16,6 @@ describe('deriveMasterComboCostFromSuppliers — whole-set dearest supplier', ()
   });
 
   it('takes the WHOLE grid of the dearest supplier, NOT a per-cell max', () => {
-    // A has the single dearest cell (300 at 24) but a cheap 28 (100).
-    // B is uniformly 250. A wins (300 > 250); the result is A's whole grid,
-    // so 28 must be A's 100 — not B's 250.
     const out = deriveMasterComboCostFromSuppliers([
       s({ supplier_id: 'A', prices_by_height: { '24': 300, '28': 100 } }),
       s({ supplier_id: 'B', prices_by_height: { '24': 250, '28': 250 } }),
@@ -32,7 +29,6 @@ describe('deriveMasterComboCostFromSuppliers — whole-set dearest supplier', ()
       s({ supplier_id: 'aaa', prices_by_height: { '24': 900 }, is_main_supplier: true }),
     ]);
     expect(out).toEqual({ '24': 900 });
-    // proven the main (aaa) won: identical grids, but tie-break is deterministic
   });
 });
 

@@ -63,15 +63,10 @@ export function feeAmountSen(grossSen: number, discountSen: number): number {
  */
 export function feeDiscountForAmount(grossSen: number, typedSen: number): number {
   const gross = safe(grossSen);
-  /* An unreadable figure means NO discount, never a full one. Rounding it to
-     zero the way `safe` does elsewhere would read as "charge nothing" and
-     waive the whole fee — so garbage fails towards charging the derived
-     amount. A deliberate waiver is still available: it is typed as 0. */
   if (!Number.isFinite(typedSen)) return 0;
   return Math.min(Math.max(gross - Math.round(typedSen), 0), gross);
 }
 
-/** NaN/Infinity from a half-typed number input must not become money. */
 function safe(n: number): number {
   return Number.isFinite(n) ? Math.round(n) : 0;
 }

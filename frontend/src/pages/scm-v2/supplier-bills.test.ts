@@ -1,6 +1,3 @@
-/* Supplier bills' rules (the owner's Claude Design, batch 4 step 5): the
-   status tag in the design's order, the chips' predicates, the search, the
-   order, and a credit note taking off what we owe on the listing. */
 
 import { describe, expect, test } from 'vitest';
 import { billTag, inChip, listingRowOf, matchesBill, sortBills, totalByCurrency, type BillRow } from './supplier-bills';

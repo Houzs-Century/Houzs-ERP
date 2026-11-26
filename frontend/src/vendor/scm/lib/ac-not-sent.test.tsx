@@ -1,9 +1,3 @@
-// ac-not-sent — reading "the accounts have not got it" off a save response.
-//
-// The controls here are the point. This runs on the SUCCESS path of every
-// create, so the one thing it must never do is turn a clean save into a popup
-// — an operator who is shown a warning after an ordinary order stops reading
-// warnings, and the next real one goes past them.
 import { describe, expect, test } from 'vitest';
 import {
   acNotSentProblemsOf, acNotSentTitle, notifyAcNotSent,
@@ -21,9 +15,6 @@ describe('what the response says', () => {
   test('a refused document yields its reasons, verbatim', () => {
     const out = acNotSentProblemsOf({ id: 'po-1', poNumber: 'HC-PO-1', acNotSent: [PROBLEM] });
     expect(out).toEqual([PROBLEM]);
-    /* VERBATIM matters: the sentence is written by the backend module that also
-       decides the document is unsendable, so a surface that reworded it would
-       be describing a rule it does not own. */
     expect(out[0].message).toBe(PROBLEM.message);
   });
 
@@ -32,7 +23,6 @@ describe('what the response says', () => {
     expect(acNotSentProblemsOf({ acNotSent: two })).toHaveLength(2);
   });
 
-  // ── CONTROLS: the ordinary save must stay silent ──────────────────────────
   test('CONTROL — a clean save says nothing', () => {
     expect(acNotSentProblemsOf({ docNo: 'HC-SO-1' })).toEqual([]);
     expect(acNotSentProblemsOf({ id: 'po-1', poNumber: 'HC-PO-1' })).toEqual([]);
@@ -54,8 +44,6 @@ describe('what the response says', () => {
 });
 
 describe('the frame around the reasons', () => {
-  /* Both halves, because half of it is good news. A title that said only
-     "failed" sends someone to re-enter a document that already exists. */
   test('the title says the document EXISTS and the accounts have not got it', () => {
     const t = acNotSentTitle('Purchase order');
     expect(t).toContain('Purchase order');
@@ -68,9 +56,6 @@ describe('the frame around the reasons', () => {
     expect(AC_NOT_SENT_TONE).toBe('info');
   });
 
-  /* The backend writes this exact key (backend/tests/acNotSentWiring.test.ts is
-     the referee across the two packages); pinned here too so a rename inside
-     this module is caught by its own suite first. */
   test('the key is the one the backend writes', () => {
     expect(AC_NOT_SENT_KEY).toBe('acNotSent');
   });
@@ -95,9 +80,6 @@ describe('showing it', () => {
     expect(s.calls[0].tone).toBe(AC_NOT_SENT_TONE);
   });
 
-  /* THE CONTROL THAT MATTERS MOST. This runs on the success path of every
-     create in the system; a dialog after an ordinary save is how an operator
-     learns to click through warnings without reading them. */
   test('CONTROL — an ordinary save opens nothing at all', async () => {
     for (const res of [{ docNo: 'HC-SO-1' }, { acNotSent: [] }, null, undefined]) {
       const s = spy();
@@ -107,13 +89,6 @@ describe('showing it', () => {
   });
 });
 
-/* ── THE SECOND VERDICT ──────────────────────────────────────────────────────
-   A TRANSFERRED document reaches the accounts and can still arrive without some
-   of its fields: `SalesHeader` / `PurchaseHeader` apply a strictly narrower set
-   than `/edit` does, and a value the ERP has none of is omitted rather than
-   sent blank. That is a different fact from "the accounts have not got it", and
-   showing it under the other title would send someone to re-raise a receipt the
-   book already holds. */
 describe('it IS in the accounts, and part of it is not', () => {
   const INCOMPLETE = {
     code: AC_SENT_INCOMPLETE_CODE,
@@ -125,9 +100,6 @@ describe('it IS in the accounts, and part of it is not', () => {
     const t = acSentIncompleteTitle('Goods receipt');
     expect(t).toContain('Goods receipt');
     expect(t).toContain('sent');
-    /* THE CONTROL. The other title's sentence would be false here, and a false
-       reassurance is worse than none — it is what sends a person to enter the
-       document a second time. */
     expect(t).not.toContain('have not got it');
     expect(t.toLowerCase()).not.toContain('failed');
   });
@@ -137,9 +109,6 @@ describe('it IS in the accounts, and part of it is not', () => {
     expect(acTitleFor([PROBLEM], 'Purchase order')).toBe(acNotSentTitle('Purchase order'));
   });
 
-  /* MIXED FALLS TO THE SAFER HEADLINE. Someone who checks a document that is
-     actually there loses a minute; someone who does not check one that is
-     missing loses it from the books. */
   test('a response carrying both verdicts uses the not-sent headline', () => {
     expect(acTitleFor([INCOMPLETE, PROBLEM], 'Invoice')).toBe(acNotSentTitle('Invoice'));
   });
@@ -160,7 +129,6 @@ describe('it IS in the accounts, and part of it is not', () => {
     );
     expect(calls).toHaveLength(1);
     expect(calls[0].title).toBe(acSentIncompleteTitle('Goods receipt'));
-    /* Still not the error tone: nothing failed. */
     expect(calls[0].tone).toBe(AC_NOT_SENT_TONE);
   });
 

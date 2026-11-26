@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { estimateReadyDate, type ReadyDateItem } from './procurement-ready-date';
 import { addCalendarDays, type LeadTimeBase, type LeadBuffers } from '../../scm/lib/lead-time';
 
-// Owner's manual base table: a warehouse-specific sofa lead (5) overriding the
 // global sofa (7); mattress 10.
 const BASE: LeadTimeBase = {
   byWhCat: new Map([['WH1|sofa', 5]]),
@@ -11,7 +10,6 @@ const BASE: LeadTimeBase = {
     ['mattress', 10],
   ]),
 };
-// Learned: SUP1 runs 3 days late; December is a 2-day-busy month.
 const BUFFERS: LeadBuffers = { supplierBufferDays: { SUP1: 3 }, seasonBufferDays: { '12': 2 } };
 const NONE: LeadBuffers = { supplierBufferDays: {}, seasonBufferDays: {} };
 
@@ -20,7 +18,7 @@ const ASOF = '2026-07-25';
 describe('addCalendarDays', () => {
   it('pushes a date forward by whole days, inverse of subtract', () => {
     expect(addCalendarDays('2026-07-25', 7)).toBe('2026-08-01');
-    expect(addCalendarDays('2026-07-25', 0)).toBe('2026-07-25'); // no-op
+    expect(addCalendarDays('2026-07-25', 0)).toBe('2026-07-25');
     expect(addCalendarDays(null, 7)).toBeNull();
   });
 });
@@ -37,7 +35,7 @@ describe('estimateReadyDate — pure core', () => {
     const r = estimateReadyDate(BASE, BUFFERS, ASOF, [
       { category: 'sofa', warehouseId: null, supplierCode: 'SUP1' },
     ]);
-    expect(r.perItem[0].leadDays.total).toBe(10); // 7 + 3
+    expect(r.perItem[0].leadDays.total).toBe(10);
     expect(r.readyDate).toBe('2026-08-04');
   });
 
@@ -52,7 +50,7 @@ describe('estimateReadyDate — pure core', () => {
     const r = estimateReadyDate(BASE, BUFFERS, ASOF, [
       { category: 'sofa', warehouseId: null, supplierCode: 'SUP1', deliveryDate: '2026-12-01' },
     ]);
-    expect(r.perItem[0].leadDays.total).toBe(12); // 7 + 3 + 2
+    expect(r.perItem[0].leadDays.total).toBe(12);
     expect(r.readyDate).toBe('2026-08-06');
   });
 
@@ -63,12 +61,12 @@ describe('estimateReadyDate — pure core', () => {
 
   it('the SET is ready only when its slowest line lands (latest per-item date)', () => {
     const items: ReadyDateItem[] = [
-      { key: 'a', category: 'sofa', warehouseId: null }, // 7d
-      { key: 'b', category: 'mattress', warehouseId: null }, // 10d -> critical path
+      { key: 'a', category: 'sofa', warehouseId: null },
+      { key: 'b', category: 'mattress', warehouseId: null },
     ];
     const r = estimateReadyDate(BASE, NONE, ASOF, items);
     expect(r.leadDaysMax).toBe(10);
-    expect(r.readyDate).toBe('2026-08-04'); // asOf + 10
+    expect(r.readyDate).toBe('2026-08-04');
     expect(r.perItem.map((p) => p.key)).toEqual(['a', 'b']);
   });
 

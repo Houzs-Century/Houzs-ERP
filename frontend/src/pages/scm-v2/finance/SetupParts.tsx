@@ -42,11 +42,9 @@ export function SetupModal({
   title: string;
   sub?: ReactNode;
   okLabel: string;
-  /** What the ok button reads while the save runs. */
   busyLabel?: string;
   busy?: boolean;
   okDanger?: boolean;
-  /** The design's error line — a check that failed, or the server's sentence. */
   error?: string | null;
   wide?: boolean;
   onOk: () => void;

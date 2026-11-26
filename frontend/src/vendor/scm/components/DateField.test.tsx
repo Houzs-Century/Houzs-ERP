@@ -29,7 +29,7 @@ describe('DateField typing', () => {
     const box = screen.getByLabelText('Voucher date') as HTMLInputElement;
     fireEvent.focus(box);
     fireEvent.change(box, { target: { value: '2026090' } });
-    expect(onChange).not.toHaveBeenCalled(); // still typing
+    expect(onChange).not.toHaveBeenCalled();
     fireEvent.change(box, { target: { value: '20260906' } });
     expect(onChange).toHaveBeenLastCalledWith('2026-09-06');
   });

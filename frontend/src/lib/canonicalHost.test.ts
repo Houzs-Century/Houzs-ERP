@@ -57,9 +57,6 @@ describe("canonicalRedirectUrl", () => {
     });
   });
 
-  // These are the load-bearing cases. Each one, if it redirected, would be a
-  // real outage or a data-context bug — see the header comment in
-  // canonicalHost.ts for why each host must be left alone.
   describe("leaves every other origin alone", () => {
     it("does NOT touch staging — it is a different Pages project on a different Supabase database", () => {
       expect(
@@ -123,17 +120,10 @@ describe("canonicalRedirectUrl", () => {
     });
 
     it("targets the same origin the backend uses for email links", () => {
-      // backend/wrangler.toml PUBLIC_APP_URL — password-reset and invite mails
-      // must land on the host this redirect sends browsers to, or a reset link
-      // would bounce the user somewhere they cannot log in.
       expect(CANONICAL_PROD_ORIGIN).toBe("https://erp.houzscentury.com");
     });
   });
 
-  // The Pages Function `frontend/functions/[[path]].ts` carries a deliberate
-  // hand-copy of this logic (it is the SPA fallback for the whole site and is
-  // kept dependency-free on purpose). Pin the copies together so they cannot
-  // drift into disagreeing about which host redirects.
   describe("Pages Function copy stays in sync", () => {
     const fnSource = readFileSync(
       resolve(
@@ -159,19 +149,12 @@ describe("canonicalRedirectUrl", () => {
     });
 
     it("still matches the host EXACTLY — no endsWith/includes creep", () => {
-      // An `endsWith(".pages.dev")` style match here would silently capture
-      // staging and previews. Guard the shape of the comparison itself.
       expect(fnSource).toContain(
         "url.hostname.toLowerCase() !== LEGACY_PROD_HOST",
       );
     });
 
     it("redirects ONLY document navigations, so /sw.js + assets are never 302'd", () => {
-      // The redirect MUST be gated on a navigation check. Redirecting the
-      // service-worker script fails the SW update (browsers fetch it with
-      // redirect mode "error"), which freezes every installed pages.dev client
-      // on its stale cache-first shell — the exact defect that stopped #855's
-      // redirect from reaching returning PWA users (see BUG-HISTORY 2026-07-19).
       expect(fnSource).toContain("isDocumentNavigation");
       expect(fnSource).toContain("Sec-Fetch-Dest");
       expect(fnSource).toContain(

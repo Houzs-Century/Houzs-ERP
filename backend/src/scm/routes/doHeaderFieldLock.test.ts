@@ -30,10 +30,8 @@ const sb = Object.assign(
       id: 'do-2', do_number: 'DO-2608-002', status: 'DISPATCHED', company_id: 1,
       debtor_name: 'Carol', address1: 'Old road', phone: '+60123456789',
     }],
-    // A live Sales Invoice on this DO → doHasDownstream() is true.
     sales_invoices: [
       { id: 'si-1', delivery_order_id: 'do-1', status: 'SENT', company_id: 1 },
-      // A CANCELLED invoice does not lock do-2.
       { id: 'si-2', delivery_order_id: 'do-2', status: 'CANCELLED', company_id: 1 },
     ],
     delivery_returns: [],

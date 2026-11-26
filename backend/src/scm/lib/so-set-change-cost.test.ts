@@ -20,7 +20,6 @@ const ORDER = '2026-10-01';
 const CHANGE = '2026-11-05';
 const sum = (m: Map<string, number>) => [...m.values()].reduce((s, v) => s + v, 0);
 
-// 1A + 2A as a set from before the order; 1A + 2A + L from 2026-11-01.
 const TWO = combo('two', [['1A(LHF)', '1A(RHF)'], ['2A(LHF)', '2A(RHF)']], 100000, '2026-09-01T02:00:00Z');
 const THREE = combo('three', [['1A(LHF)', '1A(RHF)'], ['2A(LHF)', '2A(RHF)'], ['L(LHF)', 'L(RHF)']], 150000, '2026-11-01T02:00:00Z');
 
@@ -60,8 +59,6 @@ describe('planChangedSetCost', () => {
   });
 });
 
-/* The database half: what it reads, what it writes. recomputeOneLine is the
-   pricing engine; here it answers each piece's own unit cost by code and day. */
 const ownCost = vi.hoisted(() => new Map<string, number>());
 vi.mock('./mfg-pricing-recompute', () => ({
   loadMaintenanceConfig: vi.fn(async () => null),

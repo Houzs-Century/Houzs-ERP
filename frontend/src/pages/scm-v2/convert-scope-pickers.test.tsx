@@ -1,14 +1,3 @@
-/* The "Transfer to X" buttons that navigated and scoped nothing (2026-08-16).
- *
- * These are not "does the page call useSearchParams" assertions — each test
- * MOUNTS the real picker under a real router at the real URL its real caller
- * builds (via convertToLink, the same function the button uses), with only the
- * data hook faked, and asserts what the operator SEES: the document they came
- * from, and not the other one that was sitting next to it in the global list.
- *
- * Revert any one of the three source fixes and the matching test fails on the
- * stranger's row still being on screen.
- */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -49,7 +38,6 @@ const at = (url: string, node: React.ReactNode) =>
 
 const loaded = <T,>(data: T) => ({ data, isLoading: false, isError: false });
 
-/* ── DO → SI ─────────────────────────────────────────────────────────────── */
 
 const doLine = (over: Record<string, unknown>) => ({
   doItemId: "x", deliveryOrderId: "do-1", doNumber: "HC-DO-0001",
@@ -60,9 +48,6 @@ const doLine = (over: Record<string, unknown>) => ({
   ...over,
 });
 
-/* Both notes belong to the SAME customer on purpose: the customer lock would
-   otherwise do the narrowing for us and the assertions could not tell a scoped
-   picker from an unscoped one. */
 const TWO_DOS = [
   doLine({ doItemId: "i-1", deliveryOrderId: "do-1", doNumber: "HC-DO-0001" }),
   doLine({ doItemId: "i-2", deliveryOrderId: "do-2", doNumber: "HC-DO-0002" }),
@@ -94,7 +79,6 @@ describe('DO → SI: "Transfer to Sales Invoice" lands on the note you came from
     expect((off as HTMLInputElement).disabled).toBe(false);
     fireEvent.click(off);
     expect(screen.getByText(/Continue with 2 lines/)).toBeTruthy();
-    // Unticking and re-ticking by clicking the ROW must work too.
     fireEvent.click(off);
     expect(screen.getByText(/Continue with 1 line$/)).toBeTruthy();
     fireEvent.click(screen.getByText("AERO-MP").closest("tr")!);
@@ -115,7 +99,6 @@ describe('DO → SI: "Transfer to Sales Invoice" lands on the note you came from
     invoiceableDoLines.mockReturnValue(loaded(TWO_DOS));
     at("/scm/sales-invoices/from-do?do=do-1", <SalesInvoiceFromDo />);
     expect(screen.getByRole("alert").textContent).toContain('"do"');
-    // and it did NOT quietly scope on the unrecognised name
     expect(screen.getAllByText("HC-DO-0002").length).toBeGreaterThan(0);
   });
 });
@@ -157,7 +140,6 @@ describe('DO → DR: "Transfer to Delivery Return" lands on the note you came fr
   });
 });
 
-/* ── SO → DO ─────────────────────────────────────────────────────────────── */
 
 const soLine = (over: Record<string, unknown>) => ({
   soItemId: "x", docNo: "HC-SO-0001", debtorCode: "C1", debtorName: "Ada",
@@ -167,7 +149,6 @@ const soLine = (over: Record<string, unknown>) => ({
   ...over,
 });
 
-// Same customer on both orders — see the note on TWO_DOS.
 const TWO_SOS = [
   soLine({ soItemId: "s-1", docNo: "HC-SO-0001" }),
   soLine({ soItemId: "s-2", docNo: "HC-SO-0002" }),
@@ -211,7 +192,6 @@ describe('SO → DO: "Deliver" lands on the order you came from', () => {
   });
 });
 
-/* ── GRN → PI ────────────────────────────────────────────────────────────── */
 
 const grnLine = (over: Record<string, unknown>) => ({
   grnItemId: "x", grnId: "grn-1", grnDocNo: "HC-GR-0001",
@@ -222,8 +202,6 @@ const grnLine = (over: Record<string, unknown>) => ({
   ...over,
 });
 
-// Same supplier + currency on both notes — see the note on TWO_DOS. The
-// supplier lock must not be what narrows the screen.
 const TWO_GRNS = [
   grnLine({ grnItemId: "g-1", grnId: "grn-1", grnDocNo: "HC-GR-0001" }),
   grnLine({ grnItemId: "g-2", grnId: "grn-2", grnDocNo: "HC-GR-0002" }),

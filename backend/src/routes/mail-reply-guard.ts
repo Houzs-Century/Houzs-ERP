@@ -26,7 +26,7 @@ export async function replyingOn(db: Db, threadId: string, me: number | null): P
       .all<{ name: string | null; email: string | null }>();
     return res.results.map((r) => ({ name: r.name?.trim() || r.email || "A colleague" }));
   } catch {
-    return []; // table not there yet (D1 test mirror): nobody shown
+    return [];
   }
 }
 
@@ -56,7 +56,6 @@ export async function replyConflict(
 /** After my reply: I am no longer writing, and an unassigned email becomes mine. */
 export async function afterReplySent(c: C, threadId: string, assigned: number | null, me: number | null, name: string | null): Promise<void> {
   if (me == null) return;
-  // Best effort: the reply is already sent, and a stale mark expires on its own in 90 s.
   await c.env.DB.prepare(`DELETE FROM mail_thread_replying WHERE thread_id = ? AND user_id = ?`)
     .bind(threadId, me)
     .run()
@@ -71,7 +70,6 @@ export async function afterReplySent(c: C, threadId: string, assigned: number | 
 
 const app = new Hono<{ Bindings: Env }>();
 
-// POST /api/mail-center/threads/:id/replying { drafting } - the reply box heartbeat.
 app.post("/threads/:id/replying", async (c) => {
   const id = c.req.param("id");
   const scope = await getMailScope(c);
@@ -96,8 +94,6 @@ app.post("/threads/:id/replying", async (c) => {
   return c.json({ ok: true });
 });
 
-// GET /api/mail-center/waiting-count - open emails whose last word is the
-// customer's, assigned to me or in my own mailbox (sidebar badge, owner A).
 app.get("/waiting-count", async (c) => {
   const me = c.get("userId") ?? null;
   if (me == null) return c.json({ count: 0 });

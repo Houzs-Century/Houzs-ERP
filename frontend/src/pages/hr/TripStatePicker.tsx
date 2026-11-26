@@ -1,6 +1,3 @@
-/* Trip Pay > Rates > Outstation: one group's states as tags (x removes one) and
- * "+ Add states", which lists only the states no group holds yet (a state is in
- * one group only) as checkboxes, then "Add N". */
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { ghostBtn, primaryBtn } from "../pos-admin/posAdminUi";
@@ -12,7 +9,6 @@ export function TripStatePicker({
   onChange,
 }: {
   states: string[];
-  /** The states in no group: the only ones that can be added. */
   free: string[];
   disabled: boolean;
   onChange: (states: string[]) => void;

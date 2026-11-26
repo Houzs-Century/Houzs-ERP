@@ -1,10 +1,3 @@
-/* ----------------------------------------------------------------------------
-   so-after-do — the database half of shared/so-after-do-edit.ts (DEV-32): which
-   live Delivery Orders carry a Sales Order, and the copies an after-DO edit
-   writes onto them. Every DO write here re-totals the DO, records it on the DO's
-   own history and queues the DO's AutoCount edit — the three things the DO's own
-   line and header routes do after a change.
-   -------------------------------------------------------------------------- */
 
 import { chunkIn } from './paginate-all';
 import { scopeToCompanyId } from './companyScope';
@@ -129,7 +122,7 @@ export async function copyCustomerDetailsToDos(
     const { data: before, error: beforeErr } = await scopeToCompanyId(
       sb.from('delivery_orders').select(cols.join(', ')).eq('id', t.id), who.companyId,
     ).maybeSingle();
-    if (beforeErr) { failed.push(t.do_number ?? t.id); continue; } // no history row without its from-values
+    if (beforeErr) { failed.push(t.do_number ?? t.id); continue; }
     const { error } = await scopeToCompanyId(
       sb.from('delivery_orders').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', t.id), who.companyId,
     );

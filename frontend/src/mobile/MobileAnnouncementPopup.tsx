@@ -31,8 +31,6 @@ import "./mobile.css";
 // notices go to NotificationBell's System-notices section, never a modal).
 // ---------------------------------------------------------------------------
 
-// Category colours + labels mirror MobileAnnouncements' CAT_COLOR / chip, so a
-// notice is tinted the same in the pop-up and in the list behind it.
 const CAT_LABEL: Record<string, string> = {
   GENERAL: "General",
   WARNING: "Warning",
@@ -47,13 +45,8 @@ const CAT_COLOR: Record<string, string> = {
 };
 
 export function MobileAnnouncementPopup({ onOpenList }: {
-  /** Push the Announcements screen — the "View details" / "Read SOP" journey. */
   onOpenList: () => void;
 }) {
-  // The shared cadence (3 min while visible, once on return to the app), and the
-  // shared cache entry, so the pop-up costs no extra request. It was 30s, which
-  // made the phone the heaviest banner reader; the server caches the feed per
-  // user for 5 min and drops that cache when a notice is published.
   const { current, mustAcknowledge, ack, dismissSession, hideForNavigation } =
     useAnnouncementBanner({ scope: "human" });
   const lang = useMobileLang();
@@ -63,17 +56,10 @@ export function MobileAnnouncementPopup({ onOpenList }: {
   const category = current.category ?? "GENERAL";
   const col = CAT_COLOR[category] ?? CAT_COLOR.GENERAL;
   const loc = localizeAnnouncement(current, lang);
-  // WARNING / SOP send you to the full notice; GENERAL / LEARNING just step
-  // aside for this session (no ack recorded, so it re-surfaces next visit).
   const secondaryIsView = bannerSecondaryKind(category) === "view";
 
   const secondary = () => {
     if (secondaryIsView) {
-      // Leave it UN-acked: the reader is being sent to read it, so it must
-      // still be waiting for them afterwards. hideForNavigation, NOT
-      // dismissSession — going to the notice is not a skip (the desktop twin
-      // of this button counts nothing either); it only steps the sheet aside
-      // so it isn't sitting on top of the screen we just opened.
       hideForNavigation(current);
       onOpenList();
       return;
@@ -82,8 +68,6 @@ export function MobileAnnouncementPopup({ onOpenList }: {
   };
 
   return (
-    // `hz-m` on the backdrop itself: the pop-up mounts at the shell root, which
-    // is OUTSIDE the .hz-m screen wrappers when an overlay screen is open.
     <div
       className="hz-m sheet-bd"
       role="dialog"

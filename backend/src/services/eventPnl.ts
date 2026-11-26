@@ -80,7 +80,6 @@ export type PnlColumn = {
   setup: number;
   transportSetupDismantle: number;
   others: number;
-  /** The orders' service charges: income beside Sales, not in it. */
   serviceRevenue: number;
   transportFee: TransportRow;
   commission: PctRow & { boost: boolean };
@@ -92,14 +91,10 @@ export type PnlColumn = {
 
 export type EventPnl = {
   by_sales: PnlColumn;
-  /** Null when no Sales Order was opened at the fair. */
   by_so: PnlColumn | null;
   so_count: number;
 };
 
-/* A cost category with no named row of its own is Others Costing — the one map
-   of category to row (scm/lib/event-books.ts rowOfCategory, pinned against the
-   page's own rows by tests/eventBooks.test.ts). */
 const isOthers = (category: string): boolean => rowOfCategory(category) === 'others';
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
@@ -136,8 +131,6 @@ export function eventPnl(input: {
   };
   const so = input.so && input.so.count > 0 ? input.so : null;
 
-  /* A % row: Finance's figure if the books fill it; else a typed line; else the
-     rate card on this column's sales. */
   const pctRow = (row: string, cats: readonly string[], pct: number | null, sales: number): PctRow => {
     if (input.booksRows.has(row)) return { amount: sum('cost', cats), from: 'books', pct: null };
     const typed = sum('cost', cats, true);
@@ -156,7 +149,6 @@ export function eventPnl(input: {
       && (r.boost_min_gp_pct == null || gpPct >= Number(r.boost_min_gp_pct))
       && (r.boost_min_sales == null || sales >= Number(r.boost_min_sales));
     const transportBase = pctRow('transport_fee', ['transport', 'transport_fee'], r ? Number(r.transport_pct) : null, sales);
-    /* Finance's figure, when the books fill the row, already is the transport. */
     const serviceCost = transportBase.from === 'books' ? 0 : round2(service.cost);
     const transportFee: TransportRow = { ...transportBase, amount: round2(transportBase.amount + serviceCost), serviceCost };
     const merchandise = pctRow('merchandise', ['merchandise'], r ? Number(r.merchandise_pct) : null, sales);
@@ -172,7 +164,6 @@ export function eventPnl(input: {
     };
   };
 
-  /* BY TOTAL SALES — sales lines, else the box, else the orders' total. */
   const linesSales = sum('income', ['sales']);
   const box = Number(input.lumpSales ?? 0);
   const [sales, salesFrom]: [number, PnlColumn['salesFrom']] = linesSales > 0 ? [linesSales, 'lines']

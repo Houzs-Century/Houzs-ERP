@@ -26,15 +26,12 @@ import { loadAcquirer } from './settlement';
 import { postSoPayment } from './payments';
 import { CHARGE_SOURCE, checkExpenseLeaf } from './charge-account';
 
-/* Borrowed from the poster rather than spelled out again — a new file's lint
-   ceiling is zero, and a second name for the same client would be worse. */
 type Db = Parameters<typeof postSoPayment>[0];
 type Row = Record<string, unknown>;
 
 export type ChargeInput = {
   payoutId: number;
   settledOn: string;
-  /** Omitted = the whole difference. Must be > 0 and ≤ the difference. */
   amountSen?: number | null;
   accountCode: string;
   note: string;
@@ -45,9 +42,6 @@ export type ChargeResult =
   | { ok: true; status: 'charged'; chargeSen: number; accountCode: string; jeNo: string }
   | { ok: false; status: 'not_found' | 'report_missing' | 'nothing_to_charge' | 'already_charged' | 'over_difference' | 'bad_amount' | 'note_required' | 'bad_account' | 'load_failed' | string; reason: string };
 
-/** The advice day and the report it is checked against, read together and
-    scoped to the company on both — a day row is reachable only through its
-    own company's payout. */
 async function loadDay(sb: Db, companyId: number, payoutId: number, settledOn: string): Promise<
   | { ok: true; day: Row; payableSen: number | null; acquirerCode: string }
   | { ok: false; status: 'not_found' | 'load_failed'; reason: string }
@@ -86,9 +80,6 @@ export async function postPayoutCharge(sb: Db, companyId: number, input: ChargeI
   if (Number(day.charge_sen ?? 0) > 0) {
     return { ok: false, status: 'already_charged', reason: `A charge of ${rm(Number(day.charge_sen))} is already booked on ${input.settledOn}. Undo it first to book a different one.` };
   }
-  /* The gap the charge may explain: what the report says was collected minus
-     what the advice says was paid. Nothing to explain when they already agree,
-     and a "charge" that exceeds the gap is not a deduction but a mismatch. */
   const differenceSen = payableSen - Number(day.net_sen ?? 0);
   if (differenceSen <= 0) {
     return { ok: false, status: 'nothing_to_charge', reason: `${input.settledOn} already agrees with its report — there is no deduction to explain.` };
@@ -131,8 +122,6 @@ export async function postPayoutCharge(sb: Db, companyId: number, input: ChargeI
     charged_at: new Date().toISOString(),
   }).eq('id', Number(day.id)).eq('company_id', companyId);
   if (upErr) {
-    /* The entry is in the ledger and the row does not say so — reverse it,
-       so the books and the screen do not disagree about a charge. */
     await reverseJournal(sb, { sourceType: CHARGE_SOURCE, sourceDocNo: `${CHARGE_SOURCE}-${Number(day.id)}`, entryDate: input.settledOn, narration: (o) => `Reversal of ${o.je_no} — the charge could not be recorded on the advice` });
     return { ok: false, status: 'save_failed', reason: upErr.message };
   }
@@ -148,9 +137,6 @@ export async function undoPayoutCharge(
   if (Number(day.charge_sen ?? 0) === 0) {
     return { ok: false, status: 'nothing_to_undo', reason: `No charge is booked on ${input.settledOn}.` };
   }
-  /* The contra sits on the same day as the charge — an undone deduction nets
-     to zero in the month it was booked, the same rule a corrected payment
-     follows (acc/payment-repost). */
   const undone = await reverseJournal(sb, {
     sourceType: CHARGE_SOURCE,
     sourceDocNo: `${CHARGE_SOURCE}-${Number(day.id)}`,

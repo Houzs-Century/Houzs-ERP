@@ -34,7 +34,6 @@ const PROJECT_STATES = [
   "Terengganu",
 ] as const;
 
-// ── Create Panel ─────────────────────────────────────────────
 
 export function CreateProjectPanel({
   onClose,
@@ -61,8 +60,6 @@ export function CreateProjectPanel({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [venue, setVenue] = useState("");
-  // State is derived from the picked venue (project_venues stores it).
-  // Not user-editable — the venue is the single source of truth.
   const [stateName, setStateName] = useState("");
   const [organizer, setOrganizer] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -70,7 +67,6 @@ export function CreateProjectPanel({
   const eventTypeSlug =
     eventTypes.find((t) => String(t.id) === eventTypeId)?.slug ?? null;
 
-  // Name is fully derived — user can't override.
   const derivedName = composeDefaultProjectName({
     state: stateName,
     brand,
@@ -81,9 +77,6 @@ export function CreateProjectPanel({
 
   const dateInvalid = !!(startDate && endDate && endDate < startDate);
 
-  // The backend derives the project code from state/venue/brand and
-  // throws when any are missing. Validate all three client-side so the
-  // user gets a clear inline message instead of a server round-trip.
   async function submit() {
     if (!brand) {
       toast.error("Brand is required");

@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { byStr } from "./mobile-list-compare";
 
-/* B33 (sister: Hookka #289): the comparer is hoisted to one collator. The order
-   must be exactly what the per-call localeCompare produced. */
 const perCall = (a: unknown, b: unknown) =>
   String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true });
 

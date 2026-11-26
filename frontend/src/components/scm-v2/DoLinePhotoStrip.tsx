@@ -53,20 +53,14 @@ function Thumb({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    /* Attempt state scoped to THIS effect run — StrictMode runs the effect,
-       cleans it up, and runs it again, so anything longer-lived would let the
-       discarded first pass cancel or spend the live one (the exact bug the SO
-       tile shipped once; see so-line-photo.ts's StrictMode note). */
     const attempt = { cancelled: false, objectUrl: null as string | null };
     const base = doLinePhotoLightboxBase(doId, itemId);
     void (async () => {
       let url: string | null = null;
       try {
-        // Thumb tier first — tens of KB instead of the full photo.
         url = await api.fetchBlobUrl(`${base}/${encodeURIComponent(photoKey + THUMB_KEY_SUFFIX)}`, photoContentType(photoKey));
       } catch {
         try {
-          // Pre-thumb photo (no `.thumb` object) — fall back to the full image.
           url = await api.fetchBlobUrl(`${base}/${encodeURIComponent(photoKey)}`, photoContentType(photoKey));
         } catch (e) {
           if (!attempt.cancelled) setError(e instanceof Error ? e.message : "Photo unavailable");
@@ -74,7 +68,6 @@ function Thumb({
         }
       }
       if (attempt.cancelled) {
-        // Late resolve after unmount — revoke immediately, nothing may leak.
         if (url) URL.revokeObjectURL(url);
         return;
       }
@@ -88,8 +81,6 @@ function Thumb({
     };
   }, [doId, itemId, photoKey]);
 
-  /* A failed photo must read AS missing. Not a button — a retry that re-runs
-     the same failing request is theatre; the title carries the real reason. */
   if (!src) {
     return error ? (
       <span
@@ -130,13 +121,6 @@ export function DoLinePhotoStrip({
     return <span className="text-[11px] text-ink-muted">—</span>;
   }
 
-  /* MediaLightbox joins `${baseUrl}/${r2_key}` verbatim, so the key is
-     PRE-ENCODED: a carried key is `so-items/<docNo>/<soItemId>/<name>.jpg` and
-     its slashes have to survive as ONE path segment or Hono's `:photoKey`
-     param never matches and the proxy 404s. `caption` carries the bare file
-     name because MediaLightbox derives its Download filename from
-     `caption || r2_key.split("/").pop()` — and the encoded key has no "/" left
-     to split on. */
   const items = photoKeys.map((k) => ({
     r2_key: encodeURIComponent(k),
     content_type: photoContentType(k),

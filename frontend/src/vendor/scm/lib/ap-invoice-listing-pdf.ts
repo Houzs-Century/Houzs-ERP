@@ -24,11 +24,9 @@ export type ApListingFilter = { showing: string };
     (Money out › Supplier bills, the redesign); the page decides the words. */
 export type ApListingRow = {
   kindWord: string; number: string; supplierName: string | null; supplierCode: string | null;
-  /** The control it sits on: 400 or 405. */
   control: string;
   ref: string | null; date: string | null; due: string | null; planned: string | null; description: string | null;
   currency: string; totalSen: number; paidSen: number;
-  /** Blank on a draft, a cancelled bill and a credit note. */
   outstandingSen: number | null;
   status: string;
 };
@@ -86,9 +84,6 @@ export async function generateApListingPdf(rows: ApListingRow[], filter: ApListi
     ],
   });
   const t = apListingTable(rows);
-  /* Totals are MYR sums of the sen columns — the list is MYR in this first
-     cut (AP invoices are MYR-only; a foreign purchase invoice prints its own
-     currency per row and the foot says so). */
   const foreign = rows.some((r) => r.currency !== 'MYR');
   autoTable(doc, {
     startY: y + 2,
@@ -103,7 +98,6 @@ export async function generateApListingPdf(rows: ApListingRow[], filter: ApListi
     rowPageBreak: 'avoid',
     styles: { ...DOC_TABLE_STYLES, fontSize: 8 },
     headStyles: DOC_TABLE_HEAD_STYLES,
-    /* The foot wears the head's dress — bold, ruled above and below. */
     footStyles: DOC_TABLE_HEAD_STYLES,
     columnStyles: {
       0: { cellWidth: 20 },

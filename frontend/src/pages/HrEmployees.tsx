@@ -25,7 +25,6 @@ import { EmployeeDrawer } from "./hr/EmployeeDrawer";
 import { AddFromAccountsModal } from "./hr/AddFromAccountsModal";
 import { ImportEmployeesModal } from "./hr/ImportEmployeesModal";
 import type { Employee } from "./hr/hrApi";
-// The calc/settings screens, now re-skinned to the new design, rendered directly.
 import { ShiftsTab } from "./hr/ShiftsTab";
 import { PunchSitesTab } from "./hr/PunchSitesTab";
 import { WorkingHoursTab } from "./hr/WorkingHoursTab";
@@ -44,9 +43,6 @@ export function HrEmployees() {
   const [params, setParams] = useSearchParams();
   const canOt = can("hr.ot.confirm");
   const canManage = can("hr.employees.manage");
-  // A narrow attendance / OT supervisor (hr.attendance.read or hr.ot.confirm,
-  // without the full employees read) sees ONLY the Attendance and OT tabs — not
-  // the employee master, payroll, allowances or anything with pay on it.
   const canFull = can("hr.employees.read") || can("hr.employees.manage");
   const canAttendance = canFull || can("hr.attendance.read");
   const canLeave = can("hr.leave.approve");
@@ -67,7 +63,6 @@ export function HrEmployees() {
   const raw = params.get("tab");
   let active = raw && NAV_KEYS.has(raw) ? raw : fallback;
   if (active === "ot-requests" && !canOt) active = fallback;
-  // A narrow user cannot land on a hidden tab (e.g. a stale ?tab=payroll link).
   if (hiddenKeys?.has(active)) active = fallback;
 
   const setTab = (next: string) =>
@@ -135,8 +130,6 @@ export function HrEmployees() {
   })();
 
   return (
-    // Full-bleed: break out of Layout's content padding so the sidebar sits
-    // flush against the app sidebar and the area fills the viewport height.
     <div className="-mx-3 -mt-6 -mb-[calc(10rem+env(safe-area-inset-bottom))] flex h-[calc(100dvh-52px)] overflow-hidden bg-bg sm:-mx-4 lg:-mx-4 lg:-mt-2 lg:-mb-10 lg:h-[calc(100dvh-52px)]">
       <HrSubnav active={active} onSelect={setTab} hiddenKeys={hiddenKeys} />
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto thin-scroll">{page}</div>

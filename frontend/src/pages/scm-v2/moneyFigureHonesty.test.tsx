@@ -1,24 +1,3 @@
-// A money figure the app could not read must never render as a money figure.
-//
-// WHY THIS FILE EXISTS. Two screens folded a total over a list that was empty
-// BECAUSE THE READ FAILED, and printed the result as a fact:
-//
-//   * Trial Balance (`Accounting.tsx`) — `q.data?.balances ?? []` gives `[]`,
-//     so `dr - cr === 0`, so the difference tile renders in the GREEN frame
-//     reading "RM 0.00 — books balance". An accountant closing the month signs
-//     off on a general ledger that was never actually read.
-//   * Inventory > COGS (`Inventory.tsx`) — `data ?? []` gives `[]`, so
-//     `totalCogs === 0`, so the card reads "Total COGS RM 0.00" and the table
-//     says "No COGS entries yet". The comment above that card already knew the
-//     hazard and wired `pending={isLoading}` only — and `isLoading` is FALSE
-//     after a failed fetch.
-//
-// `StatCard`'s own doc comment states the rule these two broke: "A figure the
-// app cannot vouch for must never be rendered as a figure — least of all a
-// money one."
-//
-// These tests assert the CONTRACT: on a failed read the screen does not print a
-// number, and it says the read failed. They fail on the pre-fix tree.
 import { cleanup, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -46,7 +25,6 @@ const wrap = (ui: ReactNode) => (
   </QueryClientProvider>
 );
 
-/** What a failed TanStack read actually looks like: not loading, no data. */
 const failedRead = (error: Error) => ({
   data: undefined,
   isLoading: false,
@@ -65,9 +43,7 @@ describe('Trial Balance', () => {
     useAccountBalances.mockReturnValue(failedRead(new Error('account balances are unavailable')));
     render(wrap(<TrialBalanceTab />));
 
-    // The claim that must NOT be on screen.
     expect(screen.queryByText(/books balance/i)).toBeNull();
-    // And the operator must be told why the report is blank.
     expect(screen.getAllByText(/account balances are unavailable|couldn't|could not|failed/i).length).toBeGreaterThan(0);
   });
 
@@ -88,9 +64,7 @@ describe('Inventory > COGS', () => {
     useCogsEntries.mockReturnValue(failedRead(new Error('COGS entries are unavailable')));
     render(wrap(<CogsTab warehouseId={null} search="" />));
 
-    // "Total COGS RM 0.00" is the lie. Any RM figure at all is.
     expect(screen.queryByText(/RM\s*0\.00/)).toBeNull();
-    // And "0 consumption entries" / "No COGS entries yet" must not stand alone.
     expect(screen.getAllByText(/COGS entries are unavailable|couldn't|could not|failed/i).length).toBeGreaterThan(0);
   });
 

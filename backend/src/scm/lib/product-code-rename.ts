@@ -11,11 +11,9 @@
 export interface CascadeColumn {
   table: string;
   col: string;
-  /** The table also stores fabrics and raw materials: rename only material_kind = 'mfg_product'. */
   kind?: true;
 }
 
-/* All in schema scm (the route's client), every one carrying company_id. */
 export const PRODUCT_CODE_CASCADE: readonly CascadeColumn[] = [
   { table: 'supplier_material_bindings', col: 'item_code', kind: true },
   { table: 'purchase_order_items',       col: 'item_code', kind: true },
@@ -33,25 +31,16 @@ export const PRODUCT_CODE_CASCADE: readonly CascadeColumn[] = [
   { table: 'consignment_sales_order_items',     col: 'item_code' },
   { table: 'consignment_delivery_order_items',  col: 'item_code' },
   { table: 'consignment_delivery_return_items', col: 'item_code' },
-  /* An amendment's proposed code is applied onto the line later; a pending one
-     left on the old code would write a code that no longer exists. */
   { table: 'so_amendment_lines',         col: 'new_item_code' },
   { table: 'po_amendment_lines',         col: 'new_item_code' },
-  /* A product request LINE names the SKU its Purchase Consignment Order line
-     will be raised with; left on the old code, the order door would refuse a
-     request for a SKU that no longer exists. */
   { table: 'product_request_lines',      col: 'item_code' },
   { table: 'pwp_codes',                  col: 'trigger_item_code' },
   { table: 'pwp_codes',                  col: 'redeemed_item_code' },
-  /* A service add-on names the SVC-* SKU the order line is booked under. */
   { table: 'addons',                     col: 'service_sku' },
   { table: 'hr_item_kpi',                col: 'ref' },
   { table: 'product_dept_configs',       col: 'item_code' },
   { table: 'master_price_history',       col: 'item_code' },
-  /* Effective-dated selling price (0187): the as-of resolver reads it by code. */
   { table: 'mfg_product_price_history',  col: 'item_code' },
-  /* Effective-dated COST history (auto-derive stage 3a): supplier cost history
-     (per material_kind) and the derived product-cost history, both read by code. */
   { table: 'supplier_binding_price_history', col: 'item_code', kind: true },
   { table: 'mfg_product_cost_history',   col: 'item_code' },
   { table: 'inventory_movements',        col: 'item_code' },
@@ -62,13 +51,10 @@ export const PRODUCT_CODE_CASCADE: readonly CascadeColumn[] = [
   { table: 'stock_take_lines',           col: 'item_code' },
   { table: 'warehouse_rack_items',       col: 'item_code' },
   { table: 'warehouse_rack_movements',   col: 'item_code' },
-  /* A supplier's printed code taught on the delivery-order scan card: left on the
-     old code, that supplier's next delivery order would match nothing. */
   { table: 'supplier_scan_codes',        col: 'item_code' },
 ];
 
 export interface KeptColumn {
-  /** schema.table.column */
   column: string;
   why: string;
 }
@@ -80,7 +66,6 @@ const AUTOCOUNT = 'names the item in AutoCount, which keeps its own code when th
 const SUPPLIER = "the supplier's own model code for our item, not ours";
 
 export const PRODUCT_CODE_KEEPS_VALUE: readonly KeptColumn[] = [
-  /* A record of which order a stock-PO receipt served, under the code it was received as (receipt-so-assignment.ts); history, not a live reference. */
   { column: 'scm.po_receipt_so_assignments.item_code', why: 'a receipt-to-order assignment is history: it records the code the goods were received under' },
   { column: 'scm.mfg_so_item_deletions.item_code', why: 'forensic record of a deleted SO line as it was at the moment of deletion (0302)' },
   { column: 'scm.retail_price_guard_log.item_code', why: 'evidence of one intervention: the SKU as the offending writer named it, at that moment (20260920T1300)' },

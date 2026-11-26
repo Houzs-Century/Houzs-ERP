@@ -8,11 +8,10 @@ import {
   type FairStage,
 } from './fair-report';
 
-// A minimal AuthUser factory — the gate only reads position_name + permissions_set.
 function user(position: string | null, perms: string[] = []): AuthUser {
   return { position_name: position, permissions_set: new Set(perms) } as AuthUser;
 }
-const OWNER = user(null, ['*']);                 // Owner / IT Admin — `*`
+const OWNER = user(null, ['*']);
 const SUPER_ADMIN = user('Super Admin');
 const FINANCE = user('Finance Manager');
 const SALES_DIRECTOR = user('Sales Director');
@@ -127,8 +126,8 @@ describe('money helpers', () => {
   });
   test('belowDeposit — balance owing AND paid ≤ deposit', () => {
     expect(belowDeposit({ balanceSen: 5000, depositSen: 2000, paidSen: 2000 })).toBe(true);
-    expect(belowDeposit({ balanceSen: 5000, depositSen: 2000, paidSen: 2001 })).toBe(false); // paid beyond deposit
-    expect(belowDeposit({ balanceSen: 0, depositSen: 2000, paidSen: 2000 })).toBe(false);    // fully settled
+    expect(belowDeposit({ balanceSen: 5000, depositSen: 2000, paidSen: 2001 })).toBe(false);
+    expect(belowDeposit({ balanceSen: 0, depositSen: 2000, paidSen: 2000 })).toBe(false);
   });
 });
 
@@ -142,15 +141,13 @@ describe('fairSoMoney — product/service split + per-category cost + margin', (
       others_cost_sen: 3000, service_cost_sen: 15000,
       total_cost_sen: 50000, deposit_sen: 10000,
     });
-    expect(m.amount_sen).toBe(100000);       // product 70000 + service 30000
-    expect(m.selling_sen).toBe(70000);       // product only, excludes service
+    expect(m.amount_sen).toBe(100000);
+    expect(m.selling_sen).toBe(70000);
     expect(m.service_rev_sen).toBe(30000);
     expect(m.total_so_cost_sen).toBe(50000);
     expect(m.cost_by_category.service_cost_sen).toBe(15000);
-    expect(m.goods_cost_sen).toBe(35000);      // 50000 less the service cost
-    expect(m.margin_pct).toBeCloseTo(50);      // goods: (70000-35000)/70000
-    // Balance is no longer a header pass-through: it is amount minus what the
-    // LEDGER says was paid. Same 40000, now derived (see fairBalanceSen).
+    expect(m.goods_cost_sen).toBe(35000);
+    expect(m.margin_pct).toBeCloseTo(50);
     expect(fairBalanceSen(m.amount_sen, 60000)).toBe(40000);
   });
   test('amount falls back to reconstructed sum when local_total is 0', () => {
@@ -176,8 +173,8 @@ describe('fairSoMoney — product/service split + per-category cost + margin', (
       total_cost_sen: 10000, deposit_sen: 0,
     });
     expect(m.amount_sen).toBe(30000);
-    expect(marginPct(m.amount_sen, m.total_so_cost_sen)).toBeCloseTo(66.67, 1); // what it used to read
-    expect(m.margin_pct).toBeCloseTo(50);                                       // (20000-10000)/20000
+    expect(marginPct(m.amount_sen, m.total_so_cost_sen)).toBeCloseTo(66.67, 1);
+    expect(m.margin_pct).toBeCloseTo(50);
   });
   test('a service-only order has no goods margin', () => {
     const m = fairSoMoney({
@@ -194,7 +191,7 @@ describe('fairSoMoney — product/service split + per-category cost + margin', (
 describe('doCostTotal — COALESCE(ship_cost, unit_cost) × qty, legacy flag', () => {
   test('uses frozen ship cost when present', () => {
     const r = doCostTotal([{ qty: 2, unit_cost_sen: 500, ship_cost_sen: 400, item_group: 'sofa' }]);
-    expect(r.total_do_cost_sen).toBe(800);   // 400 × 2
+    expect(r.total_do_cost_sen).toBe(800);
     expect(r.qty).toBe(2);
     expect(r.is_legacy).toBe(false);
   });
@@ -223,8 +220,8 @@ describe('doCostTotal — COALESCE(ship_cost, unit_cost) × qty, legacy flag', (
       { qty: 1, unit_cost_sen: 99514, ship_cost_sen: 0, item_group: 'sofa' },
       { qty: 1, unit_cost_sen: 0, ship_cost_sen: null, item_group: 'service' },
     ]);
-    expect(r.total_do_cost_sen).toBe(0);     // the frozen truth stands — no invention
-    expect(r.has_zero_frozen).toBe(true);    // ...but the row says WHY it is zero
+    expect(r.total_do_cost_sen).toBe(0);
+    expect(r.has_zero_frozen).toBe(true);
     expect(r.is_legacy).toBe(false);
   });
   test('a genuinely free line frozen at zero (no estimate either) is NOT ship-anyway', () => {
@@ -237,9 +234,9 @@ describe('doCostTotal — COALESCE(ship_cost, unit_cost) × qty, legacy flag', (
       { qty: 1, unit_cost_sen: 300, ship_cost_sen: null, item_group: 'service', item_code: 'SVC-INSTALL' },
       { qty: 1, unit_cost_sen: 200, ship_cost_sen: null, item_group: null, item_code: 'SVC-DELIVERY' },
     ]);
-    expect(r.total_do_cost_sen).toBe(1300);  // 800 + 300 + 200, as before
+    expect(r.total_do_cost_sen).toBe(1300);
     expect(r.goods_do_cost_sen).toBe(800);
-    expect(r.is_legacy).toBe(false);         // the SVC- line without a group does not flag it either
+    expect(r.is_legacy).toBe(false);
   });
 });
 
@@ -248,7 +245,7 @@ describe('siCostTotal — landed cost from SI lines', () => {
     expect(siCostTotal([
       { qty: 2, unit_cost_sen: 500, line_cost_sen: 900 },
       { qty: 3, unit_cost_sen: 100, line_cost_sen: null },
-    ])).toBe(1200); // 900 + 300
+    ])).toBe(1200);
   });
   test('siGoodsTotals sums the non-service lines only', () => {
     expect(siGoodsTotals([
@@ -289,7 +286,7 @@ describe('summaries', () => {
     expect(s.total_service_rev_sen).toBe(30000);
     expect(s.total_so_cost_sen).toBe(70000);
     expect(s.total_goods_cost_sen).toBe(55000);
-    expect(s.total_margin_sen).toBe(65000);                      // goods: 120000 − 55000
+    expect(s.total_margin_sen).toBe(65000);
     expect(s.margin_pct).toBeCloseTo((65000 / 120000) * 100);
     expect(s.below_deposit_count).toBe(1);
     expect(s.tender_totals).toEqual({ Cash: 10000, Merchant: 5000, Installment: 0, Online: 0 });
@@ -300,7 +297,7 @@ describe('summaries', () => {
       { total_so_cost_sen: 500, total_do_cost_sen: 500, do_cost_is_legacy: true },
     ]);
     expect(s.deliveries).toBe(2);
-    expect(s.cost_delta_sen).toBe(200); // 1700 - 1500
+    expect(s.cost_delta_sen).toBe(200);
     expect(s.legacy_count).toBe(1);
   });
   test('summarizeInvoice computes the landed margin on goods', () => {
@@ -310,6 +307,6 @@ describe('summaries', () => {
     expect(s.total_invoiced_sen).toBe(10000);
     expect(s.total_si_cost_sen).toBe(4500);
     expect(s.total_goods_invoiced_sen).toBe(9000);
-    expect(s.margin_pct).toBeCloseTo(50); // (9000-4500)/9000 — the RM 10 fee is out
+    expect(s.margin_pct).toBeCloseTo(50);
   });
 });

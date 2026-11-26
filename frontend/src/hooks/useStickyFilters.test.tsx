@@ -62,7 +62,6 @@ describe("useStickyFilters is session-scoped", () => {
     );
     cleanup();
 
-    // Remount with a BARE url, exactly as returning from /projects/:id does.
     render(<MemoryRouter initialEntries={["/"]}><Probe /></MemoryRouter>);
     await waitFor(() =>
       expect(screen.getByTestId("params").textContent).toBe("q=kept&status=draft"),
@@ -71,7 +70,6 @@ describe("useStickyFilters is session-scoped", () => {
 
   it("ignores and cleans up a pre-2026-08-24 localStorage snapshot", async () => {
     bindBrowserStorageIdentity(7);
-    // What a previous login left behind; it must not resurrect the old view.
     localStorage.setItem("filters:sales:u7:c0", "q=last-week");
 
     render(<MemoryRouter initialEntries={["/"]}><Probe /></MemoryRouter>);

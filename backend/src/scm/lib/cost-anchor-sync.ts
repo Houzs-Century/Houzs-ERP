@@ -36,7 +36,7 @@ export type AnchorCategory = 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | 'BEDFRAME' |
 export type BindingCost = {
   category: AnchorCategory | null;
   unit_price_sen: number | null;
-  price_matrix: unknown; // JSONB — { P1,P2 } (bedframe) | { h:{P1,P2,P3} } (sofa) | null
+  price_matrix: unknown;
 };
 
 /** One row of the product's SOFA cost grid (mfg_products.seat_height_prices,
@@ -53,8 +53,6 @@ export type ProductSeatCost = {
 export type ProductCost = {
   base_price_sen: number | null;
   price1_sen: number | null;
-  /** SOFA per-(height,tier) COST grid — the authoritative source for the sofa
-   *  binding's price_matrix. Absent/empty for non-sofa categories. */
   seat_height_prices?: ProductSeatCost[] | null;
 };
 
@@ -71,10 +69,6 @@ export type SyncResult<P> =
   | { skipped: true; reason: string; patch?: undefined }
   | { skipped: false; patch: P };
 
-/** Which cost "lane" a binding uses, derived from its category. SOFA is its
- *  own lane purely so it can be skipped; everything that isn't BEDFRAME/SOFA
- *  falls back to the FLAT unit_price lane (matches validatePriceMatrix, where
- *  only BEDFRAME + SOFA carry a matrix and the rest use unit_price_sen). */
 function laneFor(category: AnchorCategory | null): 'FLAT' | 'BEDFRAME' | 'SOFA' {
   const cat = (category ?? '').toUpperCase();
   if (cat === 'SOFA') return 'SOFA';
@@ -82,23 +76,18 @@ function laneFor(category: AnchorCategory | null): 'FLAT' | 'BEDFRAME' | 'SOFA' 
   return 'FLAT';
 }
 
-/** Coerce a JSONB cell to a finite non-negative integer, or null. */
 function asCent(v: unknown): number | null {
   if (v === null || v === undefined || v === '') return null;
   const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
 }
 
-/** Coerce a sen value (from a product row / patch) to int, or null. */
 function asSen(v: number | null | undefined): number | null {
   if (v === null || v === undefined) return null;
   const n = Number(v);
   return Number.isFinite(n) ? Math.round(n) : null;
 }
 
-/* ── binding cost → product cost ──────────────────────────────────────────
-   Called after a binding's cost is written (suppliers.ts PATCH). Returns the
-   mfg_products patch to mirror, or { skipped } for SOFA / no-op. */
 export function bindingToProductPatch(binding: BindingCost): SyncResult<ProductPatch> {
   const lane = laneFor(binding.category);
 
@@ -119,27 +108,14 @@ export function bindingToProductPatch(binding: BindingCost): SyncResult<ProductP
     const p2 = asCent(m.P2);
     const p1 = asCent(m.P1);
     const patch: ProductPatch = {};
-    // base_price_sen ⇐ matrix.P2 (PRICE_2 / cost ref), FALLING BACK to the flat
-    // unit_price_sen when the binding carries no matrix. A bedframe supplier can
-    // price by a {P1,P2} matrix OR by a single flat unit_price_sen; reading only
-    // the matrix dropped the cost of every flat-priced bedframe to null (found by
-    // the auto-derive reprice diff on ELEPHANE-(SK) etc.: RM1650 flat, no matrix,
-    // derived null). price1_sen ⇐ matrix.P1 (no flat equivalent for the P1 lane).
     patch.base_price_sen = p2 ?? asCent(binding.unit_price_sen);
     patch.price1_sen = p1;
     return { skipped: false, patch };
   }
 
-  // FLAT — 1:1 unit_price_sen → base_price_sen. price1 untouched (flat
-  // categories have no PRICE_1 lane on the binding side).
   return { skipped: false, patch: { base_price_sen: asCent(binding.unit_price_sen) } };
 }
 
-/* ── product cost → binding cost ──────────────────────────────────────────
-   Called after a product's cost is written (mfg-products.ts PATCH). Needs the
-   binding's CURRENT price_matrix so the bedframe path can merge P1/P2 onto the
-   existing object (preserving any unrelated keys). Returns the binding patch
-   to mirror, or { skipped } for SOFA / no-op. */
 export function productToBindingPatch(
   product: ProductCost,
   binding: Pick<BindingCost, 'category' | 'price_matrix'>,
@@ -157,9 +133,6 @@ export function productToBindingPatch(
     for (const r of rows) {
       if (!r || typeof r.height !== 'string' || r.height === '') continue;
       const cost = asSen(r.priceSen);
-      // Money-safe: a selling-only / empty seat row carries NO cost. Skip it —
-      // never fabricate a 0 cost into the binding matrix (mirrors
-      // resolveSeatHeightSen's costed() guard). A missing cost stays missing.
       if (cost === null) continue;
       const key = r.tier === 'PRICE_1' ? 'P1' : r.tier === 'PRICE_3' ? 'P3' : r.tier === 'PRICE_4' ? 'P4' : 'P2';
       const cell = matrix[r.height] ?? (matrix[r.height] = {});
@@ -167,12 +140,7 @@ export function productToBindingPatch(
     }
     const flat = asSen(product.base_price_sen);
     const patch: BindingPatch = {};
-    // Replace the matrix ONLY when the product carries a priced grid, so a
-    // product with no seat cost can never WIPE an existing binding matrix to {}.
     if (Object.keys(matrix).length > 0) patch.price_matrix = matrix;
-    // Flat fallback lane (unmatched seat size). Set only when the product has a
-    // base cost; a null base leaves the binding's flat price untouched rather
-    // than forcing it to 0 (money-safe — a missing cost must stay visible).
     if (flat !== null) patch.unit_price_sen = flat;
     if (Object.keys(patch).length === 0) {
       return { skipped: true, reason: 'sofa_product_has_no_cost' };
@@ -187,14 +155,10 @@ export function productToBindingPatch(
     const next: Record<string, unknown> = { ...prev };
     const p2 = asSen(product.base_price_sen);
     const p1 = asSen(product.price1_sen);
-    // Write set cells; strip a cell whose product side is null so the matrix
-    // doesn't accumulate nulls (matches the UI's sparse-matrix convention).
     if (p2 === null) delete next.P2; else next.P2 = p2;
     if (p1 === null) delete next.P1; else next.P1 = p1;
     return { skipped: false, patch: { price_matrix: next } };
   }
 
-  // FLAT — 1:1 base_price_sen → unit_price_sen. unit_price_sen is NOT NULL
-  // (default 0) on the binding, so a null product cost maps to 0.
   return { skipped: false, patch: { unit_price_sen: asSen(product.base_price_sen) ?? 0 } };
 }

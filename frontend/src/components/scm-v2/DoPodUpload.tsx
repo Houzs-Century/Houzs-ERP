@@ -8,13 +8,6 @@ import { DO_SHIPPED_STATES, doHasArrived } from "../../vendor/shared/do-shipped-
 import { FieldPhotos } from "../FieldPhotos";
 import type { DoPodFields } from "../../pages/scm-v2/DoProofOfDeliveryCard";
 
-/* The office uploading a Delivery Order's POD for a crew that could not (owner,
-   2026-11-17: every job can take a POD upload). The same two moves a job has:
-     on the road  -> "Complete": the DO's own POD flip (PATCH …/status DELIVERED
-                     with the photos), the path the crew's phone takes
-     delivered    -> "Add photos": POST …/pod-photos, appends, moves nothing
-   A draft has shipped nothing, so it is confirmed first; a cancelled DO takes none.
-   Photos upload on pick into the DO's stop context, as on the phone. */
 
 const MAX_PHOTOS = 20;
 const DO_POD_MAX = 40;

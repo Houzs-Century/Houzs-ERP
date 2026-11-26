@@ -81,14 +81,7 @@
 /** What a line renders. Note the absence of a `code` field — see the header:
  *  the code is an input to the rule, never an output of it. */
 export interface LineIdentity {
-  /** The ONE line that NAMES the row — the description, or the code when the
-   *  row has no description (never both). '' only when the caller passed
-   *  neither; call sites that need a placeholder keep their own `|| "—"`. */
   primary: string;
-  /** The supporting line — the VARIANT summary, and never the code. null when
-   *  there is no variant, or when the variant would merely restate `primary`
-   *  (in which case rendering it would re-create the duplicate this module
-   *  exists to remove). Render this line only when it is non-null. */
   secondary: string | null;
 }
 
@@ -126,14 +119,8 @@ export function lineIdentity(input: {
   const description = clean(input.description);
   const variant = clean(input.variant);
 
-  // Description ONCE — the code only when there is no description, so a
-  // codeless-vocabulary row still names itself and a description-less row stays
-  // identifiable (#647 kept exactly this fallback).
   const primary = description || code;
 
-  // The variant is KEPT (it is the only display of fabric / divan / leg / seat
-  // on the row) but suppressed when it merely restates the line we already
-  // rendered — a variant equal to `primary` is the duplicate, not the identity.
   const secondary = variant && variant !== primary ? variant : null;
 
   return { primary, secondary };
@@ -163,10 +150,8 @@ export function orderLineIdentity(input: {
   const description = clean(input.description);
   const variant = clean(input.variant);
 
-  // CODE leads; description is only the no-code fallback so a row is never blank.
   const primary = code || description;
 
-  // Variant subtitle, suppressed only when it would merely restate `primary`.
   const secondary = variant && variant !== primary ? variant : null;
 
   return { primary, secondary };

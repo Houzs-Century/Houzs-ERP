@@ -1,5 +1,3 @@
-/* "Delivered with issue": the problem kinds the crew can tick must be the ones
- * the server accepts — this file and the server's copy are the same bytes. */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';

@@ -1,9 +1,3 @@
-/* POS Items > Add by category: tick the inventory categories the booth sells.
- * "Add" tags every product of a ticked category that has a selling price and
- * is not a POS item yet, and turns the category's switched-off items back on;
- * "Keep only ticked" switches off the POS items in the unticked categories
- * (the same as the trash on a row). Counts come from the dry run, so the
- * owner sees what each button will do before pressing it. */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";

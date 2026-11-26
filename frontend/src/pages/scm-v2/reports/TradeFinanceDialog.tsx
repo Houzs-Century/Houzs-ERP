@@ -102,7 +102,7 @@ const messageOf = (e: unknown): string => {
       const b = JSON.parse(o.body) as { message?: unknown; error?: unknown };
       if (typeof b.message === 'string' && b.message) return b.message;
       if (typeof b.error === 'string' && b.error) return b.error;
-    } catch { /* not JSON */ }
+    } catch { }
   }
   return typeof o.message === 'string' && o.message ? o.message : 'The plan was not saved.';
 };

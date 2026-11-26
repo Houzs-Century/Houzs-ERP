@@ -28,9 +28,9 @@ const SRC = readFileSync(
    handler's leading comment. */
 function bareCreate(): string {
   const start = SRC.indexOf("purchaseReturns.post('/', async (c) => {");
-  const end = SRC.indexOf('Batch-convert multiple POSTED GRNs', start);
+  const end = SRC.indexOf('export const createPurchaseReturnFromGrnsHandler', start);
   expect(start, 'bare-create route not found').toBeGreaterThan(-1);
-  expect(end, 'from-grns comment anchor not found').toBeGreaterThan(start);
+  expect(end, 'from-grns handler anchor not found').toBeGreaterThan(start);
   return SRC.slice(start, end);
 }
 
@@ -101,7 +101,7 @@ describe('POST /purchase-returns — refusals release the idempotency claim (B2)
   });
 
   it('the from-grn and from-grns pre-write refusals mark too', () => {
-    const fromGrns = SRC.slice(SRC.indexOf('Batch-convert multiple POSTED GRNs'));
+    const fromGrns = SRC.slice(SRC.indexOf('export const createPurchaseReturnFromGrnsHandler'));
     // Three representative gates, one per class: unreadable, absent, wrong status.
     for (const anchor of ["error: 'grns_not_found'", "error: 'not_all_posted'", "error: 'nothing_to_return'"]) {
       const at = fromGrns.indexOf(anchor);

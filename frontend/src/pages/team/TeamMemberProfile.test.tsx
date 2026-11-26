@@ -89,7 +89,6 @@ function mount(over: { canManage?: boolean; roles?: Role[] } = {}) {
 const roleField = () => screen.getByRole("combobox", { name: "Role" }) as HTMLInputElement;
 
 function pickRole(label: string) {
-  // Opening the picker seeds its search with the current role, so type the new one.
   fireEvent.focus(roleField());
   fireEvent.change(roleField(), { target: { value: label } });
   const option = [...document.querySelectorAll("li")].find((li) => li.textContent === label);
@@ -172,7 +171,6 @@ describe("TeamMemberProfile — Account access", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send reset link" }));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
     expect(post).toHaveBeenCalledWith("/api/users/151/reset-password");
-    // The admin screens must never put a reset link in the admin's hands.
     expect(success).toHaveBeenCalledWith(expect.stringContaining("Reset link emailed"));
   });
 
@@ -215,7 +213,6 @@ describe("TeamMemberProfile — Name", () => {
   test("a viewer who cannot manage members sees the name read-only, not an input", () => {
     mount({ canManage: false });
     expect(screen.queryByRole("textbox", { name: "Name" })).toBeNull();
-    // Shown as text (identity card + drawer breadcrumb), never an editable field.
     expect(screen.getAllByText("PG WH Assistant").length).toBeGreaterThan(0);
   });
 });

@@ -28,15 +28,10 @@ import { CaseSection } from "./CaseSection";
 export interface SupplierReturnsListProps {
   returns: SupplierReturn[];
   canWrite: boolean;
-  /** The service-case id these trips belong to. */
   caseId: number;
-  /** Refetch the case after a successful write. */
   onChanged: () => void;
-  /** Surface a write failure to the user. */
   onError: (msg: string) => void;
-  /** DD/MM/YYYY formatter from the host surface; falls back to the raw string. */
   formatDate?: (s: string | null | undefined) => string;
-  /** Confirm gate for the two destructive-ish actions (add, remove). */
   confirm?: (msg: string) => boolean | Promise<boolean>;
 }
 
@@ -80,8 +75,6 @@ interface TripFieldsProps {
 
 function TripFields({ r, caseId, isCurrent, canWrite, busy, onPatch, onArchive, onError, formatDate, confirm }: TripFieldsProps): ReactElement {
   const fmt = formatDate ?? ((s) => s || "—");
-  // Uncontrolled inputs keyed by the persisted value: a save + parent reload
-  // resets them; text saves on blur so a reload never yanks focus mid-word.
   const save = (field: keyof SupplierReturn, value: string) => {
     if ((r[field] ?? "") === value) return;
     void onPatch(r.id, { [field]: value || null });

@@ -106,7 +106,6 @@ describe('the Performance P&L — Single', () => {
     expect(within(total).getByText('5,230.00')).toBeTruthy();
     expect(within(total).getByText('42.4%')).toBeTruthy();
     expect(rowOf(/^Product groups· GP % = gross profit ÷ that group’s own sales/)).toBeTruthy();
-    /* The account part: the amount under Gross profit, the % of sales beside it. */
     const rent = rowOf(/RENT RECEIVED/);
     expect(within(rent).getByText('500.00')).toBeTruthy();
     expect(within(rent).getByText('9.6%')).toBeTruthy();
@@ -205,7 +204,6 @@ describe('the Performance P&L — By month and the chart', () => {
     expect(rowOf(/^Sales· % = share of the month’s sales/)).toBeTruthy();
     expect(rowOf(/^Gross profit by group· % = GP % · gross profit ÷ that group’s own sales/)).toBeTruthy();
     expect(rowOf(/^NET PERFORMANCE/)).toBeTruthy();
-    /* The operating expense line stays: the rate applies to every month. */
     expect(screen.getByLabelText('Performance settings')).toBeTruthy();
   });
 

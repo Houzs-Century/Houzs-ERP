@@ -1,15 +1,9 @@
-// Field-level accuracy of one reviewed sales-slip scan for the OCR page
-// (services/ocrStats.ts): how many of the slip's fields the AI read right.
-// Compares the AI read (`extracted`) to what the person confirmed (`corrected`),
-// the same pair changedFields compares.
 import { HEADER_FIELDS, LINE_FIELDS, asObj, j } from "./scan-slip-fields";
 import { BLANK, displayValue } from "./scan-correction-detail";
 import { uniqueByRawText } from "./scan-sample-review";
 
 export interface FieldScore {
-  /** Fields with a value on the slip read or after the review. Blank on both sides is not counted. */
   total: number;
-  /** Of those, the ones the person changed. */
   changed: number;
 }
 
@@ -62,7 +56,6 @@ export function fieldScore(extracted: unknown, corrected: unknown): FieldScore |
     unused.delete(partner);
     pairs.push([partner, line]);
   }
-  // Lines with no slip text to tie them pair in order; only the excess was missed or invented.
   for (const line of leftover) {
     const partner = unused.values().next().value;
     if (!partner) {

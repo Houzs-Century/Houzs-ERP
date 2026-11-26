@@ -75,10 +75,6 @@ export function poConfirmBlockReason(status: string | null | undefined): string 
     return 'This purchase order is marked fully received, so confirming no longer applies to it.';
   }
   if (s === 'cancelled') {
-    /* Reopen goes to SUBMITTED, not back to DRAFT (mfg-purchase-orders.ts:4514),
-       so the honest next step is "reopen it", not "confirm it again". Note the
-       server refuses even that when the cancel reached AutoCount (:4487); the
-       refusal carries its own sentence and the caller surfaces it. */
     return 'This purchase order was cancelled. Reopen it to make it live again.';
   }
   return 'Only a draft purchase order can be confirmed.';
@@ -95,12 +91,6 @@ export function grnTransferBlockReason(status: string | null | undefined): strin
     return 'Confirm this purchase order first — goods can only be received against a confirmed PO.';
   }
   if (s === 'received') {
-    /* Deliberately states the HEADER FLAG, not a conclusion about the lines.
-       routes/unbilled-deliveries.ts:13-21 is the cautionary case: a header
-       status flag was read as "this was billed" and turned out to measure only
-       whether somebody clicked it, wrong in both directions. The transfer is
-       blocked here because RECEIVED is not in RECEIVABLE_PO_STATUSES — that is
-       the fact, and it is the one worth saying. */
     return 'This purchase order is marked fully received, so no further goods can be received against it.';
   }
   if (s === 'cancelled') {

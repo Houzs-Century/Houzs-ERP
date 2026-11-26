@@ -1,9 +1,3 @@
-// attachExchangePurchaseOrders — the Service Case "Exchange PO" attach. Unlike
-// order_pos (the SALES ORDER's supplier POs) and po_no (the number-only legacy
-// service PO), exchange_pos are the REAL purchase orders raised FROM the case
-// for a one-to-one exchange, linked by scm.purchase_orders.assr_case_id. Pinned
-// through the same minimal fake PostgREST client as assrOrderPos.test.ts,
-// because the D1 test harness has no scm.
 import { describe, expect, test } from 'vitest';
 import { attachExchangePurchaseOrders } from './assrOrderPos';
 
@@ -32,11 +26,9 @@ const CO_2990 = 2;
 
 const tables = {
   purchase_orders: [
-    // Case 10 (HOUZS) raised two exchange POs; case 11 (2990) raised one.
     { id: 'po-a', po_number: 'HC-PO-009002', status: 'SUBMITTED', company_id: HOUZS, assr_case_id: 10 },
     { id: 'po-b', po_number: 'HC-PO-009001', status: 'DRAFT', company_id: HOUZS, assr_case_id: 10 },
     { id: 'po-c', po_number: 'PO-2611-007', status: 'DRAFT', company_id: CO_2990, assr_case_id: 11 },
-    // An ordinary PO with no case link must never surface.
     { id: 'po-d', po_number: 'HC-PO-009100', status: 'SUBMITTED', company_id: HOUZS, assr_case_id: null },
   ],
 };

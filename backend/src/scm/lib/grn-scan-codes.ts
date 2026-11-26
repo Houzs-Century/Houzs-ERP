@@ -15,7 +15,6 @@ export async function loadScanCodes(svc: SupabaseClient, companyId: number | nul
   let q = svc.from('supplier_scan_codes').select('printed_code, item_code').eq('supplier_id', supplierId);
   if (companyId != null) q = q.eq('company_id', companyId);
   const { data, error } = await q;
-  // Learning is an aid: without it the scan still matches on bindings and names.
   if (error) { console.warn('[scan-gr] supplier_scan_codes read failed:', error.message); return []; }
   return ((data as Array<{ printed_code: string; item_code: string }> | null) ?? [])
     .map((r) => ({ supplierSku: r.printed_code, acItemCode: null, itemCode: r.item_code }));
@@ -43,7 +42,6 @@ export type TeachRow = {
   printedCode: string;
   description: string | null;
   qty: number;
-  // How the scan treated it: matched by name (confirm it), or not matched.
   status: 'name_matched' | 'not_matched';
   suggestedPoItemId: string | null;
 };

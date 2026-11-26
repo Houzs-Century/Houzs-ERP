@@ -77,18 +77,14 @@ const Meta = ({ label, value }: { label: string; value: React.ReactNode }) => (
 /** One list read, two readers: Finance gets Money out's view, a requester their own page. */
 export const PaymentRequests = () => {
   const { can } = useHouzsAuth();
-  /* Finance's "only my requests" tick — a requester's list is theirs anyway. */
   const [mineOnly, setMineOnly] = useState(false);
   const listQ = usePaymentRequests(mineOnly);
-  /* Who reads it as Finance is the server's call (the voucher-create key);
-     until it answers, the same key here, so neither page flashes the other. */
   const finance = listQ.data ? listQ.data.finance : can('scm.payment_voucher.create');
   return finance
     ? <PaymentRequestsFinance listQ={listQ} mineOnly={mineOnly} onMineOnly={setMineOnly} />
     : <RequesterRequests listQ={listQ} />;
 };
 
-/** The requester's page — their own requests, as before the redesign. */
 function RequesterRequests({ listQ }: { listQ: RequestListQuery }) {
   const { user } = useHouzsAuth();
   const me = Number(user?.id);
@@ -116,7 +112,6 @@ function RequesterRequests({ listQ }: { listQ: RequestListQuery }) {
     { key: 'no', label: 'No.', render: (r) => (
       <span style={{ whiteSpace: 'nowrap' }}>
         <button type="button" onClick={() => setOpenId(r.id)} style={{ ...linkBtn, ...num }}>{r.request_no}</button>
-        {/* An instalment of a bill (item 2): which one. */}
         {(r.installment_no ?? 1) > 1 && <span style={{ ...soft, marginLeft: 6 }}>#{r.installment_no} · balance</span>}
         {/* A refund raised from a Sales Order (owner 2026-10-14). */}
         {isRefundRequest(r) && <span style={refundTag}>Refund · {r.refund_source_doc_no}</span>}
@@ -149,7 +144,7 @@ function RequesterRequests({ listQ }: { listQ: RequestListQuery }) {
   const onWithdraw = async (r: PaymentRequest) => {
     const ok = await askConfirm({ title: `Withdraw ${r.request_no}?`, body: 'Finance will not pay it. You can raise a new request later.', confirmLabel: 'Withdraw', danger: true });
     if (!ok) return;
-    withdraw.mutate(r.id); // a refusal reaches the user through the mutation's own onError
+    withdraw.mutate(r.id);
   };
 
   return (
@@ -244,7 +239,6 @@ function RequesterRequests({ listQ }: { listQ: RequestListQuery }) {
           </div>
           {hasInstalments(detail.family) && <BillInstalments family={detail.family} currentId={detail.id} />}
           {/* 欠正式单 (item 3): the payment owes its official invoice — the requester uploads it here; Finance checks it. */}
-          {/* A refund pays the customer back — no supplier's official invoice to owe. */}
           {!isRefundRequest(detail) && detail.officialDoc && (
             <OfficialDocPanel request={detail} finance={false} mayUpload={mine(detail)} />
           )}

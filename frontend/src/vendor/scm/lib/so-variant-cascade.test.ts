@@ -1,10 +1,3 @@
-// The master-follower variant rule (vendor/scm/lib/so-variant-cascade.ts).
-//
-// The owner's report this suite exists for: two sofa compartments ticked into
-// one Sales Order in a SINGLE multi-add, then the fabric and the seat size
-// typed on line 1. Line 2 stayed empty. The multi-add seeds line 2 from a
-// master that has no variants YET, so a seed-only inherit can never fill it —
-// only a live cascade can, which is what these tests pin.
 
 import { describe, expect, test } from 'vitest';
 import {
@@ -22,18 +15,15 @@ import {
 
 const sofa = (variants: Record<string, unknown> = {}): CascadeLine => ({ category: 'sofa', variants });
 
-/** Drive a sequence of edits the way a form does: snapshot in, snapshot out. */
 const run = (lines: CascadeLine[], prev: MasterVariantSnapshot, cats: ReadonlySet<string> | null = null) =>
   cascadeMasterVariants(lines, prev, cats);
 
 describe('the owner report — two sofas added together, line 1 typed after', () => {
   test('line 2 follows the master typed AFTER both lines existed', () => {
-    // Multi-add: both lines land with nothing on them.
     let lines = [sofa(), sofa()];
     let out = run(lines, {});
     expect(out.variants[1]).toEqual({});
 
-    // Operator types the fabric and the seat size on LINE 1.
     lines = [sofa({ fabricCode: 'AMOR-12', seatHeight: '21' }), sofa(out.variants[1]!)];
     out = run(lines, out.masters);
     expect(out.variants[1]).toEqual({ fabricCode: 'AMOR-12', seatHeight: '21' });
@@ -48,26 +38,20 @@ describe('the owner report — two sofas added together, line 1 typed after', ()
 
 describe("the owner's ruling — the master's LATEST change wins", () => {
   test('a follower changed BY HAND is overwritten when the master moves again', () => {
-    // This is the behaviour the old overriddenKeys veto blocked, and the owner
-    // was told that before choosing this rule.
     const first = sofa({ seatHeight: '21' });
     let out = run([first, sofa()], {});
     expect(out.variants[1]).toEqual({ seatHeight: '21' });
 
-    // Operator hand-changes line 2 to 23.
     const handEdited = sofa({ seatHeight: '23' });
     out = run([first, handEdited], out.masters);
-    expect(out.variants[1]).toBe(handEdited.variants); // untouched — nothing moved
+    expect(out.variants[1]).toBe(handEdited.variants);
 
-    // Line 1 now moves to 25. The master wins.
     const moved = sofa({ seatHeight: '25' });
     out = run([moved, handEdited], out.masters);
     expect(out.variants[1]).toEqual({ seatHeight: '25' });
   });
 
   test('a follower edit made after the master last moved is NOT stomped on the next tick', () => {
-    // Without the snapshot the master would re-assert on every render and the
-    // follower could never be edited at all.
     const master = sofa({ seatHeight: '21' });
     let out = run([master, sofa()], {});
     const handEdited = sofa({ seatHeight: '23' });
@@ -107,7 +91,6 @@ describe('what never travels', () => {
       ],
       {},
     );
-    // Seat height IS category-wide, so it travels; the free-text add-on does not.
     expect(out.variants[1]).toEqual({ seatHeight: '21' });
     expect(out.variants[1]).not.toHaveProperty('extraAddonNote');
     expect(out.variants[1]).not.toHaveProperty('extraAddonAmountRM');
@@ -139,7 +122,6 @@ describe('what never travels', () => {
       [sofa({ buildKey: 'B-1', fabricCode: 'AMOR-12', seatHeight: '21' }), sofa({ buildKey: 'B-2' })],
       {},
     );
-    // Seat size is category-wide; the colour is not.
     expect(out.variants[1]).toEqual({ buildKey: 'B-2', seatHeight: '21' });
   });
 
@@ -154,10 +136,6 @@ describe('what never travels', () => {
 
 describe('a sofa SET shares its special orders (owner 2026-09-22)', () => {
   test('picking specials on the first compartment propagates to the siblings', () => {
-    // The owner's report: model 8030 SOFFIO carried as 4 compartment lines; the
-    // special ticked on line 1 must appear on 8030-CNR / 8030-1NA / 8030-1A(RHF).
-    // These lines carry no buildKey yet (one build being assembled), so they are
-    // the same sofa and the picks travel.
     const master = sofa({
       specials: ['Backcushion Firmer', 'Nylon Fabric', 'Seat Base Fully Cover with no Leg'],
       specialLabels: ['Backcushion Firmer', 'Nylon Fabric', 'Seat Base Fully Cover with no Leg'],
@@ -171,7 +149,6 @@ describe('a sofa SET shares its special orders (owner 2026-09-22)', () => {
   });
 
   test('specials do NOT cross between two DIFFERENT sofas on one order', () => {
-    // Same isolation the fabric colour gets: two builds, two buildKeys.
     const out = run(
       [
         sofa({ buildKey: 'B-1', specials: ['Nylon Fabric'], seatHeight: '35' }),
@@ -179,7 +156,6 @@ describe('a sofa SET shares its special orders (owner 2026-09-22)', () => {
       ],
       {},
     );
-    // Seat size is category-wide and travels; the specials are build-scoped and do not.
     expect(out.variants[1]).toEqual({ buildKey: 'B-2', seatHeight: '35' });
     expect(out.variants[1]).not.toHaveProperty('specials');
   });
@@ -189,7 +165,6 @@ describe('a sofa SET shares its special orders (owner 2026-09-22)', () => {
     let out = run([first, sofa()], { sofa: {} });
     expect(out.variants[1]).toEqual({ specials: ['Nylon Fabric'] });
 
-    // Sibling hand-changed; nothing on the master moved, so it stands.
     const handEdited = sofa({ specials: ['Wooden Arm'] });
     out = run([first, handEdited], out.masters);
     expect(out.variants[1]).toBe(handEdited.variants);
@@ -228,10 +203,6 @@ describe('categories', () => {
   });
 
   test('a restricted category set leaves everything else alone (the mobile surface)', () => {
-    // `seatHeight` is a category-wide axis, so it exercises the "outside the
-    // restricted set" path without dragging in `specials` — which is now
-    // per-line (NEVER_INHERITED_KEYS above; HC-SO-007678 leak, 2026-09-11)
-    // and never travels regardless of `categories`.
     const lines: CascadeLine[] = [
       { category: 'mattress', variants: { seatHeight: '21' } },
       { category: 'mattress', variants: {} },
@@ -259,9 +230,6 @@ describe("the sofa-only ruling", () => {
   test('a bedframe master does NOT force its followers', () => {
     const bed = (variants: Record<string, unknown> = {}): CascadeLine =>
       ({ category: 'bedframe', variants });
-    /* Bed 1 carries a drawer; beds 2 and 3 do not. Under the ruling they stay
-       that way even when bed 1 moves again — which is the exact sequence the
-       rep hit. */
     const first = run([bed({ drawer: 'RIGHT' }), bed({}), bed({})], {}, CASCADE_CATEGORIES);
     expect(first.variants[1]).toEqual({});
     expect(first.variants[2]).toEqual({});
@@ -279,9 +247,6 @@ describe("the sofa-only ruling", () => {
     expect(out.variants[1]).toEqual({ seatHeight: '21' });
   });
 
-  /* The SEED is gated by the same set. Without this a new bedframe line still
-     arrives pre-filled from bed 1 and only stops being RE-forced afterwards —
-     which fixes the second removal and not the first. */
   test('the seed does not pre-fill a new bedframe line either', () => {
     const lines: CascadeLine[] = [
       { category: 'bedframe', variants: { drawer: 'RIGHT' } },
@@ -416,10 +381,6 @@ describe('a square pillow keeps its own colour (Adrian 2026-10-28, HC-SO-013238)
 });
 
 describe('BUG-53 — a SAVED line is never filled, only forced (HC-SO-011143)', () => {
-  /* Opening HC-SO-011143 to add a storage charge filled the sofa master's
-     colourLabel onto the untouched SQUARE PILLOW beside its own MODENZA-04, so
-     the amendment carried a phantom colour change and raised a Purchaser
-     approval nobody asked for. */
   const saved = (category: string, variants: Record<string, unknown>): CascadeLine =>
     ({ category, variants, persisted: true });
 

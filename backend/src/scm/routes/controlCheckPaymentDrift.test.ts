@@ -1,25 +1,3 @@
-/* /control-check must report a payment that no longer agrees with its entry.
- *
- * WHY. `PATCH /:docNo/payments/:id` writes the payment row and never touches
- * the general ledger — it recomputes the invoice's paid amount, queues an
- * AutoCount edit, and stops. So an edited payment silently leaves its journal
- * entry behind. Nothing has caught this because almost nothing is editable:
- * `paymentRowMutable` allows a change only on the day the payment was keyed.
- * Measured on production 2026-09-10, that accident is the only reason the
- * count of amount disagreements is zero.
- *
- * The owner has now confirmed with management that FINANCE should be able to
- * correct a mis-keyed payment, which opens that window. This check has to see
- * the divergence before that happens, so these cases drive the REAL route
- * through the fake PostgREST client.
- *
- * They also pin the neighbours the check must not disturb: an `imported` row
- * (the poster skips it, so its entry was never written from it), a payment
- * with no active entry (that is the UNBOOKED card's finding, and reporting it
- * here would show the owner one payment twice), and an entry whose narration
- * is not the poster's shape (nothing to compare a method against, so no
- * method claim is made).
- */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -60,15 +38,9 @@ const sb = fakeSb({
     pay('amount', { amount_sen: 199_000 }),
     pay('date', { paid_at: '2026-09-04' }),
     pay('method', { method: 'merchant' }),
-    /* Its entry is reversed, so it has no ACTIVE entry — the unbooked card
-       speaks for this one, not this check. */
     pay('reversed-away', { amount_sen: 1 }),
-    /* The narration is not the poster's, so the method cannot be read and
-       must not be guessed at. Everything else agrees. */
     pay('foreign-narration', { method: 'merchant' }),
-    /* The poster skips `imported` rows outright. */
     pay('imported-row', { method: 'imported', amount_sen: 1 }),
-    /* Never booked at all — the unbooked card's row. */
     pay('never-booked', { amount_sen: 42 }),
   ],
 });
@@ -140,7 +112,6 @@ describe('/control-check — a payment that disagrees with its journal entry', (
   });
 
   it('says how many entries it read, so a clean answer is not an empty one', async () => {
-    /* Six ACTIVE SOPAY entries — the reversed one is not read. */
     expect((await paymentDrift()).scanned).toBe(6);
   });
 });

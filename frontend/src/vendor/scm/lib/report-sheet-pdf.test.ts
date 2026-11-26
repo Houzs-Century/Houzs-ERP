@@ -68,7 +68,6 @@ describe('the printed table', () => {
     expect(pageFor({ ...base, tables: [cols(13)] })).toEqual({ format: 'a3', orientation: 'landscape', fontSize: 6.5, labelW: 70 });
     expect(isLandscape({ ...base, tables: [cols(4)] })).toBe(false);
     expect(isLandscape({ ...base, tables: [cols(5)] })).toBe(true);
-    /* Two months with a % beside each still print as two columns — upright. */
     expect(isLandscape({ ...base, tables: [monthly] })).toBe(false);
   });
 
@@ -92,9 +91,7 @@ describe('the printed table', () => {
     ]);
     expect(p.body[0]).toEqual(['300-0000', '900.00', '500.00', '400.00', '-', '-']);
     expect(p.body[1]).toEqual(['TAXATION', '50.00', { content: '50.00', colSpan: 2, styles: { halign: 'center' } }, { content: '-', colSpan: 2, styles: { halign: 'center' } }]);
-    /* The % beside Total stays beside it; a merged cell has none. */
     expect(p.beside[1]).toEqual([null, '2.5%', null, null, null, null]);
-    /* Without headings, one head row — as before. */
     expect(printedTable(monthly).headRows).toEqual([['', 'Cumulative 08/2026 – 09/2026', '09/2026']]);
   });
 });

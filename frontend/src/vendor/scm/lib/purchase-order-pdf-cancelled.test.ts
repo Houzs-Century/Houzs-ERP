@@ -1,4 +1,3 @@
-// 2990-0028 (Sim 2026-10-29): a cancelled PO prints CANCELLED across every page.
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';

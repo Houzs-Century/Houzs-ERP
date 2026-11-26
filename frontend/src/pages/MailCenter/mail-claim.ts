@@ -13,7 +13,6 @@ export type MailClaimOffer = {
   suggestion: string;
   department: { id: number; name: string } | null;
   departments: Array<{ id: number; name: string }>;
-  /** Their latest request: waiting, approved, or rejected with the admin's reason. */
   request: { id: string; address: string; status: "requested" | "approved" | "rejected"; reason: string | null; createdAt: string } | null;
 };
 
@@ -51,7 +50,6 @@ export function useMailClaim() {
     setError(null);
     try {
       await api.post(CLAIM_KEY, { localPart: value.trim().toLowerCase(), departmentId: needsDepartment ? departmentId : null });
-      // My mailbox, "What may I see" and the From list all change.
       void queryClient.invalidateQueries({
         predicate: (q) => q.queryKey[0] === "uq" && String(q.queryKey[1]).startsWith("/api/mail-center"),
       });

@@ -78,9 +78,6 @@ describe("what the gate never blocks", () => {
   });
 
   it("a save while the state->warehouse mappings are still loading", () => {
-    /* Every State looks unmapped before that query answers; the server reads
-       the mappings directly, so let it have the last word rather than refusing
-       a legitimate order over a request in flight. */
     expect(soStockLocationError(input({ state: "Selangor", mappingsLoaded: false })))
       .toBeNull();
   });
@@ -131,8 +128,6 @@ describe("companyRequiresStockLocation", () => {
 });
 
 describe("SalesOrderNewFromProducts lands a draft exactly where it must", () => {
-  /* Source-text: the page's outcome is a body field on a mutation inside a
-     1,100-line screen, and what matters is WHICH predicate decides it. */
   const source = readFileSync(
     resolve(process.cwd(), "src/pages/scm-v2/SalesOrderNewFromProducts.tsx"),
     "utf8",
@@ -142,7 +137,6 @@ describe("SalesOrderNewFromProducts lands a draft exactly where it must", () => 
     expect(source).toContain(
       "const landsDraft = companyRequiresStockLocation(branding.companyCode);",
     );
-    // No second copy of the company scope on this page — no company CODE at all.
     expect(source).not.toContain('"HOUZS"');
     expect(source).not.toContain('"2990"');
   });
@@ -152,11 +146,6 @@ describe("SalesOrderNewFromProducts lands a draft exactly where it must", () => 
   });
 
   it("keeps the location gate wired through the backend validate draft, inert only because the create is a draft", () => {
-    /* Since 2026-09-16 the backend is the sole authority: the surface posts its
-       draft to /mfg-sales-orders/validate and renders the returned problems[].
-       The location gate is fed by the draft's asDraft: landsDraft — still wired,
-       so the day this flow stops drafting the gate applies automatically instead
-       of silently minting locationless orders (same shape as the guided wizard). */
     const draft = source.slice(
       source.indexOf("const buildValidateDraft = useCallback(() => ({"),
       source.indexOf("}), ["),
@@ -165,9 +154,6 @@ describe("SalesOrderNewFromProducts lands a draft exactly where it must", () => 
   });
 
   it("no longer tells the operator to go and use the Full form", () => {
-    /* The nav link in the header stays — it is a way to a fuller screen, not a
-       workaround for a create this page cannot do. What went is the refusal
-       that sent the operator there after they had built a whole cart. */
     expect(source).not.toContain('use "Switch to Full form" to enter it');
   });
 
@@ -213,7 +199,6 @@ describe("soRequiredFieldErrors — one message, not one-at-a-time", () => {
   });
 
   it("a DRAFT needs none of the confirm-only fields", () => {
-    // Same empty inputs, but asDraft — only the two non-confirm fields remain.
     expect(soRequiredFieldErrors({ ...houzsConfirm, asDraft: true, location: { ...houzsConfirm.location, asDraft: true } }))
       .toEqual(["Customer name", "Phone number", "At least one line item with a product"]);
   });
@@ -227,14 +212,11 @@ describe("soRequiredFieldErrors — one message, not one-at-a-time", () => {
   });
 
   it("does NOT fold the 'State has no warehouse' config error into the list (a picked State)", () => {
-    // State IS picked but resolves no warehouse — that's an admin config problem,
-    // handled by soStockLocationError afterwards, NOT a field the operator forgot.
     const missing = soRequiredFieldErrors({
       ...houzsConfirm, customerName: "A", phone: "1", hasNamedLine: true, hasVenue: true, hasSalesperson: true,
       location: { companyCode: "HOUZS", salesLocation: "", state: "Selangor", mappingsLoaded: true },
     });
     expect(missing).toEqual([]);
-    // ...and soStockLocationError still catches it as its own message.
     expect(soStockLocationError({ companyCode: "HOUZS", salesLocation: "", state: "Selangor", mappingsLoaded: true })).not.toBeNull();
   });
 });
@@ -271,9 +253,6 @@ describe("soRequiredFieldsMessage", () => {
     expect(m.title).toContain("Processing Date");
   });
 
-  /* Deliberately NOT the bare "postcode is required." — that sentence gives an
-     operator no way to know a postcode became required when they set a
-     Processing Date. The reason is the useful half. */
   it("a lone proceeding field keeps its reason instead of the bare shortcut", () => {
     const m = soRequiredFieldsMessage([], ["postcode"]);
     expect(m.title).toContain("Processing Date");
@@ -304,8 +283,6 @@ describe("soProceedingAddressErrors", () => {
     expect(got).toEqual(["address line 1", "postcode", "delivery date"]);
   });
 
-  /* Ticking it BLANKS the address out of the payload, so a typed address that
-     is about to be discarded still counts as missing. */
   it("counts the address as missing when 'fill in later' is ticked, even if typed", () => {
     const got = soProceedingAddressErrors({ ...filled, fillAddressLater: true });
     expect(got).toEqual(["address line 1", "postcode"]);

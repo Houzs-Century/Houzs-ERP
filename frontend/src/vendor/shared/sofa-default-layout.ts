@@ -1,6 +1,3 @@
-// The PO PDF's plan view for a sofa booked as a bare module list (no stored
-// geometry), plus the Console "Attached to" helpers the SO line editors use.
-// Split out of sofa-build.ts, which it builds on.
 import {
   cellEdges,
   cellsBbox,
@@ -85,7 +82,7 @@ export const buildDefaultSofaCells = (
     const moduleId = (mod?.moduleId ?? '').trim();
     if (!moduleId) continue;
     const m = findModule(moduleId);
-    if (!m) continue; // unknown module → skip (fail-soft, never throws)
+    if (!m) continue;
     const fp = moduleFootprint(m, 0, depth);
     if (!(fp.w > 0) || !(fp.h > 0)) continue;
     const edges = cellEdges({ moduleId, x: 0, y: 0, rot: 0 });
@@ -96,7 +93,6 @@ export const buildDefaultSofaCells = (
       armE: edges[EDGE_E] === 'arm',
     });
   }
-  // An explicit join only counts when its target is on this order.
   const targets = new Set(known.filter((k) => !k.attachTo).map((k) => k.moduleId));
   const isAttached = (k: Known) => k.attachTo !== '' && targets.has(k.attachTo);
   const isLeftEnd = (k: Known) =>
@@ -135,8 +131,6 @@ export const buildDefaultSofaCells = (
     }
     for (const r of runs) pieces.push([...r.left, ...r.mid, ...r.right]);
   }
-  // Joined modules sit on the open side of their target: before a right end,
-  // after anything else (a left end, a middle, a stand-alone 1S/2S/3S).
   for (const k of known.filter(isAttached)) {
     for (const ps of pieces) {
       const i = ps.findIndex((x) => x.moduleId === k.attachTo);
@@ -159,9 +153,6 @@ export const buildDefaultSofaCells = (
   let y = 0;
   for (const { cells, bb } of laid) {
     const dx = laid.length === 1 ? 0 : (widest - bb.w) / 2 - bb.x;
-    /* A stool stands just in front of whatever is behind it, not below the
-       whole sofa: HC-PO-2610-438_R1 drew it past the 1A(LHF) leg, a long way
-       from the 2NA it sits before (Sim 2026-10-30). */
     const stoolY = out.length > 0 && cells.length === 1 && cells[0]!.moduleId === 'STOOL'
       ? frontOf(out, bb.x + dx, bb.w, depth) : null;
     const dy = laid.length === 1 ? 0 : (stoolY ?? y) - bb.y;
@@ -173,7 +164,6 @@ export const buildDefaultSofaCells = (
 
 const DEFAULT_ROW_GAP_CM = 30;
 
-/** The y one row gap in front of the cells that overlap [x, x + w). */
 const frontOf = (cells: readonly Cell[], x: number, w: number, depth: Depth): number => {
   let back = 0;
   for (const c of cells) {
@@ -185,7 +175,6 @@ const frontOf = (cells: readonly Cell[], x: number, w: number, depth: Depth): nu
   return back + DEFAULT_ROW_GAP_CM;
 };
 
-/** One sofa's cells from the origin, corners turning the run (see above). */
 const layoutRun = (known: RunPiece[], depth: Depth): Cell[] => {
   const run = arrangeCornerRun(known);
   const out: Cell[] = [];
@@ -194,7 +183,6 @@ const layoutRun = (known: RunPiece[], depth: Depth): Cell[] => {
   const cornerFp = (k: { m: SofaModuleSpec } | null) => (k ? moduleFootprint(k.m, 0, depth) : { w: 0, h: 0 });
   const left = cornerFp(run.leftCorner);
   const right = cornerFp(run.rightCorner);
-  // Left leg: listed front→corner, so it stacks upward to meet the corner.
   let y = left.h;
   const leftCells: Array<{ moduleId: string; y: number }> = [];
   for (const k of [...run.left].reverse()) {
@@ -210,7 +198,6 @@ const layoutRun = (known: RunPiece[], depth: Depth): Cell[] => {
   }
   if (run.rightCorner) {
     place(run.rightCorner.moduleId, x, 0, 90);
-    // Right leg: corner→front, backs flush with the corner's outer edge.
     y = right.h;
     for (const k of run.right) {
       const fp = moduleFootprint(k.m, 90, depth);
@@ -268,8 +255,6 @@ export const consoleAttachOptions = (
 
 type RunPiece = { moduleId: string; m: SofaModuleSpec };
 
-/** Split a walked module list into left leg / back row / right leg around its
- *  corners (see buildDefaultSofaCells). No legs and no corners = straight row. */
 const arrangeCornerRun = (pieces: RunPiece[]): {
   left: RunPiece[]; leftCorner: RunPiece | null; back: RunPiece[]; rightCorner: RunPiece | null; right: RunPiece[];
 } => {

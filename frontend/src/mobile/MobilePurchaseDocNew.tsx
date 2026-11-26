@@ -70,7 +70,6 @@ import { useFormTouched, useGuardedBack, useLeaveGuard } from "../hooks/useLeave
 let seq = 0;
 const newKey = () => `pl${seq++}`;
 
-/** Where a created document came from, for the success message. */
 type Created = { id: string; number: string };
 
 function errorText(err: unknown): string {
@@ -139,9 +138,6 @@ export function MobilePurchaseDocNew({
   kind: PurchaseDocKind;
   onBack: () => void;
   onCreated: (created: Created) => void;
-  /** The existing convert wizard for this document, or null where the phone has
-   *  none (a PI from a GRN is desktop-only today). Required, not optional: a
-   *  caller that forgets it would silently hide a flow the desktop offers. */
   onConvertInstead: { label: string; open: () => void } | null;
 }) {
   const { touched: formTouched, markTouched } = useFormTouched();
@@ -149,14 +145,9 @@ export function MobilePurchaseDocNew({
   const guardedBack = useGuardedBack(onBack);
   const cfg = PURCHASE_DOC_CONFIG[kind];
   const { user } = useAuth();
-  // A GRN confirm posts stock — the purchaser's, not every Goods Receipt editor's.
   const mayConfirm = kind !== "grn" || canPostGoodsReceipts(user);
   const notify = useNotify();
   const qc = useQueryClient();
-  /* One key per mount = one document. MobileApp leaves this screen on success
-     (onCreated), so a second document always gets a fresh mount and a fresh key,
-     while a re-press after a stalled or half-failed submit REPLAYS the first
-     document instead of creating a second one (lib/idempotency.ts). */
   const idemKey = useIdempotencyKey();
 
   const suppliersQ = useSuppliers({ status: "ACTIVE" });
@@ -184,10 +175,6 @@ export function MobilePurchaseDocNew({
   const setLine = (key: string, patch: Partial<PurchaseLineDraft>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
-  /* Opened from a service case's "Raise exchange PO" (MobileExchangePoRow writes
-     the seed, then MobileApp opens this screen): pre-add the case's item line and
-     carry the case id so the created PO stamps assr_case_id and shows back on the
-     case. The purchaser still picks supplier / warehouse / price, as for any PO. */
   const [exchangeCaseId, setExchangeCaseId] = useState<number | null>(null);
   const seedAppliedRef = useRef(false);
   useEffect(() => {
@@ -207,9 +194,6 @@ export function MobilePurchaseDocNew({
     const q = supplierFilter.trim().toLowerCase();
     const all = suppliersQ.data ?? [];
     const hit = q ? all.filter((s) => `${s.code} ${s.name}`.toLowerCase().includes(q)) : all;
-    /* Keep the chosen supplier selectable even when the filter hides it, or the
-       <select> would silently show the first match while the header holds a
-       different id. */
     const chosen = all.find((s) => s.id === header.supplierId);
     return chosen && !hit.includes(chosen) ? [chosen, ...hit] : hit;
   }, [suppliersQ.data, supplierFilter, header.supplierId]);
@@ -221,17 +205,11 @@ export function MobilePurchaseDocNew({
     setPickerOpen(false);
     setLines((prev) => [
       ...prev,
-      /* unitPriceSen starts BLANK on purpose — see PurchaseLineDraft for both
-         reasons (never the catalog selling price; never a "0.00" that drops the
-         buyer's keystrokes). */
       { key: newKey(), itemCode: sku.itemCode, name: sku.name, itemGroup: sku.itemGroup, qty: 1, unitPriceSen: null, remark: "" },
     ]);
     if (kind === "po" && !header.supplierId) setMainSupplierFor(sku.itemCode);
   };
 
-  /* Same rule as desktop PurchaseOrderNew's item-first pick. The setter
-     re-checks the header: a supplier the buyer picked while the lookup was in
-     flight wins. A failed lookup leaves the supplier for the buyer to pick. */
   const [mainSupplierFor, setMainSupplierFor] = useState<string | null>(null);
   const itemSuppliersQ = useSuppliersForMaterial(mainSupplierFor ? "mfg_product" : null, mainSupplierFor);
   useEffect(() => {
@@ -244,8 +222,6 @@ export function MobilePurchaseDocNew({
   }, [mainSupplierFor, itemSuppliersQ.isLoading, itemSuppliersQ.data, suppliersQ.data]);
 
   const finish = async (created: Created, asDraft: boolean) => {
-    /* The vendored hooks refresh the desktop's canonical keys; the phone list
-       this screen returns to reads its OWN keys, paged ones included. */
     invalidateMobileLists(qc);
     await notify({
       title: `${cfg.label} ${created.number} ${asDraft ? "saved as draft" : "created"}`,
@@ -272,27 +248,17 @@ export function MobilePurchaseDocNew({
         await finish({ id: res.id, number: res.poNumber }, asDraft);
       } else if (kind === "grn") {
         const res = await createGrn.mutateAsync({ idempotencyKey: idemKey, ...buildGrnPayload(header, lines, asDraft) });
-        /* POST /grns posts a non-draft receipt itself and answers in-band:
-           `movementErrors` when the stock write was refused, `recountError`
-           when the PO's received qty was not recounted. */
         reportInBandFailure("Goods receipt saved, but not everything was recorded", res);
-        /* Same second call as desktop GrnNew — an idempotent no-op on an
-           already-POSTED receipt, and the commit on a replayed one. */
         if (!asDraft) await postGrn.mutateAsync(res.id);
         await notifyAcNotSent(notify, res, "Goods receipt");
         await finish({ id: res.id, number: res.grnNumber }, asDraft);
       } else {
         const res = await createPi.mutateAsync({ idempotencyKey: idemKey, ...buildPiPayload(header, lines, asDraft) });
-        /* PurchaseInvoiceNew: "Auto-post (Confirm) so PI lands in POSTED state".
-           Without it the AP liability is never recorded. */
         if (!asDraft) await postPi.mutateAsync(res.id);
         await notifyAcNotSent(notify, res, "Purchase invoice");
         await finish({ id: res.id, number: res.invoiceNumber }, asDraft);
       }
     } catch (err) {
-      /* Every refusal reaches the operator in words: the server's own message,
-         or for a zero-cost receipt the shared sentence naming which lines and
-         what they normally cost. The post hooks carry their own onError too. */
       await notify({ title: `${cfg.label} not saved`, body: errorText(err), tone: "error" });
     } finally {
       setBusy(false);

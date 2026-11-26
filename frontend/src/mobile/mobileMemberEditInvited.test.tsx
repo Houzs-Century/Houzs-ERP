@@ -26,7 +26,6 @@ import { stripComments } from "../auth/sourceScan.testutil";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/** The statuses PATCH /api/users/:id accepts, read from the handler itself. */
 function patchAcceptedStatuses(): string[] {
   const route = readFileSync(resolve(HERE, "../../../backend/src/routes/users.ts"), "utf8");
   const registration = 'app.patch("/:id"';

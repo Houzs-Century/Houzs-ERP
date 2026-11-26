@@ -29,7 +29,6 @@ import { companyCodeById } from '../scm/lib/doc-no';
 import { chunkIn } from '../scm/lib/paginate-all';
 import { fmtSen } from '../scm/shared/format';
 
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 type Row = Record<string, unknown>;
 
@@ -54,9 +53,6 @@ export async function loadCardAccounts(sb: Sb, companyId: number): Promise<
   const merchants = (Array.isArray(data) ? data : []) as Array<{ code: string; transit_account_code: string | null; fee_account_code: string | null; is_active: boolean | null }>;
   const clearing = new Set<string>([roles.TRANSIT_EDC]);
   for (const m of merchants) if (m.transit_account_code) clearing.add(String(m.transit_account_code));
-  /* The charges account the merchants already book their fees to — the active
-     ones', and every one's when none is active. One account, or the person is
-     told rather than one being picked for them. */
   const active = merchants.filter((m) => m.is_active !== false);
   const fees = [...new Set((active.length > 0 ? active : merchants).map((m) => String(m.fee_account_code ?? '').trim()).filter(Boolean))];
   if (fees.length === 1) return { ok: true, clearing, feeAccountCode: fees[0]!, feeProblem: null };
@@ -68,7 +64,6 @@ export async function loadCardAccounts(sb: Sb, companyId: number): Promise<
   };
 }
 
-/** The payments as the books hold them (step 1 above), or the refusal naming the one that cannot be taken. */
 async function readCards(sb: Sb, companyId: number, refs: readonly CardPaymentRef[], clearing: ReadonlySet<string>): Promise<
   { ok: true; cards: CardForMatch[] } | CardRefusal
 > {
@@ -97,7 +92,6 @@ async function readCards(sb: Sb, companyId: number, refs: readonly CardPaymentRe
   if (!previous.ok) return failedRead('The previous records', previous.reason);
   if (entries.error) return failedRead("The payments' entries", entries.error.message);
 
-  /* Each payment's LIVE entry, and the accounts it debits. */
   const live = entries.data.filter((e) => e.reversed !== true);
   const legs = live.length === 0 ? none : await chunkIn<Row>(live.map((e) => String(e.id)), (b, f, t) => sb.from('journal_entry_lines')
     .select('journal_entry_id, account_code, debit_sen').eq('company_id', companyId).in('journal_entry_id', b).order('journal_entry_id').range(f, t));
@@ -158,7 +152,6 @@ async function readCards(sb: Sb, companyId: number, refs: readonly CardPaymentRe
 export type SettleCardsInput = {
   line: { id: number; booked_on: string; reference: string | null; amount_sen: number };
   bankAccountCode: string;
-  /** Entries on this bank the route has checked: posted, unclaimed. */
   entries: EntryForMatch[];
   payments: CardPaymentRef[];
   actor: string | null;
@@ -169,7 +162,6 @@ export type SettleCardsResult =
   | CardRefusal;
 
 export async function settleCardsOnBankLine(sb: Sb, companyId: number, input: SettleCardsInput): Promise<SettleCardsResult> {
-  /* An earlier attempt on this OPEN movement that died half way: taken back first. */
   const leftover = await undoCardSettlement(sb, companyId, input.line.id);
   if (!leftover.ok) return refuse(500, 'leftover_failed', `An earlier attempt on this movement could not be taken back: ${leftover.reason}`);
 
@@ -184,8 +176,6 @@ export async function settleCardsOnBankLine(sb: Sb, companyId: number, input: Se
   });
   if (!plan.ok) return refuse(409, plan.status, plan.message);
 
-  /* 2. The claim first, so the journal can be keyed on it and a second movement
-        loses the race at the unique index rather than booking the money twice. */
   const receivedOn = String(input.line.booked_on).slice(0, 10);
   const { data: claimedRaw, error: claimErr } = await sb.from(BANK_CARD_TABLE).insert(read.cards.map((c) => ({
     company_id: companyId, bank_line_id: input.line.id, payment_source: c.source, payment_id: c.id, doc_no: c.docNo,
@@ -225,7 +215,6 @@ export async function settleCardsOnBankLine(sb: Sb, companyId: number, input: Se
   const { error: stampErr } = await sb.from(BANK_CARD_TABLE).update({ je_no: posted.jeNo }).eq('company_id', companyId).eq('bank_line_id', input.line.id);
   if (stampErr) return takeBack(`the card payments could not be stamped with ${posted.jeNo} (${String(stampErr.message ?? stampErr)})`);
 
-  /* 3. The movement accounts for the ticked entries and the new journal's bank leg. */
   const { error: matchErr } = await sb.from('acc_bank_statement_matches').insert([
     ...input.entries.map((e) => ({ bank_line_id: input.line.id, company_id: companyId, je_no: e.jeNo, amount_sen: e.sen, match_reason: 'manual' })),
     { bank_line_id: input.line.id, company_id: companyId, je_no: posted.jeNo, amount_sen: plan.bankSen, match_reason: 'manual' },
@@ -239,7 +228,6 @@ export async function settleCardsOnBankLine(sb: Sb, companyId: number, input: Se
     return takeBack(`the movement could not be marked matched (${String(upErr.message ?? upErr)})`);
   }
 
-  /* Best effort, like every other match: a receipt never fails the money. */
   await formaliseReceiptsForBankMatch(sb, companyId, input.bankAccountCode, input.entries.map((e) => e.jeNo), input.actor);
   const code = await companyCodeById(sb, companyId);
   if (code) await formaliseReceiptsForSettlement(sb, companyId, code, read.cards.map((c) => ({ source: c.source, id: c.id })), input.bankAccountCode, input.actor);

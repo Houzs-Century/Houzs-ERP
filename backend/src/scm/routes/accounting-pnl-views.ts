@@ -32,11 +32,9 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 export type PnlViewsPayload = {
   from: string; to: string;
-  /** The months the views cover, YYYY-MM. */
   months: string[];
   actual: PnlViewSide;
   performance: PnlViewSide;
-  /** Null when none of the months has a forecast row. */
   forecast: PnlViewSide | null;
 };
 

@@ -56,7 +56,6 @@ const day = (v: unknown): string | null => (v == null || v === '' ? null : Strin
 const actorOf = (c: any): string | null => (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
 const NO_RIGHT = "You don't have permission to change the logistics report's settings.";
 
-/* ── GET /logistics/pnl ───────────────────────────────────────────────────── */
 export const logisticsPnlHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -74,7 +73,6 @@ export type LogisticsPnlLoad = { ok: true; body: LogisticsPnlBody; billLines: Bi
 export type LogisticsPnlBody = ReturnType<typeof buildLogisticsPnl> & {
   tripsProblem: string | null; fairsProblem: string | null; perMonth: LogisticsPnlMonth[];
   areaRates: Array<{ key: string; label: string; region: RegionCode; rateSen: number | null; defaultRateSen: number | null; isDefault: boolean }>;
-  /** Spend by lorry: the in-house rows, one entry per lorry and Not tied (scm/lib/lorry-spend.ts). */
   lorrySpend: LorrySpend[];
 };
 export type LogisticsPnlMonth = {
@@ -106,7 +104,6 @@ export async function loadLogisticsPnl(c: any, companyId: number, from: string, 
     return keys.size;
   };
 
-  /* Finance's own spreads (the rates and ticks are read with the trips). */
   const spreadRes = await sb.from('acc_logistics_spreads').select('line_id, months').eq('company_id', companyId);
   if (spreadRes.error) return no(fail(c, 'spreads', spreadRes.error.message));
   const spreadMonths = new Map(((spreadRes.data ?? []) as Row[]).map((r) => [String(r.line_id), Number(r.months)] as const));
@@ -114,7 +111,6 @@ export async function loadLogisticsPnl(c: any, companyId: number, from: string, 
   if (rateRes.error) return no(fail(c, 'area rates', rateRes.error.message));
   const rates = new Map(((rateRes.data ?? []) as Row[]).map((r) => [String(r.area), r.rate_sen == null ? null : Number(r.rate_sen)] as const));
 
-  /* The books: every leg on the P&L's accounts, from far enough back for the longest spread. */
   const spreadFrom = `${addMonths(monthOf(wholeFrom), -(MAX_SPREAD - 1))}-01`;
   const legsRes = await chunkIn<Row>(accounts.all, (b, lo, hi) => sb.from('v_gl_entries')
     .select('line_id, account_code, account_name, entry_date, debit_sen, credit_sen, posted, reversed, reversed_by_je, opening, notes, je_no, source_type, source_doc_no, party_name')
@@ -129,8 +125,6 @@ export async function loadLogisticsPnl(c: any, companyId: number, from: string, 
     partyName: l.party_name == null ? null : String(l.party_name),
   }));
 
-  /* What Finance billed extra: Other Debtor bills a few months either side —
-     a recharge is billed after the month it names. */
   const billFrom = `${addMonths(monthOf(wholeFrom), -3)}-01`;
   const billTo = monthEnd(`${addMonths(monthOf(wholeTo), 3)}-01`);
   const billsRes = await paginateAll<Row>((lo, hi) => sb.from('acc_debtor_bills')
@@ -160,8 +154,6 @@ export async function loadLogisticsPnl(c: any, companyId: number, from: string, 
     };
   });
 
-  /* The fairs set up or dismantled in the range and their trips — the ONE read
-     the fairs' own books use too (scm/lib/fair-trips.ts). */
   let fairs: FairRow[] = [];
   let trips: SetupTrip[] = [];
   let tripsProblem: string | null = null;
@@ -172,7 +164,6 @@ export async function loadLogisticsPnl(c: any, companyId: number, from: string, 
     tripsProblem = 'the fairs are not reachable from here';
   }
 
-  /* Each fair opened in the range: its sales and its own books (Project Overview's engine). */
   const opened = fairs.filter((f) => f.startDate != null && f.startDate >= from && f.startDate <= to);
   let fairBooks = new Map<number, PnlWithLines>();
   let fairsProblem: string | null = tripsProblem;
@@ -183,8 +174,6 @@ export async function loadLogisticsPnl(c: any, companyId: number, from: string, 
   const fairRegion = (f: FairRow): RegionCode => areaOf(f.state)?.region ?? 'KL';
   const salesRmOf = (id: number): number => { const p = fairBooks.get(id)?.pnl; return p ? (p.by_so ?? p.by_sales).sales : 0; };
 
-  /* The carriers' bills behind the outsource legs (by AP invoice number), their
-     3PL lines, and the fair lines with no fair picked. */
   const outsourceLegs = legs.filter((l) => accounts.outsource.has(l.accountCode) && l.day >= wholeFrom && l.day <= wholeTo);
   const apNos = [...new Set(outsourceLegs.filter((l) => l.sourceType === 'API' && l.sourceDocNo).map((l) => l.sourceDocNo!))];
   const [apRes, noFairRes] = await Promise.all([
@@ -226,7 +215,6 @@ export async function loadLogisticsPnl(c: any, companyId: number, from: string, 
       lines: ls.map((l) => ({ amountSen: Number(l.amount_sen ?? 0), assign: l.assign == null ? null : String(l.assign), doIds: Array.isArray(l.do_ids) ? (l.do_ids as unknown[]).map(String) : [] })),
     });
   }
-  /* A bill may name DOs of another month: their regions too. */
   const missing = [...new Set([...threeplBills.values()].flatMap((b) => b.lines.flatMap((l) => l.doIds)).filter((id) => !regionOf.has(id)))];
   if (missing.length > 0) {
     const more = await readDoRegions(sb, companyId, missing);
@@ -253,7 +241,6 @@ export async function loadLogisticsPnl(c: any, companyId: number, from: string, 
   };
   const pnl = pnlFor(from, to);
 
-  /* Month by month: the P&L, the delivery cost, the fairs. */
   const perMonth = range.map((m) => {
     const f = m === monthOf(from) ? from : `${m}-01`;
     const t = m === monthOf(to) ? to : monthEnd(`${m}-01`);
@@ -305,7 +292,6 @@ const mostCommon = (xs: readonly string[]): string | null => {
   return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? null;
 };
 
-/** The regions of DOs read by id (a 3PL bill naming another month's DOs). */
 async function readDoRegions(sb: any, companyId: number, ids: string[]): Promise<{ ok: true; regions: Map<string, RegionCode> } | { ok: false; what: string; reason: string }> {
   const res = await chunkIn<Row>(ids, (b, lo, hi) => sb.from('delivery_orders').select('id, state, city, postcode, address1, address2')
     .eq('company_id', companyId).in('id', b).order('id').range(lo, hi));
@@ -320,7 +306,6 @@ async function readDoRegions(sb: any, companyId: number, ids: string[]): Promise
   };
 }
 
-/* ── The PUTs: Finance's settings ─────────────────────────────────────────── */
 async function readBody(c: any): Promise<any> {
   try { return await c.req.json(); } catch { return undefined; }
 }

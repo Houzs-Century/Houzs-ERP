@@ -17,27 +17,10 @@ import { eq, sql } from "drizzle-orm";
 
 const app = new Hono<{ Bindings: Env }>();
 
-/**
- * GET /api/roles/permissions
- * Returns the permission catalog so the frontend can render the
- * permission picker. Anyone with roles.read can see this.
- */
 app.get("/permissions", requirePermission("roles.read"), async (c) => {
   return c.json({ permissions: PERMISSIONS });
 });
 
-/**
- * GET /api/roles
- * Returns all roles + their permission arrays + member counts.
- *
- * Admitted for a Sales Director too (READ-ONLY, additive on top of roles.read):
- * the Team member-invite / edit forms render a Role picker sourced from this
- * list, and a dept-scoped Sales Director has no roles.read in the matrix
- * (positions get no backfill) so it 403'd — breaking the mobile Member form.
- * Roles are a global, non-sensitive lookup; the WRITE routes below stay
- * roles.manage-only, and a scoped invite/patch forces a baseline role
- * server-side (routes/users.ts) regardless of what the picker sends.
- */
 app.get("/", requirePermissionOrSalesDirector("roles.read"), async (c) => {
   const db = getDb(c.env);
   const rows = await db
@@ -49,7 +32,6 @@ app.get("/", requirePermissionOrSalesDirector("roles.read"), async (c) => {
       is_system: roles.is_system,
       scope_to_pic: roles.scope_to_pic,
       created_at: roles.created_at,
-      // Subquery for the member count keeps this single-round-trip.
       member_count: sql<number>`(SELECT COUNT(*) FROM ${users} WHERE ${users.role_id} = ${roles.id})`,
     })
     .from(roles)
@@ -61,10 +43,6 @@ app.get("/", requirePermissionOrSalesDirector("roles.read"), async (c) => {
       name: r.name,
       description: r.description,
       permissions: parsePermissions(r.permissions),
-      // The other half of the same answer. parsePermissions DISCARDS any stored
-      // key this build does not declare, so a role row can carry keys that
-      // decide nothing and the list looked identical to a clean one. Surfaced
-      // here because Team > Roles is the one place a human looks at a role.
       unknown_permissions: droppedPermissions(r.permissions),
       is_system: !!r.is_system,
       scope_to_pic: !!r.scope_to_pic,
@@ -74,11 +52,6 @@ app.get("/", requirePermissionOrSalesDirector("roles.read"), async (c) => {
   });
 });
 
-/**
- * POST /api/roles
- * Body: { name, description?, permissions: string[] }
- * Create a custom role.
- */
 app.post("/", requirePermission("roles.manage"), async (c) => {
   const body = await c.req.json<{
     name: string;
@@ -131,11 +104,6 @@ app.post("/", requirePermission("roles.manage"), async (c) => {
   });
 });
 
-/**
- * PATCH /api/roles/:id
- * Body: { name?, description?, permissions? }
- * Update a custom role. System roles' permissions are locked.
- */
 app.patch("/:id", requirePermission("roles.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -155,7 +123,6 @@ app.patch("/:id", requirePermission("roles.manage"), async (c) => {
     scope_to_pic?: boolean;
   }>();
 
-  // System roles: only description editable, never name or permissions.
   if (row[0].is_system) {
     if (body.name !== undefined || body.permissions !== undefined) {
       return c.json(
@@ -191,10 +158,6 @@ app.patch("/:id", requirePermission("roles.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-/**
- * DELETE /api/roles/:id
- * Delete a custom role. Refuses if any user still holds it.
- */
 app.delete("/:id", requirePermission("roles.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -232,19 +195,6 @@ app.delete("/:id", requirePermission("roles.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-/**
- * GET /api/roles/page-access
- * The page-visibility half of a role (RBAC rebuild, Option A — PR2). Returns the
- * page catalogue (the backend is the source; the matrix UI must not keep a second
- * copy of PAGES) and, per role, the RAW stored `role_page_access` levels. No
- * cascade is applied here — the matrix resolves parent→child for display exactly
- * as login does (resolvePositionAccessFromRows), so the two never drift.
- *
- * RETIRED keys are never returned (there is no cell to render for them); a stored
- * row on a retired key stays inert and simply isn't listed. A role with no rows
- * comes back with an empty `levels` map + `has_rows: false` — login still falls
- * back to the legacy resolution for it (memberPageAccess), which the UI flags.
- */
 app.get("/page-access", requirePermission("roles.read"), async (c) => {
   const db = getDb(c.env);
   const rows = await db
@@ -257,8 +207,6 @@ app.get("/page-access", requirePermission("roles.read"), async (c) => {
 
   const byRole = new Map<number, Record<string, string>>();
   for (const r of rows) {
-    // Skip rows on keys that have left the catalogue — they grant nothing and
-    // have no cell. Keeps the matrix a faithful view of what is settable today.
     if (!isValidPageKey(r.page_key) || isRetiredPageKey(r.page_key)) continue;
     const m = byRole.get(r.role_id) ?? {};
     m[r.page_key] = r.level;
@@ -272,8 +220,6 @@ app.get("/page-access", requirePermission("roles.read"), async (c) => {
       key: p.key,
       label: p.label,
       parent: p.parent ?? null,
-      // Dormant = settable but read by nothing (DORMANT_PAGE_KEYS). The matrix
-      // greys these and keeps the row, per the owner's standing ruling.
       dormant: isDormantPageKey(p.key),
     })),
     roles: roleRows.map((r) => ({
@@ -284,28 +230,6 @@ app.get("/page-access", requirePermission("roles.read"), async (c) => {
   });
 });
 
-/**
- * PATCH /api/roles/:id/page-access
- * Body: { entries: { pageKey: string; level: string }[] }  — REPLACE-SET.
- * Sets the role's entire page-access configuration at once: the given set BECOMES
- * the role's rows (every other row for the role is removed). The matrix always
- * sends the full configuration, so the role stays the single source of truth
- * (memberPageAccess falls back to the legacy login resolution only for a role
- * with ZERO rows — hence an empty body is refused rather than silently reverting
- * the role to that fallback).
- *
- * Protection mirrors the permissions PATCH above: system roles (and the `*`
- * wildcard they carry) are locked. Validation mirrors the old positions/roles
- * page-access writes: every key through isValidPageKey (unknown / retired → 400),
- * every level through isValidPositionLevel (none/view/edit/full — the 4-level
- * matrix vocabulary; legacy `partial` is rejected on write, the UI having mapped
- * it to `view` on load). Approval / money / fine-grained SCM keys are NOT touched
- * here — those stay in the role's permission array (the Roles tab) with their
- * explicit-grant semantics intact.
- *
- * On success every member of the role is session-busted so the change lands on
- * their next request; the authz fingerprint's page arm covers the eventual case.
- */
 app.patch("/:id/page-access", requirePermission("roles.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -333,7 +257,6 @@ app.patch("/:id/page-access", requirePermission("roles.manage"), async (c) => {
     );
   }
 
-  // Validate + dedupe (last write wins on a repeated key, so the PK never clashes).
   const wanted = new Map<string, string>();
   for (const e of entries) {
     const pageKey = e?.pageKey;
@@ -361,8 +284,6 @@ app.patch("/:id/page-access", requirePermission("roles.manage"), async (c) => {
     );
   });
 
-  // Instant effect: bust every live session of every member of this role. The
-  // fingerprint's page arm already busts eventually; this removes the TTL wait.
   const members = await db
     .select({ id: users.id })
     .from(users)

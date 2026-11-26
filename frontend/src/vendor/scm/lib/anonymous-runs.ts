@@ -30,8 +30,6 @@ export type AnonymousRunStop = {
   earliestTime: string | null;
   latestTime: string | null;
   windowViolated: boolean;
-  /* Route metrics for Apply (persisted onto the stop) — facts about the
-     sequence, not about any vehicle's identity. Null on an unrouted run. */
   etaOffsetS: number | null;
   legDistanceM: number | null;
   legDurationS: number | null;
@@ -40,9 +38,7 @@ export type AnonymousRunStop = {
 export type AnonymousRun = {
   key: string;
   date: string;
-  /** The packer's zone group — 'KLANG_VALLEY' (mixed) or a dedicated far zone. */
   group: string;
-  /** 1-based run number WITHIN its date — the run's whole public identity. */
   runNo: number;
   stops: AnonymousRunStop[];
   sets: number;
@@ -53,8 +49,6 @@ export type AnonymousRun = {
   totalDistanceMetres: number | null;
   routeReason: string | null;
   ungeocoded: string[];
-  /** Opaque vehicle-slot uuid — Apply plumbing ONLY (a stop needs a trip and a
-   *  trip keys on (lorry, date)). Never rendered; named by Last Mile. */
   vehicleSlotId: string;
 };
 

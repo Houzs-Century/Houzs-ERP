@@ -36,7 +36,6 @@ const PERM = 'scm.payment_voucher.post';
 const NO_PERM = { error: "You don't have permission to arrange the financial statements." };
 const failed = (e: unknown): string => String((e as { message?: string }).message ?? e);
 const who = (c: Ctx): string => String((c.get('houzsUser') as { name?: string } | undefined)?.name ?? '');
-/** A bill still owing: posted or part paid. */
 const OPEN = new Set(['POSTED', 'PARTIALLY_PAID']);
 
 /** A choice or the rule's answer as the page shows it. */
@@ -45,12 +44,9 @@ export type CashFlowCategory = { id: string; label: string; path: string };
 export type OpeningSupplierRow = {
   id: string; code: string; name: string;
   bills: number; openBills: number; owingSen: number; paidSen: number;
-  /** How many of its bills carry a choice of their own. */
   billsSet: number;
-  /** How many of its bills read by what they bought (AutoCount's lines). */
   billsByGoods: number;
   set: PlaceOut | null;
-  /** What its own live bills in the ERP give; null = the creditor control. */
   auto: PlaceOut | null;
 };
 export type OpeningBillsPayload = { suppliers: OpeningSupplierRow[]; accounts: PlaceAccount[]; categories: CashFlowCategory[] };
@@ -84,7 +80,6 @@ export const billText = (notes: string | null): string => String(notes ?? '').re
 async function loadTree(c: Ctx, sb: Sb): Promise<{ ok: true; items: LayoutItem[] } | { ok: false; reason: string }> {
   const laid = await resolveLayout(sb, allowedIds(c), 'rp');
   if (!laid.ok) return laid;
-  /* A resolved Cash Flow layout always carries its one block. */
   return { ok: true, items: laid.layout.blocks.accounts };
 }
 
@@ -108,7 +103,6 @@ const outOf = (p: StoredPlace | undefined, names: Map<string, string>, labels: M
   return { kind: 'category', id, label: labels.get(id) ?? `${id} (not on the Cash Flow)` };
 };
 
-/* ── GET …/opening-bills ── */
 export const openingBillsGet = async (c: Ctx): Promise<Response> => {
   if (!hasHouzsPerm(c, PERM)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -167,7 +161,6 @@ export const openingBillsGet = async (c: Ctx): Promise<Response> => {
   return c.json(payload);
 };
 
-/* ── GET …/opening-bills/:supplierId ── */
 export const openingBillsOfSupplier = async (c: Ctx): Promise<Response> => {
   if (!hasHouzsPerm(c, PERM)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -218,7 +211,6 @@ export function readPlaceBody(raw: unknown): { ok: true; supplierId: string | nu
   return { ok: true, supplierId, billId, place: account === null && category === null ? null : { account, category } };
 }
 
-/* ── PUT …/opening-bills/place ── */
 export const openingBillPlacePut = async (c: Ctx): Promise<Response> => {
   if (!hasHouzsPerm(c, PERM)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -229,7 +221,6 @@ export const openingBillPlacePut = async (c: Ctx): Promise<Response> => {
   const body = readPlaceBody(raw);
   if (!body.ok) return c.json({ error: 'bad_place', message: body.message }, 400);
 
-  /* The supplier or bill must be this company's, and an opening one. */
   const target = body.supplierId
     ? await sb.from('ap_invoices').select('id').eq('company_id', co.companyId).eq('supplier_id', body.supplierId).eq('opening', true).limit(1)
     : await sb.from('ap_invoices').select('id').eq('company_id', co.companyId).eq('id', body.billId).eq('opening', true).limit(1);

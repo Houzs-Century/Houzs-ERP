@@ -110,7 +110,7 @@ describe('DailyBankCashbook — money received', () => {
     const grid = screen.getByRole('table', { name: 'Income by bank and method' });
     fireEvent.change(within(grid).getByLabelText('310-0010 GHL'), { target: { value: '9,031.50' } });
     fireEvent.change(within(grid).getByLabelText('310-0010 Online'), { target: { value: '' } });
-    fireEvent.change(within(grid).getByLabelText('310-0010 Cash'), { target: { value: '0' } });   // was empty, still nothing
+    fireEvent.change(within(grid).getByLabelText('310-0010 Cash'), { target: { value: '0' } });
     expect(grid.querySelector('tbody tr td:last-child')!.textContent).toBe('9,031.50');
     fireEvent.click(screen.getByRole('button', { name: 'Save 2 changes' }));
     expect(saveDay).toHaveBeenCalledWith({ date: DAY, cells: [

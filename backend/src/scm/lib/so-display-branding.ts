@@ -1,41 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-display-branding — derive the DISPLAY branding for a set of Sales Orders
-// from their item lines + the product catalog.
-//
-// The SO header's `branding` column is NULL for essentially every order: the
-// create form has never exposed a branding field (see derive-line-branding.ts).
-// What the SO list actually shows is `first_item_branding`, computed inline in
-// the /mfg-sales-orders LIST handler (PR #266, catalog-resolved + mains-first):
-//
-//   1. rep line  = the SO's first non-cancelled line whose CATALOG-resolved
-//                  category is a MAIN (SOFA / BEDFRAME / MATTRESS), falling
-//                  back to the earliest line when there is none;
-//   2. branding  = that line's own `branding` text;
-//   3. MATTRESS fallback — a blank mattress line borrows mfg_products.branding;
-//   4. bedframe-only SO (>=1 BEDFRAME line, no MATTRESS/SOFA) -> "BEDFRAME"
-//      (Commander 2026-07-16), only when no explicit brand text is present.
-//
-// This module is that same rule as a reusable helper, so OTHER readers of SO
-// branding (the Fair/Sales Report was the first: its Branding column read the
-// raw header and rendered a dash on every row) resolve the identical value the
-// SO list shows. The list handler still carries its inline copy interwoven
-// with its readiness aggregation — consolidating it onto this helper is a
-// follow-up; if you change the rule, change BOTH until then.
-//
-// NOTE (2026-08-17): the two exports here are DIFFERENT rules and always have
-// been, which is worth knowing before you assume a fix to one touched the
-// other.
-//   · deriveBranding (re-exported from ../shared/so-branding-label) maps a
-//     CATEGORY to a display label — "2990s Sofa" / "ZANOTTI" per company,
-//     "Bedframe", "Service".
-//   · deriveDisplayBrandingByDoc, below, returns the line's RAW branding text
-//     and the literal "BEDFRAME" (upper case, not "Bedframe") for a
-//     bedframe-only order, and omits a doc entirely when nothing resolves.
-// So the Sales Report and the SO detail can show a different string than the
-// SO list for the same order, and a doc missing from the map still renders a
-// dash upstream. That divergence is NOT fixed here — see the PR's deferred
-// list. Only the label rule was made total.
-// ----------------------------------------------------------------------------
 
 import { chunkIn } from './paginate-all';
 import { scopeToCompany } from './companyScope';
@@ -117,8 +79,6 @@ export async function deriveDisplayBrandingRowByDoc(
   const uniq = Array.from(new Set(docNos.filter(Boolean)));
   if (uniq.length === 0) return out;
 
-  /* Lines, ordered so the FIRST row seen per doc is its earliest line —
-     the same (doc_no, line_no, created_at) order the list handler uses. */
   const { data: lineData, error } = await chunkIn<LineRow>(uniq, (batch, from, to) =>
     scopeToCompany(
       sb.from('mfg_sales_order_items')
@@ -131,11 +91,10 @@ export async function deriveDisplayBrandingRowByDoc(
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: true })
       .range(from, to));
-  if (error) return out; // best-effort: an unreadable line set derives nothing
+  if (error) return out;
   const lines = (lineData ?? []) as LineRow[];
   if (lines.length === 0) return out;
 
-  /* Catalog category + branding for every code in view (chunked .in). */
   const codes = Array.from(new Set(lines.map((l) => l.item_code).filter((v): v is string => !!v)));
   const productCategory = new Map<string, string>();
   const productBranding = new Map<string, string>();
@@ -157,8 +116,6 @@ export async function deriveDisplayBrandingRowByDoc(
   const resolveLineCat = (l: LineRow): string =>
     (l.item_code ? productCategory.get(l.item_code) : undefined) ?? normCategory(l.item_group);
 
-  /* One ordered pass: earliest line, first MAIN line, and the resolved
-     category set per doc (for the bedframe-only rule). */
   const firstLine = new Map<string, LineRow>();
   const repLine = new Map<string, LineRow>();
   const catsByDoc = new Map<string, Set<string>>();
@@ -175,12 +132,6 @@ export async function deriveDisplayBrandingRowByDoc(
     const rep = repLine.get(docNo) ?? firstLine.get(docNo);
     if (!rep) continue;
     let brand = rep.branding;
-    /* SKU-FIRST for a mattress, in lockstep with the list handler (owner
-       2026-08-18: «mattress follow SKU branding»). It used to borrow the
-       catalog only when the line was blank, which left the loose "2990" /
-       "2990s" line spellings in place here while the list resolved them — the
-       exact kind of divergence between these two copies this file's header
-       warns about. */
     if (resolveLineCat(rep) === 'MATTRESS' && rep.item_code) {
       const skuBrand = productBranding.get(rep.item_code);
       if (!isBlank(skuBrand)) brand = skuBrand!;

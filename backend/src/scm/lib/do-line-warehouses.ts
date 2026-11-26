@@ -4,40 +4,11 @@
    point of that signature; see inventory-movements.ts defaultWarehouseId. */
 import { defaultWarehouseId } from './inventory-movements';
 
-/* Moved out of routes/delivery-orders-mfg.ts on 2026-09-07, when the
-   migrated-document guard pushed that file past its size ceiling. A MOVE, not
-   a rewrite — the body is unchanged and all ten call sites still pass through
-   here, which is the property that matters: the OUT, the resync, the restamp
-   and the pre-flight availability check must all resolve a line's warehouse
-   the SAME way, or the dialog and the movement measure two different
-   buildings (2026-08-03, Nico / 2990-SO-2606-034). */
-/* ── resolveDoLineWarehouses (Agent D 2026-05-31, TASK #32) ───────────────────
-   PER-WAREHOUSE CORRECTNESS for the OUTBOUND side. A DO line MUST deduct from
-   the warehouse of the Sales Order LINE it delivers (mfg_sales_order_items.
-   warehouse_id, migration 0118) — never a single DO-header default. A KL SO
-   line must ship from KL stock even if the DO header (or the default) points at
-   PG; stock never crosses warehouses (CLAUDE.md locked rule).
-
-   Resolution order per DO line:
-     1. the linked SO line's warehouse_id (so_item_id → mfg_sales_order_items)
-     2. the DO header's warehouse_id (ad-hoc lines with no so_item_id)
-     3. the DO's OWN company's default warehouse (last-resort fallback)
-
-   Returns a map of delivery_order_items.id → warehouse_id (or null when even
-   the fallbacks are absent — the caller skips those lines so a wrong warehouse
-   is never guessed).
-
-   The `id` field is only a correlation key, so this also serves lines that do
-   not exist yet: the pre-flight stock check passes synthetic ids and the request
-   body's soItemId, and gets back exactly the warehouses the OUT will use. */
 export async function resolveDoLineWarehouses(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- unchanged from delivery-orders-mfg.ts: the PostgREST-shaped client has no honest type until schema.pg.ts covers the SCM tables.
   sb: any,
   items: Array<{ id: string; so_item_id?: string | null }>,
   headerWarehouseId: string | null,
-  /* The DO's company (2026-08-03) — step 3 is per company. It used to be a
-     company-blind draw across every company's is_default warehouses, decided by
-     alphabetical `code` order. */
   companyId: number | undefined,
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
@@ -48,20 +19,6 @@ export async function resolveDoLineWarehouses(
   if (soItemIds.length > 0) {
     const { data: soRows, error } = await sb.from('mfg_sales_order_items')
       .select('id, warehouse_id').in('id', soItemIds);
-    /* The error was UNBOUND until this function moved here, and the ratchet is
-       right that it matters: supabase-js does not throw, so a five-second blip
-       reads as "no SO line has a warehouse" and every line falls through to
-       step 2 - the DO header - which is the single-warehouse default that
-       migration 0118 exists to stop.
-
-       BEHAVIOUR IS UNCHANGED, DELIBERATELY. The fallback still happens; it is
-       now a NAMED decision with a line in the log rather than an accident, and
-       the ten call sites across the ship / resync / restamp / pre-flight paths
-       keep resolving warehouses identically. Resolving a read FAILURE to null
-       instead - callers skip rather than guess - is the stronger fix and it
-       changes what happens to a live shipment during a blip. That belongs in
-       its own PR with its own evidence, not as a rider on a stock guard
-       shipped the night before go-live. */
     if (error) {
       // eslint-disable-next-line no-console
       console.error('[do-warehouse] SO-line warehouse read failed; every line falls back to the DO header:', error.message);
@@ -78,18 +35,6 @@ export async function resolveDoLineWarehouses(
   return out;
 }
 
-/* The ONE warehouse a delivery order ships from, stored on the DO header
-   (delivery_orders.warehouse_id) so the DO page and print can name it. Neither
-   create path stored one (sister fix Conts-ERP #746), so the page showed the SO's
-   sales-location text as "Warehouse" and a free line added later drew from the
-   company default instead of the DO's building.
-
-   The operator's explicit choice wins. Otherwise: the warehouse every line
-   resolves to, when they all resolve to the SAME one. A DO whose lines leave
-   from several warehouses, or one whose line resolves to none, stores null and
-   stays per line. Storing it never moves a line: resolveDoLineWarehouses uses
-   the header only for lines without an SO-line warehouse, and when every line
-   already resolved to this one, those lines resolved to it too. PURE. */
 export function doShipFromWarehouseId(
   headerWarehouseId: string | null,
   lineWarehouses: ReadonlyMap<string, string | null>,

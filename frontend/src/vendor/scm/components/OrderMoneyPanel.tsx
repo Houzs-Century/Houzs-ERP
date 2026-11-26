@@ -69,8 +69,6 @@ export function refundRequestText(r: MoneyRefundRequest): string {
   return `${r.requestNo} · ${fmtRm(r.amountSen)} (${answer})`;
 }
 
-/** The customer's bank — the bank, the account number, the name on the
-    account; `of` names the order when several sit side by side. */
 function BankFields({ value, onChange, of }: { value: RefundAskBank; onChange: (v: RefundAskBank) => void; of?: string }) {
   const at = of ? ` for ${of}` : '';
   return (
@@ -191,8 +189,6 @@ export function ConvertPicker({ rows: given, copyFrom, ticked: tickedAtFirst, on
   );
 }
 
-/** The panel's convert: this order first, ticked, for what may move; the
-    customer's other orders beneath, unticked. */
 function ConvertForm({ money, others, onDone, onOpen }: { money: OrderMoney; others: ConvertSource[]; onDone: () => void; onOpen?: OpenNewOrder }) {
   const rows = useMemo<ConvertRow[]>(() => [
     { docNo: money.docNo, customer: money.customer.name, status: money.status, cancelledOn: null, remainingSen: money.remainingSen, bookedSen: money.bookedSen, movableSen: money.movableSen, keepSen: money.keepSen, self: true },

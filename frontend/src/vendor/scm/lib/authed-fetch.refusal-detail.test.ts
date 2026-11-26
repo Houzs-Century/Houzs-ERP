@@ -1,31 +1,9 @@
-// ----------------------------------------------------------------------------
-// The refusal that said nothing.
-//
-// A salesperson could not add a BEDFRAME line to an existing Sales Order and all
-// he saw was "Save failed. Could not save <SKU>: Some of the details weren't
-// accepted. Please check what you entered and try again."
-//
-// The server had ALREADY SENT the answer. `variant_not_allowed` carries `field`,
-// `value` and `allowed` (backend allowed-options-check.ts:81-86) and the client
-// threw all three away: the code is not in ERROR_CODE_MESSAGES, and the body has
-// neither `reason` nor `message`, so it fell to the 400/422 catch-all.
-//
-// These tests are written against `humanApiError` rather than the renderer
-// underneath it, because `humanApiError` is the ONLY place the detail can be
-// composed and still reach the screen: so-add-lines.ts `messageOf` keeps only
-// `e.message`, and `lineWriteErrorMessage` mints a bare Error with no `.body`,
-// so every add / update / delete failure arrives at SalesOrderDetail with the
-// body already destroyed. A renderer at the page level cannot work.
-// ----------------------------------------------------------------------------
 import { describe, expect, test } from "vitest";
 import { humanApiError } from "./authed-fetch";
 
 const GENERIC_400 =
   "Some of the details weren't accepted. Please check what you entered and try again.";
 
-/** The live prod pool for the 10 restricted BEDFRAME Models, verbatim —
- *  even values ASCII (U+0022), odd values curly (U+201C / U+201D).
- *  Measured on prod 2026-08-17, probe run 32048732641. */
 const PROD_TOTAL_HEIGHTS = [
   '10"', '12"', '14"', '16"', '17“', '18"', '19“', '20"',
   '21”', '22"', '23“', '24"', '25”', '26"', '27“', '28"',
@@ -61,8 +39,6 @@ describe("variant_not_allowed — the derived field is the whole point", () => {
 
   test("it names the three boxes he CAN change, because Total Height has no input", () => {
     const msg = humanApiError(400, refusal);
-    // The form has exactly these three controls behind the computed total
-    // (SoLineCard.tsx:923-943). Naming only "Total Height" names nothing.
     expect(msg).toMatch(/no Total Height/i);
     expect(msg).toMatch(/change Divan Height, Leg Height or Gap/i);
     expect(msg).toMatch(/add up to/i);
@@ -76,10 +52,7 @@ describe("variant_not_allowed — the derived field is the whole point", () => {
 
   test("LOOK-ALIKE GLYPHS: the printed list never shows two spellings of one number", () => {
     const msg = humanApiError(400, refusal);
-    // `17“` (U+201C) and `17"` must not both appear — a message reading
-    // `Total Height 17" is not allowed. Allowed: 17“, 19“` reads as gibberish.
     expect(msg).not.toMatch(/[‘’‚‛“”„‟′″]/);
-    // …and folding must not duplicate: 16 pool values, 16 rendered numbers.
     const rendered = msg.slice(msg.indexOf("add up to"));
     for (const n of [17, 19, 21, 23, 25, 27]) {
       expect(rendered).toContain(`${n}"`);
@@ -159,8 +132,6 @@ describe("the generic sentence still covers genuinely unknown shapes", () => {
   });
 
   test("a body carrying `allowed` but no field/value pair stays generic", () => {
-    // invalid_variant_key is {error, key, allowed} where `allowed` is a list of
-    // WIRE KEYS. Rendering it would print camelCase internals to a salesperson.
     expect(humanApiError(400, body({
       error: "invalid_variant_key",
       key: "divanHeightt",

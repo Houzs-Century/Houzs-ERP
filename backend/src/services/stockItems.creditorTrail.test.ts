@@ -106,7 +106,7 @@ describe('stale read', () => {
   beforeEach(() => { order.updChanges = 1; });
   test('the UPDATE refuses a manual pick and a lost race logs nothing', async () => {
     order.result = { code: '400-H003', source: 'po' };
-    order.updChanges = 0; // someone hand-picked between our read and our write
+    order.updChanges = 0;
     const inserted: Array<unknown[]> = [];
     const sqls: string[] = [];
     const res = await resolveCreditorForCase(fakeEnv(inserted, sqls), 5, 'MAT-1');

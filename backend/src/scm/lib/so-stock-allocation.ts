@@ -126,25 +126,7 @@ export type AllocationResult = {
   ordersAdvanced: number;
   ordersRegressed: number;
   reason?: string;
-  /* TRUE when this call did NOT finish the projection and left a durable retry
-     row behind for the five-minute cron. FALSE when it did not finish and could
-     not even record that — the one state a human has to hear about, which is
-     why it is logged at error level rather than only returned. `undefined` on
-     the happy path.
-
-     This field exists because `ok` answers a DIFFERENT question (CLAUDE.md,
-     "the check that answers a different question"): a lock-skip returned
-     `{ ok: true, reason: 'another_recompute_in_progress' }` and thirty-odd
-     best-effort callers wrote `await recomputeSoStockAllocation(sb)` and
-     discarded it, so "true" meant "nothing happened and nobody will retry".
-     See the SKIP LEAVES A TRACE note at the enqueue below. */
   queuedForRetry?: boolean;
-  /* Doc numbers whose HEADER status could not be advanced/regressed this pass
-     because a human editor holds the SO's edit lease (or the header moved under
-     us). See the skip-and-continue note at the header-transition block: these
-     are NOT failures. The line-level projection for these orders is already
-     committed; only the derived header status is pending. The caller re-queues
-     the job so a later sweep finishes them. */
   deferredDocNos?: string[];
   /* Doc numbers holding at least one line the non-selling-warehouse rule kept
      PENDING (owner ruling 2026-09-08). Present only when non-empty, so a caller
@@ -155,15 +137,6 @@ export type AllocationResult = {
   nonSellingWarehouseDocNos?: string[];
 };
 
-/**
- * Resolve READY/PENDING for every active SO line based on live inventory.
- * Idempotent — running twice on the same DB state is a no-op.
- *
- * `scopeToDocNo` (optional): when provided, only touches lines on that one SO
- * + skips the global FIFO walk (used by POST /mfg-sales-orders to avoid the
- * full sweep when creating a single order — but still respects older orders'
- * claims because we deduct ALL outstanding qty from the bucket first).
- */
 const ALLOCATION_LOCK_ROW = 'GLOBAL';
 const ALLOCATION_LOCK_MS = 15 * 60_000;
 
@@ -213,10 +186,6 @@ export async function recomputeSoStockAllocation(
     );
     return { ...result, queuedForRetry: true };
   } catch (error) {
-    /* The projection is stale AND nothing will retry it. That is the state this
-       whole wrapper exists to prevent, so it can never be silent — and it is
-       still not thrown, because rolling back a posted GRN over a diagnostic row
-       would be worse than the stale line. */
     // eslint-disable-next-line no-console
     console.error('[so-allocation] recompute did not finish and the retry row could not be written:', error);
     return { ...result, queuedForRetry: false };
@@ -228,10 +197,6 @@ async function runSoStockAllocation(
   sb: any,
   scopeToDocNo?: string,
 ): Promise<AllocationResult> {
-  /* Edge #F — single-flight guard. PostgREST does not retain one PostgreSQL
-     session across the recompute's reads/writes, so a session advisory lock is
-     not a lock here. Claim the durable singleton lease row instead. Missing
-     migration or a lock read failure fails closed before projection writes. */
   let lockHeld = false;
   const lockToken = crypto.randomUUID();
   try {
@@ -261,35 +226,9 @@ async function runSoStockAllocation(
     };
   }
   try {
-    /* 1. All non-cancelled, non-completed SOs. Allocation priority:
-            a) EFFECTIVE delivery date ASC NULLS LAST — earlier delivery wins
-            b) created_at ASC  — tiebreaker so order is deterministic
-
-       EFFECTIVE, not original. This ranked on `customer_delivery_date` alone
-       until 2026-08-18, so a customer who rescheduled moved on the delivery
-       board (which has always read `amended_delivery_date ?? customer_delivery_
-       date`) and did NOT move here, in the queue that decides who gets the
-       scarce stock. Owner: there is no production in this business, only the
-       delivery date, and everything plans on the amended one. ONE reader now —
-       shared/effective-delivery.ts — shared with mrp.ts so the two engines
-       cannot drift apart again.
-
-       The SQL ORDER BY below is deliberately UNCHANGED and is not the priority.
-       It exists so paginateAll's `.range()` windows are coherent (they are only
-       coherent under a stable order); the priority order is the JS sort in
-       section 5, over the fully-materialised set. PostgREST cannot ORDER BY a
-       COALESCE of two columns, and inventing a sort expression here would buy
-       nothing the JS sort does not already decide. */
-    // Page through — PostgREST's default 1000-row cap would truncate the active
-    // SO set, silently DROPPING orders from allocation (their lines never flip).
     const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; on_hold: boolean | null; created_at: string; customer_delivery_date: string | null; amended_delivery_date: string | null; company_id: number | null; processing_date: string | null }>((from, to) => sb
       .from('mfg_sales_orders')
       .select(`doc_no, status, created_at, customer_delivery_date, amended_delivery_date, company_id, on_hold, ${SO_PROCESSING_DATE_COLUMN}`)
-      /* The live-SO lens. ONE declaration, in shared/so-terminal-states.ts —
-         eight audit scripts and mrp.ts used to re-type this same six-status
-         set under four different names, each promising in a comment to track
-         this line. SO_TERMINAL_STATES_PGREST renders byte-identically to the
-         literal it replaced. */
       .not('status', 'in', SO_TERMINAL_STATES_PGREST)
       .order('customer_delivery_date',  { ascending: true, nullsFirst: false })
       .order('created_at',              { ascending: true })
@@ -364,31 +303,12 @@ async function runSoStockAllocation(
        replicates whatever 2990 sends, including a stamp, through applyMap. Both
        end for good with the column; see "RETIRING THE SECOND STORAGE" in
        shared/so-processing-date.ts. */
-    /* A HELD order is gated the same way (sister review P3 follow-up): the hold
-       never writes status, so the terminal-state lens above cannot see it, and
-       MRP already drops held demand with the same `isDocumentHeld` reader. Its
-       stock goes back to the queue on the next sweep; releasing the hold
-       enqueues a sweep that gives it back if it is still there. */
     const allocGated = new Set(
       orders.filter((o) => !o[SO_PROCESSING_DATE_COLUMN] || isDocumentHeld(o)).map((o) => o.doc_no),
     );
-    /* Which company each document belongs to — the pooled walk needs it to
-       enforce HARD_BOUND_COMPANY_ID's exclusivity (see the constant's note). */
     const companyByDoc = new Map(orders.map((o) => [o.doc_no, Number(o.company_id ?? 0)]));
 
-    // 2. Non-cancelled lines on those SOs. Pull qty + variant fields so we
-    //    can compute variant_key and the bucket.
     const docNos = orders.map((o) => o.doc_no);
-    // chunkIn — docNos can exceed 1000 (un-truncated SO set) and lines across
-    // them can exceed the 1000-row cap; batch the .in() and page each batch so
-    // no SO line is dropped from the allocation walk.
-    /* allocated_batch_no rides along in THIS read. It used to be a SECOND,
-       separately chunked pass over the sofa line ids (6 more serial round trips
-       on production, measured 2026-08-16) for a column every one of these rows
-       already carries. Forward-compat (migration 0121) is preserved, not
-       dropped: if the column is not in the schema the read is retried without
-       it and every line's batch reads as unset — which is exactly what the
-       separate pass did on the same error. */
     const readLines = (cols: string) => chunkIn(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_items')
       .select(cols)
@@ -410,28 +330,6 @@ async function runSoStockAllocation(
     }>;
     if (lines.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
 
-    /* Stage 3 (Commander 2026-05-31) — SOFA is colour-matched and ships as a
-       whole SET from ONE batch (= source PO / one dye lot). Sofa lines are NOT
-       allocated per-line off the qty bucket like everything else; instead the
-       SO's whole sofa set is matched atomically to ONE batch whose component
-       multiset EXACTLY equals the set's need. Identify sofa lines via the
-       product catalog's category so the per-line walk below can skip them.
-       BEDFRAME is by-SKU (Commander 2026-05-31) — it stays on plain per-line
-       FIFO and is NOT batched. */
-    // Page through — mfg_products is >1000 rows (1141 live), so the default cap
-    // would DROP catalog rows → SOFA/SERVICE codes past row 1000 misclassified.
-    /* DELIBERATELY NOT company-scoped, unlike every other by-code product read
-       (2026-08-01 audit). This job recomputes allocation for EVERY SO across
-       both companies — it has no single active company, and its 34 callers
-       include crons and post-write hooks with no request context. Threading a
-       company here would mean either 34 signature changes or an arbitrary
-       choice of "which company" for a cross-company job.
-       Instead the read is made HONEST: `code` is not unique, so a code present
-       in both companies yields two rows, and the sets below take their union.
-       That is correct while the two rows agree on category (true for all 17
-       colliding codes on production: CODY/FENRIR/JAGER bedframes + 2 mattress
-       codes) and WRONG the moment they don't — so a disagreement is logged
-       loudly rather than silently deciding whether a line is a batched sofa. */
     const { data: catRows, error: categoryError } = await paginateAll<{ code: string; category: string | null }>((from, to) =>
       sb.from('mfg_products').select('code, category').order('code').range(from, to));
     if (categoryError) throw new Error(`allocation product load failed: ${categoryError.message}`);
@@ -453,9 +351,6 @@ async function runSoStockAllocation(
     const nonSellingWarehouses = await loadNonSellingWarehouses(sb);
     const nonSellingIds: ReadonlySet<string> = new Set(nonSellingWarehouses.keys());
     const batchedCodes = new Set<string>();
-    /* P1 SO-SKU spec — SERVICE SKUs (delivery fee / dispose / lift) are not
-       goods. Collect their codes here (same catalog pull) so the needs walk
-       below can skip them by the authoritative category signal too. */
     const serviceCodes = new Set<string>();
     const catByCode = new Map<string, string>();
     const conflicting: string[] = [];
@@ -474,29 +369,9 @@ async function runSoStockAllocation(
     const isBatchedLine = (item_code: string, item_group: string | null) =>
       batchedCodes.has(item_code) || (item_group ?? '').toUpperCase().includes('SOFA');
 
-    /* Each sofa line's currently-locked batch, so we can tell what changed. It
-       came in on the step-2 read above; only sofa lines are ever looked up. */
     const curBatchByLine = new Map<string, string | null>();
     for (const l of lines) curBatchByLine.set(l.id, l.allocated_batch_no ?? null);
 
-    // 3. Compute deliverable_remaining per line — = qty − Σ delivered (via
-    //    non-cancelled DOs) + Σ returned (via non-cancelled DRs). Same formula
-    //    as soDeliverableRemaining but inlined since we already have line ids.
-    /* INVERTED READ (2026-08-16). This used to chunk EVERY live SO-line id 200
-       at a time into `.in('so_item_id', ...)`: on production that was 71 serial
-       requests to retrieve 83 rows, because the cost is set by the ID COUNT
-       (14,169 live lines) and not by the rows that exist. Asked the other way
-       round — FROM the SO lines, pulling their DO lines through an `!inner`
-       embed — PostgREST returns only the lines that HAVE a DO line, so the same
-       83 rows arrive in one page.
-       Nothing new is invented here: the live-SO lens is the same one-level
-       embedded filter routes/mrp.ts already runs in production, and `!inner` is
-       what narrows the PARENT rows (reports.ts relies on that mechanism for its
-       listings). The FK PostgREST resolves the embed through —
-       delivery_order_items_so_item_id_mfg_sales_order_items_id_fk — was
-       confirmed present, exactly once, by probe-so-sweep-inversion.
-       The predicate is the same one that built `lines` above, so the row set is
-       identical by construction; the probe also proves it against prod. */
     const { data: doJoinRows, error: doLineError } = await paginateAll<{
       id: string;
       do_items: Array<{ id: string; qty: number; delivery_order_id: string }> | null;
@@ -505,8 +380,6 @@ async function runSoStockAllocation(
       .select('id, so:mfg_sales_orders!inner(status), do_items:delivery_order_items!inner(id, qty, delivery_order_id)')
       .eq('cancelled', false)
       .not('so.status', 'in', SO_TERMINAL_STATES_PGREST)
-      /* Deterministic paging — paginateAll walks .range() windows, and an
-         unordered read can repeat or skip a row between pages. */
       .order('id')
       .range(from, to));
     if (doLineError) throw new Error(`allocation DO-line load failed: ${doLineError.message}`);
@@ -524,16 +397,6 @@ async function runSoStockAllocation(
         sb.from('delivery_orders').select('id, status').in('id', batch).range(from, to));
       if (doError) throw new Error(`allocation DO load failed: ${doError.message}`);
       for (const d of (dos ?? []) as Array<{ id: string; status: string | null }>) {
-        /* LEAK GUARD (PRE-SHIP) — audit D5, 2026-08-01: a DO that has not
-           shipped must not count as delivered here. This inline sum used to
-           exclude only CANCELLED while its source of truth
-           (soDeliverableRemaining, delivery-orders-mfg.ts) and the DO->SO
-           delivery sync both excluded CANCELLED + DRAFT — so a draft DO
-           quietly shrank a line's remaining, starved it of allocation, and
-           MRP (which uses soDeliverableRemaining) disagreed with this job
-           about the same line. "One rule everywhere" was true from that day
-           and the rule ITSELF was wrong: LOADED is pre-ship too. It is one
-           PREDICATE everywhere now (2026-08-20), not one hand-typed pair. */
         if (doCountsAsDelivered(d.status)) activeDoIds.add(d.id);
       }
     }
@@ -571,43 +434,20 @@ async function runSoStockAllocation(
       }
     }
 
-    /* 4. Build per-line allocation request. Commander 2026-05-31 — the LINE's
-          own warehouse_id (migration 0118) scopes the bucket key. MRP + auto-
-          allocation run strictly PER-WAREHOUSE: 2990 can't pull stock across
-          warehouses, so a KL line draws only KL stock, a PJ line only PJ. A
-          line with NO warehouse bound yet (NULL) gets its own 'NOWH' bucket —
-          inventory always carries a warehouse_id, so a NULL-warehouse line sees
-          no stock and stays PENDING until a warehouse is assigned. Drop lines
-          with deliverable_remaining ≤ 0 (already shipped). curReady is the
-          line's existing stock_qty_ready — used to compute "did the value
-          change". */
     const WH_NONE = 'NOWH';
     type LineNeed = { id: string; doc_no: string; bucket: string; whId: string | null; need: number; current: string; curReady: number; group: string; item_code: string };
     const needs: LineNeed[] = [];
-    /* Sofa lines walk the batch-bound path instead of the per-line bucket
-       fill. Keep the SKU + variant + remaining so we can check each module's
-       on-hand within its bound batch below. */
     type SofaLineRec = {
       id: string; doc_no: string; whId: string | null; item_code: string;
       variant_key: string; need: number; current: string; curReady: number; curBatch: string | null;
     };
     const sofaLineRecs: SofaLineRec[] = [];
     for (const l of lines) {
-      /* P1 SO-SKU spec §4.6 — SERVICE lines are services, not goods: never
-         allocate stock to them and never let them gate readiness. Without
-         this skip a SERVICE line stays PENDING forever and wedges the SO
-         short of READY_TO_SHIP (so-readiness already treats SERVICE as
-         non-MAIN, so skipping here completes the pair). */
       if (isServiceLine({
         itemGroup: l.item_group,
         itemCode: l.item_code,
         category: serviceCodes.has(l.item_code) ? 'SERVICE' : null,
       })) continue;
-      /* Returned units are NOT owed again (Sim, 2026-10-20, 2990-0011): a
-         customer-rejected return goes back to stock for the next matching
-         order, and a customer who still wants the item gets a new SO. Netting
-         the return back in handed 2990-DR-2610-001's set straight back to
-         2990-SO-2606-001. */
       const remaining = Number(l.qty ?? 0) - (deliveredBySoItem.get(l.id) ?? 0);
       if (remaining <= 0) continue;
       const variant_key = computeVariantKey(l.item_group ?? null, l.variants ?? null);
@@ -620,10 +460,6 @@ async function runSoStockAllocation(
         });
         continue;
       }
-      /* A variant-tracked company (binding-mode.ts) matches the canonical form on
-         both sides (here and the balance map below): a bucket written as
-         `...|totalheight=24"` or `legheight=default` is the same goods as this
-         line keyed without them. Company 1 keeps the exact string. */
       const bucketVk = variantTrackedCompany(companyByDoc.get(l.doc_no) || null) ? canonicalVariantKey(variant_key) : variant_key;
       const bucket = `${whId ?? WH_NONE}::${l.item_code}::${bucketVk}`;
       needs.push({
@@ -636,29 +472,7 @@ async function runSoStockAllocation(
     }
     if (needs.length === 0 && sofaLineRecs.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
 
-    /* 5. Sort needs by allocation priority. Commander 2026-05-31 — equal
-          delivery date now tie-breaks by SO doc number ascending (SO-2605-001
-          before SO-2605-002) so same-day allocation is deterministic, matching
-          the MRP engine. created_at + line id break any remaining ties. */
     const FAR_FUTURE = '9999-12-31';
-    /* The ONE reader, shared with mrp.ts (shared/effective-delivery.ts):
-       amended_delivery_date wins over the customer's original, and it
-       normalises to 'YYYY-MM-DD'.
-
-       Normalising is not cosmetic and the reason is written down there too. The
-       row types say these are strings, and under PostgREST they are — but a
-       repair script driving this same function through the postgres shim gets
-       Date OBJECTS for date/timestamp columns, and `.localeCompare` on a Date
-       throws, which killed a production allocation recompute on 2026-08-10 with
-       "ad.localeCompare is not a function" AFTER the allocator had done all its
-       work. effectiveSoDelivery carries that Date branch verbatim; this call
-       site is the reason it exists.
-
-       These orders carry no LINE fields — the allocator ranks whole orders, as
-       it always has, so it hands the reader header dates only. A per-line
-       override date still outranks the header inside mrp.ts, which does read
-       lines; that pre-existing difference between the two engines is untouched
-       here and unmeasured. */
     const effDate = (o?: { customer_delivery_date: string | null; amended_delivery_date: string | null }): string =>
       (o ? effectiveSoDelivery(o) : null) ?? '';
     const stampKey = (v: unknown): string =>
@@ -667,22 +481,17 @@ async function runSoStockAllocation(
       const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
       const ad = effDate(A) || FAR_FUTURE;
       const bd = effDate(B) || FAR_FUTURE;
-      if (ad !== bd) return ad.localeCompare(bd);                         // a) EFFECTIVE delivery date
-      if (a.doc_no !== b.doc_no) return a.doc_no.localeCompare(b.doc_no); // b) SO doc number
+      if (ad !== bd) return ad.localeCompare(bd);
+      if (a.doc_no !== b.doc_no) return a.doc_no.localeCompare(b.doc_no);
       const ac = stampKey(A?.created_at);
       const bc = stampKey(B?.created_at);
-      return ac.localeCompare(bc) || a.id.localeCompare(b.id);            // c) created_at + line id
+      return ac.localeCompare(bc) || a.id.localeCompare(b.id);
     });
 
-    /* 6. Pull live on-hand, keyed strictly per-warehouse to match the per-line
-          buckets above. No cross-warehouse aggregate — a line draws only its
-          own warehouse's stock. */
     const itemCodes = [...new Set(needs.map((n) => {
       const parts = n.bucket.split('::');
       return parts[1] ?? '';
     }).filter(Boolean))];
-    // chunkIn — itemCodes can exceed 1000 and balances can exceed the 1000-row
-    // cap; batch + page so on-hand isn't understated → lines wrongly PENDING.
     const { data: balRows, error: balanceError } = await chunkIn<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number; company_id: number | null }>(itemCodes, (batch, from, to) => pgrestIn(sb
       .from('inventory_balances')
       .select('warehouse_id, item_code, variant_key, qty, company_id'), 'item_code', batch)
@@ -690,12 +499,6 @@ async function runSoStockAllocation(
     if (balanceError) throw new Error(`allocation balance load failed: ${balanceError.message}`);
     const onHandByBucket = new Map<string, number>();
     for (const r of (balRows ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number; company_id?: number | null }>) {
-      /* Display / showroom / service stock never enters the pool. This is the
-         BELT — the decisive gate is per LINE, at the walk below, because BOUND
-         MODE and the sofa matcher never read this map at all. Both are kept:
-         this one guarantees the units are absent from `remaining` no matter how
-         a bucket key is built, which is the failure the per-line gate cannot
-         see. */
       if (!warehouseCanPromise(r.warehouse_id, nonSellingIds)) continue;
       const v = variantTrackedCompany(r.company_id ?? null) ? canonicalVariantKey(r.variant_key) : (r.variant_key ?? '');
       const qty = Number(r.qty ?? 0);
@@ -728,24 +531,7 @@ async function runSoStockAllocation(
        the floor already expects, so they must NOT be diverted. */
     const dedicatedReady = new Map<string, number>();
     const boundNeeds = needs.filter((n) => isHardBoundLine(n.group, n.item_code));
-    /* Sofa lines were diverted into sofaLineRecs before `needs` was built, so
-       for three months this read never saw them and the bound rule the comment
-       above NAMES sofa into never fired for sofa — every migrated set with no
-       exact-multiset dye lot stayed PENDING with its own PO fully received
-       (11 lines on 2026-08-29, run 33233660301). Their ids join the read here;
-       the sofa set walk below consults dedicatedReady when no batch covers. */
     if (boundNeeds.length > 0 || sofaLineRecs.length > 0) {
-      /* INVERTED, for the same reason and by the same shape as the DO-line read
-         above: chunking the 3,520 bedframe/sofa line ids cost 18 serial
-         requests on production. `!inner` on the PO link means only lines that
-         HAVE one come back.
-         `received_qty > 0` is pushed into SQL because the loop below discards
-         everything else anyway (a null received_qty reads as 0 and is skipped),
-         and it is applied to the EMBED so it narrows the parents too.
-         The bound-group narrowing deliberately stays in JS: `group` is compared
-         case-insensitively there, and a SQL predicate that had to reproduce
-         that could answer differently. Reading a superset and intersecting is
-         exact — `dedicatedReady` is only ever consulted for bound line ids. */
       const boundIds = new Set([...boundNeeds.map((n) => n.id), ...sofaLineRecs.map((s) => s.id)]);
       const { data: poLinkRows, error: poLinkError } = await paginateAll<{
         id: string; po_items: Array<{ qty: number; received_qty: number | null }> | null;
@@ -757,11 +543,6 @@ async function runSoStockAllocation(
         .gt('po_items.received_qty', 0)
         .order('id')
         .range(from, to));
-      /* Unchecked until the READY audit (F3, 2026-10-16): a failed read looked
-         like "no PO has received anything", so every bound READY line was
-         written PENDING and READY_TO_SHIP orders regressed, under ok:true with
-         no retry. Throwing here, before step 8 writes anything, turns it into
-         the wrapper's queued retry like the other reads in this function. */
       if (poLinkError) throw new Error(`allocation PO-receipt load failed: ${poLinkError.message}`);
       for (const r of poLinkRows ?? []) {
         if (!boundIds.has(r.id)) continue;
@@ -772,27 +553,12 @@ async function runSoStockAllocation(
       }
     }
 
-    /* 7. Walk needs in priority order. Partial fill (#4) — when bucket has
-          some but not enough, allocate what's available and mark the line
-          PARTIAL (stock_qty_ready = whatever fit). Full fill → READY. Zero
-          allocation → PENDING (stock_qty_ready = 0). */
     type TargetState = { status: 'READY' | 'PENDING' | 'PARTIAL'; qtyReady: number };
     const targetById = new Map<string, TargetState>();
     const remaining = new Map(onHandByBucket);
-    /* Lines whose warehouse may not promise, so the counts below and the caller
-       can say WHICH orders the rule touched rather than reporting a silent
-       difference. */
     const nonSellingBlockedDocs = new Set<string>();
-    // Bound lines first, so their units leave the pool before anyone else walks it.
     for (const n of boundNeeds) {
       if (allocGated.has(n.doc_no)) continue;
-      /* BOUND MODE IS NOT AN EXEMPTION. This pass lights off the line's own
-         `purchase_order_items.received_qty` and never consults
-         `inventory_balances`, so gating only the pooled on-hand read would have
-         left the whole bound path open — exactly the half-applied shape this
-         repo keeps shipping. Falling through (rather than stamping PENDING
-         here) hands the line to the pooled walk below, which stamps it once, in
-         one place. */
       if (!warehouseCanPromise(n.whId, nonSellingIds)) continue;
       const got = dedicatedReady.get(n.id) ?? 0;
       if (got <= 0) continue;
@@ -800,7 +566,6 @@ async function runSoStockAllocation(
       targetById.set(n.id, fill >= n.need
         ? { status: 'READY', qtyReady: n.need }
         : { status: 'PARTIAL', qtyReady: fill });
-      // take the units out of the pool: exact bucket first, then blank-variant
       let left = fill;
       for (const key of [n.bucket, `${n.whId ?? WH_NONE}::${n.bucket.split('::')[1]}::`]) {
         if (left <= 0) break;
@@ -812,7 +577,7 @@ async function runSoStockAllocation(
       }
     }
     for (const n of needs) {
-      if (targetById.has(n.id)) continue; // settled by its dedicated PO above
+      if (targetById.has(n.id)) continue;
       if (allocGated.has(n.doc_no)) {
         targetById.set(n.id, { status: 'PENDING', qtyReady: 0 });
         continue;
@@ -850,32 +615,16 @@ async function runSoStockAllocation(
       }
     }
 
-    /* 7b. SOFA — whole-set, all-or-nothing batch coverage (Wei Siang 2026-06-03,
-           replaces the old "batch belongs to the PO's SO" model). A sofa SET =
-           all the sofa module lines of one SO at one warehouse (e.g. LHF + RHF,
-           same fabric). The set is READY only when ONE single production batch
-           (batch_no = a PO's dye lot) holds enough of EVERY module; that batch is
-           then locked onto every line as allocated_batch_no so the DO consumes
-           the whole set from one dye lot. No single covering batch → PENDING
-           (never PARTIAL, never split across two batches, never strand a half-set).
-           Eligibility is plain SKU + variant — NOT the SO's own PO link; ANY SO
-           whose set a batch fully covers may claim it. Sets are walked in the
-           SAME priority order as non-sofa needs (delivery date → SO doc number)
-           and each claimed batch is decremented, so two SOs can't double-claim the
-           same units. */
     const batchTargetByLine = new Map<string, string | null>();
     if (sofaLineRecs.length > 0) {
       const sofaStock = await loadSofaBatchStock(sb, sofaLineRecs.map((s) => s.item_code));
 
-      // Group sofa lines into per-SO, per-model sets (within a warehouse).
-      const setLines = new Map<string, SofaLineRec[]>(); // key = `${wh}|${docNo}|${model}`
+      const setLines = new Map<string, SofaLineRec[]>();
       for (const s of sofaLineRecs) {
         const key = `${s.whId ?? WH_NONE}|${sofaSetKey(s.doc_no, s.item_code)}`;
         const arr = setLines.get(key) ?? [];
         arr.push(s); setLines.set(key, arr);
       }
-      // Walk sets in allocation priority so a single covering batch goes to the
-      // highest-priority SO first, then is decremented before lower-priority sets.
       const orderedSets = [...setLines.values()].sort((ga, gb) => {
         const a = ga[0]!; const b = gb[0]!;
         const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
@@ -893,16 +642,6 @@ async function runSoStockAllocation(
           continue;
         }
         const whId = group[0]!.whId;
-        /* Sofa is gated on the SAME axis as everything else. It reaches READY
-           through `findCoveringBatch` or through hard binding, and NEITHER
-           reads the pooled on-hand map — so the balance filter above does not
-           reach this path and the gate has to be stated again, here, or the
-           rule ships covering two of its three doors.
-           The 26 migrated display sofas happen to be inert already (17 open
-           lots, all with batch_no NULL, so sofa coverage sees 0 units — PROVEN,
-           run 34177208009). That is a property of the migrated data, not of the
-           rule: the first sofa RECEIVED into a display warehouse against its own
-           PO would carry a batch and would have lit. */
         if (!warehouseCanPromise(whId, nonSellingIds)) {
           for (const s of group) {
             batchTargetByLine.set(s.id, null);
@@ -920,13 +659,6 @@ async function runSoStockAllocation(
             targetById.set(s.id, { status: 'READY', qtyReady: s.need });
             continue;
           }
-          /* No covering dye lot — the owner's hard binding takes over
-             (2026-08-29, re-ruling his 2026-08-10 call): a sofa piece whose
-             OWN converted PO has received is READY per line, min(received,
-             need), exactly the bedframe arithmetic above. No batch is claimed
-             — the migrated stock this serves rarely forms an exact multiset,
-             and the DO flow lets the operator pick the physical batch at
-             dispatch, which is the shipping rule already in force. */
           const got = dedicatedReady.get(s.id) ?? 0;
           const fill = Math.min(got, s.need);
           targetById.set(s.id, fill >= s.need
@@ -938,11 +670,9 @@ async function runSoStockAllocation(
       }
     }
 
-    /* 8. Flip lines that changed. Group by exact (status, qtyReady) so we can
-          batch the UPDATEs. Optionally scope writes to scopeToDocNo. */
     let linesFlipped = 0;
     type FlipBatch = { ids: string[]; status: 'READY' | 'PENDING' | 'PARTIAL'; qtyReady: number };
-    const flipBatches = new Map<string, FlipBatch>(); // key = status|qtyReady
+    const flipBatches = new Map<string, FlipBatch>();
     for (const n of needs) {
       if (scopeToDocNo && n.doc_no !== scopeToDocNo) continue;
       const t = targetById.get(n.id);
@@ -954,8 +684,6 @@ async function runSoStockAllocation(
       flipBatches.set(key, batch);
     }
     for (const batch of flipBatches.values()) {
-      // Chunk the id list so the UPDATE's .in() never builds a >1000-element IN
-      // (a full re-allocation can flip thousands of lines into one bucket).
       for (let i = 0; i < batch.ids.length; i += 200) {
         const { error } = await sb.from('mfg_sales_order_items')
           .update({ stock_status: batch.status, stock_qty_ready: batch.qtyReady })
@@ -965,10 +693,6 @@ async function runSoStockAllocation(
       linesFlipped += batch.ids.length;
     }
 
-    /* 8b. Flip sofa lines — they also persist allocated_batch_no (the locked
-           batch the whole set ships from). Group by (status|qtyReady|batch).
-           Forward-compat (0121): if allocated_batch_no isn't in the schema yet,
-           retry the update without it so READY/PENDING still flips. */
     type SofaFlip = { ids: string[]; status: 'READY' | 'PENDING' | 'PARTIAL'; qtyReady: number; batchNo: string | null };
     const sofaFlips = new Map<string, SofaFlip>();
     for (const s of sofaLineRecs) {
@@ -983,7 +707,6 @@ async function runSoStockAllocation(
       sofaFlips.set(key, f);
     }
     for (const f of sofaFlips.values()) {
-      // Chunk the id list so the UPDATE's .in() never builds a >1000-element IN.
       for (let i = 0; i < f.ids.length; i += 200) {
         const idChunk = f.ids.slice(i, i + 200);
         const { error } = await sb.from('mfg_sales_order_items')
@@ -1001,8 +724,6 @@ async function runSoStockAllocation(
       linesFlipped += f.ids.length;
     }
 
-    /* Flatten the maps so the audit + header re-aggregation steps below see
-       per-line target status directly. Combine non-sofa needs + sofa lines. */
     const flippable: Array<{ id: string; current: string }> = [
       ...needs.map((n) => ({ id: n.id, current: n.current })),
       ...sofaLineRecs.map((s) => ({ id: s.id, current: s.current })),
@@ -1010,14 +731,9 @@ async function runSoStockAllocation(
     const toReady   = flippable.filter((n) => targetById.get(n.id)?.status === 'READY'   && targetById.get(n.id)?.status !== n.current).map((n) => n.id);
     const toPending = flippable.filter((n) => targetById.get(n.id)?.status === 'PENDING' && targetById.get(n.id)?.status !== n.current).map((n) => n.id);
     const toPartial = flippable.filter((n) => targetById.get(n.id)?.status === 'PARTIAL' && targetById.get(n.id)?.status !== n.current).map((n) => n.id);
-    /* Map of id → target status (string) for the readiness summary below.
-       Replaces the old targetStatusById which was 'READY' | 'PENDING' only. */
     const targetStatusById = new Map<string, string>();
     for (const [id, t] of targetById) targetStatusById.set(id, t.status);
 
-    // ── Audit trail: one entry per affected SO summarising the auto-flip
-    //    (Edge #H polish). Operator can later see "why did this line change?"
-    //    Best-effort — never blocks the allocation result.
     if (toReady.length > 0 || toPending.length > 0 || toPartial.length > 0) {
       const lineToDoc = new Map(lines.map((l) => [l.id, l.doc_no]));
       const byDoc = new Map<string, { ready: string[]; pending: string[]; partial: string[] }>();
@@ -1047,13 +763,7 @@ async function runSoStockAllocation(
         });
       }
       if (auditRows.length > 0) {
-        // Multi-company (migration 0061): mfg_so_audit_log.company_id is NOT NULL.
-        // Batch-resolve each SO's company so an auto-allocation audit row inherits
-        // the company of the SO it describes. Best-effort (the insert is swallowed).
         try {
-          /* chunkIn — the unscoped sweep flips lines across the WHOLE tenant, so
-             `docNos` is one entry per SO that changed and grows with the order
-             book; every other `.in()` in this file is already chunked. */
           const docNos = [...new Set(auditRows.map((r) => r.so_doc_no as string))];
           const { data: coRows } = await chunkIn<{ doc_no: string; company_id: number | null }>(docNos, (batch, from, to) =>
             sb.from('mfg_sales_orders').select('doc_no, company_id').in('doc_no', batch).order('doc_no').range(from, to));
@@ -1062,20 +772,12 @@ async function runSoStockAllocation(
             const cid = coByDoc.get(r.so_doc_no as string);
             if (cid != null) r.company_id = cid;
           }
-        } catch { /* swallow — best-effort */ }
+        } catch { }
         try { await sb.from('mfg_so_audit_log').insert(auditRows); }
         catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] audit insert failed:', e); }
       }
     }
 
-    // 9. Per-SO header re-aggregation (only for SOs that had a line flip,
-    //    or the scoped SO if any). all-READY → READY_TO_SHIP (when previously
-    //    CONFIRMED / IN_PRODUCTION). any-PENDING → CONFIRMED (when previously
-    //    READY_TO_SHIP).
-    // Re-evaluate every loaded header during a global run. If a prior attempt
-    // flipped lines but lost a header CAS, the retry has no fresh line flip to
-    // rediscover that SO; walking all loaded headers is what makes convergence
-    // durable. Scoped runs retain their single-document bound.
     const touchedDocs = new Set<string>(scopeToDocNo ? [scopeToDocNo] : orders.map((order) => order.doc_no));
 
     let ordersAdvanced = 0, ordersRegressed = 0;
@@ -1083,38 +785,8 @@ async function runSoStockAllocation(
     for (const docNo of touchedDocs) {
       const order = orderByDoc.get(docNo);
       if (!order) continue;
-      /* A held order's header is left where it is. Its lines gave their stock
-         back above, but a hold never moves status (document-hold.ts), so the
-         readiness move waits for the release, whose sweep re-judges it. */
       if (isDocumentHeld(order)) continue;
       const docLines = lines.filter((l) => l.doc_no === docNo);
-      /* Re-evaluate readiness using the live target status. B2C semantics: an SO
-         is ship-able when every MAIN product line (sofa/bedframe/mattress) is
-         READY — accessories pending don't block ship. (This used to say the
-         label for that state was "READY (PARTIAL)". It is not, since
-         2026-08-16: the label is the bare word "PARTIAL", and it is printed
-         only when the SO HAS a main line — an accessory-only order has nothing
-         ready and stays blank rather than claim a readiness it does not have.
-         The GATE is unchanged.)
-         Auto-regress only when a MAIN line goes back to PENDING. */
-      /* `category` from the SAME catalog pull the needs walk uses (serviceCodes)
-         — isServiceLine's strongest signal, and the pair to the skip at the top
-         of that walk: a SERVICE line skipped there but classified as a short
-         accessory here would wedge the header exactly as before. */
-      /* SHIPPED LINES ARE MARKED, NOT INFERRED — and the sentence this replaces
-         claimed the opposite of what the code did. It read "lines that weren't
-         in needs are already shipped → treat as READY", but a shipped line is
-         skipped at `remaining <= 0` before `needs` is built, so
-         `targetStatusById` has no entry for it and the `??` fell through to the
-         STALE stored value, which for goods that shipped straight off a
-         purchase order is PENDING. The order then never advanced to
-         READY_TO_SHIP although every line still owing goods was allocated.
-
-         Measured on prod 2026-09-09 (company 1): 60 live orders carry at least
-         one such line, and on 18 of them every still-outstanding line is READY.
-
-         `fulfilled` is the same arithmetic the needs walk uses above, so the
-         two can only ever agree about which lines are finished. */
       const readinessLines = docLines.map((l) => ({
         item_group: l.item_group,
         item_code: l.item_code,
@@ -1126,19 +798,13 @@ async function runSoStockAllocation(
       }));
       const r = summariseReadiness(readinessLines);
       const cur = order.status;
-      /* Owner requirement — the SO History timeline must show AUTOMATED status
-         transitions too ("the system did it" disputes). Mirror the manual
-         status-PATCH audit pattern: one mfg_so_status_changes row (legacy
-         StatusTimeline) + one mfg_so_audit_log row. Best-effort, never blocks
-         the allocation result (recordSoAudit swallows failures internally). */
       const auditAutoStatus = async (from: string, to: string, note: string) => {
         try {
           await sb.from('mfg_so_status_changes').insert({
-            // Multi-company: the automated status-change row inherits the SO's company.
             ...(order.company_id != null ? { company_id: order.company_id } : {}),
             doc_no: docNo, from_status: from, to_status: to, changed_by: null, notes: note,
           });
-        } catch { /* best-effort */ }
+        } catch { }
         await recordSoAudit(sb, {
           docNo,
           action: 'UPDATE_STATUS',
@@ -1150,28 +816,6 @@ async function runSoStockAllocation(
           note,
         });
       };
-      /* SKIP AND CONTINUE — do NOT throw (livelock fix, 2026-07-22).
-
-         advanceSoGeneration stands down while a human holds the SO's edit lease.
-         That lease is FIVE minutes and the retry cron is also FIVE minutes, so
-         throwing here meant: one order under active edit aborted the whole
-         global recompute, the queue row was marked failed, and the next sweep
-         five minutes later hit the same still-leased order. Two equal timers —
-         the projection could fail forever while looking like it was retrying,
-         and every order AFTER the leased one in this loop never got its header
-         evaluated at all.
-
-         A deferral is not an error. The line-level projection for this order is
-         already committed above; only the derived header status is outstanding,
-         and it is re-derived from scratch on every pass (this function is
-         idempotent). So record the doc number, keep going, and let the caller
-         re-queue. Progress is made on every other order in the batch. */
-      /* isShipReady, NOT bare isMainReady: the latter is vacuously true for an
-         SO carrying no stock-bearing lines at all, which is exactly how 16
-         emptied-out 2990 test SOs auto-advanced to READY_TO_SHIP on
-         2026-08-13/14. An empty document is never ship-able. See so-readiness.
-         The regress arm inherits the same gate, so those husks fall back to
-         CONFIRMED on the next sweep without a data fix. */
       if (r.isShipReady && (cur === 'CONFIRMED' || cur === 'IN_PRODUCTION')) {
         const advanced = await advanceSoGeneration(sb, docNo, { status: 'READY_TO_SHIP' }, { status: cur });
         if (advanced.applied) {
@@ -1181,9 +825,6 @@ async function runSoStockAllocation(
           deferredDocNos.push(`${docNo}:${advanced.reason}`);
         }
       } else if (!r.isShipReady && cur === 'READY_TO_SHIP') {
-        /* Back to where the date says it belongs: a proceeded order that loses
-           its stock is still proceeded (shared/so-proceeded-status.ts), so it
-           regresses to IN_PRODUCTION, not to Submitted. */
         const regressTo = liveStatusForProcessingDate(order.processing_date);
         const regressed = await advanceSoGeneration(sb, docNo, { status: regressTo }, { status: cur });
         if (regressed.applied) {

@@ -18,7 +18,6 @@ vi.mock('../lib/mfg-products-queries', async (orig) => ({
   useMaintenanceConfig: () => ({ data: undefined }),
   useSpecialAddons: () => ({ data: [] }),
   useModelAllowedOptionsByCode: () => ({ data: null }),
-  // What GET /mfg-products/by-code answers for AR01 on production.
   useSkuCategoryByCode: () => ({ data: 'FABRIC_ACCESSORY' }),
 }));
 vi.mock('../lib/fabric-queries', async (orig) => ({
@@ -79,10 +78,8 @@ describe('SO line card — a Sofa Accessory line', () => {
 
   it('shows the note itself, open, where it can be read and changed', () => {
     renderArmRest(true);
-    // A line that carries a note opens with it (posRemarkSpecialOf), so no click.
     const input = screen.getByDisplayValue(NOTE) as HTMLInputElement;
     expect(input.disabled).toBe(false);
-    // And it still folds away like every other Special Orders section.
     fireEvent.click(screen.getByText('Special Orders'));
     expect(screen.queryByDisplayValue(NOTE)).toBeNull();
   });

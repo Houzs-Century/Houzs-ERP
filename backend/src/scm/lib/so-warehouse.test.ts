@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-warehouse — the warehouse follows the Sales Order, and a NULL line
-// warehouse INHERITS the header rather than meaning "moved".
-//
-// Regression (bug 0539): the PO SO-drift check compared a PO line's real
-// warehouse against the SO line's RAW warehouse_id with `!==`. A rebuilt SO's
-// lines carry warehouse_id NULL (they inherit the header's sales_location), so
-// `KL-uuid !== NULL` fired "SO warehouse moved" on every such line. The fix
-// resolves the SO line to its EFFECTIVE warehouse first (resolveLineWarehouseId)
-// and only flags a genuine difference between two real warehouses
-// (warehousesDiffer). These tests pin both halves — the second set is RED on the
-// pre-fix tree, where a real id against NULL compared unequal.
-// ----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
 import {
@@ -61,8 +48,6 @@ describe('resolveLineWarehouseId — a NULL line inherits the order, it has not 
 });
 
 describe('warehousesDiffer — only a real, distinct pair counts as drift', () => {
-  // THE REGRESSION. A real PO warehouse against a NULL SO side is NOT a move —
-  // the pre-fix `poWh !== soWh` returned true here and printed the false warning.
   test('a real warehouse against NULL is NOT drift', () => {
     expect(warehousesDiffer('kl', null)).toBe(false);
     expect(warehousesDiffer(null, 'kl')).toBe(false);
@@ -81,10 +66,6 @@ describe('warehousesDiffer — only a real, distinct pair counts as drift', () =
   });
 });
 
-// Regression (HC-SO-013495): every company has its own "KL WAREHOUSE". The
-// amendment ADD line resolved the header's sales_location against EVERY
-// company's warehouses and took the first name match — another company's KL —
-// so the Houzs MRP showed "—" for those lines and split the order into two POs.
 describe('soWarehouseIdForDoc — resolves inside the SO own company only', () => {
   type Row = Record<string, unknown>;
   const tables: Record<string, Row[]> = {

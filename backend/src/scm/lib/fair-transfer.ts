@@ -92,7 +92,6 @@ export async function transferOrdersToFairs(args: {
   sb: any;
   db: FairDb;
   companySql: string;
-  /** The active company — every read and write here is held to it. */
   companyId: number;
   items: readonly FairTransferItem[];
   actorId: string | null;
@@ -100,8 +99,6 @@ export async function transferOrdersToFairs(args: {
 }): Promise<FairTransferResult[]> {
   const { sb, db, companySql, companyId, items } = args;
   const targets = await loadLiveFairsByIds(db, companySql, items.map((i) => i.projectId));
-  /* The targets' own reports, for the Fair Day. A chat that cannot be read
-     costs only that: the move still happens, with the order's own day. */
   const evidence = await loadReportEvidence(db, companySql, { projectIds: [...targets.keys()] }).catch(() => new Map());
   const read = await chunkIn<OrderRow>(items.map((i) => i.docNo), (batch, from, to) =>
     sb.from('mfg_sales_orders')
@@ -124,12 +121,10 @@ export async function transferOrdersToFairs(args: {
       continue;
     }
     const reported = sightingsOf(o, evidence).find((s) => s.projectId === it.projectId) ?? null;
-    /* The order as it stood, taken before the write: History says what it was. */
     const before = { state: fairStateOf(o), venue: o.venue ?? null, fairDay: day(o.fair_date) };
     const fairDate = transferFairDay(fair, reported?.reportDate ?? null, before.fairDay);
     const venue = (fair.venue ?? '').trim();
     const { error } = await sb.from('mfg_sales_orders')
-      /* A move by hand also brings a put-aside order back (fair-put-aside.ts). */
       .update({ project_id: it.projectId, fair_match: 'PICKED', venue, venue_source: 'PMS', fair_date: fairDate, ...NOT_PUT_ASIDE })
       .eq('doc_no', it.docNo)
       .eq('company_id', companyId);

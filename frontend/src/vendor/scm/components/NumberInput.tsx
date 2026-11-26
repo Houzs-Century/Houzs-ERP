@@ -53,9 +53,7 @@ export const parseNumericText = (text: string): number | null => {
 const fmt = (value: number | null): string => (value == null ? '' : String(value));
 
 export type NumberInputProps = {
-  /** The numeric source of truth (null = empty box). */
   value: number | null;
-  /** Parsed number, or null while the box is empty / mid-type ("-", "."). */
   onValueChange: (value: number | null) => void;
   sign: NumberSign;
   decimal: boolean;
@@ -67,12 +65,8 @@ export type NumberInputProps = {
   'aria-label'?: string;
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
   onBlur?: () => void;
-  // For a cell/list editor that must not let a click bubble to the row.
   onClick?: (e: MouseEvent<HTMLInputElement>) => void;
-  /** Opt-in up/down stepper (buttons + ArrowUp/ArrowDown) for small counts like
-   *  a line qty, where clicking is quicker than typing (DEV-62). */
   step?: number;
-  /** Lowest value the stepper goes down to. */
   min?: number;
 };
 
@@ -83,7 +77,6 @@ export const NumberInput = ({
   const [draft, setDraft] = useState(() => fmt(value));
   const focused = useRef(false);
 
-  // Sets the draft too: while focused the value -> draft sync is paused.
   const stepBy = (dir: 1 | -1) => {
     if (!step) return;
     let next = (value ?? 0) + dir * step;
@@ -92,9 +85,6 @@ export const NumberInput = ({
     onValueChange(next);
   };
 
-  // Re-sync from the value ONLY when the box is not being edited — so a typed
-  // leading zero survives while focused, and an external change (e.g. a lot pick
-  // capping a decrease) still updates the box when it is not.
   useEffect(() => {
     if (!focused.current) setDraft(fmt(value));
   }, [value]);

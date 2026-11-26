@@ -76,8 +76,8 @@ describe('setup and dismantle trips', () => {
     const trips = setupTrips({
       fairs: [
         fair(1, 'Mid Valley', 'KUALA LUMPUR', '2026-09-11', '2026-09-14'),
-        fair(2, 'MID VALLEY', 'Kuala Lumpur', '2026-09-11', '2026-09-14'),   // the second booth rides the same trips
-        fair(3, 'MVEC Southkey', 'JOHOR', '2026-09-18', '2026-10-02'),        // dismantled next month
+        fair(2, 'MID VALLEY', 'Kuala Lumpur', '2026-09-11', '2026-09-14'),
+        fair(3, 'MVEC Southkey', 'JOHOR', '2026-09-18', '2026-10-02'),
         fair(4, 'PWCC', 'PULAU PINANG', '2026-09-25', '2026-09-28'),
         fair(5, 'MCCC', 'SARAWAK', '2026-09-24', '2026-09-27'),
       ],
@@ -174,11 +174,11 @@ describe('the P&L', () => {
         leg({ accountCode: '900-T005', debitSen: 1_597_000 }),
         leg({ accountCode: '900-T006', debitSen: 138_000 }),
         leg({ accountCode: '900-T027', debitSen: 507_233 }),
-        leg({ accountCode: '900-T027', debitSen: 999, day: '2026-08-31' }),             // not this month
+        leg({ accountCode: '900-T027', debitSen: 999, day: '2026-08-31' }),
         leg({ accountCode: '900-P015', debitSen: 814_726 }),
         leg({ lineId: 'u', accountCode: '900-U010', debitSen: 116_200, day: '2026-09-10' }),
         leg({ accountCode: '450-H002', debitSen: 252_100 }),
-        leg({ accountCode: '450-H002', creditSen: 9_000_000 }),                           // a new agreement is no instalment
+        leg({ accountCode: '450-H002', creditSen: 9_000_000 }),
         leg({ accountCode: '900-S100', debitSen: 1_978_363, notes: "OPERATION HELPER SALARY - SEPT'26" }),
         leg({ accountCode: '900-S100', debitSen: 5_000_000, notes: "FINANCE - SALARY - SEP'26" }),
       ],
@@ -209,7 +209,6 @@ describe('the P&L', () => {
     expect(row('net_cost_per_do').sen.KL).toBe(Math.round((138_000 + inHouse - 444_210 - 40_000 - 386_400) / 2));
     expect(p.inHousePerTripSen).toBe(Math.round(inHouse / 4));
     expect(p.spreads.map((s) => s.lineId)).toEqual(['u']);
-    /* The lines it counts outside the spreads, as it counts them: an instalment's debit, no finance pay. */
     expect(p.inHouseLines.map((l) => [l.kind, l.amountSen])).toEqual([['petrol', 814_726], ['instalment', 252_100], ['manpower', 1_978_363]]);
   });
 });

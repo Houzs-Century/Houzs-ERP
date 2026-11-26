@@ -1,16 +1,3 @@
-// The desktop Venture Portal Feed page, rendered against a mocked API.
-//
-// What is asserted is the requirement, not the markup:
-//   • the SECRET never reaches the screen — the one property that, if it broke,
-//     would put a live credential in a screenshot and a browser's network tab;
-//   • a read-only holder sees the feed and no buttons, because the page's own
-//     `canManage` must agree with the server rather than hoping the server
-//     refuses later;
-//   • a refusal reaches the operator. CLAUDE.md records "the button does
-//     nothing" as worse than a crash, and this page has seven buttons;
-//   • the verdict, not the counts, leads;
-//   • the filter counts come from the SERVER's aggregate — the list is capped,
-//     so counting what loaded would understate a real backlog.
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -28,9 +15,6 @@ import { VenturePortalFeed } from "./VenturePortalFeed";
 import type { VpRow, VpStatus } from "../lib/venturePortalFeed";
 
 afterEach(cleanup);
-/* BRACES, not a concise arrow — vitest treats a value returned from beforeEach
-   as that test's teardown, and `mockReset()` returns the mock. The same trap is
-   documented in autoCountSync.test.tsx, which paid for it. */
 beforeEach(() => {
   apiGet.mockReset();
   apiPost.mockReset();
@@ -75,7 +59,6 @@ const failedRow: VpRow = {
   sent_at: null,
 };
 
-/** Route both GETs off one mock, the way the page calls them. */
 function wire(s: VpStatus | Error, rows: VpRow[] = [failedRow]) {
   apiGet.mockImplementation((path: string) => {
     if (path.startsWith("/api/scm/venture-portal-feed/status")) {
@@ -104,34 +87,20 @@ describe("the desktop page", () => {
     expect(await screen.findByText("1 order could not be delivered")).toBeTruthy();
   });
 
-  /* THE SECURITY PROPERTY. GET /status cannot hand the page a key, and there is
-     no input box that could hold one — so the only way a key reaches this screen
-     is the one-time reveal below. */
   it("never renders a key the server did not hand it", async () => {
     wire(status());
     await mount();
-    /* The whole sentence, not just the mask: the mask alone appears twice (the
-       field and its hint), which is correct page behaviour and an ambiguous
-       query. */
     await screen.findByText(/Key ····e-42 · generated/);
     expect(document.body.textContent).not.toContain(SECRET);
-    /* And no box to type one into: the owner fills the key in on the PORTAL. */
     expect(screen.queryByPlaceholderText(/At least 32 characters/)).toBeNull();
   });
 
-  /* THE HAND-SHAKE, end to end on this surface: press Generate, the key is on
-     screen exactly once with the instruction that names where it goes, and Done
-     takes it away for good — the server will not answer it a second time.
-     Asserted rather than assumed because a reveal that does not appear leaves a
-     key written to the database that nobody can paste anywhere. */
   it("reveals a generated key once, with where to paste it, and lets it go", async () => {
     wire(status({
       connection: { ...status().connection, secret: { set: false, length: 0, tail: "", setAt: null } },
     }));
     apiPost.mockResolvedValue({ ok: true, secret: SECRET, mask: { set: true, length: 39, tail: "e-42", setAt: null } });
     await mount();
-    /* With no key stored the verdict is the not-wired-up one, which outranks the
-       failed count — the page's own ordering, asserted here by waiting on it. */
     await screen.findByText(/not wired up yet/i);
 
     await userEvent.click(screen.getByRole("button", { name: /Generate API key/i }));
@@ -166,8 +135,6 @@ describe("the desktop page", () => {
     expect(screen.getByText(/Not saved yet/i)).toBeTruthy();
   });
 
-  /* A READ-ONLY HOLDER. The server is the boundary; this asserts the page
-     agrees with it rather than offering buttons that would 403. */
   it("offers no controls to somebody who may only look", async () => {
     wire(status({ canManage: false }));
     await mount();
@@ -176,9 +143,6 @@ describe("the desktop page", () => {
     expect(screen.queryByRole("button", { name: /Turn off/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Test connection/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Send again/i })).toBeNull();
-    /* Minting a key is the newest write on this page and the most consequential
-       of the small ones — it invalidates the key the portal is holding, so every
-       queued delivery starts answering 401 until somebody pastes the new one. */
     expect(screen.queryByRole("button", { name: /Generate/i })).toBeNull();
   });
 
@@ -186,14 +150,10 @@ describe("the desktop page", () => {
     wire(status());
     await mount();
     expect(await screen.findByText("HC-SO-013403")).toBeTruthy();
-    /* The next STEP, not the status code: a 401 is the portal holding a
-       different key, and the fix is generate-then-paste. */
     expect(screen.getByText(/different key/i)).toBeTruthy();
     expect(screen.getByText(/http 401/)).toBeTruthy();
   });
 
-  /* A REFUSAL MUST REACH SOMEBODY. This is the class CLAUDE.md calls worse
-     than a crash, and the page's whole write surface goes through one `run`. */
   it("says out loud when a save is refused", async () => {
     wire(status());
     apiPut.mockRejectedValue(new Error("secret_too_short"));
@@ -211,14 +171,6 @@ describe("the desktop page", () => {
     await screen.findByText(/could not be delivered/);
 
     await userEvent.click(screen.getByRole("button", { name: /Test connection/i }));
-    /* THE NEXT STEP, on the surface, not just in the shared layer. A 401 here is
-       the portal holding a different key, and the button that fixes it is on this
-       same card — this used to read "refused the secret ... the two values are not
-       the same", which described a world where the operator typed the key twice.
-       Matched on "then test again", which is the CONNECTION TEST's ending: the
-       failed row on this same screen now gives the same diagnosis and ends "then
-       re-send", so /different key/ alone matches twice. That both say it is the
-       point of the drift guard in venturePortalFeed.test.ts. */
     expect(await screen.findByText(/different key.*then test again/i)).toBeTruthy();
   });
 
@@ -248,8 +200,6 @@ describe("the desktop page", () => {
     expect(apiPut).not.toHaveBeenCalled();
   });
 
-  /* The list is server-filtered and capped at 100, so a count taken from the
-     loaded page would tell somebody 100 when the real backlog is 400. */
   it("counts the filter chips from the server's totals, not the loaded page", async () => {
     wire(status({
       queue: { ...status().queue, pending: 412, failed: 1 },

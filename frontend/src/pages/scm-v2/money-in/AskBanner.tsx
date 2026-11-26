@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// AskBanner — the redesign's confirmation (the owner's Claude Design, batch 5
-// §1, the design's askVals): an inline banner above the table or the document
-// instead of a modal. A title, a body, an optional reason box, then `Keep it`
-// (`Not now` when the step moves the document on) and the go button — red
-// when it undoes something, petrol when it moves it on. A required reason
-// greys the go button until it is typed; pressing it then says so.
-//
-// The banner asks; the page acts. Whatever the server refuses comes back as
-// `error` and is shown verbatim in the banner, which stays open.
-// ----------------------------------------------------------------------------
 
 import { useState, type ReactNode } from 'react';
 import { useToastOptional } from '../../../hooks/useToast';
@@ -17,14 +6,10 @@ import s from '../MoneyIn.module.css';
 export type Ask = {
   title: string;
   body: ReactNode;
-  /** `undo` (Void, Cancel, Reject) is red; `go` (Approve) is petrol. */
   tone: 'undo' | 'go';
   goLabel: string;
-  /** A reason box; the go button stays grey until it holds something. */
   reason?: { placeholder: string };
-  /** False when the step is refused: the body says why and only `Keep it` shows. */
   canGo?: boolean;
-  /** Runs the step with the typed reason (trimmed; '' when there is no box). */
   onGo: (reason: string) => void;
 };
 

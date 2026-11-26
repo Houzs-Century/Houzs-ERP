@@ -1,12 +1,3 @@
-// Purchase Return PDF — to send to the supplier for credit note issuance.
-// Dual-code layout (Commander): supplier code first, our code alongside.
-// purchase_return_items has NO supplier_sku column — resolved at print time
-// from supplier_material_bindings via the doc's supplier_id.
-//
-// 2026-06-19 — adopts the unified "Hookka-tidy" layout shared with SO/PO/DO/SI:
-// real letterhead header, the drawInfoColumns info block (SUPPLIER label-gutter +
-// RETURN DETAILS colon-aligned), and the consistent footer (doc no · portal ·
-// page n of m) on every page. A4 portrait, pure B&W. No field dropped.
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -34,18 +25,12 @@ type PrItem = {
   item_code: string; material_name: string;
   qty_returned: number; unit_price_sen: number; line_refund_sen: number;
   reason: string | null;
-  /* Dual-code extras — optional so older call sites keep compiling. */
   supplier_sku?: string | null;
   item_group?: string | null;
   description?: string | null;
   variants?: Record<string, unknown> | null;
 };
 
-/* Draw ONE purchase return's content into `doc` (letterhead → meta → codes-note
-   → items → total refund → signature → footer). Does NOT create the jsPDF or
-   save — the caller finalizes ONCE, so several PRs can share one doc (batch
-   "Export PDF"). The footer loop runs from `startPage` so each PR's own pages
-   carry its return number; earlier PRs' pages keep theirs. */
 export async function renderPurchaseReturnInto(
   doc: import('jspdf').jsPDF,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -54,9 +39,6 @@ export async function renderPurchaseReturnInto(
   items: PrItem[],
   opts?: { docTitle?: string; docNoLabel?: string; amountLabel?: string; totalLabel?: string },
 ): Promise<void> {
-  /* Before ANY drawing: a customer / supplier name, address or remark that
-     carries CJK needs the font embedded up front, or helvetica silently paints
-     the whole field as mojibake. No-op for a pure-WinAnsi document. */
   await ensurePdfCjkFont(doc, [header, items]);
 
   const startPage = doc.getNumberOfPages();
@@ -71,11 +53,6 @@ export async function renderPurchaseReturnInto(
     ],
   });
 
-  /* Load supplier master + dual-code lookups BEFORE the info block so the
-     canonical SUPPLIER block can include address / tel / attn / terms — the
-     PR's own header carries only { code, name } (endpoint economy), the
-     top-up comes from GET /suppliers/:id. loadSupplierDocData is a single
-     parallel round; moving it forward doesn't add a request. */
   const { skuMap, fabricMap, fabricDescMap, supplier: sFull } = await loadSupplierDocData(header.supplier_id, items);
   const supplierAddressLines = [
     sFull?.address,
@@ -86,9 +63,6 @@ export async function renderPurchaseReturnInto(
 
   const statusText = statusLabel('pr', header.status);
   y = drawInfoColumns(doc, y,
-    /* Canonical supplier block via the shared helper — matches PO / PI / GRN
-       so every purchasing doc reads the same rows. Return Reason slots into
-       extras alongside the party lines (mirrors DR's Reason placement). */
     supplierBlock({
       name: header.supplier?.name ?? sFull?.name,
       code: header.supplier?.code ?? sFull?.code,
@@ -114,17 +88,11 @@ export async function renderPurchaseReturnInto(
     },
   );
 
-  // Codes note (dual-code lookups already loaded above with the supplier
-  // top-up, so the block prints with a full supplier profile in one round).
   doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(80);
   doc.text('Codes shown are SUPPLIER codes; our reference in second column.', margin, y);
   doc.setFont('helvetica', 'normal'); doc.setTextColor(0);
   y += 4;
 
-  /* Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→accessories→
-     services) — mirror the sales side. The shared helper keys on `item_code`;
-     PR lines expose `item_code`, so sort a shimmed view that carries the
-     original row back unchanged (render-time only, no persistence touched). */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
       items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
@@ -168,7 +136,6 @@ export async function renderPurchaseReturnInto(
   });
   const lastY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
 
-  // Total refund row
   const totalsX = pageW - margin - 70;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
   doc.text(opts?.totalLabel ?? 'TOTAL REFUND', totalsX, lastY + 2);
@@ -176,8 +143,6 @@ export async function renderPurchaseReturnInto(
 
   drawSignatureBoxes(doc, lastY + 12, `${COMPANY.name} Issued By`, 'Supplier Acknowledgement');
 
-  // Footer: doc no · portal · page n of m on every page (only this PR's pages,
-  // so a combined doc keeps each PR's own footer).
   const pageCount = doc.getNumberOfPages();
   for (let p = startPage; p <= pageCount; p += 1) {
     doc.setPage(p);
@@ -189,9 +154,6 @@ export async function renderPurchaseReturnInto(
   }
 }
 
-/* Single PR → its own file (unchanged behaviour). Reused by
-   PurchaseConsignmentReturnDetail with opts (docTitle / docNoLabel /
-   amountLabel / totalLabel) — kept plumbed through. */
 export async function generatePurchaseReturnPdf(
   header: PrHeader,
   items: PrItem[],
@@ -204,9 +166,6 @@ export async function generatePurchaseReturnPdf(
   deliverPdf(doc, `${header.return_number}-${safeName(header.supplier?.name ?? 'supplier')}.pdf`, opts?.action);
 }
 
-/* Several PRs → ONE combined file, each PR starting on a new page. For the batch
-   "Export PDF" action on the Purchase Returns list (send a supplier all their
-   credit-note returns in one attachment). */
 export async function generateCombinedPurchaseReturnPdf(
   docs: Array<{ header: PrHeader; items: PrItem[] }>,
   opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; amountLabel?: string; totalLabel?: string; action?: PdfAction },

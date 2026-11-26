@@ -21,7 +21,6 @@ import { errText } from './comboErrors';
 const PRESET_CODES = presetModuleCodes(SOFA_MODULES.map((m) => m.id));
 const MODULE_NAMES: Record<string, string> = Object.fromEntries(SOFA_MODULES.map((m) => [m.id, m.label]));
 const RED = 'var(--c-festive-b, #8f2c1a)';
-/** About ten module rows in the editor's list. */
 const EDITOR_LIST_HEIGHT = 450;
 
 /** The combo list as a CSV file, in order. */
@@ -58,7 +57,6 @@ export function PresetsDialog({ onClose }: { onClose: () => void }) {
   const remove = useDeleteComboPreset();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<ComboPreset | 'new' | null>(null);
-  // The order on screen while a drag runs or its save is in flight; null = the server's.
   const [order, setOrder] = useState<string[] | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -77,7 +75,6 @@ export function PresetsDialog({ onClose }: { onClose: () => void }) {
   const save = (ids: string[]) => {
     if (ids.join() === presets.map((p) => p.id).join()) { setOrder(null); return; }
     setOrder(ids);
-    // The hook shows the failure; the list goes back to the saved order.
     reorder.mutate(ids, { onError: () => setOrder(null) });
   };
 
@@ -92,8 +89,7 @@ export function PresetsDialog({ onClose }: { onClose: () => void }) {
 
   const onPointerDown = (e: PointerEvent<HTMLButtonElement>, id: string) => {
     if (reorder.isPending || e.button > 0) return;
-    // Capture keeps the moves coming to the handle once the pointer leaves it.
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* not every browser (or jsdom) has it */ }
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { }
     setDragging(id);
     setOrder(shown.map((p) => p.id));
   };
@@ -212,7 +208,6 @@ function PresetEditor({ editing, onDone }: { editing: ComboPreset | null; onDone
       else await create.mutateAsync({ name: name.trim(), slots: kept });
       onDone();
     } catch {
-      // The failure is already on screen (writeFailedAs); the editor stays open.
     }
   };
 

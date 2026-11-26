@@ -47,9 +47,6 @@ describe('a statement with a bank charge booked against its payout', () => {
     expect(out.status).toBe('over_receipt');
   });
 
-  /* Without the charge the old arithmetic holds: the whole net is outstanding
-     and the bank's short credit leaves RM 324.00 owing — the state this change
-     exists to end, still reported honestly when no charge has been booked. */
   it('with no charge booked, the short credit leaves the difference outstanding', async () => {
     const out = await postBatchReceipt(world(0), 2, 6, { receivedOn: '2026-06-08', amountSen: 302_418 });
     expect(out).toMatchObject({ ok: true, outstandingSen: 32_400 });
@@ -87,7 +84,6 @@ describe('a charge kept off a credit, with no advice to book it on', () => {
     const receipt = sb.tables.acc_settlement_receipts[0]!;
     expect(receipt).toMatchObject({ amount_sen: 312_840, charge_sen: 5_400, charge_account_code: '900-T003', charge_note: 'GHL terminal rental' });
     const charge = sb.tables.journal_entries.find((j) => j.source_doc_no === `SETTLECHARGE-R${receipt.id}`)!;
-    /* Dated the report's settlement day, as an advice day's charge is. */
     expect(charge).toMatchObject({ source_type: 'SETTLECHARGE', entry_date: '2026-08-29' });
     expect(receipt.charge_je_no).toBe(charge.je_no);
     const lines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === charge.id);

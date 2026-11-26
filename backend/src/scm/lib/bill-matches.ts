@@ -23,7 +23,6 @@ export type BillMatch = {
   number: string | null;
   amountSen: number;
   status: string;
-  /** For a request: the voucher or AP invoice answering it, by number. */
   answeredBy: string | null;
 };
 
@@ -34,7 +33,6 @@ export type BillProbe = {
   key: string;
   billNo: unknown;
   billDate: unknown;
-  /** The probing document itself and its own answer — never its own match. */
   exclude?: { requestIds?: Array<string | null | undefined>; pvIds?: Array<string | null | undefined>; apInvoiceIds?: Array<string | null | undefined> };
 };
 
@@ -69,8 +67,6 @@ export async function findBillMatches(
   const vouchers = ((pvs.data ?? []) as Row[]).filter((v) => v.status !== 'CANCELLED');
   const invoices = ((apis.data ?? []) as Row[]).filter((i) => i.status !== 'CANCELLED' && i.supplier_invoice_ref);
 
-  /* A request's answer by number, for "PRQ-… → PV-…" — read for the matched
-     requests whose answer did not come back with the same pair. */
   const pvNo = new Map(((pvs.data ?? []) as Row[]).map((v) => [String(v.id), v.pv_number == null ? null : String(v.pv_number)]));
   const apiNo = new Map(((apis.data ?? []) as Row[]).map((i) => [String(i.id), i.invoice_number == null ? null : String(i.invoice_number)]));
   const missingPv = [...new Set(requests.map((r) => r.pv_id).filter((v) => v && !pvNo.has(String(v))).map(String))];
@@ -90,8 +86,6 @@ export async function findBillMatches(
     const exReq = ids(p.exclude?.requestIds);
     const exPv = ids(p.exclude?.pvIds);
     const exApi = ids(p.exclude?.apInvoiceIds);
-    /* A request answered by an excluded document is that document's own — and
-       an excluded request's answer is the request's own. */
     for (const r of requests) {
       if ((r.pv_id && exPv.has(String(r.pv_id))) || (r.ap_invoice_id && exApi.has(String(r.ap_invoice_id)))) exReq.add(String(r.id));
     }
@@ -123,7 +117,6 @@ export async function findBillMatches(
   return { ok: true, matches };
 }
 
-/* ── The facts a request keeps about its bill ──────────────────────────────── */
 
 export type RequestBillFacts = {
   bill_no: string | null;
@@ -168,7 +161,6 @@ export function eventBillRefusal(f: { event_bill: boolean; project_id: number | 
   return { error: 'event_required', message: 'This bill is for an event — pick the event, or say in a line why there is none.' };
 }
 
-/* ── The pair a voucher keeps ──────────────────────────────────────────────── */
 
 /** What the body says, else what the request it answers read off the bill. */
 export function pvBillFields(body: Row, request?: Row | null): { bill_ref: string | null; bill_date: string | null } {

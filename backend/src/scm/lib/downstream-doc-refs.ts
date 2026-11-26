@@ -67,8 +67,6 @@ export function refsByParent<R extends Record<string, unknown>>(
 /** What a Sales Order row carries so its menu can print what came after it. */
 export type SoDownstreamRefs = { do_refs: DocRef[]; si_refs: DocRef[] };
 
-/** The answer for an order with nothing downstream. Frozen and shared so the
- *  hot path does not allocate two arrays per row to say "none". */
 const NONE: DocRef[] = Object.freeze([]) as unknown as DocRef[];
 export const NO_SO_DOWNSTREAM_REFS: SoDownstreamRefs = Object.freeze({ do_refs: NONE, si_refs: NONE });
 

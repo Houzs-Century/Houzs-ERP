@@ -100,7 +100,6 @@ const readNote = async (c: AnyCtx): Promise<string> => {
   } catch { return ''; }
 };
 
-/* ── Per-order routes ─────────────────────────────────────────────────────── */
 
 export const soPaymentBackdateRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 soPaymentBackdateRequests.use('*', supabaseAuth);
@@ -201,8 +200,6 @@ soPaymentBackdateRequests.post('/:docNo/payment-backdate-requests', async (c: An
     .single();
   if (error) return c.json({ error: 'create_failed', reason: error.message }, 500);
 
-  /* Promote the slip so the reaper leaves it for the approval — the same dance
-     as the payments route; the request row already holds the key either way. */
   if (p.uploadSessionId) {
     const { error: promoteErr } = await sb
       .from('pending_slip_uploads')
@@ -225,7 +222,6 @@ soPaymentBackdateRequests.post('/:docNo/payment-backdate-requests', async (c: An
   return c.json({ request: created }, 201);
 });
 
-/* ── Inbox (admin) ────────────────────────────────────────────────────────── */
 
 export const paymentBackdateInbox = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentBackdateInbox.use('*', supabaseAuth);
@@ -303,7 +299,6 @@ async function loadRequest(c: AnyCtx): Promise<{ ok: true; row: RequestRow } | {
 const NOT_OPEN = { error: 'request_not_open', reason: 'This request has already been decided.' };
 const NO_SLIP_TO_APPROVE = { error: 'no_slip_attached', reason: 'This request has no slip attached, so it cannot be approved. Reject it and ask the requester to send it again with the slip.' };
 
-/** Move a REQUESTED row on, conditionally, so two admins cannot both decide it. */
 async function claim(c: AnyCtx, r: Pick<RequestRow, 'id' | 'company_id'>, patch: Record<string, unknown>): Promise<boolean> {
   const { data, error } = await c.get('supabase')
     .from(BACKDATE_REQUESTS_TABLE)
@@ -356,7 +351,6 @@ paymentBackdateInbox.post('/:id/approve', async (c: AnyCtx) => {
     auditNote: `Backdated slip approved by ${actor.name ?? 'admin'} (requested by ${r.requested_by_name ?? 'staff'}): ${r.reason}`,
   });
   if (errorMessage || !payment) {
-    /* Hand the row back so it can be approved again once the cause is fixed. */
     const { error: backErr } = await sb.from(BACKDATE_REQUESTS_TABLE)
       .update({ status: 'REQUESTED', decided_by: null, decided_by_name: null, decided_at: null, decision_note: null, updated_at: nowIso() })
       .eq('id', r.id).eq('company_id', r.company_id).eq('status', 'APPROVED');
@@ -365,7 +359,6 @@ paymentBackdateInbox.post('/:id/approve', async (c: AnyCtx) => {
     return c.json({ error: 'insert_failed', reason: errorMessage ?? 'The payment could not be recorded.' }, 500);
   }
   const paymentId = (payment as { id?: string }).id ?? null;
-  /* The payment is booked; a failed link is logged, never un-books it. */
   const { data: updated, error: linkErr } = await sb.from(BACKDATE_REQUESTS_TABLE)
     .update({ payment_id: paymentId, updated_at: nowIso() })
     .eq('id', r.id)
@@ -405,8 +398,6 @@ paymentBackdateInbox.post('/:id/reject', async (c: AnyCtx) => {
   return c.json({ ok: true });
 });
 
-/* On the order's own prefix, not the inbox: the requester who withdraws is
-   usually not an admin, and this path already rides the Sales Order guards. */
 soPaymentBackdateRequests.post('/:docNo/payment-backdate-requests/:id/withdraw', async (c: AnyCtx) => {
   const docNo = c.req.param('docNo');
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);

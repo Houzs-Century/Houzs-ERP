@@ -22,7 +22,6 @@ export type UnmatchedReport = {
   batchId: number;
   fileName: string | null;
   acquirerCode: string;
-  /** Its lines nobody has confirmed or set aside. */
   waitingLines: number;
 };
 
@@ -32,7 +31,6 @@ export type UnmatchedPayment = {
   docNo: string;
   customerName: string | null;
   salespersonName: string | null;
-  /** Who took the money — the payment's own collected_by; null when nobody was recorded. */
   collectedByName: string | null;
   paidOn: string;
   kind: 'card' | 'transfer';
@@ -40,19 +38,13 @@ export type UnmatchedPayment = {
   channel: string | null;
   amountSen: number;
   reference: string | null;
-  /** The document's Ref No. pair — the order's, or the invoice's own — raw, for customerRefOf.
-      Not `reference`, which is the code keyed with the money. */
   ref: string | null;
   customer_so_no: string | null;
   ageDays: number;
   state: UnmatchedState;
-  /** transfer: the money account its entry debits, and the last day that
-      account's uploaded statements reach (null = none uploaded). */
   bankAccountCode: string | null;
   statementUpTo: string | null;
-  /** transfer: its entry's number — the entry Bank money in may offer a bank line to. */
   jeNo?: string | null;
-  /** card: the report its line is on, when a line claims it. */
   report?: UnmatchedReport | null;
 };
 
@@ -67,7 +59,6 @@ export type UnmatchedBankLine = {
   accountCode: string;
   bankName: string | null;
   bookedOn: string;
-  /** YYYY-MM — the month Bank statements opens it in. */
   month: string;
   description: string;
   reference: string | null;
@@ -75,9 +66,7 @@ export type UnmatchedBankLine = {
   what: BankLineWhat;
   kind: string;
   acquirerCode: string | null;
-  /** The decider's own sentence for it (card payout, QR money). */
   note: string | null;
-  /** TRANSFER: same-amount entries within the window no bank line holds, and the first few. */
   entryCount: number;
   entries: Array<{ jeNo: string; entryDate: string; doc: string | null; who: string | null; daysApart: number }>;
   ageDays: number;
@@ -123,7 +112,6 @@ export type PreviousPayment = PaymentRef & {
   customer: string | null;
   paidOn: string;
   method: string;
-  /** card: the bank it was keyed with; transfer: its sub-type. */
   channel: string | null;
   amountSen: number;
   reference: string | null;
@@ -143,7 +131,6 @@ export const usePreviousPayments = (enabled = true) => useQuery({
   retryDelay: 800,
 });
 
-/** Every list a mark changes: the two unmatched lists, Merchant Recon's watch list, the Cash Flow. */
 const refreshAfterMark = (qc: QueryClient) => {
   for (const key of ['previous-payments', 'unmatched-payments', 'settlement-watchlist']) void qc.invalidateQueries({ queryKey: [key] });
   void qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith('report-rp') });

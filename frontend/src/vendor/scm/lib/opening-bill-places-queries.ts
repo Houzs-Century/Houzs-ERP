@@ -18,10 +18,8 @@ export type OpeningSupplierRow = {
   id: string; code: string; name: string;
   bills: number; openBills: number; owingSen: number; paidSen: number;
   billsSet: number;
-  /** How many of its bills read by what they bought (AutoCount's lines). */
   billsByGoods: number;
   set: PlaceOut | null;
-  /** What its own bills in the ERP give; null = the creditor control. */
   auto: PlaceOut | null;
 };
 export type OpeningBillsPayload = { suppliers: OpeningSupplierRow[]; accounts: PlaceAccount[]; categories: CashFlowCategory[] };

@@ -1,22 +1,9 @@
-/* The daily reminder asks the SAME endpoint as the My Pending list.
- *
- * That is the property with teeth, and it is asserted here: the popup must not
- * be able to say "26 events" while the screen it sends you to shows something
- * else. Re-deriving "what is mine" would mean a fourteenth copy of the thirteen
- * role lanes in services/projects.ts — the code that routes every staff
- * member's day — so the hook issues `my_pending=1` and counts what comes back.
- *
- * Also pinned: acknowledging is remembered PER DAY, so the reminder returns
- * tomorrow on its own with no cron to run and nothing to reset.
- */
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const { apiGet, authUser } = vi.hoisted(() => ({
   apiGet: vi.fn(),
-  // Mutable so a test can swap the signed-in position; defaults to an ALLOWED
-  // one (see beforeEach) so the pre-existing cases keep exercising the happy path.
   authUser: {
     current: { id: 7, position_name: "Sales Executive", permissions: [] as string[] } as {
       id: number;
@@ -96,14 +83,12 @@ describe("usePendingReminder", () => {
 
   it("a stored acknowledgement from TODAY keeps it shut on the next load", async () => {
     apiGet.mockResolvedValue({ data: [row(1, "2020-01-01", "2020-01-02")], total: 1 });
-    // 01:30 on 10 Nov in Malaysia (still the 9th in UTC): today's key is the 10th.
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));
     try {
       localStorage.setItem("pending-reminder:u7:c1:2026-11-10", "1");
       const { result } = renderHook(() => usePendingReminder(), { wrapper });
       expect(result.current.open).toBe(false);
-      // ...and it does not even ask, so an acknowledged day costs no request.
       expect(apiGet).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -131,7 +116,6 @@ describe("usePendingReminder", () => {
     authUser.current = { id: 8, position_name: "Driver", permissions: [] };
     apiGet.mockResolvedValue({ data: [row(1, "2020-01-01", "2020-01-02")], total: 1 });
     const { result } = renderHook(() => usePendingReminder(), { wrapper });
-    // enabled:false, so the query is never issued and the modal stays shut.
     expect(result.current.open).toBe(false);
     expect(apiGet).not.toHaveBeenCalled();
   });

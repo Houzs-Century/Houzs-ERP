@@ -1,15 +1,3 @@
-// Port of 2990 packages/shared/src/so-amendment.test.ts, alongside the port of
-// so-amendment.ts itself. The two implementations are byte-identical apart from
-// so-amendment.ts's header comment, so this suite ports 1:1 — no adaptation.
-//
-// Why it is worth porting rather than assuming: this state machine is the ONLY
-// thing standing between a locked SO and an out-of-order transition, and it was
-// the one axis where 2990 was genuinely ahead of us (it had this test; we had
-// none). Houzs has since diverged UPWARDS from 2990 on amendments — mig 0119's
-// header_changes / old_header_snapshot, company scoping, the mirror write guard
-// — but every one of those sits in the ROUTE layer. The transitions below are
-// the shared floor, and a silent edit to FLOW would otherwise be caught by
-// nothing.
 
 import { describe, it, expect } from "vitest";
 import { nextStatus, canTransition, receivedFloorViolation, type AmendStatus } from "./so-amendment";
@@ -63,8 +51,6 @@ describe("withdraw", () => {
   });
 
   it("is refused once anyone has acted on the amendment", () => {
-    // Retracting after a supplier has been told, or after either gate approved,
-    // would erase work somebody else did. From there the route is reject.
     for (const s of ["SUPPLIER_PENDING", "SO_APPROVED", "PO_APPROVED"] as AmendStatus[]) {
       expect(canTransition(s, "withdraw")).toBe(false);
       expect(nextStatus(s, "withdraw")).toBeNull();

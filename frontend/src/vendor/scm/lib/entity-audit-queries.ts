@@ -1,14 +1,3 @@
-/* entity-audit-queries — the read side of scm.entity_audit_log for the shared
-   History drawer.
-
-   Sibling of useSalesOrderAuditLog (sales-order-queries.ts). It lives in its own
-   module rather than inside stock-queries / grn-queries / payment-voucher-queries
-   because four unrelated modules read it, and putting it in any one of them would
-   make the other three import a neighbour's query file for no reason.
-
-   The backend deliberately mirrors the SO endpoint's `{ entries: [...] }`
-   envelope and newest-first ordering (routes/entity-audit-log.ts), so the rows
-   satisfy AuditHistoryPanel's AuditLogEntry shape with no adapter in between. */
 
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -35,20 +24,6 @@ export type EntityAuditEntry = {
   created_at: string;
 };
 
-/* The same list as ENTITY_TYPES in backend/src/scm/lib/entity-audit.ts, and
-   entity-audit-queries.test.ts READS that file and fails if the two differ —
-   because "must stay in step" is what this comment used to say, and it did not.
-
-   It was five names short from the day the document modules were added until
-   2026-09-13: the backend had been recording PURCHASE_ORDER, PURCHASE_INVOICE,
-   SALES_INVOICE, DELIVERY_ORDER and PURCHASE_RETURN rows all along, and no
-   screen could ask for any of them, because the type they had to be named with
-   did not exist here. Nothing failed and nothing was logged — the four
-   documents simply had no change history.
-
-   A VALUE, not just a type, so the test has something to compare. The endpoint
-   rejects an unknown type with 400 rather than an empty list, so a typo still
-   surfaces as a visible error instead of a document that looks historyless. */
 export const AUDIT_ENTITY_TYPES = [
   'PAYMENT_VOUCHER',
   'GRN',

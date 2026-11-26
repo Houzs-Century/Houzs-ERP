@@ -3,9 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { CostAnchorCard } from './CostAnchorCard';
 import type { ProductCostAnchor } from '../../vendor/scm/lib/mfg-products-queries';
 
-/* The Product Maintenance Cost anchor card — the four states from the approved
-   SKU-drawer mockup. Renders on props alone (no router / query context), so the
-   whole display decision is testable in isolation. Money is integer sen. */
 
 const base: ProductCostAnchor = {
   state: 'ok',

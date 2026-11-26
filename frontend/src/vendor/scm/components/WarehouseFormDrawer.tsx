@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// WarehouseFormDrawer — shared create/edit warehouse form.
-//
-// Extracted from pages/scm-v2/Warehouses.tsx so the SAME form can be opened
-// from more than one place (the Warehouses master page today; a Racks & Bins
-// page later, which groups racks by warehouse, so creating a warehouse there
-// is the natural entry point). onSaved fires after a successful create/update
-// so a caller that reads warehouses from a different query can refetch.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { X } from 'lucide-react';
@@ -26,7 +17,6 @@ import { masterNeedsPostcode, masterPostcodeError } from '../../shared/master-po
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* The drawer's own field look, for the shared State / City / Postcode trio. */
 const TRIPLE_CLASSES: AddressTripleClasses = {
   field: styles.tripleField,
   label: styles.eyebrow,
@@ -34,8 +24,6 @@ const TRIPLE_CLASSES: AddressTripleClasses = {
   input: styles.searchInput,
 };
 
-/* Ordered for the dropdown — most-used first. Labels are the display text, the
-   value is the enum literal stored in scm.warehouses.type (mig 0171). */
 const TYPE_OPTIONS: { value: WarehouseType; label: string }[] = [
   { value: 'warehouse', label: 'Warehouse (stock)' },
   { value: 'showroom',  label: 'Showroom (sales + venue)' },
@@ -49,15 +37,11 @@ export const WarehouseFormDrawer = ({
 }: {
   editing: Warehouse | null;
   onClose: () => void;
-  /** Called after a successful create/update (before onClose). */
   onSaved?: () => void;
 }) => {
   const create = useCreateWarehouse();
   const update = useUpdateWarehouse();
   const notify = useNotify();
-  /* Derive the initial type from either the stored `type` (mig 0171) or the
-     legacy is_showroom flag — a pre-migration edit still opens with a coherent
-     choice. Default 'warehouse' for a fresh create. */
   const initialType: WarehouseType =
     editing?.type ?? (editing?.is_showroom ? 'showroom' : 'warehouse');
   const [form, setForm] = useState({
@@ -76,12 +60,6 @@ export const WarehouseFormDrawer = ({
     stockBucket: editing?.stock_bucket ?? '',
   });
 
-  /* Country / State / City / Postcode cascade off scm.my_localities — same
-     source the SO Maintenance geo table maintains. Country picked first
-     (defaults to Malaysia when unset); State picker is filtered by country;
-     picking State auto-derives Country if it was blank so the operator
-     doesn't have to reselect. Empty locality set (unseeded) → the state
-     dropdown gracefully renders empty free-text so nothing breaks. */
   const localities = useLocalities();
   const localityRows = localities.data ?? [];
   const countries = useMemo(() => distinctCountries(localityRows), [localityRows]);
@@ -95,11 +73,6 @@ export const WarehouseFormDrawer = ({
     }
     const pcErr = masterPostcodeError(form.country, form.postcode);
     if (pcErr) { void notify({ title: pcErr, tone: 'error' }); return; }
-    /* Block the half-configured showroom at the point of creation. A warehouse
-       classified as Showroom with no Venue name is not an error the database
-       can see — it simply resolves to NO venue, so every order from every
-       salesperson parked under it silently carries a blank venue. Catching it
-       here, while someone is looking at the form, is the only cheap moment. */
     const isShowroom = form.type === 'showroom';
     if (isShowroom && !form.venueName.trim()) {
       notify({
@@ -170,13 +143,6 @@ export const WarehouseFormDrawer = ({
               value={form.location ?? ''} placeholder="e.g. No. 12, Jalan …"
               onChange={(e) => setForm((s) => ({ ...s, location: e.target.value }))} />
           </label>
-          {/* ── Structured address (mig 0180 + StatePicker MVP2 2026-07-23)
-              Country picked first (from seeded my_localities set — no free-
-              text). State uses shared StatePicker component — MY default,
-              Others expander for CN/SG, search across all. Picking State
-              back-derives Country when Country was blank/mismatched.
-              NO `(legacy)` fallbacks — a state not in my_localities must
-              first be added via the Localities Maintenance UI. */}
           <label style={{ display: 'block', marginBottom: 'var(--space-3)' }}>
             <div className={styles.eyebrow}>Country</div>
             <select className={styles.searchInput} style={{ width: '100%' }}

@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// SoBacklogCover — Finance › Reports › SO conversion & backlog (owner
-// 2026-11-24). The month's orders by the Processing Date written on them:
-// this month's orders and the backlog orders, each with its amount and share
-// of the month's processed total; the backlog at the 1st; the two backlog
-// cover rates (on the backlog, on the month's processed total), each by amount
-// and by number of orders, with their averages from a month the reader may
-// pick, by default the company's first month with a backlog, each average a
-// card of its own beside its rate; each month's figures; and the orders, which
-// a tile narrows to its part. The rules: so-backlog-cover-view.ts and, on the
-// server, acc/so-backlog-cover.ts.
-// ----------------------------------------------------------------------------
 
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -30,14 +18,12 @@ import {
 import { useReportRange } from './reports/useReportRange';
 import s from './SoBacklogCover.module.css';
 
-/** The first month the pickers offer: 2990's first orders in the ERP. */
 const FIRST_MONTH = '2026-06';
 
 const COLUMNS: Column<CoverRow>[] = [
   {
     key: 'doc_no', label: 'Order', width: '200px', getValue: (r) => r.docNo, searchValue: (r) => `${r.docNo} ${r.customer ?? ''}`,
     exportValue: (r) => r.docNo,
-    /* Its own tab of the strip, so the order's Back returns to this report as it was. */
     render: (r) => (
       <span className={s.stack}>
         <FinanceDocLink to={`/scm/sales-orders/${encodeURIComponent(r.docNo)}`}>{r.docNo}</FinanceDocLink>
@@ -72,10 +58,8 @@ const COLUMNS: Column<CoverRow>[] = [
   },
 ];
 
-/** A rate's average as a card of its own: the figure, and the months it is of. */
 const avgTile = (key: string, label: string, avg: number | null, period: string): ReportTile => ({ key, label, value: shareText(avg), sub: period });
 
-/** A month's amount with its order count under it. */
 const Both = ({ c }: { c: Count }) => (
   <span className={s.stack}><span>{fmtSenPlain(c.amountSen)}</span><span className={s.muted}>{ordersText(c.orders)}</span></span>
 );
@@ -137,7 +121,6 @@ export const SoBacklogCoverTab = () => {
   const rows = useMemo(() => rowsOfPart(d?.rows ?? [], view), [d, view]);
   const period = periodText(`${month}-01`, monthBounds(month).to);
   useReportSubtitle(`${period} · by Processing Date · RM`);
-  /* The default start leaves the URL, so a link without ?avg follows the company's default. */
   const pickAvg = (ym: string) => setParam('avg', d && ym === d.defaultFrom ? null : ym);
 
   const partTile = (p: CoverPart): ReportTile => ({

@@ -13,17 +13,12 @@ import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { loadBankCardKeys } from './bank-card-settled';
 import type { resolveRoles } from './rules';
 
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 
 export async function loadSettledKeys(
   sb: Sb,
   companyId: number,
 ): Promise<{ ok: true; keys: Set<string> } | { ok: false; reason: string }> {
-  /* PAGED: one link per settled payment, so this grows with every line ever
-     confirmed. Past PostgREST's 1000-row ceiling a single read would drop the
-     rest without an error, and the dropped payments — already cleared — would
-     come back as candidates for a second statement. */
   const [linked, banked] = await Promise.all([
     paginateAll<{ payment_source: string; payment_id: string }>((f, t) => sb
       .from('acc_settlement_matches').select('payment_source, payment_id')

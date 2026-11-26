@@ -5,25 +5,10 @@ import {
   HOUZS_COMPANY_CODE,
 } from "./branding";
 
-// ── Email service (Resend-backed) ─────────────────────────────
-//
-// Design goals:
-//   • No-op safely when secrets or recipients are missing.  send()
-//     never throws — it returns a result object that callers can log
-//     but don't *need* to check. This keeps notification calls off
-//     the critical path of mutations like "close case" or "escalate".
-//   • Every attempt (sent / skipped / error) is written to email_log
-//     so ops can trace a missing email to a specific reason without
-//     digging through worker logs.
-//   • Channel toggles in app_settings let admins disable categories
-//     (e.g. flip off SLA escalation during a quiet week) without
-//     needing a deploy.
 
 export type EmailPurpose =
   | "assr_survey"
   | "assr_sla_escalation"
-  // v3.1 per-stage alert events (one toggle each so admins can mute
-  // half-time chatter while leaving breach alerts on)
   | "assr_alert_stage_entered"
   | "assr_alert_half_time"
   | "assr_alert_approaching_breach"
@@ -33,71 +18,29 @@ export type EmailPurpose =
   | "member_invite"
   | "project_due_reminder"
   | "password_reset"
-  // Customer-facing document emails (auto-send foundation). All OFF by default
-  // (seeded false in mig 098) — high-stakes outbound, flip per-channel when ready.
   | "delivery_order"
   | "invoice"
   | "document_report"
-  // Supplier-facing: a Purchase Order sent to its supplier. OFF by default
-  // (seeded false in mig 0132), fail-closed — a PO reaches an external supplier
-  // only when the owner flips this channel on, and only on a human action.
   | "purchase_order"
-  // Internal IT telemetry: the daily client-error digest (services/
-  // clientErrors.ts). Internal channel — default ON when the toggle row is
-  // missing, like the other digests.
   | "client_error_digest"
-  // Meeting emails written by the IT Hub and sent from here (services/meetingMail.ts). Internal: default ON.
   | "meeting"
   | "generic";
 
 export interface SendOptions {
-  /** One address, or several. A list goes out as ONE message with every
-   *  recipient on it — never one message each. See `cc` below for why. */
   to: string | string[] | null | undefined;
-  /** Carbon copy. Visible to everyone on the message.
-   *
-   *  ONE SEND, NOT N SENDS. The outbox row is drained with a SINGLE provider
-   *  call carrying every recipient, so a delivery either happens or does not.
-   *  Looping per recipient would let a mid-loop failure leave the row 'pending'
-   *  and the 5-minute cron retry would deliver a SECOND copy to everyone who
-   *  already had it. */
   cc?: string | string[] | null;
-  /** Blind carbon copy. Not visible to the other recipients. */
   bcc?: string | string[] | null;
   subject: string;
   html: string;
-  text?: string;        // plain-text fallback; auto-derived from html if missing
+  text?: string;
   purpose: EmailPurpose;
   refType?: string | null;
   refId?: number | null;
   replyTo?: string | null;
-  // Optional From override. When set, the outbound From is this address (wrapped
-  // with the Branding company name as the display name) INSTEAD of the default
-  // no-reply@<domain> / EMAIL_FROM. Used by the Mail Center so a reply/compose
-  // goes out FROM the chosen mailbox (e.g. hello@houzscentury.com or
-  // hello@2990shome.com). The address must be on a Resend-VERIFIED domain to
-  // deliver. Bare address (no "<>") — the company display name is added here.
   from?: string | null;
-  // Optional attachments (Mail Center reply/compose). `content` is base64. When
-  // the immediate send fails the files are copied to R2 and listed on the outbox
-  // row, so the cron retry sends the complete message. If they cannot be stored
-  // the row is marked terminal rather than retried body-only.
   attachments?: Array<{ filename: string; content: string }>;
-  // RFC threading headers (In-Reply-To / References) for a Mail Center reply.
-  // Stored on the outbox row so a retried reply still threads at the customer.
   headers?: Record<string, string> | null;
-  // Whether a FAILED immediate send may be retried by the 5-minute cron drain.
-  // Default true (a durable retry is strictly better than a lost email).
-  //
-  // Pass FALSE when the operator is told "not sent" and will send again by hand
-  // (the PO / DO document emails): a retry on top of that is a second copy. The
-  // row is still written (so the failure is visible in the outbox and
-  // email_log); it is just marked terminal instead of pending.
   outboxRetry?: boolean;
-  // Which company's identity the outbound mail carries ('HOUZS' | '2990').
-  // Drives the From DISPLAY NAME (the address itself stays the verified Resend
-  // sender — see deliverViaResend). Persisted to email_outbox.company_code so
-  // a cron-drained retry renders the same identity. Omitted → HOUZS (legacy).
   companyCode?: string | null;
 }
 
@@ -106,7 +49,6 @@ export interface SendResult {
   providerId?: string;
   reason?: string;
   outboxId?: string;
-  // An "error" whose outbox row stays pending: the cron drain will deliver it.
   retrying?: boolean;
 }
 
@@ -128,13 +70,9 @@ const PURPOSE_TOGGLE_KEYS: Record<EmailPurpose, string> = {
   purchase_order: "email.purchase_order",
   client_error_digest: "email.client_error_digest",
   meeting: "email.meeting",
-  // No toggle for 'generic' — caller opted in explicitly.
   generic: "email.enabled",
 };
 
-// Customer-facing channels FAIL CLOSED: a missing toggle row (fresh/restored
-// DB, dropped seed) must never auto-email a real customer. Legacy internal
-// channels keep their historical default-ON (their rows were never all seeded).
 const FAIL_CLOSED_PURPOSES: ReadonlySet<EmailPurpose> = new Set([
   "delivery_order",
   "invoice",
@@ -142,21 +80,13 @@ const FAIL_CLOSED_PURPOSES: ReadonlySet<EmailPurpose> = new Set([
   "purchase_order",
 ]);
 
-// Exported so a caller that takes a SIDE EFFECT alongside the send (the DO
-// email claims delivery_orders.do_email_sent_at before sending) can check the
-// gate BEFORE it writes anything. sendEmail re-checks independently, so this is
-// an early-out, never the only gate.
 export async function isChannelEnabled(env: Env, purpose: EmailPurpose): Promise<boolean> {
-  // Master kill-switch first.
   const master = await readSetting<{ value: boolean }>(env, "email.enabled");
   if (master && master.value === false) return false;
-  // Per-channel check.
   const k = PURPOSE_TOGGLE_KEYS[purpose];
   if (k === "email.enabled") return true;
   const s = await readSetting<{ value: boolean }>(env, k);
-  // Customer-facing: ON only when explicitly true (missing row = OFF).
   if (FAIL_CLOSED_PURPOSES.has(purpose)) return s?.value === true;
-  // Internal channels: default ON if the row is missing.
   return s?.value !== false;
 }
 
@@ -198,7 +128,6 @@ async function logEmail(
       )
       .run();
   } catch (e) {
-    // Logging failures are non-fatal — the request already succeeded.
     console.error("[email_log] insert failed", e);
   }
 }
@@ -212,30 +141,13 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-// Low-level Resend POST. No logging / no outbox — shared by sendEmail and the
-// outbox drain. Returns 'sent' | 'error' (caller pre-checks channel + key).
 async function deliverViaResend(
   env: Env,
   m: { to: string; cc?: string | null; bcc?: string | null; subject: string; html: string; text?: string | null; replyTo?: string | null; from?: string | null; attachments?: Array<{ filename: string; content: string }> | null; headers?: Record<string, string> | null; companyCode?: string | null },
 ): Promise<SendResult> {
-  // From-name + fallback sender address come from the central Branding config
-  // (per-company: m.companyCode, default HOUZS) so the outbound identity tracks
-  // Settings, not a hardcode. EMAIL_FROM (when set) still supplies the ADDRESS
-  // — it's the verified Resend sender; a 2990 sender domain is an ops task
-  // (Resend domain verification), so only the DISPLAY NAME follows the company
-  // for now. The no-EMAIL_FROM fallback keeps the local-part
-  // no-reply@<branding.email's domain> so the address stays deliverable on the
-  // verified domain.
-  //
-  // EXCEPTION: an explicit per-message `from` (Mail Center reply/compose) wins
-  // over both — the operator's chosen mailbox becomes the visible sender. We
-  // wrap the bare address with the company's Branding display name. The address
-  // must be on a Resend-VERIFIED domain (houzscentury.com; 2990shome.com once
-  // the owner verifies it) to deliver.
   let from: string | undefined;
   const explicitFrom = (m.from ?? "").trim();
   if (explicitFrom) {
-    // Already a "Name <addr>" form? Use as-is; otherwise add the company name.
     if (explicitFrom.includes("<")) {
       from = explicitFrom;
     } else {
@@ -245,13 +157,8 @@ async function deliverViaResend(
   } else if (env.EMAIL_FROM) {
     const configured = env.EMAIL_FROM.trim();
     if (configured.includes("<")) {
-      // Operator configured a full "Name <addr>" identity — respect it as-is
-      // (it can't be re-branded per company without corrupting the address).
       from = configured;
     } else {
-      // Bare verified address — wrap it with the sending company's display
-      // name so 2990 documents arrive as "2990's Home <no-reply@…>" while the
-      // address stays on the verified Resend domain.
       const branding = await getBrandingForCompany(env, m.companyCode);
       from = `${branding.companyName} <${configured}>`;
     }
@@ -271,9 +178,6 @@ async function deliverViaResend(
       },
       body: JSON.stringify({
         from,
-        /* ARRAYS, and one call. Resend delivers a single message addressed to
-           everyone listed; sending per recipient would turn a mid-loop failure
-           into a duplicate on the cron retry. */
         to: recipientList(m.to),
         ...(recipientList(m.cc).length ? { cc: recipientList(m.cc) } : {}),
         ...(recipientList(m.bcc).length ? { bcc: recipientList(m.bcc) } : {}),
@@ -320,8 +224,6 @@ export function recipientList(v: string | string[] | null | undefined): string[]
 
 export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult> {
   const toList = recipientList(opts.to);
-  /* Cc/Bcc minus anyone already on To — see recipientList: a duplicate across
-     fields makes the provider deliver the same message twice. */
   const onTo = new Set(toList.map((a) => a.toLowerCase()));
   const ccList = recipientList(opts.cc).filter((a) => !onTo.has(a.toLowerCase()));
   const onToCc = new Set([...onTo, ...ccList.map((a) => a.toLowerCase())]);
@@ -345,12 +247,6 @@ export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult
     return result;
   }
 
-  // Durable: enqueue first (so a failed send is never silently lost), then try
-  // to deliver immediately. On failure the row stays 'pending' for the */5 cron
-  // drain (drainEmailOutbox) to retry. email_log remains the per-attempt audit.
-  // The row is written CLAIMED (claimed_at): the drain leaves it alone while
-  // this request is still talking to Resend, so a cron tick mid-send cannot
-  // deliver a second copy. Every outcome below releases the claim.
   const id = crypto.randomUUID();
   let enqueued = false;
   try {
@@ -359,9 +255,6 @@ export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult
          (id, to_address, cc_address, bcc_address, subject, body_html, body_text, purpose, ref_type, ref_id, reply_to, company_code, from_address, headers, status, attempts, claimed_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1, ?)`,
     )
-      /* Stored as the joined lists so a cron retry sends to exactly the same
-         people the immediate attempt did — a retry that quietly dropped the Cc
-         would be worse than the failure it is recovering from. */
       .bind(id, to, ccList.join(", ") || null, bccList.join(", ") || null, opts.subject, opts.html, opts.text ?? null, opts.purpose, opts.refType ?? null, opts.refId ?? null, opts.replyTo ?? null, opts.companyCode ?? null, opts.from ?? null, opts.headers ? JSON.stringify(opts.headers) : null, new Date().toISOString())
       .run();
     enqueued = true;
@@ -387,9 +280,6 @@ export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult
     if (result.status === "sent") {
       await env.DB.prepare(`UPDATE email_outbox SET status='sent', sent_at=datetime('now'), provider_id=?, claimed_at=NULL WHERE id=?`).bind(result.providerId ?? null, id).run();
     } else if (opts.outboxRetry === false) {
-      // The caller tells the operator "not sent" and they send again by hand, so
-      // a retry would be a second copy (see SendOptions.outboxRetry). The row and
-      // the reason stay for the ops trace — this suppresses the RETRY only.
       await env.DB.prepare(`UPDATE email_outbox SET status='failed', last_error=?, claimed_at=NULL WHERE id=?`)
         .bind(`${result.reason ?? "send failed"} [not retried: the caller reports the failure instead]`, id)
         .run();
@@ -408,16 +298,12 @@ export async function sendEmail(env: Env, opts: SendOptions): Promise<SendResult
       retrying = enqueued;
     }
   } catch {
-    /* outbox bookkeeping is best-effort */
   }
   await logEmail(env, opts, result);
   if (!enqueued) return result;
   return result.status === "error" ? { ...result, outboxId: id, retrying } : { ...result, outboxId: id };
 }
 
-// R2 copy of a failed send's attachments (the base64 text as given), so the
-// drain can send the complete message. null = could not store; the caller then
-// marks the row terminal instead of letting it retry body-only.
 async function stashOutboxAttachments(
   env: Env,
   outboxId: string,
@@ -437,7 +323,6 @@ async function stashOutboxAttachments(
   }
 }
 
-// null = a listed file is gone; the drain must not send without it.
 async function loadOutboxAttachments(
   env: Env,
   json: string,
@@ -485,11 +370,6 @@ export async function claimOutboxRow(env: Env, id: string, nowMs: number): Promi
   return row ? { attempts: Number(row.attempts ?? 0) } : null;
 }
 
-// Cron drain (called from the every-5-min scheduled handler): retry pending
-// outbox rows — the immediate-send failures. Up to 3 attempts total, then
-// 'failed'. No-op when RESEND_API_KEY is unset. Each attempt mirrors to email_log.
-// A row someone is still sending (claimed_at inside the lease) is skipped, and
-// each row is claimed before it is sent.
 export async function drainEmailOutbox(
   env: Env,
   limit = 25,
@@ -504,8 +384,6 @@ export async function drainEmailOutbox(
     .all<{
       id: string;
       to_address: string;
-      /* Re-sent to exactly the people the first attempt addressed. A retry that
-         quietly dropped the Cc would be worse than the failure it recovers. */
       cc_address: string | null;
       bcc_address: string | null;
       subject: string;
@@ -530,9 +408,6 @@ export async function drainEmailOutbox(
     const claim = await claimOutboxRow(env, r.id, nowMs);
     if (!claim) continue;
     processed++;
-    // Respect the LIVE channel toggle at retry time: an admin may have turned
-    // the channel (or master switch) OFF after this row was enqueued. Don't
-    // deliver it then — mark it terminal so the drain stops re-trying.
     if (!(await isChannelEnabled(env, r.purpose))) {
       await env.DB.prepare(
         `UPDATE email_outbox SET status='failed', last_error='channel disabled at drain', claimed_at=NULL WHERE id=?`,
@@ -601,18 +476,6 @@ export async function drainEmailOutbox(
   return { processed, sent, failed };
 }
 
-// ── Convenience: build a public URL for email links ──────────
-// Used by callers to build survey / portal / invite / reset URLs.
-// Falls back to the canonical user-facing domain if PUBLIC_APP_URL is unset.
-//
-// Per-company: a company's links may land on its own hostname once that
-// hostname serves THIS app. Callers pass the company code where they know it;
-// omitted -> the PUBLIC_APP_URL / houzscentury.com behaviour.
-//
-// 2990 is deliberately absent: erp.2990shome.com is still the old 2990 system's
-// own backend site (Pages project 2990s-backend), which has no /invite or
-// /reset page, so a 2990 invitee landed on a sign-in form with no password to
-// type. Add it back only after that hostname is moved onto this app's Pages.
 const COMPANY_PUBLIC_URLS: Record<string, string> = {};
 
 export function publicUrl(env: Env, path: string, companyCode?: string | null): string {
@@ -626,9 +489,6 @@ export function publicUrl(env: Env, path: string, companyCode?: string | null): 
   return `${base}${p}`;
 }
 
-// ── Shared transactional templates ───────────────────────────
-// Kept here (not in route files) so invite + reset mail share one
-// look and both invite paths (issue + resend) render identically.
 
 /** Product name for template copy ("You're invited to <X> ERP"). Derives from
  *  the company's Branding so 2990 invites read "2990's Home ERP". Callers pass
@@ -643,8 +503,6 @@ export function inviteEmailHtml(p: {
   roleName: string;
   inviterName: string;
   expiresIn: string;
-  /** Company-branded product name (erpProductName). Default keeps the
-   *  historical copy for untouched callers. */
   productName?: string;
 }): string {
   const product = p.productName?.trim() || "Houzs ERP";
@@ -670,9 +528,6 @@ export function inviteEmailHtml(p: {
     </div>`;
 }
 
-// HTML-escape interpolated values. Document emails embed customer-controlled
-// free text (names, addresses, driver/lorry fields); without escaping a value
-// containing < > & " would corrupt or inject markup into the outbound email.
 function escapeHtml(s: string): string {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -709,15 +564,12 @@ function escapeHtml(s: string): string {
 //
 // Every interpolated value is escaped (escapeHtml) since it can be customer text.
 export function documentEmailHtml(p: {
-  docTypeLabel: string; // "Delivery Order" | "Invoice" | "Report"
+  docTypeLabel: string;
   docNo: string;
   recipientName: string;
-  rows: Array<{ label: string; value: string }>; // summary key/values
-  viewLink?: string | null; // tokenized public view/print URL, optional
+  rows: Array<{ label: string; value: string }>;
+  viewLink?: string | null;
   note?: string | null;
-  // Company name for the header + footer — pass branding.companyName from the
-  // central Branding config. Falls back to the historical literal so existing
-  // callers (and any pre-migration call) render unchanged.
   companyName?: string;
 }): string {
   const label = escapeHtml(p.docTypeLabel);
@@ -754,8 +606,6 @@ export function resetEmailHtml(p: {
   link: string;
   expiresIn: string;
   requestedBy: string | null;
-  /** Company-branded product name (erpProductName). Default keeps the
-   *  historical copy for untouched callers. */
   productName?: string;
 }): string {
   const product = p.productName?.trim() || "Houzs ERP";
@@ -780,7 +630,6 @@ export function resetEmailHtml(p: {
     </div>`;
 }
 
-// ── Settings helpers exposed to routes ────────────────────────
 
 export async function getAllEmailSettings(env: Env): Promise<Record<string, any>> {
   const rows = await env.DB.prepare(

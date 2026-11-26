@@ -60,17 +60,12 @@ import {
   getRegisteredAgent,
   registeredAgents,
 } from "../services/agent-scheduler";
-// Engine bootstrap: registers the Delivery + Document agents with the
-// scheduler and pushes their tunables into the config-proposal whitelist.
-// This import is what puts them on the heartbeat — do not remove.
 import "../services/agents";
 import { deliveryAgentStatus } from "../services/agents/delivery-agent";
 import { documentAgentStatus } from "../services/agents/document-agent";
 import { collectionAgentStatus } from "../services/agents/collection-agent";
 import { csAgentStatus } from "../services/agents/cs-agent";
 import { procurementAgentStatus } from "../services/agents/procurement-agent";
-/* The executor lives in services/agents so the full-auto path can reach it
-   without faking a request context — see that module's header. */
 import {
   executeReorderProposal,
   staffIdForUser,
@@ -81,10 +76,8 @@ import { listKillScopes, setKillScope } from "../services/agents/kill-scopes";
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Owner-only, whole router.
 app.use("*", requirePermission("*"));
 
-// ── GET /status ──────────────────────────────────────────────────────────────
 
 interface RunRow {
   id: string;
@@ -119,8 +112,6 @@ function projectRun(r: RunRow) {
 app.get("/status", async (c) => {
   const db = c.env.DB;
   const nowIso = new Date().toISOString();
-  // Same MYT day bucket the scheduler counts the daily cap with (taskStats) —
-  // shared so this badge and the cap can never disagree about what "today" is.
   const today = mytDate();
   const { startIso, endIso } = mytDayRangeUtc(today);
 
@@ -164,7 +155,6 @@ app.get("/status", async (c) => {
     const usage = llm?.byFamily.find((f) => f.family === fam) ?? null;
     return {
       id: fam,
-      // live once its engine registered a run function (Delivery/Document land next).
       live: famRegs.length > 0,
       paused: ctl?.paused === true,
       autoApprove: ctl?.autoApprove === true,
@@ -187,17 +177,7 @@ app.get("/status", async (c) => {
   return c.json({ success: true, data: { killAll, generatedAt: nowIso, agents, llm } });
 });
 
-// ── GET /review — the agents' scorecard ──────────────────────────────────────
-// Reviewing an agent = reviewing an employee: not re-doing their arithmetic,
-// but checking the record of what they raised and how it was decided, over a
-// 30-day window. Real per-family outcome metrics computed from the same tables
-// the console already reads: agent_runs (activity + errors + last run), each
-// family's *_agent_proposals decision columns (DOCUMENT works findings), plus
-// the config-tuning decision tally. READ-ONLY — never touches a business
-// document (AGENTS-BLUEPRINT red line).
 
-/** Per-family proposal/findings table wiring. DOCUMENT keeps a findings
- *  worklist (OPEN/RESOLVED) rather than approve/reject proposals. */
 const REVIEW_FAMILY_SOURCES: Record<
   AgentFamily,
   { task: string; proposalTable?: string; findingsTable?: string }
@@ -215,17 +195,11 @@ const REVIEW_FAMILY_SOURCES: Record<
 export interface AgentReviewFamily {
   family: AgentFamily;
   task: string;
-  /** Newest agent_runs.started_at for this family's task (ISO), or null. */
   lastRunAt: string | null;
-  /** agent_runs activity over the window. */
   runs: number;
   errors: number;
-  /** Proposal outcomes (30d window on decided_at for approved/rejected;
-   *  pending is the current open backlog). Null for findings-only families. */
   proposals: { raised: number; pending: number; approved: number; rejected: number } | null;
-  /** Findings worklist outcomes (DOCUMENT only), else null. */
   findings: { open: number; resolvedRecently: number } | null;
-  /** Owner decision tally on this family's config-tuning proposals (30d). */
   decisions: { approved: number; rejected: number };
 }
 
@@ -326,10 +300,6 @@ app.get("/review", async (c) => {
   return c.json({ success: true, data: { windowDays: 30, families } });
 });
 
-// ── GET /history ?family= ─────────────────────────────────────────────────────
-// Read-only per-family run log from agent_runs — the console's history drawer.
-// Resolves the family's registered task(s), so an unregistered family returns
-// an empty list rather than an error.
 
 app.get("/history", async (c) => {
   const family = String(c.req.query("family") ?? "").toUpperCase();
@@ -401,7 +371,6 @@ app.post("/run-now", async (c) => {
   return c.json({ success: true, data: { task: reg.task, summary } });
 });
 
-// ── POST /pause {agent, paused} ──────────────────────────────────────────────
 
 app.post("/pause", async (c) => {
   let body: { agent?: string; paused?: boolean } = {};
@@ -426,7 +395,6 @@ app.post("/pause", async (c) => {
   return c.json({ success: true, data: { agent, paused } });
 });
 
-// ── POST /kill-all {on} ──────────────────────────────────────────────────────
 
 app.post("/kill-all", async (c) => {
   let body: { on?: boolean } = {};
@@ -462,9 +430,6 @@ app.post("/gate", async (c) => {
   if (!AGENT_FAMILIES.includes(agent)) {
     return c.json({ success: false, error: "unknown agent" }, 400);
   }
-  /* The dial is `stage` (1 propose / 2 auto-tune / 3 full-auto); `autoApprove` is
-     the legacy on/off (maps to 2/1). setAgentControl clamps to the family's
-     migration-set ceiling, so a request above it is quietly capped, never raised. */
   let patch: { stage: 1 | 2 | 3 } | { autoApprove: boolean };
   if (body.stage != null) {
     const s = Math.round(Number(body.stage));
@@ -483,7 +448,6 @@ app.post("/gate", async (c) => {
   return c.json({ success: true, data: { agent, ...patch } });
 });
 
-// ── Config proposals (learning loop → owner approval → app_settings) ─────────
 
 app.get("/config-proposals", async (c) => {
   const status = (c.req.query("status") ?? "PENDING").toUpperCase();
@@ -491,10 +455,6 @@ app.get("/config-proposals", async (c) => {
   return c.json({ success: true, data });
 });
 
-// Approve writes the whitelisted parameter through applyConfigProposalValue
-// (the SAME gateway the full-auto path uses — manual and autonomous approvals
-// can never diverge). Reject just closes the proposal. Non-whitelisted keys
-// are REJECTED loudly, never normalized.
 app.post("/config-proposals/decide", async (c) => {
   const db = c.env.DB;
   let body: { ids?: unknown; action?: string } = {};
@@ -526,7 +486,7 @@ app.post("/config-proposals/decide", async (c) => {
         proposed_value?: string;
         proposedValue?: string;
       }>();
-    if (!row) continue; // unknown / already decided
+    if (!row) continue;
 
     const paramKey = (row.paramKey ?? row.param_key) ?? "";
     const proposedRaw = (row.proposedValue ?? row.proposed_value) ?? "";
@@ -564,7 +524,6 @@ app.post("/config-proposals/decide", async (c) => {
   });
 });
 
-// ── Agent feedback (owner teachings) ─────────────────────────────────────────
 
 app.get("/feedback", async (c) => {
   const agent = c.req.query("agent") || undefined;
@@ -608,13 +567,7 @@ app.post("/feedback/:id/retire", async (c) => {
   return c.json({ success: true, data: { id } });
 });
 
-// ═══ Engine endpoints — Delivery ═════════════════════════════════════════════
-// The console UI's working surfaces. Approval here marks a plan APPROVED for
-// the office to execute through the existing flows — it NEVER creates,
-// edits or dispatches DOs/trips (AGENTS-BLUEPRINT red line).
 
-/** jsonb columns arrive as objects from the pg driver but as strings from
- *  older shim paths — accept both. */
 function asJson(v: unknown): unknown {
   if (typeof v !== "string") return v ?? null;
   try {
@@ -739,9 +692,6 @@ app.get("/delivery/brief", async (c) => {
   });
 });
 
-// ═══ Engine endpoints — Document ═════════════════════════════════════════════
-// Findings are READ-mostly: resolve here only dismisses the flag; the patrol
-// re-opens a fresh finding if the underlying condition still holds next run.
 
 interface FindingRow {
   id: string;
@@ -867,11 +817,6 @@ app.get("/document/brief", async (c) => {
   });
 });
 
-// ═══ Order Fulfilment (OF-001) — findings worklist, mirrors DOCUMENT ═══════════
-// OF is a findings agent (of_agent_findings, mig 0130): one NOT_READY row per
-// blocked order. Same list/resolve/brief surface as DOCUMENT, but the row shape
-// is order-centric (so_doc_no / readiness / top_blocker / owner) rather than
-// doc-type-centric, so it gets its own mapping rather than reusing DOCUMENT's.
 app.get("/of/findings", async (c) => {
   const status = (c.req.query("status") ?? "OPEN").toUpperCase();
   const severity = (c.req.query("severity") ?? "").toUpperCase();
@@ -947,9 +892,6 @@ app.get("/of/brief", async (c) => {
   });
 });
 
-// ═══ §10.6 kill SCOPES + §9.4 decision packets ════════════════════════════════
-// The global switch and the per-family pause already exist; these are the finer
-// scopes (a company / a transaction class / a tool) and the decision history.
 app.get("/kill-scopes", async (c) => {
   return c.json({ success: true, data: await listKillScopes(c.env.DB) });
 });
@@ -1014,9 +956,6 @@ app.get("/decisions", async (c) => {
   });
 });
 
-// ═══ Sales & Commercial Intelligence (SI-006) — anomaly worklist ══════════════
-// Same list/resolve/brief surface; SI rows are subject-centric (an ORDER doc_no, a
-// SALESPERSON or a VENUE) with the metric that tripped the anomaly.
 app.get("/si/findings", async (c) => {
   const status = (c.req.query("status") ?? "OPEN").toUpperCase();
   const kind = (c.req.query("kind") ?? "").toUpperCase();
@@ -1088,23 +1027,14 @@ app.get("/si/brief", async (c) => {
   });
 });
 
-// ═══ Engine endpoints — Phase-2 engines (Collection / CS / Procurement / PMS) ══
-// Every Phase-2 engine exposes the SAME four-route surface as Delivery
-// (status / proposals list / proposals decide / latest brief) over its own
-// proposal + brief tables (migrations 0094-0097, all created_at-ordered). One
-// factory registers them so the four families can never drift apart. Approving
-// a proposal only marks it decided for the office to act on — the PROPOSAL-ONLY
-// red line holds for every family (no engine creates/edits a business document).
 
 
 function mountEngineRoutes(opts: {
-  base: string; // URL segment + audit/action slug, e.g. 'collection'
+  base: string;
   proposalTable: string;
   briefTable: string;
   auditEntity: string;
   status: (env: Env) => Promise<unknown>;
-  /** Optional executor run after a successful claim. Omitted → approving only
-   *  marks the row decided, which is what the other three families still do. */
   onApprove?: (c: Context<{ Bindings: Env }>, row: EngineProposalRow) => Promise<ApproveEffect>;
 }) {
   const { base, proposalTable, briefTable, auditEntity, status, onApprove } = opts;
@@ -1151,12 +1081,6 @@ function mountEngineRoutes(opts: {
     const errors: string[] = [];
     const notes: string[] = [];
     for (const id of ids) {
-      /* CLAIM FIRST, execute second. The UPDATE is the atomic step: only the
-         caller whose write reports a change owns this proposal, so two consoles
-         approving the same reorder in the same second cannot both raise POs.
-         The config-proposal path above SELECTs then applies — the opposite
-         order. It can afford that because writing a setting twice is
-         idempotent. Creating a purchase order twice is not. */
       const r = await c.env.DB.prepare(
         `UPDATE ${proposalTable}
             SET status = ?, decided_at = ?, decided_by = ?
@@ -1165,7 +1089,7 @@ function mountEngineRoutes(opts: {
         .bind(next, nowIso, decidedBy, id)
         .run();
       const claimed = Number(r.meta?.changes ?? r.meta?.rows_written ?? 0) > 0;
-      if (!claimed) continue; // unknown id, or someone else decided it first
+      if (!claimed) continue;
       decided++;
       if (action !== "approve" || !onApprove) continue;
 
@@ -1178,9 +1102,6 @@ function mountEngineRoutes(opts: {
       try {
         effect = await onApprove(c, row);
       } catch (e) {
-        // An executor that threw got far enough to do anything at all, so the
-        // claim stands and a human reads the error. Guessing "nothing happened"
-        // here is what would double an order.
         effect = { ok: false, error: e instanceof Error ? e.message : String(e), reversible: false };
       }
       if (effect.ok) {
@@ -1189,9 +1110,6 @@ function mountEngineRoutes(opts: {
       }
       errors.push(`${id}: ${effect.error}`);
       if (!effect.reversible) continue;
-      /* Nothing was created, so handing the proposal back is safe and is the
-         honest outcome: an APPROVED row with no PO behind it would tell the
-         owner the job is done. */
       await c.env.DB.prepare(
         `UPDATE ${proposalTable}
             SET status = 'PENDING', decided_at = NULL, decided_by = NULL
@@ -1262,15 +1180,6 @@ mountEngineRoutes({
   status: csAgentStatus,
 });
 
-/* Procurement is the one family whose approval DOES something: it raises the
-   DRAFT POs the proposal describes. Everything else here still only marks the
-   row decided.
-
-   The red line is unmoved. The engine (procurement-agent.ts) still never touches
-   scm.purchase_orders — it proposes. The PO is created HERE, on a human's click,
-   through the same converter that human would otherwise have driven by hand, and
-   it lands as a DRAFT they still have to confirm. Two gates, not zero: approve,
-   then confirm. */
 mountEngineRoutes({
   base: "procurement",
   proposalTable: "procurement_agent_proposals",
@@ -1278,9 +1187,6 @@ mountEngineRoutes({
   auditEntity: "procurement_agent_proposal",
   status: procurementAgentStatus,
   onApprove: async (c, row) => {
-    /* Acting AS the human who clicked. The full-auto path resolves a different
-       actor (see resolveAgentActorStaffId) — "who did this" has a different
-       answer for a click than for a heartbeat, so neither guesses the other's. */
     const staffId = await staffIdForUser(c.env.DB, c.get("userId"));
     if (!staffId) {
       return {

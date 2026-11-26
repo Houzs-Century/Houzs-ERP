@@ -19,7 +19,6 @@ export function useIsMobile(breakpoint = 1024): boolean {
       return;
     }
     if (!touchDevice) {
-      // PC: pinned to desktop — no resize listener, no flipping.
       setMobile(false);
       return;
     }
@@ -30,10 +29,6 @@ export function useIsMobile(breakpoint = 1024): boolean {
   return mobile;
 }
 
-/** Phone/tablet detection: primary pointer is coarse (touch), or a mobile UA.
- *  A touchscreen Windows laptop keeps a FINE primary pointer (trackpad/mouse),
- *  so it counts as PC; an iPad in desktop-mode Safari masquerades as a Mac in
- *  the UA but its coarse pointer still marks it as a touch device. */
 function isTouchDevice(): boolean {
   try {
     return (
@@ -49,10 +44,6 @@ function readForcedOverride(): boolean | null {
   if (typeof window === "undefined") return null;
   try {
     const q = new URLSearchParams(window.location.search).get("mobile");
-    // sessionStorage, NOT localStorage -- the preview override must die with
-    // the tab. The old localStorage flag stuck FOREVER: a one-time ?mobile=1
-    // preview left the owner's desktop permanently on the phone UI. Also
-    // clear any legacy sticky flag.
     localStorage.removeItem("hz_force_mobile");
     if (q === "1") sessionStorage.setItem("hz_force_mobile", "1");
     else if (q === "0") sessionStorage.removeItem("hz_force_mobile");

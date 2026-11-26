@@ -35,12 +35,6 @@ import { amendmentPrintedStatus, poAmendmentToPdfInput } from "../vendor/scm/lib
 import { amendmentVariantSummaries } from "../vendor/scm/lib/so-amendment-line-diff";
 import "./mobile.css";
 
-/* ------------------------------------------------------------------ *
- * Mobile PO amendment job card — the phone twin of desktop
- * pages/scm-v2/PoAmendmentDetailV2.tsx. View the before -> after diff and, for
- * an approver on the go, run the single-approver gate (approve / reject /
- * withdraw). Print reuses the shared amendment PDF (poAmendmentToPdfInput).
- * ------------------------------------------------------------------ */
 
 const TONE_BADGE_CLASS: Record<StatusTone, string> = {
   neutral: "b-grey", info: "b-brand", progress: "b-amber",
@@ -71,8 +65,6 @@ const plainError = (e: unknown): string => {
   return err?.message ?? "Something went wrong. Please try again.";
 };
 
-/* Per-row department routing chips (mobile idiom). Advisory accountability — it
-   never gates the single-signature apply. */
 function RoutingChips({ kinds }: { kinds: AmendmentFieldKind[] }) {
   if (kinds.length === 0) return null;
   return (
@@ -95,7 +87,6 @@ function RoutingChips({ kinds }: { kinds: AmendmentFieldKind[] }) {
   );
 }
 
-/* The amendment TYPE badge(s) — Processing vs Delivery / Commercial, Mixed when both. */
 function TypeBadges({ kinds }: { kinds: AmendmentFieldKind[] }) {
   const { types, isMixed } = summariseRouting(kinds);
   if (types.length === 0) return null;
@@ -120,9 +111,6 @@ function DiffRow({ line }: { line: PoAmendmentLine }) {
   const isAdd = line.change_type === "ADD";
   const isRemove = line.change_type === "REMOVE";
   const newCode = line.new_item_code ?? old.item_code ?? null;
-  /* Variant SUMMARY per side — a colour/fabric/special change shows only here (it
-     moves no item_code). Group-aware via the shared SO helper; guarded on
-     new_variants so a QTY row's null blob never reads as a cleared spec. */
   const spec = amendmentVariantSummaries({
     change_type: line.change_type,
     new_variants: line.new_variants,
@@ -420,7 +408,6 @@ export function MobilePoAmendmentDetail({
               </div>
             </div>
 
-            {/* Actions */}
             <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 2 }}>
               <button className="btn-ghost" onClick={print.openPreview}>Print amendment</button>
               <PrintPreviewModal

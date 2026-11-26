@@ -20,9 +20,6 @@ const INK = '#11140f';
 const INK2 = '#414539';
 const MUTED = '#767b6e';
 const GRID = '#e3e6e0';
-/* The reports' palette (the owner's redesign, batch 6 §5.11): petrol, gold and
-   warm grey, the P&L chart's three; dark petrol for the bottom line, the
-   Finance red for a loss. Hex, not tokens: Charts PNG draws the SVG as it is. */
 const PETROL = '#16695f';
 const PETROL_INK = '#0c3f39';
 const GOLD = '#d8a85a';
@@ -35,8 +32,6 @@ const CATEGORY_COLOURS = { mattress: PETROL, sofa: GOLD, bedframe: '#6fa79e', ot
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
-/** The box a chart draws in, measured; the defaults stand in before the first
-    measure and under jsdom, which has no ResizeObserver. */
 function useBox(defaults: { w: number; h: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState(defaults);
@@ -112,7 +107,6 @@ export const ShareDonut = forwardRef<SVGSVGElement, { slices: Slice[]; footnote?
   const cy = side ? (H - foot) / 2 : R + 8;
   const lx = side ? 2 * R + 36 : 8;
   const ly = side ? Math.max(14, cy - legendH / 2 + 12) : 2 * R + 30;
-  /* The figures sit near their names, not at the far edge of a wide card. */
   const legendW = clamp(W - lx - 8, 160, 260);
   const total = slices.reduce((a, s) => a + s.valueSen, 0);
   const colour = (i: number, s: Slice) => (s.category ? CATEGORY_COLOURS[s.category] : s.rest ? REST_COLOUR : SLICE_COLOURS[i % SLICE_COLOURS.length]);

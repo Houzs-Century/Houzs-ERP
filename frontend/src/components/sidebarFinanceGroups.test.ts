@@ -62,25 +62,17 @@ describe('the Finance sidebar', () => {
       '/scm/currencies', '/reports/fair-report',
       /* And the ones added since (docs/bugs/0827, 0828; the Forecast P&L 2026-09-21). */
       '/scm/credit-notes', '/scm/forecast', '/scm/finance-dashboard',
-      /* AR Invoices (2026-09-29) — the AP list's twin. */
       '/scm/ar-invoices',
-      /* Card and transfer payments not matched yet, one list (2026-09-30). */
       '/scm/unmatched-payments',
-      /* The supplier's credit notes, their own page under Money out (2026-10-28). */
       '/scm/supplier-notes',
-      /* The owner's cash book, a second Daily Bank under Bank & cards (2026-11-23). */
       '/scm/daily-bank-cashbook',
     ]) expect(tos, `${to} is still reachable`).toContain(to);
-    /* The Accounting page's tabs, now reachable by name. */
     for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance', 'products', 'logistics', 'departments', 'changesum']) {
       expect(tos, `tab ${tab} is deep-linked`).toContain(`/scm/accounting?tab=${tab}`);
     }
     expect(new Set(tos).size, 'no destination twice').toBe(tos.length);
   });
 
-  /* The owner's Claude Design (batch 5, step 4): Official receipts folded into
-     Receipts as its first kind — the entry leaves the sidebar, its address
-     redirects, and Receipts' gate is the two old entries' together. */
   it('folds Official receipts into Receipts: one entry, the old address a redirect', () => {
     const moneyIn = finance?.children?.find((g) => g.label === 'Money in')?.children ?? [];
     expect(moneyIn[0]).toMatchObject({ to: '/scm/receipts', label: 'Receipts', anyAccess: ['scm.finance.money_in'] });
@@ -89,8 +81,6 @@ describe('the Finance sidebar', () => {
     expect(STAFF_LEGACY_REDIRECT_PATTERNS as readonly string[]).toContain('/scm/official-receipts');
   });
 
-  /* Batch 5, step 5: Deposit invoices folded into Invoices as a kind; the switch
-     they carried is Setup › Deposit invoices, gated as the old row was. */
   it('folds Deposit invoices into Invoices, and puts their switch in Setup', () => {
     const moneyIn = finance?.children?.find((g) => g.label === 'Money in')?.children ?? [];
     expect(moneyIn.map((t) => t.label)).toEqual(['Receipts', 'Invoices', 'Debtor maintenance', 'Credit / debit notes', 'Outstanding', 'Not yet billed']);
@@ -122,15 +112,12 @@ describe('the Finance sidebar', () => {
      CN / DN 分出来 — each beside the money it moves. */
   it('splits the notes: the customer\'s and other debtor\'s under Money in, the supplier\'s under Money out', () => {
     const entries = (label: string) => flatten(finance?.children?.find((g) => g.label === label)?.children ?? []);
-    /* The redesign's name (owner's Claude Design, batch 5): the same page, the same gate. */
     expect(entries('Money in').find((t) => t.to === '/scm/credit-notes')?.label).toBe('Credit / debit notes');
     expect(entries('Money in').find((t) => t.to === '/scm/credit-notes')?.anyAccess).toEqual(['scm.finance.money_in']);
     expect(entries('Money out').find((t) => t.to === '/scm/supplier-notes')?.label).toBe('Supplier & other creditor CN / DN');
     expect(entries('Money out').find((t) => t.to === '/scm/supplier-notes')?.anyAccess).toEqual(['scm.finance.money_out']);
   });
 
-  /* The owner's Claude Design (batch 5, step 0): the Money-in pages renamed one
-     for one keep their place, their address and their gates. */
   it('names the Money-in pages as the redesign does', () => {
     const moneyIn = finance?.children?.find((g) => g.label === 'Money in')?.children ?? [];
     const byTo = (to: string) => moneyIn.find((t) => t.to === to);
@@ -151,8 +138,6 @@ describe('the Finance sidebar', () => {
     ]));
   });
 
-  /* The owner's Claude Design (batch 6 §1.1): Books and Setup in the design's
-     order and names, every gate as it was. */
   it('names Books and Setup as the redesign does', () => {
     const entries = (label: string) => finance?.children?.find((g) => g.label === label)?.children ?? [];
     expect(entries('Books').map((t) => [t.label, t.to])).toEqual([

@@ -46,8 +46,6 @@ export function DoDateFilter({
   onChange: (next: { from: string; to: string; dateBy: DoDateBy }) => void;
 }) {
   const [open, setOpen] = useState(false);
-  // The chip ends the status row on desktop but starts it on a phone, so the
-  // panel opens toward whichever side has room.
   const [alignRight, setAlignRight] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -64,7 +62,6 @@ export function DoDateFilter({
     };
   }, [open]);
 
-  // Re-measured on every change: a new label can wrap the chip onto its own row.
   useLayoutEffect(() => {
     const r = boxRef.current?.getBoundingClientRect();
     if (open && r) setAlignRight(r.left + PANEL_W > document.documentElement.clientWidth - 8);
@@ -72,7 +69,6 @@ export function DoDateFilter({
 
   const active = !!(from || to);
   const thisMonth = soTodayYmd(new Date()).slice(0, 7);
-  // The month input shows a month only when the window is exactly one.
   const monthValue = from && to && monthBounds(from.slice(0, 7)).to === to && from.endsWith("-01") ? from.slice(0, 7) : "";
   const fmt = (d: string) => (d ? fmtDate(d) : "…");
   const setMonth = (ym: string) => { if (ym) onChange({ ...monthBounds(ym), dateBy }); };
@@ -124,7 +120,6 @@ export function DoDateFilter({
           </div>
           <label className="mb-2 block text-[11px] font-semibold text-ink-secondary">
             Month
-            {/* Numeric yyyy/mm, not the native month box: that spells month names. */}
             <select
               value={monthValue}
               onChange={(e) => setMonth(e.target.value)}

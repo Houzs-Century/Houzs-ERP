@@ -1,6 +1,3 @@
-// Unit tests for the GR delivery-order extraction normaliser — the defensive
-// coercion that guarantees downstream code a well-shaped GrnExtracted whatever
-// the model returns.
 import { describe, expect, test } from 'vitest';
 import { normalizeGrnExtract, emptyScanNote } from './grn-scan-extract';
 
@@ -48,7 +45,7 @@ describe('normalizeGrnExtract', () => {
     expect(out.poNo).toBeNull();
     expect(out.lines[0]).toEqual({ itemCode: null, barcode: null, description: 'x', qty: 5, poNo: null, rack: null });
     expect(out.lines[1].qty).toBe(0);
-    expect(out.lines[2].qty).toBe(0); // negative clamps to 0
+    expect(out.lines[2].qty).toBe(0);
   });
 
   test('a PO number printed on a row is kept per line (consolidated delivery order)', () => {

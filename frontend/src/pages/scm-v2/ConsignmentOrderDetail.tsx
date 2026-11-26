@@ -1,26 +1,3 @@
-// ----------------------------------------------------------------------------
-// ConsignmentOrderDetail — full-page route at /scm/consignment-orders/:docNo.
-//
-// Clone of SalesOrderDetail.tsx pointed at the consignment detail hook. Keeps
-// the SAME section-card layout (Customer / Order Info / Emergency / Delivery
-// Address cards), line-items table with variant pills, and a payments ledger.
-// Reuses SoLineCard + PhoneInput UNCHANGED for the inline line editor.
-//
-// SO-specific actions are intentionally DROPPED here:
-//   • Proceed-to-PO / status-flow strip + lock-override banner
-//   • MRP coverage (Incoming PO / ETA) column + delivery breakdown
-//   • Convert menus (Issue DO / Issue SI)
-//   • History (audit-log) drawer + price-override modal
-//
-// The backend `/consignment-orders` route mirrors `/mfg-sales-orders` 1:1, so
-// the detail shape (salesOrder header + items + payments) is identical.
-//
-// NOTE on payments: the shared <PaymentsTable> saved-mode is hardwired to the
-// SO payment endpoints, so to keep this page pointed at /consignment-orders we
-// render the payments ledger inline via the consignment payment hooks instead
-// of reusing PaymentsTable in saved mode. (The New page DOES reuse PaymentsTable
-// unchanged in draft mode.)
-// ----------------------------------------------------------------------------
 
 import {
   forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
@@ -142,13 +119,6 @@ type ConsignmentItem = {
   unit_price_sen: number;
   discount_sen: number;
   total_sen: number;
-  /* FINANCE-gated (CO_ITEM_FINANCE_KEYS server-side) — OMITTED from the detail
-     payload for a non-finance caller (canViewScmFinance), hence optional. This
-     page renders no cost/margin, so there is nothing to cut here. NOTE:
-     draftFromItem below collapses a missing unit_cost_sen to 0 and the save
-     echoes it back — safe because the CO line PATCH only takes an explicit cost
-     when it is > 0 and otherwise falls through to the recompute / stored cost
-     (#625's precedence chain; see consignment-orders.ts). */
   unit_cost_sen?: number;
   line_cost_sen?: number;
   line_margin_sen?: number;
@@ -191,8 +161,6 @@ export const ConsignmentOrderDetail = () => {
   const header = (detail.data?.salesOrder as ConsignmentHeader | undefined) ?? null;
   const items = useMemo(() => (detail.data?.items as ConsignmentItem[] | undefined) ?? [], [detail.data]);
 
-  /* Per-line "Delivered" drill-down — which Consignment Note shipped how much
-     (backend attaches `deliveries` per item via coLineDeliveries). */
   const renderDelivered = (it: ConsignmentItem) => {
     const deliveries = (it as ConsignmentItem & {
       deliveries?: Array<{ noNumber: string; qty: number; status: string }>;
@@ -251,15 +219,6 @@ export const ConsignmentOrderDetail = () => {
       setSaveError('Every line must have a product selected before saving.');
       return;
     }
-    /* Sofa is exclusive among MAIN products — the server 400s
-       `so_sofa_no_other_main`. Refuse here so the operator gets one plain
-       sentence instead of a raw 400 round-trip. INTRODUCED, not flat: the
-       server's CO line paths grandfather an order that already mixes
-       (backend/src/scm/lib/main-mix.ts), so a flat check here would lock an
-       operator out of a historic mixed order that the server would happily let
-       them edit. `before` is the order as stored; in edit mode every existing
-       line is seeded into editingDrafts, so the drafts plus the staged add are
-       the whole `after`. */
     const beforeGroups = items.map((it) => it.item_group);
     const afterGroups = [
       ...Object.values(editingDrafts),
@@ -477,19 +436,8 @@ export const ConsignmentOrderDetail = () => {
     }
   };
 
-  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
-     until 2026-08-17, so the loading render called fewer hooks than the loaded
-     one and React threw #310 ("rendered more hooks than during the previous
-     render") the moment the query resolved — a blank "Something went wrong
-     loading this page." on a direct URL / refresh. Arriving from the list hid
-     it: react-query already had the detail cached, so the isPending branch
-     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
-     header; it can only ever be CALLED from the preview dialog, which does not
-     exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!header) return;
-    // The raw detail response carries the category-total fields the SO PDF
-    // needs (the typed subset above omits them). Consignment has no payments.
     return import('../../vendor/scm/lib/sales-order-pdf')
       .then(({ generateSalesOrderPdf, CONSIGNMENT_ORDER_PDF_OPTS }) =>
         generateSalesOrderPdf(header as never, items as never, [], action, [], CONSIGNMENT_ORDER_PDF_OPTS))
@@ -514,7 +462,6 @@ export const ConsignmentOrderDetail = () => {
 
   return (
     <div className="space-y-4">
-      {/* ── Header ──────────────────────────────────────────────── */}
       <PageHeader back
         eyebrow="Supply Chain"
         title={`${header.doc_no} — ${header.debtor_name}`}
@@ -586,7 +533,6 @@ export const ConsignmentOrderDetail = () => {
         </div>
       )}
 
-      {/* ── Customer info ───────────────────────────────────────── */}
       <CustomerCard
         ref={customerCardRef}
         header={header}
@@ -596,7 +542,6 @@ export const ConsignmentOrderDetail = () => {
         onDeliveryDateChange={cascadeDeliveryDateToLines}
       />
 
-      {/* ── Line items ──────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({items.length})</h2>
@@ -627,10 +572,6 @@ export const ConsignmentOrderDetail = () => {
                   docNo={header.doc_no}
                   itemId={it.id}
                   isEditing
-                  /* Conditional on the Processing Date, matching this document's
-                     own PATCH gate (consignment-orders.ts:1267 only collects
-                     offenders when processingDate is set). Was defaulting to
-                     true. */
                   variantsRequired={!!header.processing_date}
                   specLockedReason={null}
                   lineDateLocked={false}
@@ -647,7 +588,6 @@ export const ConsignmentOrderDetail = () => {
                 onChange={patchAddingDraft}
                 onRemove={cancelAddLine}
                 canRemove
-                // Same rule as the saved lines above.
                 variantsRequired={!!header.processing_date}
                 specLockedReason={null}
                 lineDateLocked={false}
@@ -695,8 +635,6 @@ export const ConsignmentOrderDetail = () => {
                     </td>
                     <td>
                       {(() => {
-                        // Description 2 — live recompute first so detail matches list/PDF
-                        // (Commander 2026-06-18). Stored is only a fallback.
                         const desc2 = buildVariantSummary(it.item_group, it.variants)
                           || (it.description2 && it.description2.trim()) || '';
                         return desc2
@@ -727,19 +665,10 @@ export const ConsignmentOrderDetail = () => {
         )}
       </section>
 
-      {/* PAYMENTS removed (Wei Siang 2026-06-06): a consignment is goods placed
-          on loan at the showroom, not a sale — no money is collected, so there
-          is no payments ledger. */}
     </div>
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Customer info card — 4-card split (Customer / Order Info / Emergency /
-   Delivery Address) with debtor autocomplete + locality cascades. Clone of
-   SalesOrderDetail's CustomerCard, minus the SO-only Proceed Date / signature /
-   slip cards.
-   ════════════════════════════════════════════════════════════════════════ */
 type CustomerCardHandle = {
   validate: () => string | null;
   save: (cb: { onSuccess: () => void; onError: (msg: string) => void }) => void;
@@ -768,17 +697,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
   const notify = useNotify();
   const localities = useLocalities();
   const localityRows = useMemo(() => localities.data ?? [], [localities.data]);
-  /* `include` carries the salesperson already ON this document, so someone the
-     onlySales narrowing hides is still named. "(former staff)" below is then
-     only reachable for a row that genuinely is gone. */
   const staffQ = usePickableStaff({ onlySales: true, include: [header.salesperson_id] });
   const staffList = (staffQ.data ?? []).filter((s) => s.active);
   const { can } = useHouzsAuth();
   const venuesQ = useVenues();
   const stateWarehousesQ = useStateWarehouseMappings();
-  // Houzs-flavoured: gate on the flat permission key `scm.so.attribute_other`
-  // (the 2990 bridge always reports either super_admin or sales). Owner + IT
-  // Admin pass via `*`; grant to other positions via Team > Positions.
   const canChangeSalesperson = can('scm.so.attribute_other');
 
   const customerTypeOptsQ = useSoDropdownOptions('customer_type');
@@ -856,9 +779,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     setForm((s) => ({ ...s, salesLocation: code }));
   }, [form.state, stateWarehousesQ.data, form.salesLocation]);
 
-  /* Shared address cascade, BOTH directions (address-cascade.ts). One setForm
-     per pick so the value just chosen survives — the State picker's own handler
-     resets the cascade, so a back-filled State must not route through it. */
   const { cities, postcodes } = useAddressCascade(localityRows, form.state, form.city);
   const onCityPick = (next: string) =>
     setForm((s) => ({ ...s, ...pickCity(localityRows, s, next) }));
@@ -955,7 +875,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 
   return (
     <>
-      {/* ── CUSTOMER ──────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Customer</h2>
@@ -1047,7 +966,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── ORDER INFO ────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Order Info</h2>
@@ -1124,7 +1042,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── EMERGENCY CONTACT ─────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Emergency Contact</h2>
@@ -1174,7 +1091,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── DELIVERY ADDRESS ──────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Delivery Address</h2>

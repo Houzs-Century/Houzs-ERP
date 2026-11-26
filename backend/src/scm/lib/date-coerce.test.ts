@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { dateOrNull, isDateColumn, coerceEmptyDates } from './date-coerce';
 
-/* The vocabulary half of isDateColumn is pinned separately, in
-   tests/dateCoerceColumns.test.ts — it reads the migration tree and the route
-   files off disk, which needs node types this project's tsconfig does not
-   carry. Keep the pure assertions here. */
 
 describe('dateOrNull', () => {
   it('turns a blank date into null, never into a date', () => {
@@ -19,8 +15,6 @@ describe('dateOrNull', () => {
     expect(dateOrNull(' 2026-08-17 ')).toBe('2026-08-17');
   });
 
-  /* The `?? todayMyt()` sites: a blank must fall down the SAME path an absent
-     key falls down, so a NOT NULL document date still gets its default. */
   it('lets a caller default a blank the way it defaults an absent key', () => {
     expect(dateOrNull('') ?? '2026-08-17').toBe('2026-08-17');
     expect(dateOrNull(undefined) ?? '2026-08-17').toBe('2026-08-17');
@@ -28,9 +22,6 @@ describe('dateOrNull', () => {
 });
 
 describe('coerceEmptyDates', () => {
-  /* The production 500: PATCH /api/scm/mfg-purchase-orders/<id> with
-     supplierDeliveryDate2/3/4 sent as "" answered
-     invalid input syntax for type date: "". Null is what the column accepts. */
   it('nulls a blank date column instead of sending "" to Postgres', () => {
     expect(coerceEmptyDates({
       supplier_delivery_date_2: '',
@@ -77,12 +68,8 @@ describe('isDateColumn', () => {
   });
 
   it('a _pattern column is a recipe for finding a date, never a date', () => {
-    /* 0336's trading_date_pattern is a regex whose capture group is the
-       trading day; coercing or gating it as a date is a category error the
-       dateWriteCoercion gate made loudly on 2026-09-02. */
     expect(isDateColumn('trading_date_pattern')).toBe(false);
     expect(isDateColumn('some_date_pattern')).toBe(false);
-    /* And the suffix rule must not eat a real date column. */
     expect(isDateColumn('trading_date')).toBe(true);
   });
 });

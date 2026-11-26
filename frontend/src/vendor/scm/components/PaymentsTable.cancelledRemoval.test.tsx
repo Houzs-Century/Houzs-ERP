@@ -90,7 +90,6 @@ describe('a cancelled order\'s payments: Finance may remove one, nobody may do a
     expect(ask.confirmLabel).toBe('Remove');
     expect(deleteMutate.mock.calls[0]![0]).toEqual({ docNo: DUP, id: 'dup', version: 1, reason: REASON });
 
-    /* The server's refusal reaches the screen instead of vanishing. */
     const { onError } = deleteMutate.mock.calls[0]![1] as { onError: (e: unknown) => void };
     onError(new Error('RM 300.00 of 2990-SO-2608-028\'s money is refunded or moved to another order. Undo that first, then remove this payment.'));
     expect(notifySpy).toHaveBeenCalledWith(expect.objectContaining({ title: 'Payment not removed', tone: 'error', body: expect.stringContaining('Undo that first') }));

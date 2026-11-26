@@ -24,13 +24,11 @@ export const BILL_LINE_KINDS: readonly BillLineKind[] = ['delivery', 'setup', 'd
 export type PrintedOrder = { doNo: string | null; soNo: string | null; ref: string | null };
 
 export type TransportBillLine = {
-  /** The line's own words, short, as printed. */
   text: string;
   date: string | null;
   place: string | null;
   kind: BillLineKind;
   amountSen: number | null;
-  /** Every order the line charges for — several when one price covers a trip. */
   orders: PrintedOrder[];
 };
 

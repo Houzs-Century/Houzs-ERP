@@ -90,9 +90,6 @@ export function useDashboardPeriod(today: string, fromKey: string, toKey: string
  *  dates beside it. */
 export function DashboardPeriodPicker({ period, today, onChange }: { period: Period; today: string; onChange: (from: string, to: string) => void }) {
   const presets = dashboardPeriods(today);
-  /* Choosing "Date range…" opens the two dates on the current window; until
-     one is changed that window still matches a preset, so the choice is held
-     here rather than read back from the URL. */
   const [rangeOpen, setRangeOpen] = useState(false);
   const custom = period.key === "custom" || rangeOpen;
   return (

@@ -8,8 +8,6 @@ import {
 import { BTN, CONTROL, LABEL, PRI, Veil, chip, copyText } from "./MeetingsDialogs";
 import { DateField } from "../../vendor/scm/components/DateField";
 
-/* The Meetings page's other subpages: My meetings, Rooms (cards and the edit dialog),
-   Guest links, Email and WhatsApp, and the Change log. */
 
 const EQUIPMENT = ["TV", "Video call", "Whiteboard", "Projector", "Speakerphone"];
 const CARD = "overflow-hidden rounded-2xl border border-border bg-surface";
@@ -237,7 +235,6 @@ export function LinkDialog({ people, saving, error, onClose, onSave }: {
   const [q, setQ] = useState("");
   const byKey = new Map(people.map((p) => [p.key, p]));
   const needle = q.trim().toLowerCase();
-  // Names appear only while searching, so the dialog is never a wall of names.
   const pool = needle ? people.filter((p) => `${p.name} ${p.company} ${p.department}`.toLowerCase().includes(needle)).slice(0, 30) : [];
   const toggle = (k: string) => setX({ ...x, hosts: x.hosts.includes(k) ? x.hosts.filter((h) => h !== k) : [...x.hosts, k] });
   return (

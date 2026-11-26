@@ -14,7 +14,6 @@ import type { QueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import type { PlanningOrder, PlanningResponse } from './delivery-planning-queries';
 
-/** Same coalescing window as the full refresh it replaces. */
 const ROW_REFRESH_MS = 500;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let client: QueryClient | null = null;
@@ -22,7 +21,6 @@ const waiting = new Set<string>();
 const lastAskedBy = new Map<string, number>();
 let requestNo = 0;
 
-/** Does a row belong in the board cached under ['delivery-planning', region, state]? */
 function fitsSlice(o: PlanningOrder, region: unknown, state: unknown): boolean {
   if (region !== 'ALL' && typeof region === 'string' && !o.regions.includes(region as PlanningOrder['regions'][number])) return false;
   if (state === 'ALL' || state == null) return true;

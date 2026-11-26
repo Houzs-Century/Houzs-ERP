@@ -66,9 +66,6 @@ function DocumentRow({ doc }: { doc: ChangeLogDocument }) {
         </span>
         <span className="w-[170px] shrink-0 font-mono font-semibold text-ink">{doc.docNo}</span>
         <span className="flex-1 truncate text-ink">
-          {/* WHO, in front — it is the first half of his question. A document
-              only the system touched says so rather than showing an empty
-              name, which would read as a change nobody can account for. */}
           {doc.people.length > 0 ? doc.people.join(", ") : "The system only"}
         </span>
         <span className="w-[80px] shrink-0 text-right text-ink-muted">
@@ -93,8 +90,6 @@ function DocumentRow({ doc }: { doc: ChangeLogDocument }) {
                 )}
               </div>
               {ch.fields.length === 0 ? (
-                /* NOT hidden. A row with no readable diff still records WHO and
-                   WHEN, which is most of what this page is for. */
                 <p className="mt-1 text-ink-muted">No field-by-field detail was recorded for this change.</p>
               ) : (
                 <ul className="mt-1 space-y-0.5">
@@ -119,7 +114,6 @@ function DocumentRow({ doc }: { doc: ChangeLogDocument }) {
 export function ChangeLog() {
   const [params, setParams] = useSearchParams();
 
-  /* URL is state (repo rule), so a filtered view is a link he can keep. */
   const hours = Number(params.get("hours")) || CL_WINDOWS[2].hours;
   const rawAuthor = params.get("author");
   const author: ChangeLogAuthorFilter =
@@ -161,13 +155,10 @@ export function ChangeLog() {
         }
       />
 
-      {/* THE ANSWER FIRST, and both numbers in it. */}
       <div className="rounded-lg border border-border bg-canvas p-3 text-[13px] font-semibold text-ink">
         {d ? clVerdict(d) : "Reading the change log..."}
       </div>
 
-      {/* A load failure reaches the reader. An empty table that means "we could
-          not read it" is the failure mode this repo has already paid for. */}
       {q.error && (
         <div className="rounded-md border border-err/40 bg-err/5 p-3 text-[12px] text-err">
           <p className="font-semibold">The change log could not be read, so nothing below is complete.</p>

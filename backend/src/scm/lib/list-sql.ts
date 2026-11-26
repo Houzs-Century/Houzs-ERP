@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// list-sql — the guarded door from a list route to Postgres over Hyperdrive.
-//
-// Each caller keeps its PostgREST read as the fallback. `trySql` answers null
-// (take the fallback) when:
-//   - there is no database URL (the workers test suite pins DATABASE_URL to ''),
-//   - the filter closure used something pgrest-sql cannot translate,
-//   - the statement failed. A failure is remembered per label for LIST_SQL_OFF_MS
-//     so a broken statement (a missing grant, a renamed column) costs one failed
-//     attempt per isolate per window, not one per request.
-// Every outcome is marked in Server-Timing (`s-sql-<label>-…`).
-// ----------------------------------------------------------------------------
 
 import type { Sql } from 'postgres';
 import { getSql, resolveDatabaseUrl } from '../../db/pg';

@@ -24,19 +24,14 @@ import { DO_HEADER_LOCK_COLS, DO_HEADER_LOCK_LABELS, DO_HEADER_OPEN_DESCRIPTION 
 export type TxnDocType = 'PO' | 'GRN' | 'DO' | 'CN' | 'PCO' | 'PC_RECEIVE';
 
 export type HeaderLockPolicy = {
-  /** Inherited columns that freeze once a live child exists (DB column names). */
   lockCols: ReadonlySet<string>;
   labels: Record<string, string>;
-  /** The 409 error code — UNCHANGED per document. */
   error: string;
   what: string;
   child: string;
   ownFields: string;
 };
 
-/* The per-document lock column sets + labels — the single source. Each document's
-   lock module/route imports ITS set from here, so "which columns freeze" lives in
-   exactly one place. UNCHANGED from what each document already used. */
 const SUPPLIER_LABELS = { supplier_id: 'supplier', currency: 'currency', purchase_location_id: 'purchase location' };
 const CUSTOMER_LABELS = { debtor_code: 'customer code', debtor_name: 'customer', currency: 'currency', sales_location: 'sales location', branding: 'branding' };
 

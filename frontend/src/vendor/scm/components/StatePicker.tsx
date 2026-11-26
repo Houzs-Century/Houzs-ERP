@@ -54,9 +54,6 @@ import styles from './StatePicker.module.css';
 const PRIMARY_COUNTRY = 'Malaysia' as const;
 const UNGROUPED = 'Other' as const;
 
-/* The ten-row box the operators already know. The rest of the geometry — gap,
-   flip, floor — is the house rule in lib/anchoredPanel, shared with every other
-   picker so they cannot drift apart. */
 const PANEL_MAX_H = 280;
 
 export const StatePicker = ({
@@ -69,18 +66,13 @@ export const StatePicker = ({
   placeholder = '— pick state —',
   selectClassName,
 }: {
-  /** When set, restrict the picker to this country's states (flat list).
-   *  When empty, show every seeded state grouped by country. */
   country?: string;
   value: string;
-  /** derivedCountry is the state's country from my_localities — the caller can
-   *  patch its own Country field if it was blank. Null if unknown. */
   onChange: (nextState: string, derivedCountry: string | null) => void;
   className?: string;
   style?: React.CSSProperties;
   disabled?: boolean;
   placeholder?: string;
-  /** Applied to the inner control so the caller can share its form styles. */
   selectClassName?: string;
 }) => {
   const localities = useLocalities();
@@ -91,8 +83,6 @@ export const StatePicker = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const isCountryPinned = country.trim().length > 0;
 
-  /* Country-pinned: a flat list of that country's states.
-     Country-empty: states bucketed by country, MY first, "Other" last. */
   const scoped = useMemo(
     () => (isCountryPinned ? statesInCountry(rows, country) : []),
     [rows, country, isCountryPinned],
@@ -106,7 +96,6 @@ export const StatePicker = ({
       if (arr) arr.push(s);
       else byCountry.set(c, [s]);
     }
-    // MY first, then every other country A→Z, "Other" (country-less) last.
     return Array.from(byCountry.entries()).sort(([a], [b]) => {
       if (a === b) return 0;
       if (a === PRIMARY_COUNTRY) return -1;
@@ -120,8 +109,6 @@ export const StatePicker = ({
   const q = query.trim().toLowerCase();
   const match = (s: string) => !q || s.toLowerCase().includes(q);
 
-  /* The filtered view the open panel renders, plus a FLAT list of the same
-     options in display order for keyboard navigation. */
   const filteredGroups = useMemo<[string, string[]][]>(() => {
     if (isCountryPinned) {
       const opts = scoped.filter(match);
@@ -133,9 +120,6 @@ export const StatePicker = ({
   }, [isCountryPinned, scoped, orderedGroups, country, q]);
   const flat = useMemo(() => filteredGroups.flatMap(([, list]) => list), [filteredGroups]);
 
-  /* Is the stored value one of the seeded states? If not (legacy data, or a
-     state whose country differs from a now-pinned one), it is still shown as
-     the current text so it never blanks. */
   const knownStates = useMemo(
     () => new Set(isCountryPinned ? scoped : distinctStates(rows)),
     [isCountryPinned, scoped, rows],
@@ -156,8 +140,6 @@ export const StatePicker = ({
     setQuery('');
     setActive(0);
   };
-  /* pick() and Escape blur the input themselves; the flag stops that blur from
-     reading the stale (possibly empty) query as a clear. */
   const quietBlurRef = useRef(false);
   const quietBlur = () => {
     quietBlurRef.current = true;
@@ -170,16 +152,9 @@ export const StatePicker = ({
     quietBlur();
   };
 
-  /* Loading / empty locality set: keep the control DISABLED rather than falling
-     back to free text. Empty = pre-seed environment; loading = fetch in flight.
-     Either way, letting the operator type a raw string is the backdoor this
-     component exists to remove. */
   const isEmpty = !localities.isLoading && rows.length === 0;
   const controlsDisabled = disabled || localities.isLoading || isEmpty;
 
-  /* The panel lives in a <body> portal, so nothing positions it for us — the
-     shared hook measures the input on open, on capture-phase scroll and on
-     resize, and flips the panel above when the room below cannot hold it. */
   const panelPos = useAnchoredPanel(inputRef, open && !controlsDisabled, PANEL_MAX_H);
 
   const wrapCls = className ? `${styles.wrap} ${className}` : styles.wrap;
@@ -207,9 +182,6 @@ export const StatePicker = ({
     }
   };
 
-  /* One combobox: shows the stored value when closed; opening clears it into a
-     live filter (placeholder keeps the current value visible). Options use
-     onMouseDown + preventDefault so the pick lands before the input's blur. */
   let flatIdx = -1;
   return (
     <div className={wrapCls} style={style}>
@@ -246,18 +218,12 @@ export const StatePicker = ({
             setActive(0);
           }}
           onKeyDown={onKeyDown}
-          /* Text deleted, then the operator moved on: that is a clear, not a
-             cancel. Typing still can never commit a value of its own. */
           onBlur={() => {
             if (!quietBlurRef.current && open && !query.trim() && value) handlePick('');
             close();
           }}
         />
         {open && !controlsDisabled && panelPos && createPortal(
-          /* Portalled so no ancestor's overflow can clip the list. Events still
-             bubble along the REACT tree, so a host that closes on a click in
-             its own subtree (the Warehouse drawer's backdrop, say) behaves
-             exactly as it did while the panel was rendered in place. */
           <div
             className={styles.panel}
             role="listbox"

@@ -40,10 +40,6 @@ export type SoSourceLine = {
   po_qty_picked: number;
 };
 
-/** Trim, upper-case, collapse inner whitespace — the way a person reads a code.
- *  Same normalisation as `soLinkTargetRefusal` and `normItemCode` in
- *  scripts/lib/ac-po-line.mjs. Anything looser hides a real mismatch; anything
- *  stricter reports formatting as a wrong product. */
 const norm = (v: unknown) => String(v ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
 
 export type SoLinkMismatch = {

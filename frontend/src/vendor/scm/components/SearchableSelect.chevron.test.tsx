@@ -1,7 +1,3 @@
-/* Postcode / City pickers on Edit Warehouse and the DP drawers drew their chevron
-   on its own line under the input: it was a sibling the HOST had to position
-   with a wrapper class, and those hosts passed none. It now sits inside the
-   picker, positioned by the picker itself. */
 import { render } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
 import { SearchableSelect, selectInputStyle } from "./SearchableSelect";

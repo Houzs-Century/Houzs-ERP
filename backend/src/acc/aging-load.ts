@@ -48,9 +48,6 @@ export type AgingLoad =
       entries: AgingEntry[];
       controls: ControlBalance[];
       outside: { count: number; sen: number };
-      /** AR only: what each order was paid before the ERP (payments brought over
-          from AutoCount, method 'imported') that no AutoCount deposit note has
-          brought into these books yet, by order. */
       paidBeforeErp?: Record<string, number>;
     }
   | { ok: false; reason: string };
@@ -58,7 +55,6 @@ export type AgingLoad =
 const mytDate = (iso: unknown): string => new Date(Date.parse(String(iso)) + 8 * 3_600_000).toISOString().slice(0, 10);
 const uniq = (xs: Array<string | null | undefined>): string[] => [...new Set(xs.filter((x): x is string => !!x))];
 
-/** Rows of `table` whose `col` is one of `values`, in this company. */
 async function byValues(sb: Db, companyId: number, table: string, cols: string, col: string, values: string[]): Promise<{ ok: true; rows: Row[] } | { ok: false; reason: string }> {
   if (values.length === 0) return { ok: true, rows: [] };
   const { data, error } = await chunkIn<Row>(values, (batch, from, to) =>
@@ -71,14 +67,12 @@ function controlsOf(lines: readonly ControlLine[], codes: readonly string[], sid
   return codes.map((code) => ({ code, balanceSen: lines.filter((l) => l.account_code === code).reduce((n, l) => n + sideOf(l), 0) }));
 }
 
-/* A name keys the party case-blind: Finance's words are upper case from 2026-11-09, older lines are not. */
 export const lineParty = (l: ControlLine): AgingParty => ({
   key: l.party_code ?? `name:${partyNameKey(l.party_name) ?? '—'}`,
   code: l.party_code,
   name: l.party_name ?? l.party_code ?? '(no party)',
 });
 
-/* ── AR ─────────────────────────────────────────────────────────────────── */
 
 export async function loadArAging(sb: Db, companyId: number, codes: readonly string[], asOf: string): Promise<AgingLoad> {
   const got = await loadControlLines(sb, companyId, codes, asOf);
@@ -106,16 +100,11 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
   if (!bills.ok) return bills;
   if (!receipts.ok) return receipts;
   if (!debtorNotes.ok) return debtorNotes;
-  /* The customer notes that answer a deposit invoice net inside their order; any
-     other is credit on the customer until it is knocked off. */
   const papers = await depositPapers(sb, companyId, notes.rows);
   if (!papers.ok) return papers;
 
-  /* Invoices named by id (a payment's or a note's) or by number (a refund's)
-     that the SI lines did not bring. */
   const siById = new Map<string, Row>(sisByNo.rows.map((s) => [String(s.id), s]));
   const siByNo = new Map<string, Row>(sisByNo.rows.map((s) => [String(s.invoice_number), s]));
-  /* The invoices in the books at the date — the only ones a knock-off can come off here. */
   const siInBooks = new Map<string, Row>(siById);
   const wantIds = uniq([...siPays.rows.map((p) => p.sales_invoice_id), ...notes.rows.map((n) => n.sales_invoice_id)]).filter((id) => !siById.has(id));
   const wantNos = uniq(pvs.rows.filter((v) => v.refund_source_type === 'SI').map((v) => v.refund_source_doc_no)).filter((n) => !siByNo.has(n));
@@ -142,7 +131,6 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
   const receiptByNo = new Map(receipts.rows.map((r) => [String(r.receipt_number), r]));
   const debtorNoteByNo = new Map(debtorNotes.rows.map((n) => [String(n.note_number), n]));
 
-  /* The orders every line points at, and the debtors of the other-debtor paper. */
   const soNos = uniq([
     ...pays.rows.flatMap((p) => [p.so_doc_no, p.converted_from_so_doc_no]),
     ...[...siById.values()].map((s) => s.so_doc_no),
@@ -159,17 +147,12 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
   if (!orders.ok) return orders;
   if (!debtors.ok) return debtors;
   if (!imported.ok) return imported;
-  /* A deposit taken before the ERP and brought over from AutoCount books
-     nothing here, so an order invoiced after the move owes its whole invoice in
-     these books. Said in the footer, never knocked off: the aging is the books. */
   const paidBeforeErp: Record<string, number> = {};
   for (const p of imported.rows) {
     if (p.method !== 'imported' || Number(p.amount_sen ?? 0) <= 0) continue;
     const so = String(p.so_doc_no);
     paidBeforeErp[so] = (paidBeforeErp[so] ?? 0) + Number(p.amount_sen);
   }
-  /* What an AutoCount deposit note brought onto the customer is in the books
-     (acc/autocount-deposits.ts): only the rest is footnoted. */
   const offsetByOrder = new Map<string, number>();
   for (const l of lines) {
     if (l.source_type !== 'CN') continue;
@@ -216,7 +199,6 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
       }
       case 'SOCONV': {
         const p = payById.get(doc);
-        /* Dr the order the money left, Cr the order it went to (acc/payments.ts). */
         const so = amountSen > 0 ? p?.converted_from_so_doc_no : p?.so_doc_no;
         if (so) { at = orderGroup(String(so), l); base.docNo = String(so); base.kind = amountSen > 0 ? 'Moved to another order' : 'Moved from another order'; }
         break;
@@ -284,8 +266,6 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
         base.kind = 'Receipt';
         break;
       }
-      /* An other-debtor credit note comes off the bills it knocked off, as a
-         receipt does — by what each knock-off actually moved. */
       case 'OCN': {
         const n = debtorNoteByNo.get(doc);
         if (n) {
@@ -304,13 +284,11 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
     entries.push({ ...base, ...(at ?? { group: own, party: lineParty(l) }) });
   });
 
-  /* Customer invoices brought over from AutoCount book nothing here: said, not aged. */
   const outside = await outsideTheBooks(sb, companyId, 'sales_invoices', [...OPEN_SI_STATUSES], false);
   if (!outside.ok) return outside;
   return { ok: true, entries, controls: controlsOf(lines, codes, (l) => l.debit_sen - l.credit_sen), outside: outside.outside, paidBeforeErp };
 }
 
-/* ── AP ─────────────────────────────────────────────────────────────────── */
 
 export async function loadApAging(sb: Db, companyId: number, codes: readonly string[], asOf: string): Promise<AgingLoad> {
   const got = await loadControlLines(sb, companyId, codes, asOf);
@@ -338,8 +316,6 @@ export async function loadApAging(sb: Db, companyId: number, codes: readonly str
   if (!pvAllocs.ok) return pvAllocs;
   if (!scnAllocs.ok) return scnAllocs;
 
-  /* The invoices a tick names that no invoice line brought (one paid in an
-     earlier era, or brought over from AutoCount) — for their number and rate. */
   const piById = new Map(pisByNo.rows.map((p) => [String(p.id), p]));
   const apiById = new Map(apisByNo.rows.map((a) => [String(a.id), a]));
   const allAllocs = [...pvAllocs.rows, ...scnAllocs.rows] as Row[];
@@ -361,7 +337,6 @@ export async function loadApAging(sb: Db, companyId: number, codes: readonly str
     const s = l.party_code ? supByCode.get(l.party_code) : undefined;
     return s ? { key: String(s.code), code: String(s.code), name: String(s.name ?? s.code) } : lineParty(l);
   };
-  /** The group a tick lands in, and what it is worth in ringgit. */
   const target = (piId: unknown, apiId: unknown, appliedSen: number): { group: string; sen: number } | null => {
     if (piId != null) {
       const p = piById.get(String(piId));
@@ -392,8 +367,6 @@ export async function loadApAging(sb: Db, companyId: number, codes: readonly str
       const v = pvByNo.get(doc)!;
       const parts = (pvAllocs.rows as Row[]).filter((a) => String(a.pv_id) === String(v.id) && Number(a.applied_sen ?? 0) > 0)
         .map((a) => {
-          /* An advance applied later is a tick of its own day; the voucher's
-             own ticks are the voucher's day. */
           const date = a.from_advance === true ? mytDate(a.created_at) : l.entry_date;
           const t = target(a.pi_id, a.ap_invoice_id, Number(a.applied_sen));
           return t && date <= asOf ? { group: t.group, amountSen: t.sen, date, kind: a.from_advance === true ? 'Advance applied' : 'Payment' } : null;
@@ -418,14 +391,11 @@ export async function loadApAging(sb: Db, companyId: number, codes: readonly str
     entries.push({ ...base, group: `LINE:${l.je_no}#${i}`, kind: l.source_type });
   });
 
-  /* Purchase invoices brought over from AutoCount book nothing here. */
   const outside = await outsideTheBooks(sb, companyId, 'purchase_invoices', [...OPEN_PI_STATUSES], true);
   if (!outside.ok) return outside;
   return { ok: true, entries, controls: controlsOf(lines, codes, (l) => l.credit_sen - l.debit_sen), outside: outside.outside };
 }
 
-/** Open invoices brought over from AutoCount (migrated_no_stock): never booked
-    in this ledger, so they are not in the aging — the footer says how many. */
 async function outsideTheBooks(sb: Db, companyId: number, table: 'sales_invoices' | 'purchase_invoices', open: string[], withRate: boolean): Promise<{ ok: true; outside: { count: number; sen: number } } | { ok: false; reason: string }> {
   const cols = withRate ? 'id, total_sen, paid_sen, exchange_rate' : 'id, total_sen, paid_sen';
   const { data, error } = await paginateAll<Row>((f, t) => sb.from(table).select(cols)

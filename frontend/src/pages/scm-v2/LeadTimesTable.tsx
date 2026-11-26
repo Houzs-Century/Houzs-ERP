@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// LeadTimesTable — one row per product category, one Save for the lot
-// (2990-0063 follow-up, Sim: "adjust the UI and Save button"). Used by the MRP
-// "Lead Times" dialog and the supplier page's Lead Times panel.
-//
-// The rows come from the server (GET /mrp-lead-times `categories`), which reads
-// the product catalogue, so a category added in Products shows here by itself.
-// A blank box means "not set here": the placeholder says what applies instead.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { Button } from '../../components/Button';
@@ -21,13 +12,9 @@ export function LeadTimesTable({
   categories, stored, fallbackLabel, canClear, onSave,
 }: {
   categories: LeadCategoryOption[];
-  /** What is saved for this view; undefined = not set here. */
   stored: (category: string) => number | undefined;
-  /** What applies when the box is blank, e.g. "Others: 10". */
   fallbackLabel: (category: string) => string;
-  /** true = emptying a set box removes it; false = a blank box is never a change. */
   canClear: boolean;
-  /** Writes the changed rows; resolves once they are all saved. */
   onSave: (changes: LeadTimeChange[]) => Promise<unknown>;
 }) {
   const [draft, setDraft] = useState<Partial<Record<string, string>>>({});
@@ -49,7 +36,6 @@ export function LeadTimesTable({
       setDraft({});
       setSaved(true);
     } catch {
-      // The failed write's own onError has told the user; rows saved before it stay saved.
     } finally {
       setSaving(false);
     }

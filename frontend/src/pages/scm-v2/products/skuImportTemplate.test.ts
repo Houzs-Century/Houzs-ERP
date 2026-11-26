@@ -1,6 +1,3 @@
-// 2990-0025: the template is only worth handing out if Import SKUs reads back
-// every column it writes, so these tests fill it the way a person would and
-// push it through the importer's own parser.
 import { describe, expect, test } from 'vitest';
 import { buildSkuImportRows, gridToSkuRecords } from '../products-import-headers';
 import { savedSummary, skuTemplateColumns, skuTemplateSheets } from './skuImportTemplate';

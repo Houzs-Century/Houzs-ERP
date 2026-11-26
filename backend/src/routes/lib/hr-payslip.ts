@@ -15,7 +15,6 @@ export const ALLOWANCE_LABEL: Record<AllowanceKind, string> = {
   TRANSPORT: "Transport allowance",
   OVERNIGHT: "Overnight allowance",
   KPI: "KPI allowance",
-  /* The stored amount is a PER-DAY rate; payroll computes the month from attendance. */
   ATTENDANCE: "Attendance allowance",
   OTHER: "Allowance",
   BACKPAY: "Backpay (company advance)",
@@ -54,7 +53,6 @@ export type PayslipFigures = {
   departmentName: string | null;
   payMode: "MONTHLY" | "DAILY";
   pay: MonthlyPay;
-  /** The monthly allowances (not backpay). */
   allowancesSen: number;
   allowanceLines: AllowanceLine[];
   commissionSen: number;
@@ -98,11 +96,8 @@ export function buildPayslip(input: {
   advances: ReadonlyArray<{ date: string; amountSen: number }>;
   penaltySen: number;
   paidLeave?: ReadonlySet<string>;
-  /** The trip month of the same name (23rd to 22nd), or null. */
   trip?: TripPay | null;
-  /** Monthly allowance lines in force this month; BACKPAY is a deduction. */
   allowances?: ReadonlyArray<{ kind: AllowanceKind; amountSen: number; note: string | null }>;
-  /** Earlier months of the same year, for PCB: normal remuneration, employee EPF, PCB withheld. */
   ytd: { remunerationSen: number; epfSen: number; pcbSen: number };
   /** Confirmed overtime hours per date (HC-0125); null keeps punch-derived weekday OT. */
   confirmedOtHoursByDate: ReadonlyMap<string, number> | null;
@@ -139,7 +134,6 @@ export function buildPayslip(input: {
     residency: e.taxResidency,
     category: e.taxCategory,
     childReliefSen: e.taxChildReliefSen,
-    /* Allowances stay out of PCB as in Hookka (and the YTD sum); commission is pay. */
     currentRemunerationSen: pay.grossSen + commissionSen,
     currentEpfSen: statutory.epfEmployeeSen,
     ytdRemunerationSen: input.ytd.remunerationSen,
@@ -172,7 +166,6 @@ export function buildPayslip(input: {
     advanceSen,
     advanceDates: input.advances.map((a) => a.date).sort(),
     penaltySen: input.penaltySen,
-    /* Not clamped, as in Hookka: a negative net shows in red and HR decides. */
     netSen: grossSen - statutoryEmployeeSen - advanceSen - backpaySen - input.penaltySen,
     paymentMethod: e.paymentMethod,
     bankName: cash ? null : e.bankName || null,

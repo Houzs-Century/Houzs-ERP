@@ -1,16 +1,3 @@
-// ── TOTP shared secrets at rest ───────────────────────────────
-//
-// A two-step sign-in secret is all anyone needs to produce that user's codes,
-// and until 2026-11-10 it sat in users.totp_secret as plain base32 — so a copy
-// of the database (a backup, a dump, a staging refresh) handed over everyone's
-// second factor. Sealed, the column holds `enc:v1:<iv>:<ciphertext>` under
-// AES-GCM with a Worker secret (TOTP_ENCRYPTION_KEY) the database never sees.
-// The user id is bound in as additional data, so a sealed value copied onto a
-// different user does not open.
-//
-// The key is optional on purpose: unset, nothing is sealed and a plain secret
-// reads as itself — exactly the behaviour before this file. A plain row is
-// sealed the next time its owner signs in with a code (totpCheck.ts).
 
 const PREFIX = "enc:v1:";
 

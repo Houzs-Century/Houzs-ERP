@@ -29,7 +29,6 @@ const sofaSet = (soDocNo: string, soItemId: string, debtor: string): SofaSet => 
   suppliers: [SUPPLIER],
 });
 
-// An ACCESSORY shortage line on SO-COVER-1 — the cover that must ride with it.
 const coverSku = (): MrpSku => ({
   warehouseId: 'W1', warehouseCode: 'KL', warehouseName: 'KL WAREHOUSE',
   itemCode: 'PILLOW-1', variantKey: '', variantLabel: null,
@@ -79,7 +78,6 @@ describe('MRP sofa tab — the cover rides visibly with the sofa', () => {
     render(<MemoryRouter><Mrp /></MemoryRouter>);
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
 
-    // The rider row names the accessory and is tagged as one.
     const riderRow = screen.getAllByRole('row').find(
       (r) => /PILLOW-1/.test(String(r.textContent)) && r.querySelectorAll('tr').length === 0,
     );
@@ -87,17 +85,13 @@ describe('MRP sofa tab — the cover rides visibly with the sofa', () => {
     expect(within(riderRow!).getByText('Accessory')).toBeTruthy();
     expect(within(riderRow!).getByText('HOOKKA')).toBeTruthy();
 
-    // The default mode is Combined, so the caption says it rides on the sofa PO.
     expect(screen.getByText(/ride on the sofa PO/i)).toBeTruthy();
   });
 
   test('the accessory is NOT a standalone top-level SO row on the sofa tab', () => {
     mrpData = base({ sofaSets: [sofaSet('SO-COVER-1', 'si-sofa', 'CUST A')], skus: [coverSku()] });
     render(<MemoryRouter><Mrp /></MemoryRouter>);
-    // Before expanding, only the sofa SO's own L1 row exists; the accessory has
-    // no SO card of its own (the sofa tab renders from sofaSets).
     const soCells = screen.getAllByText('SO-COVER-1');
-    // Exactly one top-level code cell for the SO (the accessory doesn't add one).
     expect(soCells.length).toBe(1);
   });
 });
@@ -115,8 +109,6 @@ describe('MRP search — narrows the rows in view', () => {
     expect(screen.getAllByText('SO-COVER-1').length).toBeGreaterThan(0);
     expect(screen.getAllByText('SO-COVER-2').length).toBeGreaterThan(0);
 
-    // Force-opening the match repeats its SO no across child module rows, so
-    // assert presence with getAllByText and absence with queryByText.
     fireEvent.change(screen.getByPlaceholderText(/customer/i), { target: { value: 'SO-COVER-2' } });
     expect(screen.queryByText('SO-COVER-1')).toBeNull();
     expect(screen.getAllByText('SO-COVER-2').length).toBeGreaterThan(0);

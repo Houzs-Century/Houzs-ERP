@@ -9,7 +9,6 @@ const piece = (over: Record<string, unknown>): Record<string, unknown> => ({
   item_group: 'sofa', description: null, qty: 1, unit_price_sen: 0, location: null, delivery_date: null, ...over,
 });
 
-/* HC-SO-012736, sofa 8030: typed [Console, 2A(LHF), 1A(RHF)]. */
 const so012736 = () => {
   const variants = { colourLabel: 'BO315-23 BEIGE', specials: [] };
   const d2 = '2R+Console+1R/col : B0315-23';
@@ -20,8 +19,6 @@ const so012736 = () => {
   ];
 };
 
-/* HC-GRN-2609-006, three sofas interleaved on one receipt; sofa 9058 under key
-   928483 was typed [1NA, 1A(LHF), CNR, 1A(RHF)]. */
 const grn006 = () => {
   const a = { colourLabel: 'CH141-2 [superseded by CH141-02 on 2026-08-11]', specials: [] };
   const b = { colourLabel: 'CH141-12 METAL', specials: ['Nylon Fabric'] };

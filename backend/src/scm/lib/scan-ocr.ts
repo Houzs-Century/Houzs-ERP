@@ -1,44 +1,18 @@
-// ---------------------------------------------------------------------------
-// scan-ocr — document-type-agnostic OCR transport primitives.
-//
-// Factored out of scan-so.ts (byte-for-byte, no behaviour change) so the GR /
-// PI scanners (tasks/PLAN-ocr-scan-gr-pi.md, slices 3+) reuse the SAME transport
-// instead of copying it: the Anthropic fetch-with-retry, the base64/sha helpers,
-// the JSON-fence stripper, the multipart file parser, and the R2 replay loader
-// the queue consumer + reaper rebuild a job's inputs from. Everything here is
-// generic — it knows nothing about sale orders, delivery orders or invoices; the
-// per-document prompt + normaliser live in each scanner's own module.
-// ---------------------------------------------------------------------------
 
 export const CLAUDE_MODEL = 'claude-sonnet-4-6';
 
-// SO scanning's model (scan_so and its cache_warm), read from the SCAN_SO_MODEL
-// secret so trying a newer model, and switching back, needs no deploy. A secret,
-// not a [vars] entry, because a dashboard variable is wiped by the next deploy.
-// Unset or not in this list => CLAUDE_MODEL.
 export const SCAN_SO_MODELS = ['claude-sonnet-4-6', 'claude-sonnet-5-5'];
 export function scanSoModel(env: { SCAN_SO_MODEL?: string }): string {
   const model = (env.SCAN_SO_MODEL ?? '').trim();
   return SCAN_SO_MODELS.includes(model) ? model : CLAUDE_MODEL;
 }
 
-// The request fields that differ by model. Sonnet 4.6 does not think unless asked
-// and takes temperature 0. Sonnet 5.5 rejects temperature 0 (400) and thinks by
-// default; between_tools is its lowest setting, which on a single call with no
-// tools means no thinking at all, so a scan costs and reads as it did on 4.6.
 export function modelRequestFields(model: string): Record<string, unknown> {
   return model === 'claude-sonnet-5-5' ? { thinking: { type: 'between_tools' } } : { temperature: 0 };
 }
 export const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
-// Anthropic (and gateways in front of it) return transient 429 rate-limits and
-// 529 "Overloaded" / 5xx spikes that clear on a retry; a single hit otherwise
-// fails the whole scan/distill with a hard error. Retry those a few times with
-// an exponential-ish backoff. Non-retryable statuses (4xx other than 429) and
-// the final attempt fall straight through to the caller's existing !resp.ok
-// handling, so the response shape is unchanged. Only the transport is retried —
-// the prompt/body and response parsing are untouched.
 const RETRYABLE_ANTHROPIC_STATUS = new Set([429, 500, 502, 503, 529]);
 
 export async function anthropicFetchWithRetry(
@@ -49,18 +23,13 @@ export async function anthropicFetchWithRetry(
   for (let attempt = 0; attempt < tries; attempt += 1) {
     resp = await fetch(ANTHROPIC_URL, init);
     if (resp.ok) return resp;
-    // Peek the body for an explicit overloaded_error without consuming the
-    // Response the caller reads — clone so the returned body survives. Some
-    // gateways surface an overloaded body under a status outside the set.
     let overloaded = false;
     try {
       const peek = await resp.clone().text();
       if (/overloaded/i.test(peek)) overloaded = true;
-    } catch { /* body peek is best-effort */ }
+    } catch { }
     const retryable = RETRYABLE_ANTHROPIC_STATUS.has(resp.status) || overloaded;
     if (!retryable || attempt === tries - 1) return resp;
-    // 400ms, 800ms, 1600ms … keeps the whole retry window well under the
-    // per-call AbortSignal.timeout budget.
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
   }
   return resp as Response;
@@ -68,8 +37,6 @@ export async function anthropicFetchWithRetry(
 
 export const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
-// ArrayBuffer -> base64. Workers don't expose Node's Buffer; the chunked loop
-// keeps stack usage bounded for large files. (Ported from HOOKKA scan-po.)
 export function toBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   const chunkSize = 0x8000;
@@ -91,13 +58,10 @@ export async function sha256Hex(buf: ArrayBuffer): Promise<string> {
 export function stripJsonFences(text: string): string {
   let trimmed = text.trim();
 
-  // 1) ```json … ``` or ``` … ```
   const fenceRe = /^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/;
   const fenceMatch = trimmed.match(fenceRe);
   if (fenceMatch?.[1]) trimmed = fenceMatch[1].trim();
 
-  // 2) Strip any chain-of-thought preamble. The valid payload always starts
-  //    with `{` — take from the first `{` to the last `}`.
   const firstBrace = trimmed.indexOf('{');
   const lastBrace = trimmed.lastIndexOf('}');
   if (firstBrace > 0 && lastBrace > firstBrace) {
@@ -110,39 +74,23 @@ export function stripJsonFences(text: string): string {
 export type AnthropicResponse = {
   content?: Array<{ type: string; text?: string }>;
   error?: { type: string; message: string };
-  // 'max_tokens' = the answer was cut off at the output cap, mid-JSON.
   stop_reason?: string | null;
   usage?: { cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
 };
 
-// A Claude content block (image or document per file), in upload order.
 export type ContentBlock = Record<string, unknown>;
-// Per-IMAGE provenance, indexed by the SAME `index` Claude classifies in the
-// OUTPUT "images" array — fileBlocks is built in file order, so image #N in
-// the model's view is uploadedImages[N]. PDFs are NOT displayable inline so
-// they are never stored under an image key (they still ride the prompt as
-// document blocks).
 export type UploadedImage = { index: number; buffer: ArrayBuffer; mime: string };
 export type ScanFileParse = {
   fileBlocks: ContentBlock[];
-  // Image files only (buffer + mime), for R2 provenance storage.
   uploadedImages: UploadedImage[];
-  // EVERY accepted file's raw bytes (images AND pdfs) — the enqueue path
-  // persists these to R2 for durability before the job runs.
   allFiles: Array<{ buffer: ArrayBuffer; mime: string }>;
   firstBuffer: ArrayBuffer | null;
   fileCount: number;
 };
 
-// Accept files under any field name ("file", "files", repeated) — the modal
-// sends `file` repeatedly but be liberal in what we accept. Returns a plain
-// bad-request reason string on any rejected input (the caller maps it to its
-// own 400), or the parsed blocks/buffers.
 export async function parseScanFiles(
   formData: FormData,
 ): Promise<{ ok: true; parsed: ScanFileParse } | { ok: false; reason: string }> {
-  // (entries cast to unknown: @cloudflare/workers-types narrows
-  // FormDataEntryValue to string, which breaks the instanceof check.)
   const files: File[] = [];
   for (const [, v] of formData.entries() as Iterable<[string, unknown]>) {
     if (v instanceof File && v.size > 0) files.push(v);
@@ -198,12 +146,6 @@ export async function parseScanFiles(
   };
 }
 
-// Rebuild a scan job's file inputs from the durable R2 copies — the inverse of
-// parseScanFiles for a retry / queue redelivery (the original in-memory buffers
-// died with the isolate). Block order matches upload order because image_keys
-// was appended in file order; the stored contentType decides image vs document
-// block, same mapping as parseScanFiles. Returns null (caller errors the job)
-// if the bucket is unbound or ANY key is missing.
 export async function loadScanJobFilesFromR2(
   bucket: R2Bucket | undefined,
   keys: string[],

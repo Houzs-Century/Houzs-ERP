@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// connect-payment-map — the PURE decisions behind the Houzs Connect payment push
-// (routes/connect-payments.ts): the method token map, RM→sen, currency guard,
-// and the Sales-Order match classifier. No Supabase, no env, no I/O — so every
-// branch is unit-testable (tests/connectPayments.test.ts) without a live DB, the
-// way the route handler itself cannot be (it needs the scm Postgres schema).
-// ----------------------------------------------------------------------------
 
 /** The ERP ledger method codes a Connect push can resolve to. Connect sends the
  *  owner's 3-method vocabulary (Card / Online / Cash); the ERP persists the

@@ -5,8 +5,6 @@ import { getDb } from "../db/client";
 import { auth_failed_logins as t } from "../db/schema";
 import { loginsVerdict } from "../services/failedLogins";
 
-/* GET /api/admin/health/logins: failed sign-ins (DEV-35). Mounted inside
-   systemHealth.ts, behind its requireItPages() gate. */
 const app = new Hono<{ Bindings: Env }>();
 
 const isRateLimited = sql`${t.reason} IN ('rate_limited', 'totp_rate_limited')`;
@@ -16,7 +14,6 @@ app.get("/logins", async (c) => {
   try {
     return c.json({ ok: true, ...(await failedLoginsSummary(c.env)) });
   } catch (e) {
-    // Same as the other health routes: a DB failure reads as ok:false, not a 500.
     console.error("[health/logins]", e);
     return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) });
   }

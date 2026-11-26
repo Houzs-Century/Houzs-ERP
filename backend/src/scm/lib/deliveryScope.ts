@@ -116,11 +116,8 @@ export async function resolveDeliveryScope(
   caller: DeliveryScopeCaller | null | undefined,
 ): Promise<DeliveryScope> {
   if (!caller) return SCOPE_ALL;
-  // The owner / IT wildcard is never narrowed.
   if (hasWildcard(caller)) return SCOPE_ALL;
 
-  // INTENT gate — only the policy's restricted cohort (the transportation-view
-  // positions) is a candidate for scoping. Everyone else keeps the whole board.
   const policy = resolvePositionPolicy(
     {
       position_name: caller.position_name ?? null,
@@ -133,8 +130,6 @@ export async function resolveDeliveryScope(
   const uid = caller.id;
   if (uid == null || !Number.isFinite(Number(uid))) return SCOPE_ALL;
 
-  // IDENTITY gate — resolve the caller's fleet rows by the user_id link. Any
-  // failure (missing column, transient error) fails OPEN to the whole board.
   const driverIds = new Set<string>();
   const helperIds = new Set<string>();
   try {

@@ -72,10 +72,8 @@ export type AttendanceView = {
   regularMin: number;
   otMin: number;
   shortfallMin: number;
-  /** Minutes on site so far (open punch) or in total (closed), lunch not deducted. */
   spanMin: number | null;
   notes: string | null;
-  /** Each clock pair of the day (clock 1-4), for display. */
   segments: ViewSegment[];
 };
 
@@ -101,7 +99,6 @@ function side(row: AttendanceRow, which: "in" | "out", siteNames: ReadonlyMap<nu
   };
 }
 
-/** A stored punch mark shaped for the phone / tab, like side() but from a segment. */
 function markSide(mark: PunchMark, workDate: string, siteNames: ReadonlyMap<number, string>): PunchSide {
   return {
     at: asDate(mark.at).toISOString(),
@@ -182,8 +179,6 @@ export function attendanceView(row: AttendanceRow, rules: AttendanceRules, siteN
   const inMin = row.clock_in_at ? minutesFromWorkDate(row.work_date, asDate(row.clock_in_at)) : null;
   const outMin = row.clock_out_at ? minutesFromWorkDate(row.work_date, asDate(row.clock_out_at)) : null;
   const open = inMin != null && outMin == null;
-  /* An open day is judged up to now, so the phone and the tab show late and
-     hours so far; a day with no clock-in has no times to judge. */
   const day = inMin != null ? computeAttendanceDay(inMin, outMin ?? minutesFromWorkDate(row.work_date, now), rules) : null;
   return {
     id: row.id,
@@ -282,8 +277,6 @@ export function punchGateRefusal(
   return null;
 }
 
-/* An HR correction gives times as "HH:MM" on the work date. A clock-out
- * earlier than the clock-in is the next morning. Blank = no punch. */
 export function correctionTimes(
   workDate: string,
   clockIn: string,

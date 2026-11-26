@@ -1,9 +1,3 @@
-// si-list-stamps was lifted out of routes/sales-invoices.ts on 2026-08-23 and
-// landed with no test executing it — with grn-audit-meta, the pair that pushed
-// scm/lib's no-test count from 10 to 12 and turned the coverage ratchet red on
-// main. What the two stamps promise: ONE batched read per page however many
-// rows repeat a key, rows mutated in place, and a failed read that degrades to
-// null display columns instead of a 500 on the invoice list.
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { stampDoNumber, stampSoDates } from './si-list-stamps';
 
@@ -14,7 +8,6 @@ type Store = {
   reads: Array<{ table: string; in: unknown[] }>;
 };
 
-/** Chainable PostgREST stand-in for the `.in()` batched reads. */
 function fakeSb(store: Store) {
   return {
     from: (table: string) => ({

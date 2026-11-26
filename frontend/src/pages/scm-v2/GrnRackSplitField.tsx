@@ -1,8 +1,3 @@
-// Desktop presentation of a DRAFT GRN line split over several racks (owner
-// 2026-10-02). The logic is the shared useGrnLineRackSplit — the phone's
-// MobileGrnLineRack renders the same hook — so only the look is desktop's.
-// Saves on Add / remove, like the one-rack picker's own endpoint, independent of
-// the line form's Save. The first rack of an unplaced line saves on the pick.
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';

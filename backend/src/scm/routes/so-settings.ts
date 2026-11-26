@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-settings — SO Maintenance feature toggles (migration 0158, spec D5).
-//   GET   /        — all rows: { settings: [{ key, enabled, label }] }
-//   PATCH /:key    — { enabled: boolean } — config editors only; a KNOWN key
-//                    (below) by its own rule, and created on its first write.
-// The SO create path reads the same rows server-side (extra-amount gate;
-// mfg-sales-orders.ts reads so_settings.pos_remark_extra_auto_sku).
-// ----------------------------------------------------------------------------
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
@@ -19,11 +11,6 @@ export const soSettings = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 soSettings.use('*', supabaseAuth);
 
-// Houzs-flavoured: gate via canWriteScmConfig (flat `scm.config.write` OR the position policy canWriteConfig flag, see houzs-perms.ts) against
-// the REAL caller (the 2990 staff_role lookup is dead in Houzs — the SCM
-// bridge pins every caller to one super_admin row). Owner + IT Admin pass via
-// `*`; grant the flat key to a ROLE, or set the Title's canWriteConfig flag,
-// under Team > Roles & Permissions (the Roles and Titles tabs).
 
 /** Settings this code knows that are not seeded: written by their own rule and
  *  created on their first write, so a company never needs a row before the
@@ -70,14 +57,11 @@ soSettings.patch('/:key', async (c) => {
   if (!parsed.success) return c.json({ error: 'invalid_body', issues: parsed.error.issues }, 400);
 
   const companyId = activeCompanyId(c);
-  /* A known key is created on its first write — and only for a resolved
-     company, never as a company-less row every company would read. */
   if (known && companyId == null) return c.json({ error: 'company_unresolved' }, 409);
   const before = known
     ? await sb.from('so_settings').select('enabled').eq('key', key).eq('company_id', companyId).maybeSingle()
     : null;
   if (before?.error) return c.json({ error: 'load_failed', reason: before.error.message }, 500);
-  /* Read NOW: the value before the write, for the ledger. */
   const was = (before?.data as { enabled?: boolean } | null)?.enabled === true;
 
   const { data, error } = known && !before?.data
@@ -96,9 +80,6 @@ soSettings.patch('/:key', async (c) => {
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
 
-  /* Who flipped a switch that decides whether a sale can be confirmed. The
-     actor is the REAL person (houzsUser): inside /api/scm/* `user` is the
-     pinned bridge identity every caller shares. Best-effort by contract. */
   if (known) {
     await writeAudit(c.env, {
       action: 'so_settings.update',

@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// DailyBankBoard — the Daily Bank's Board (the owner's Claude Design redesign,
-// batch 3, "Money today"): how much can move today, how the day got there, each
-// bank and cash account with the day's movements, the card money on its way,
-// and the vouchers awaiting approval. Reads the same board the Accounts sheet
-// does (GET /accounting/daily-bank), so the two never disagree. The cash book's
-// page (2026-11-23) draws its own board here too, and says which banks it does
-// not carry yet.
-// ----------------------------------------------------------------------------
 
 import { Link } from 'react-router-dom';
 import { ArrowRight, Hourglass } from 'lucide-react';
@@ -40,7 +31,6 @@ export function notStartedNote(b: DailyBankBoard): string | null {
 /** A cash-book bank's tag: the day its cash book starts. */
 export const sinceLabel = (start: { date: string }): string => `Cash book since ${fmtDate(start.date)}`;
 
-/** What a day's line is called on a card: who, else (a typed receipt) its note, else its document. */
 const lineWho = (m: DailyBankMovement): string => m.party ?? (m.sourceType === 'TYPED' ? m.note : m.docNo);
 
 /** Every voucher checked and awaiting approval: per bank, then those paying from an account the board does not carry. */
@@ -75,12 +65,10 @@ function AccountCard({ block, onOpen }: { block: DailyBankBlock; onOpen: (accoun
 
 export function DailyBankBoardView({ board, onOpenAccount, cashbook }: {
   board: DailyBankBoard; onOpenAccount: (accountCode: string) => void;
-  /** The cash book's page: where its banks' starts and receipts are typed. null on the original. */
   cashbook: { onOpenEntries: () => void } | null;
 }) {
   const bridge = bridgeRows(board);
   const waiting = notStartedNote(board);
-  /* Bars start at zero; a negative figure draws no bar and reads red. */
   const top = Math.max(1, ...bridge.map((r) => r.sen));
   const awaiting = awaitingVouchers(board);
   const transit = [...board.transit].sort((a, b) => b.balanceSen - a.balanceSen);

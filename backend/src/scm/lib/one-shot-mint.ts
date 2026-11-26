@@ -1,22 +1,15 @@
 import { oneShotSofaCode, oneShotSimpleCode, buildOneShotName, remarkSlug } from '../shared';
 
 export type OneShotMintReq = {
-  /** The SO line row object to rewrite (mutated in place: item_code + description). */
   row: Record<string, unknown>;
   category: 'SOFA' | 'BEDFRAME' | 'MATTRESS' | 'ACCESSORY';
-  /** base_model (sofa); '' for non-sofa. */
   modelCode: string;
-  /** Base SKU code (non-sofa) for oneShotSimpleCode. */
   baseSkuCode: string;
-  /** Base SKU display name to derive the one-shot name. */
   baseName: string;
   modelId: string | null;
   branding: string | null;
-  /** Normalized base compartment code (sofa); '' otherwise. */
   compartment: string;
-  /** Raw remark text (drives slug + the parenthetical name). */
   remarkText: string;
-  /** D9 list price (sen). */
   sellPriceSen: number;
 };
 

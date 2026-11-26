@@ -3,31 +3,16 @@ import { useQuery as useTanstackQuery, keepPreviousData } from "@tanstack/react-
 export interface QueryState<T> {
   data: T | null;
   loading: boolean;
-  /** A request is active, including background/placeholder transitions. */
   fetching: boolean;
-  /** The visible data belongs to the previous query key. */
   placeholder: boolean;
   error: string | null;
   reload: () => void;
 }
 
-// Optional per-callsite freshness controls. Defaults mirror the global
-// queryClient (refetch-on-mount when stale). Set
-// `refetchOnMount: "always"` + `staleTime: 0` on a list query that must
-// reflect a sibling tab's create the instant the consumer mounts.
 export interface UseQueryOptions {
   refetchOnMount?: boolean | "always";
   staleTime?: number;
-  // Set true on a PAGINATED / tab-switched list so changing page/tab keeps the
-  // previous rows on screen while the next slice loads, instead of flashing an
-  // empty table + spinner (TanStack v5's keepPreviousData behaviour). Purely
-  // presentational — does not touch the query key or caching.
   keepPreviousData?: boolean;
-  // When false the fetch never fires (TanStack `enabled`). Use to HARD-GATE a
-  // permission-restricted query: pair it with NOT rendering the consuming
-  // section so a user who lacks the permission neither renders nor fetches —
-  // no 403, no fetch-then-hide flicker. Defaults to true. While disabled the
-  // hook reports loading=false so the gated branch renders without a spinner.
   enabled?: boolean;
 }
 
@@ -95,24 +80,11 @@ export function useQuery<T>(
       refetchOnMount: options.refetchOnMount,
     }),
     ...(options.staleTime !== undefined && { staleTime: options.staleTime }),
-    // keepPreviousData: hold the last successful data while the next key's
-    // fetch is in flight, so a page/tab switch never blanks the list.
     ...(options.keepPreviousData && { placeholderData: keepPreviousData }),
   });
   return {
     data: q.data ?? null,
-    // A disabled query stays `isPending` in TanStack v5 (status pending,
-    // fetchStatus idle). Report loading=false so a hard-gated consumer renders
-    // its hidden/empty branch instead of a permanent spinner.
-    //
-    // NOTE for direct TanStack callsites: use `isPending`, NOT `isLoading`.
-    // isLoading is (isPending && isFetching), so it is FALSE while a query is
-    // pending but not actively fetching — i.e. disabled, or PAUSED because the
-    // device is offline. A gate written `if (isLoading) <spinner>; if (error ||
     // !data) <error>` therefore paints its ERROR branch on a flaky connection
-    // before the fetch ever runs, then swaps to content when it resolves — the
-    // "error first, then it loads" class of bug. This wrapper already uses
-    // isPending for exactly that reason.
     loading: enabled ? q.isPending : false,
     fetching: enabled ? q.isFetching : false,
     placeholder: enabled ? q.isPlaceholderData : false,

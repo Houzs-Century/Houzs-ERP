@@ -10,7 +10,6 @@ const read = (p: string) => readFileSync(path.resolve(__dirname, p), "utf8");
 const modal = read("./DocumentFlowModal.tsx");
 const app = read("../../../App.tsx");
 
-/* "route: (id) => `/scm/sales-orders/${encodeURIComponent(id)}`" -> "/scm/sales-orders/:x" */
 const mapRoutes = [...modal.matchAll(/route:\s*\(id\)\s*=>\s*`([^`]+)`/g)].map((m) => m[1].replace(/\$\{[^}]+\}/g, ":x"));
 const appRoutes = [...app.matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1].replace(/:[A-Za-z]+/g, ":x"));
 

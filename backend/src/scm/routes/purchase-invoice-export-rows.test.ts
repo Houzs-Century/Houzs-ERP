@@ -1,6 +1,3 @@
-// GET /purchase-invoices/export/rows — every Purchase Invoice the list's filter
-// matches, each carrying its lines, for the grid-driven export (owner
-// 2026-09-15). Harness as purchase-invoice-exports.test.ts.
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import type { Env, Variables } from '../env';

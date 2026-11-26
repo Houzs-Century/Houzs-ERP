@@ -1,23 +1,3 @@
-// ---------------------------------------------------------------------------
-// profilePicture — the profile-photo read and write paths, once.
-//
-// WHY THIS FILE EXISTS. Upload and delete lived inside `pages/Profile.tsx`
-// (uploadPic / removePic) and the blob read lived inside `components/Avatar.tsx`.
-// Both are desktop files, and `frontend/src/mobile/` contained no reference to
-// `profile_pic` at all — so the ONE device with a camera could neither upload a
-// photo nor display one that had been uploaded from a PC.
-//
-// Two hooks, because they are two different gaps:
-//   · useProfilePicUrl  — the READ. Fetches the authed blob and hands back an
-//     object URL, revoking it on unmount / key change. Used by the desktop
-//     `Avatar` and by the mobile identity card.
-//   · useProfilePicture — the WRITE. Compress → weigh → PUT, and the delete.
-//
-// THE LIMITS ARE NOT RE-TYPED. `maxDimension: 1000` and the 5 MB refusal are the
-// desktop's own numbers, and they now exist in exactly one place, so the phone
-// cannot drift permissive. Avatars render small; compression also absorbs what
-// used to be a hard rejection of ordinary phone shots.
-// ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
@@ -28,7 +8,6 @@ export const PROFILE_PIC_MAX_DIMENSION = 1000;
 /** Weighed AFTER compression, so this refuses what we would actually send. */
 export const PROFILE_PIC_MAX_BYTES = 5 * 1024 * 1024;
 
-// ── READ ────────────────────────────────────────────────────────────────────
 
 /**
  * The authed profile-photo blob for one user, as an object URL.
@@ -85,13 +64,10 @@ export function useProfilePicUrl(
   return { src, error };
 }
 
-// ── WRITE ───────────────────────────────────────────────────────────────────
 
 export type ProfilePictureWriter = {
   busy: boolean;
-  /** @returns null on success, else a sentence to show the operator. */
   upload: (rawFile: File) => Promise<string | null>;
-  /** @returns null on success, else a sentence to show the operator. */
   remove: () => Promise<string | null>;
 };
 

@@ -11,8 +11,6 @@ export type ScanKind = 'so' | 'payment' | 'pv' | 'workshop';
 export function ViewOriginalScan({ kind, documentId }: { kind: ScanKind; documentId: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [files, setFiles] = useState<Array<{ id: string }>>([]);
-  /* Plain fetch, not react-query: Fleet Health has no QueryClient. A failed
-     list shows no link, the same as a document that was never scanned. */
   useEffect(() => {
     let live = true;
     setFiles([]);

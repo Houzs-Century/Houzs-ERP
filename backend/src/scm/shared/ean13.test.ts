@@ -1,5 +1,3 @@
-// The own-barcode rule for Houzs POS labels: 200 + running number + check
-// digit, validated, and the bar pattern a label prints.
 import { describe, expect, test } from "vitest";
 import { ean13CheckDigit, ean13Modules, ean13Svg, internalEan13, isInternalEan13, isValidEan13 } from "./ean13";
 
@@ -14,7 +12,6 @@ describe("ean13", () => {
 
   test("an internal barcode is 200 + nine digits + check, and only those count as internal", () => {
     const c = internalEan13(1);
-    /* 2·1 + 1·3 = 5 over the twelve digits, so the check digit is 5. */
     expect(c).toBe("2000000000015");
     expect(isInternalEan13(c)).toBe(true);
     expect(isInternalEan13("4006381333931")).toBe(false);

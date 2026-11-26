@@ -39,8 +39,6 @@ export async function readPoSourceSo(sb: Sb, poId: string): Promise<PoSourceSo> 
 
   const heads = ((await readOrThrow('mfg_sales_orders',
     sb.from('mfg_sales_orders').select('doc_no, ref, customer_so_no, linked_ac_docno').in('doc_no', docNos))) as SoHead[] | null) ?? [];
-  /* The book's number: a carried-over order is SO-0xxxxx there and HC-SO-0xxxxx
-     here; an ERP-made one is the same on both sides. */
   const source_so_no = poSourceSoNos(heads.map((h) => h.linked_ac_docno ?? h.doc_no));
   const ref = heads.length === 1 ? soReference(heads[0]) : null;
   return { ref, source_so_no };

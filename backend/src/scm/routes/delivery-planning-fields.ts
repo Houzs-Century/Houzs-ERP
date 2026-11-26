@@ -1,8 +1,3 @@
-// Field metadata for PATCH /delivery-planning/:type/:id/fields — the value
-// whitelists, the zod body schema, and the camelCase-key -> snake_case-column
-// maps split by table (SO header vs DO row). Lives here, not in the router, to
-// keep delivery-planning.ts under its file-size ceiling; imported back by the
-// route and by delivery-planning.fields.test.ts / delivery-planning-fields.test.ts.
 import { z } from 'zod';
 import { ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 
@@ -35,44 +30,39 @@ export const HC_MESSAGE_STATUS_VALUES = [
 ] as const;
 
 export const fieldsSchema = z.object({
-  // SO-context (→ mfg_sales_orders)
-  possessionDate: z.string().nullable().optional(),       // YYYY-MM-DD
-  houseType: z.string().nullable().optional(),            // New House / Replacement (free text)
+  possessionDate: z.string().nullable().optional(),
+  houseType: z.string().nullable().optional(),
   replacementDisposal: z.string().nullable().optional(),
   referral: z.string().nullable().optional(),
-  deliveryMessageStatus: z.string().nullable().optional(),  // one of the 23 workflow values, or blank
+  deliveryMessageStatus: z.string().nullable().optional(),
   disposalRequest: z.string().nullable().optional(),
   dpRemark: z.string().nullable().optional(),
-  amendReason: z.string().nullable().optional(),  // preset reason or free text
-  // Amendment dates — the customer's ORIGINAL customer_delivery_date is NEVER
-  // edited here; only the amendment columns are.
-  amendDateFromCustomer: z.string().nullable().optional(),  // YYYY-MM-DD (customer's ask)
-  amendedDeliveryDate: z.string().nullable().optional(),    // YYYY-MM-DD (we confirm)
-  // DO-execution (→ delivery_orders)
+  amendReason: z.string().nullable().optional(),
+  amendDateFromCustomer: z.string().nullable().optional(),
+  amendedDeliveryDate: z.string().nullable().optional(),
   timeRange: z.string().nullable().optional(),
-  jobKind: z.enum(ASSR_BOARD_LEGS).optional(),  // service-case leg the write targets
+  jobKind: z.enum(ASSR_BOARD_LEGS).optional(),
   timeConfirmed: z.boolean().nullable().optional(),
-  arrivalAt: z.string().nullable().optional(),            // ISO datetime
+  arrivalAt: z.string().nullable().optional(),
   departureAt: z.string().nullable().optional(),
-  shipoutDate: z.string().nullable().optional(),          // YYYY-MM-DD
+  shipoutDate: z.string().nullable().optional(),
   customerDeliveredDate: z.string().nullable().optional(),
-  etaArrivingPort: z.string().nullable().optional(),      // port / shipment ref
-  deliverySubstatus: z.string().nullable().optional(),    // HC "Remark 4" (whitelisted, blank allowed)
-  arrivesEmWarehouseDate: z.string().nullable().optional(),  // YYYY-MM-DD
+  etaArrivingPort: z.string().nullable().optional(),
+  deliverySubstatus: z.string().nullable().optional(),
+  arrivesEmWarehouseDate: z.string().nullable().optional(),
   // EM cross-border transport status (owner 2026-09-23) — ESB sea-freight + BS
   // last-mile legs, back-filled by the two 3PL transporters.
   emDeliveryStatus: z.string().nullable().optional(),
   consignmentNo: z.string().nullable().optional(),
   vesselVoyage: z.string().nullable().optional(),
-  etdPortKlang: z.string().nullable().optional(),         // YYYY-MM-DD
-  bsDeliveryDate: z.string().nullable().optional(),       // YYYY-MM-DD
+  etdPortKlang: z.string().nullable().optional(),
+  bsDeliveryDate: z.string().nullable().optional(),
   esbRemarks: z.string().nullable().optional(),
   bsRemarks: z.string().nullable().optional(),
-  ctn: z.string().nullable().optional(),                  // carton count (free text)
-  emDeliveredDate: z.string().nullable().optional(),      // YYYY-MM-DD (Done Delivery)
+  ctn: z.string().nullable().optional(),
+  emDeliveredDate: z.string().nullable().optional(),
 });
 
-/* Map the camelCase request keys → the snake_case columns, split by table. */
 export const SO_FIELD_COLS: Record<string, string> = {
   possessionDate: 'possession_date',
   houseType: 'house_type',
@@ -82,7 +72,6 @@ export const SO_FIELD_COLS: Record<string, string> = {
   disposalRequest: 'disposal_request',
   dpRemark: 'dp_remark',
   amendReason: 'amend_reason',
-  // Amendment dates — NEVER customer_delivery_date (the original).
   amendDateFromCustomer: 'amend_date_from_customer',
   amendedDeliveryDate: 'amended_delivery_date',
 };
@@ -107,19 +96,11 @@ export const DO_FIELD_COLS: Record<string, string> = {
   emDeliveredDate: 'em_delivered_date',
 };
 
-/* The raw scm.delivery_orders row the board read shapes into the per-DO exec
-   fields — dual-read snake + camelCase (the pg driver camelCases result
-   columns). Declared here (rather than inline in the router) to keep
-   delivery-planning.ts under its file-size ceiling. */
 export type DeliveryOrderExecRow = {
   id: string; do_number: string | null; so_doc_no: string | null; status: string | null;
   driver_id: string | null; driverId?: string | null;
   driver_name?: string | null; driverName?: string | null; vehicle?: string | null;
   delivery_state: string | null; customer_delivery_date: string | null; do_date: string | null;
-  // POD (proof of delivery) — the real delivered instant + evidence presence.
-  // signature_data (the base64 blob) is deliberately NOT read here; the board
-  // surfaces only has_pod + delivered_at, and the evidence preview is fetched
-  // on demand from the DO detail.
   delivered_at: string | null; pod_r2_key: string | null; pod_lat: number | null;
   time_range: string | null; time_confirmed: boolean | null;
   arrival_at: string | null; departure_at: string | null;
@@ -143,10 +124,6 @@ export type DeliveryOrderExecRow = {
   bsRemarks?: string | null; emDeliveredDate?: string | null;
 };
 
-/* The per-DO exec fields the board attaches to each SO row — the shaped output
-   of DeliveryOrderExecRow (the LAST non-DRAFT/CANCELLED DO wins, same DO whose
-   crew is shown). Declared here (rather than inline in the router) to keep
-   delivery-planning.ts under its file-size ceiling. */
 export type DoExecOut = {
   time_range: string | null; time_confirmed: boolean | null;
   arrival_at: string | null; departure_at: string | null;
@@ -158,20 +135,10 @@ export type DoExecOut = {
   bs_delivery_date: string | null; esb_remarks: string | null;
   bs_remarks: string | null; ctn: string | null; em_delivered_date: string | null;
   do_date: string | null;
-  // POD: the real delivered instant, the photo key, and whether ANY evidence
-  // (photo or GPS) was captured — distinguishes a real driver POD from an
-  // evidence-free "mark delivered" (office advance / QR scan). The signature
-  // and full geo are fetched on demand for the preview, not carried per row.
   delivered_at: string | null; pod_r2_key: string | null; pod_lat: number | null;
   has_pod: boolean;
 };
 
-/* A driver TYPED on the DO header (the DO form's free-text Driver / Vehicle) with
-   no crew row behind it: it names nobody in the fleet master, so there is no IC
-   or phone to print and the Driver Info message cannot send. Before this the board
-   showed nothing at all for such a DO ("I filled the driver, it is missing"); now
-   it shows the typed name flagged `driver_1_typed`, and the board asks for the
-   real driver to be picked. Keyed by DO id; a DO with a crew row never uses it. */
 export type TypedHeaderCrew = {
   driver: string; helper: null; lorry: string | null;
   driver_1_name: string; driver_1_ic: null; driver_1_contact: null;
@@ -194,19 +161,6 @@ export function typedHeaderCrewByDo(rows: ReadonlyArray<DeliveryOrderExecRow>): 
   return out;
 }
 
-/* The Delivery Planning board shows ONE crew row per Sales Order, but crew is a
-   per-delivery-order snapshot (scm.delivery_order_crew) and a single SO can carry
-   several DOs (partial deliveries, AutoCount re-pulls). The driver you assign
-   therefore lives on one specific DO. The board used to read crew from only the
-   SO's newest DO (last by id); when a later DO joined the SO with no driver, the
-   driver you had entered "vanished" from the column and had to be re-typed.
-
-   pickDisplayCrew chooses which DO's crew the board shows: the newest DO's crew
-   when it already names a driver (today's behaviour, unchanged), otherwise the
-   most-recent earlier DO whose crew names a driver, so an assigned driver stays
-   visible once a blank newer DO appears. When no DO names a driver it returns the
-   newest DO's crew (its lorry / helpers, or null) — the previous result. It picks
-   ONE coherent crew row, never a merge of seats from different DOs. Pure + tested. */
 export function pickDisplayCrew<T>(
   doIdsOldestToNewest: ReadonlyArray<string>,
   getCrew: (doId: string) => T | null,
@@ -214,13 +168,10 @@ export function pickDisplayCrew<T>(
 ): T | null {
   if (doIdsOldestToNewest.length === 0) return null;
   const newestCrew = getCrew(doIdsOldestToNewest[doIdsOldestToNewest.length - 1]!);
-  // Newest DO already names a driver → unchanged from before this fix.
   if (newestCrew !== null && hasDriver(newestCrew)) return newestCrew;
-  // Newest DO has no driver → show the most-recent earlier DO that does.
   for (let i = doIdsOldestToNewest.length - 2; i >= 0; i--) {
     const earlier = getCrew(doIdsOldestToNewest[i]!);
     if (earlier !== null && hasDriver(earlier)) return earlier;
   }
-  // No DO names a driver → the newest DO's crew (lorry / helpers only), or null.
   return newestCrew;
 }

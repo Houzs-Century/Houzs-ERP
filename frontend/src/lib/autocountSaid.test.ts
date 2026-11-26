@@ -49,8 +49,6 @@ describe("a refusal AutoCount has words for", () => {
   test("says what it MEANS for the document, not what the database called it", () => {
     const c = acAutoCountCopy("Gave up after 6 attempts. Last error: Primary Key Error");
     expect(c).not.toBeNull();
-    /* The business effect. "Primary key" is the mechanism and must not be the
-       headline — the owner is not an engineer and the screen is his. */
     expect(c!.headline).toBe("AutoCount already has a document with this number");
     expect(c!.headline.toLowerCase()).not.toContain("primary key");
   });
@@ -58,7 +56,6 @@ describe("a refusal AutoCount has words for", () => {
   test("the To fix line is honest that sending it again cannot help", () => {
     const c = acAutoCountCopy("Primary Key Error")!;
     expect(c.toFix.toLowerCase()).toContain("will not help");
-    /* And it names whose job it is, because it is not the reader's. */
     expect(c.toFix.toLowerCase()).toContain("autocount account book");
   });
 
@@ -68,11 +65,6 @@ describe("a refusal AutoCount has words for", () => {
     expect(c!.headline).toBe("AutoCount already has a document with this number");
   });
 
-  /* THE STATE THAT WOULD OTHERWISE BE MISSED. AcSyncService turns every
-     exception into a 500 and a 500 is retryable, so a document AutoCount is
-     refusing sits at `pending` carrying the refusal until its sixth attempt.
-     On 2026-08-20 that was HC-SO-2608-002, next to HC-SO-2608-001 which read
-     `failed` with identical words. */
   test("a WAITING row carrying the same refusal is explained too", () => {
     const c = acReasonCopy("pending", null, "Primary Key Error");
     expect(c).not.toBeNull();
@@ -82,9 +74,7 @@ describe("a refusal AutoCount has words for", () => {
   test("the raw text is still reachable, verbatim, in the technical detail", () => {
     const d = acRowDetail(row(), false);
     expect(d.line).toBe("AutoCount already has a document with this number");
-    /* Off the face of the row... */
     expect(d.said!.said).toBeNull();
-    /* ...but never lost: whoever maintains the link needs the book's own words. */
     expect(d.said!.technical).toContain("Primary Key Error");
   });
 });
@@ -99,9 +89,6 @@ describe("a refusal nobody has words for yet", () => {
 
   test("keeps AutoCount's own words ON the row, where the diagnosis is", () => {
     const d = acRowDetail(row({ reason: UNSEEN }), false);
-    /* The generic copy tells the reader to read the words below, so the words
-       below must still be below. Folding them away would leave an instruction
-       pointing at something that is no longer on screen. */
     expect(d.said!.said).toContain("Some Error Nobody Has Seen");
   });
 
@@ -112,8 +99,6 @@ describe("a refusal nobody has words for yet", () => {
 
 describe("the ERP's own refusals are untouched by any of this", () => {
   test("a skipped row keeps its reason_kind copy, whatever the text says", () => {
-    /* Even if an ERP reason happened to quote AutoCount, the ERP classified it
-       and the ERP was the one that refused — AutoCount was never asked. */
     const c = acReasonCopy("skipped", "missing-location", "Primary Key Error");
     expect(c).not.toBeNull();
     expect(c!.headline).not.toBe("AutoCount already has a document with this number");
@@ -126,7 +111,6 @@ describe("the ERP's own refusals are untouched by any of this", () => {
 
 describe("the dictionary itself", () => {
   test("every entry records where the string was OBSERVED", () => {
-    /* An entry with no provenance is a guess with a citation field. */
     for (const e of AC_AUTOCOUNT_SAID) {
       expect(e.seen.length).toBeGreaterThan(20);
       expect(e.needle.length).toBeGreaterThan(0);

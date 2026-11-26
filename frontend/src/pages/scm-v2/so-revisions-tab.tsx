@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-revisions-tab — the Sales Order detail page's "Revisions" tab.
-//
-// Lifted VERBATIM out of SalesOrderDetail.tsx; no behaviour change. That file
-// carries a file-size ceiling that may only FALL, and CLAUDE.md's rule for
-// being over one is "a new module, never a bigger number". This tab was the
-// cleanest thing to move: it reads one query, renders read-only, and shares no
-// state with the editor around it.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { fmtDateTime, fmtMoneySen } from '@2990s/shared';
@@ -15,9 +6,6 @@ import styles from './SalesOrderDetail.module.css';
 
 const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
-/* Read-only Revisions tab — lists prior SO snapshots (newest first) via
-   useSoRevisions. Clicking a revision expands its stored snapshot as read-only
-   detail. Mirrors the audit/history read pattern; no writes. */
 export const RevisionsTab = ({ docNo, currency }: { docNo: string; currency: string }) => {
   const { data, isLoading, error } = useSoRevisions(docNo);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -82,9 +70,6 @@ export const RevisionsTab = ({ docNo, currency }: { docNo: string; currency: str
   );
 };
 
-/* Read-only render of a revision snapshot (header + lines). The snapshot JSON is
-   the full SO at that revision; we surface the key header fields + the line list.
-   Dual-reads snake/camel defensively (the approve-so snapshot shape isn't frozen). */
 const RevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currency: string }) => {
   const snap = (snapshot ?? {}) as Record<string, unknown>;
   const header = (snap.header ?? snap.salesOrder ?? snap) as Record<string, unknown>;

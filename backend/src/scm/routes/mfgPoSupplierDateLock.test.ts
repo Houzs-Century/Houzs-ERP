@@ -26,7 +26,6 @@ const CALLER = {
   user_metadata: { name: 'Buyer' }, aud: 'authenticated', created_at: '',
 } as unknown as User;
 const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
-/* The header PATCH needs the version the editor loaded (sister review G6). */
 const withVersion = (body: Record<string, unknown>) => ({
   expectedUpdatedAt: (sb.tables.purchase_orders.find((r) => r.id === 'po-1') as Row | undefined)?.updated_at, ...body,
 });
@@ -71,7 +70,6 @@ describe('supplierDatePatchGate', () => {
 describe('PATCH header: concurrent fill of the same empty slot', () => {
   it('the second writer gets 409 and does not overwrite', async () => {
     sb.tables.purchase_orders[0]!.supplier_delivery_date_4 = null;
-    // Simulates A winning between B's read and B's write: B's update is conditional on Date 4 still NULL.
     const a = await patch({ supplierDeliveryDate4: '2026-11-01' });
     expect(a.status).toBe(200);
     const b = await patch({ supplierDeliveryDate4: '2026-11-09' });

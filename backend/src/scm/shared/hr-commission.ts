@@ -1,6 +1,3 @@
-// Pure commission math for the HR module. No I/O, no DB, no React — safe to
-// run on the CF Workers API (authoritative) and reuse client-side for preview.
-// Money in centi (sen, integer); rates in bps (integer, 100 bps = 1%).
 
 export type HrTier = 'sales' | 'manager';
 
@@ -84,10 +81,8 @@ export interface SalespersonInput {
 
 /** One level's contribution to a chain-mode override (chain mode only). */
 export interface OverrideLevelDetail {
-  /** Distance UP the reporting chain: 1 = this earner's direct reports. */
   level: number;
   rateBps: number;
-  /** Σ KPI-excluded goods of the earner's downline sellers at exactly this level. */
   goodsSen: number;
   commissionSen: number;
 }
@@ -98,13 +93,8 @@ export interface CommissionRow {
   personalGoodsSen: number;
   personalRateBps: number;
   personalCommissionSen: number;
-  /* One flat rate on one base in showroom mode. NULL in chain mode, where the
-     override is Σ over levels of DIFFERENT rates on DIFFERENT bases — there is
-     no single rate, and reporting a blended one would be a rounding-lossy figure
-     nobody can reconcile against a payslip. Read overrideDetail instead. */
   overrideRateBps: number | null;
   overrideCommissionSen: number;
-  /** Per-level breakdown; chain mode only (undefined in showroom mode). */
   overrideDetail?: OverrideLevelDetail[];
   itemKpiSen: number;
   totalSen: number;
@@ -112,10 +102,6 @@ export interface CommissionRow {
 
 const applyBps = (centi: number, bps: number): number => Math.round((centi * bps) / 10_000);
 
-/* The PERSONAL half of a row — identical in both override modes, so both entry
-   points below call this rather than each carrying a copy of the rate ladder.
-   A second copy is how the two modes would silently drift apart on the next
-   rate change. */
 const personalPart = (
   config: CommissionConfig,
   showroomKpiHit: boolean,
@@ -223,8 +209,6 @@ export const computeChainOverride = (
 ): { overrideCommissionSen: number; overrideDetail: OverrideLevelDetail[] } => {
   const overrideDetail: OverrideLevelDetail[] = [];
   let overrideCommissionSen = 0;
-  // Configured order is irrelevant to the total; sort so the detail (and the
-  // frozen snapshot built from it) is byte-stable run to run.
   for (const l of [...levels].sort((a, b) => a.level - b.level)) {
     const goodsSen = goodsByLevel.get(l.level);
     if (goodsSen === undefined || goodsSen <= 0) continue;
@@ -237,7 +221,6 @@ export const computeChainOverride = (
 
 /** A salesperson plus the downline goods that roll up to them, by level. */
 export interface ChainSalespersonInput extends SalespersonInput {
-  /** level (>=1) → Σ KPI-excluded goods of THIS person's downline at that level. */
   goodsByLevel: ReadonlyMap<number, number>;
 }
 
@@ -264,7 +247,7 @@ export const computeChainCommission = (
       personalGoodsSen: p.personalGoodsSen,
       personalRateBps,
       personalCommissionSen,
-      overrideRateBps: null, // no single rate in chain mode — see overrideDetail
+      overrideRateBps: null,
       overrideCommissionSen,
       overrideDetail,
       itemKpiSen: p.itemKpiSen,
@@ -315,44 +298,15 @@ export const lineKpiSen = (line: KpiLine, flags: ItemKpiFlag[]): number => {
   return total;
 };
 
-// ── item-KPI as a goods EXCLUSION (Loo 2026-06-20) ───────────────────────────
-// An item-KPI-flagged purchase earns a FIXED bonus (e.g. RM 50) INSTEAD of the
-// percentage commission on the flagged portion — never both ("no double
-// commission"). So the flagged amount is removed from the goods that drive BOTH
-// the % commission AND the 100k / 400k thresholds.
-//
-// The flagged thing is one purchased item — a "unit". A POS sofa build is stored
-// as several per-module SO lines (so-sofa-split) that all carry the SAME fabric,
-// and its fabric-tier Δ is one flat figure spread across those lines. So module
-// lines of one build collapse back into ONE unit: the bonus and the exclusion
-// each count ONCE per built item, not once per module. Every non-sofa line is a
-// unit of one.
-//
-// What gets excluded, per flag type (Loo's worked example: a sofa whose base is
-// RM 3,000 with a RM 125 fabric-tier add-on, fabric flagged at RM 50 → goods
-// stays RM 3,000, salesperson earns the fixed RM 50, the RM 125 is dropped):
-//   · fabric  → the fabric-tier add-on Δ (qty × per-item Δ) — the base price stays goods
-//   · special → the special-order surcharge (qty × per-item)
-//   · product → the whole unit total (the product itself IS the KPI item)
-// Capped at the unit total so a unit's goods can never go negative.
 
 export interface KpiUnit {
-  /** Every SKU code in the unit — a split sofa carries one per module. */
   itemCodes: string[];
-  /** Items purchased (a build's qty; uniform across its module lines). */
   qty: number;
-  /** The unit's product category, UPPERCASE mfg_product_category ('SOFA',
-   *  'BEDFRAME', ...). NULL when it could not be resolved — a category flag then
-   *  simply does not fire, rather than guessing a category and paying a bonus
-   *  nobody configured for this item. */
   category: string | null;
   fabricId: string | null;
   specialCodes: string[];
-  /** Σ of the unit's line totals (goods, qty-inclusive, post-discount), centi. */
   lineTotalSen: number;
-  /** Per-ITEM fabric-tier add-on Δ charged on this unit (centi); 0 when none. */
   fabricAddonUnitSen: number;
-  /** Per-ITEM special-order surcharge on this unit (centi); 0 when none. */
   specialSurchargeUnitSen: number;
 }
 
@@ -361,31 +315,10 @@ const flagMatchesUnit = (
   u: Pick<KpiUnit, 'itemCodes' | 'category' | 'fabricId' | 'specialCodes'>,
 ): boolean =>
   (f.flagType === 'product' && u.itemCodes.includes(f.ref)) ||
-  // NULL category never matches — see KpiUnit.category.
   (f.flagType === 'category' && u.category !== null && u.category === f.ref) ||
   (f.flagType === 'fabric' && u.fabricId === f.ref) ||
   (f.flagType === 'special' && u.specialCodes.includes(f.ref));
 
-/**
- * PRECEDENCE: a product rule BEATS a category rule on the same unit.
- *
- * This is a money decision, so it is stated once, here, and both the bonus and
- * the goods-exclusion below obey it. Without it a sofa that is BOTH flagged by
- * SKU and covered by a "every SOFA" rule would collect BOTH bonuses off one
- * purchase — the exact double-pay the item-KPI model exists to prevent (Loo
- * 2026-06-20: "no double commission"), and it would do it silently.
- *
- * Product wins because it is the more SPECIFIC statement of intent: naming one
- * SKU is a deliberate override of the blanket category rate, in the same way a
- * per-model fabric override beats the config default. The category rule is the
- * fallback for everything in the category the owner did NOT name individually.
- *
- * Only product-vs-category needs a rule. Every other pair targets a different
- * DIMENSION of the same purchase (the SKU, its fabric series, its special-order
- * surcharge) and those deliberately stack, exactly as they did before this file
- * knew what a category was — see unitKpiExcludedSen, where each type removes
- * its own slice of goods and nothing overlaps.
- */
 const categorySuppressed = (u: Pick<KpiUnit, 'itemCodes'>, flags: ItemKpiFlag[]): boolean =>
   flags.some((f) => f.flagType === 'product' && u.itemCodes.includes(f.ref));
 
@@ -431,11 +364,6 @@ export const unitKpiExcludedSen = (u: KpiUnit, flags: ItemKpiFlag[]): number => 
   let excluded = 0;
   let wholeUnit = false;
   for (const f of firingFlags(u, flags)) {
-    // `category` excludes the WHOLE unit exactly as `product` does: both target
-    // the purchased item itself, so the item earns its fixed bonus INSTEAD of
-    // percentage commission. (fabric / special only ever target an add-on ON the
-    // item, so they remove only that add-on.) Precedence already guaranteed at
-    // most one of product/category is in this list, so this cannot double-count.
     if (f.flagType === 'product' || f.flagType === 'category') wholeUnit = true;
     else if (f.flagType === 'fabric') excluded += u.qty * u.fabricAddonUnitSen;
     else if (f.flagType === 'special') excluded += u.qty * u.specialSurchargeUnitSen;

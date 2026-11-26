@@ -1,12 +1,3 @@
-/* The bound purchase orders on each row of GET /so-amendments.
- *
- * Both PO Amendments queues (desktop PoAmendments.tsx, and the phone queue) show
- * an SO amendment as a "From SO amendment" row only when its `bound_pos` is
- * non-empty. So a `bound_pos` that is EMPTY because a read failed looks exactly
- * like "this order has no purchase order": the row leaves purchasing's queue and
- * nothing says why. These tests pin that a failure of any of the three reads
- * behind the field fails the list instead.
- */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -32,8 +23,6 @@ const ORDERS = (): Row[] => [
   { doc_no: 'HC-SO-004928', ref: null, customer_so_no: null, company_id: 1 },
 ];
 
-/* HC-SO-012442 is bought on two POs; HC-SO-012713 shares one of them; HC-SO-004928
-   was never purchased. */
 const SO_LINES = (): Row[] => [
   { id: 'l1', doc_no: 'HC-SO-012442', company_id: 1 },
   { id: 'l2', doc_no: 'HC-SO-012442', company_id: 1 },
@@ -90,8 +79,6 @@ describe('GET /so-amendments — bound_pos', () => {
     });
   });
 
-  /* PostgREST fails the WHOLE read when a selected column is missing (42703) —
-     the fake's way of making one read fail while the others answer. */
   it.each([
     ['the SO line read', { mfg_sales_order_items: ['doc_no'] }],
     ['the PO line read', { purchase_order_items: ['so_item_id'] }],

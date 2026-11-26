@@ -26,18 +26,11 @@ import { findOverConvertOffender, soLineHeadroom } from './po-over-convert';
 import { doLineRemaining, doRemainingByItemId, returnableRemainingFrom } from './do-line-remaining';
 import { soDeliverableRemaining } from '../routes/delivery-orders-mfg';
 import { soLineOverConvertRefusal } from './po-over-convert';
-// Source text of the PO router, so the WIRING of the guard is asserted too — a
-// guard nothing calls is the exact failure mode this lane exists to catch.
 import poRouterSrc from '../routes/mfg-purchase-orders.ts?raw';
-// Same, for the Delivery Return router: the return ceiling must actually compose
-// doLineRemaining('delivered') with returnableRemainingFrom (PATH 4 below).
 import drRouterSrc from '../routes/delivery-returns.ts?raw';
 
 type Row = Record<string, unknown>;
 
-/* A fake PostgREST query: chainable filters, awaitable, paginable via range().
-   Supports the operators the ceiling cores actually chain, including the
-   `parent:table(col)` to-one embed soDeliverableRemaining uses. */
 function fakeSb(tables: Record<string, Row[]>) {
   class Q {
     rows: Row[];
@@ -45,8 +38,6 @@ function fakeSb(tables: Record<string, Row[]>) {
     constructor(rows: Row[]) { this.rows = [...rows]; }
 
     select(cols?: string) {
-      /* Resolve `alias:table(col)` embeds against the sibling table by <table
-         singular>_id, mirroring PostgREST's to-one embed (row count unchanged). */
       if (cols) {
         for (const m of cols.matchAll(/(\w+):(\w+)\(([^)]*)\)/g)) {
           this.embeds.push({ alias: m[1]!, table: m[2]!, col: m[3]!.trim() });
@@ -76,7 +67,6 @@ function fakeSb(tables: Record<string, Row[]>) {
       return this.rows.map((r) => {
         const out = { ...r };
         for (const e of this.embeds) {
-          // delivery_orders -> delivery_order_id, delivery_returns -> delivery_return_id
           const fk = `${e.table.replace(/s$/, '')}_id`;
           const parent = (all[e.table] ?? []).find((p) => p.id === r[fk]);
           out[e.alias] = parent ? { [e.col]: parent[e.col] } : null;
@@ -91,16 +81,10 @@ function fakeSb(tables: Record<string, Row[]>) {
   return { from: (table: string) => new Q(tables[table] ?? []) };
 }
 
-// ---------------------------------------------------------------------------
-// PATH 1 — SO -> PO.  Ceiling: mfg_sales_order_items.qty - po_qty_picked
-//   batch create  : findOverConvertOffender  (mfg-purchase-orders.ts:1142)
-//   line add/edit : soLineHeadroom           (mfg-purchase-orders.ts:2676/2861)
-// ---------------------------------------------------------------------------
 describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
   const so = (id: string, qty: number, picked: number) => ({ id, qty, po_qty_picked: picked });
 
   test('a SECOND PO against a partly-converted SO line is ALLOWED up to the remainder', () => {
-    // 10 ordered, 6 already on a PO -> a second PO may take the last 4.
     expect(findOverConvertOffender([{ soItemId: 'si-1', qty: 4 }], [so('si-1', 10, 6)])).toBeNull();
   });
 
@@ -115,7 +99,6 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
   });
 
   test('one SO line split across several PO lines is summed, not judged line-by-line', () => {
-    // 3 + 3 each fit under 5 alone; together they over-order and must be caught.
     expect(findOverConvertOffender(
       [{ soItemId: 'si-1', qty: 3 }, { soItemId: 'si-1', qty: 3 }],
       [so('si-1', 5, 0)],
@@ -126,7 +109,6 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
     expect(findOverConvertOffender([{ qty: 9999 }], [so('si-1', 1, 1)])).toBeNull();
   });
 
-  // --- line-level bind: the two paths that took an operator-supplied qty ----
   describe('line add / line edit headroom', () => {
     test('ADD onto a fully-converted SO line has zero headroom', () => {
       expect(soLineHeadroom(so('si-1', 10, 10), 0)).toBe(0);
@@ -137,8 +119,6 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
     });
 
     test('EDIT of an already-bound line credits back its OWN qty, so a no-op edit passes', () => {
-      // line holds 6 of the 10; picked is 6 -> raw remaining 0, headroom 6.
-      // Re-saving 6 must NOT refuse itself.
       const headroom = soLineHeadroom(so('si-1', 10, 6), 6);
       expect(headroom).toBe(10);
       expect(6 > headroom).toBe(false);
@@ -146,12 +126,11 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
 
     test('EDIT may raise up to the SO qty but not past it', () => {
       const headroom = soLineHeadroom(so('si-1', 10, 6), 6);
-      expect(10 > headroom).toBe(false); // raise 6 -> 10 is fine
-      expect(11 > headroom).toBe(true);  // raise 6 -> 11 over-orders
+      expect(10 > headroom).toBe(false);
+      expect(11 > headroom).toBe(true);
     });
 
     test('REBIND onto a different SO line gets NO credit for the old line qty', () => {
-      // Moving a qty-6 line onto si-2 (5 ordered, 5 picked) must not smuggle 6 in.
       expect(soLineHeadroom(so('si-2', 5, 5), 0)).toBe(0);
     });
 
@@ -160,10 +139,6 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
     });
   });
 
-  /* The route-level guard itself, driven against a fake PostgREST client. This
-     is the guard the two previously-uncapped handlers now call; before this
-     lane, BOTH of them enforced nothing but soLinkTargetRefusal (identity /
-     company / cancelled / SKU match) and would accept any qty. */
   describe('soLineOverConvertRefusal (add-line + line-edit guard)', () => {
     const sbWith = (qty: number, picked: number) =>
       fakeSb({ mfg_sales_order_items: [{ id: 'si-1', qty, po_qty_picked: picked }] }) as any;
@@ -196,15 +171,10 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
     });
   });
 
-  /* WIRING — the guard must actually be invoked by both handlers. Asserted on
-     the router source because scm routes cannot be exercised end-to-end in this
-     harness (Supabase Postgres; the harness rebuilds only the D1 side). Without
-     these, deleting either call site would leave every test above green. */
   describe('the guard is wired into both operator-qty paths', () => {
     const handler = (marker: string): string => {
       const start = poRouterSrc.indexOf(marker);
       expect(start, `handler not found: ${marker}`).toBeGreaterThan(-1);
-      // Up to the next route registration, so we read ONE handler's body.
       const rest = poRouterSrc.slice(start + marker.length);
       const next = rest.search(/\nmfgPurchaseOrders\.(post|patch|get|delete)\(/);
       return next === -1 ? rest : rest.slice(0, next);
@@ -222,9 +192,6 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
       expect(poRouterSrc).toContain('findOverConvertOffender(items.filter((it) => !dupGate.confirmed.has(it.soItemId as string)), soRows)');
     });
 
-    /* A company-1 BOUND line (sofa / bedframe / (SP) mattress / custom pillow) is
-       capped on BOTH paths against every live PO on it, MRP-origin included —
-       the double-ordered custom pillows of 2026-09 (lib/bound-line-ordered.ts). */
     test('both paths count live purchase orders on a bound line, and MRP does not skip a bound cap', () => {
       expect(poRouterSrc.match(/loadBoundOrderedQty\(/g)?.length).toBe(2);
       expect(poRouterSrc).toContain('po_qty_picked: boundAwarePicked(r, boundOrdered)');
@@ -234,10 +201,6 @@ describe('SO -> PO ceiling (qty - po_qty_picked)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// PATH 2 — SO -> DO.  Ceiling: qty - delivered + returned
-//   soDeliverableRemaining (delivery-orders-mfg.ts:1885), enforced at :3336
-// ---------------------------------------------------------------------------
 describe('SO -> DO ceiling (qty - delivered + returned)', () => {
   const soItem = (id: string, qty: number) => ({
     id, doc_no: 'SO-1', item_code: 'AKEMI-Q', qty, cancelled: false,
@@ -298,11 +261,6 @@ describe('SO -> DO ceiling (qty - delivered + returned)', () => {
     })).toBe(3);
   });
 
-  /* MIGRATED DOCUMENTS — this repo has NO `migrated_no_stock` column (nor any
-     equivalent flag on scm.delivery_orders / scm.grns), so a migrated DO is an
-     ordinary row: it counts toward the ceiling on exactly the same terms as a
-     native one, by STATUS and by LINK. Status is covered above; the link is the
-     real exposure, pinned by the two tests below. */
   test('a migrated DO whose lines ARE linked counts toward the ceiling', async () => {
     expect(await remainingOf({
       mfg_sales_order_items: [soItem('si-1', 10)],
@@ -313,27 +271,15 @@ describe('SO -> DO ceiling (qty - delivered + returned)', () => {
   });
 
   test('KNOWN EXPOSURE: an UNLINKED DO line (so_item_id NULL) is invisible to the ceiling', async () => {
-    /* This is not a hypothetical. DO-2607-005 on SO-2606-019 shipped with NULL
-       so_item_id, which is precisely why the over-delivery guard stayed blind
-       while a second DO shipped the same goods. The ceiling is keyed on the
-       LINK, so an unlinked line — migrated or hand-made — consumes nothing.
-       Pinned deliberately: if a future change starts counting unlinked lines,
-       this test should be updated, not silently deleted. */
     expect(await remainingOf({
       mfg_sales_order_items: [soItem('si-1', 10)],
       delivery_orders: [{ id: 'do-1', status: 'POSTED' }],
       delivery_order_items: [{ id: 'dl-1', delivery_order_id: 'do-1', so_item_id: null, qty: 10 }],
       delivery_returns: [], delivery_return_items: [],
-    })).toBe(10); // 10 shipped, yet the ceiling still reads 10 available
+    })).toBe(10);
   });
 });
 
-// ---------------------------------------------------------------------------
-// PATH 3 — DO -> Sales Invoice.
-//   Ceiling: delivered - invoiced - returned. do-line-remaining.ts, enforced at
-//   checkSiOverRemaining (sales-invoices.ts). Returning USED to share this pool;
-//   since 2026-09-20 the return pool is delivered - returned — PATH 4 below.
-// ---------------------------------------------------------------------------
 describe('DO -> Invoice ceiling (delivered - invoiced - returned)', () => {
   const base = (over: Partial<Record<string, Row[]>> = {}) => ({
     delivery_orders: [{ id: 'do-1', do_number: 'DO-1', status: 'POSTED', debtor_code: 'C1', debtor_name: 'Cust' }],
@@ -343,11 +289,6 @@ describe('DO -> Invoice ceiling (delivered - invoiced - returned)', () => {
     ...over,
   });
 
-  /* The ceiling cores return a RESULT now (`{ ok }`), not a bare Map — a failed
-     read can no longer arrive here disguised as an empty ledger. These tests
-     assert the happy path, so unwrapping loudly is the point: an `ok: false`
-     that slipped through would fail on this line instead of silently reading as
-     `undefined` and passing a `toBe(...)` nobody re-checked. */
   async function pending(tables: Record<string, Row[]>) {
     const r = await doRemainingByItemId(fakeSb(tables) as any, ['dl-1'], 'invoiceable');
     if (!r.ok) throw new Error(`expected a readable ledger, got: ${r.reason}`);
@@ -381,8 +322,6 @@ describe('DO -> Invoice ceiling (delivered - invoiced - returned)', () => {
   });
 
   test('the INVOICE pool still subtracts returns — 7 invoiced + 3 returned leaves 0 to invoice', async () => {
-    // The two pools diverged in 2026-09-20 (returns no longer block invoicing),
-    // but the invoice pool still nets returns: returned goods must not be billed.
     expect(await pending(base({
       sales_invoices: [{ id: 'si-1', status: 'POSTED' }],
       sales_invoice_items: [{ do_item_id: 'dl-1', sales_invoice_id: 'si-1', qty: 7 }],
@@ -434,11 +373,6 @@ describe('DO -> Return ceiling (delivered - returned, independent of invoicing)'
     ...over,
   });
 
-  /* doReturnableRemaining IS this composition: doLineRemaining(..., 'delivered')
-     then returnableRemainingFrom. Driving the two lib functions together pins the
-     number the route serves without booting the Hono route (scm rides Supabase
-     Postgres; this harness rebuilds only the D1 side). The wiring test below
-     proves the route actually composes them. */
   async function returnable(tables: Record<string, Row[]>, id = 'dl-1') {
     const led = await doLineRemaining(fakeSb(tables) as any, ['do-1'], 'delivered');
     if (!led.ok) throw new Error(`expected a readable ledger, got: ${led.reason}`);
@@ -475,27 +409,13 @@ describe('DO -> Return ceiling (delivered - returned, independent of invoicing)'
     }))).toBe(10);
   });
 
-  /* WIRING — the route must actually compose the two. Asserted on source because
-     the route cannot be booted here; without it, doReturnableRemaining could
-     revert to the shared invoice pool and every test above would stay green. */
   test('doReturnableRemaining feeds the delivered pool through returnableRemainingFrom', () => {
     expect(drRouterSrc).toContain("doLineRemaining(sb, doIds, 'delivered')");
     expect(drRouterSrc).toContain('returnableRemainingFrom(base.lines)');
   });
 });
 
-// ---------------------------------------------------------------------------
-// PATH 5 — PO -> GRN.  Ceiling: purchase_order_items.qty - received_qty.
-//   Unlike every path above, this one reads a STORED counter rather than
-//   deriving the sum live. The counter is recounted from live GRN lines in
-//   grns.ts:795 (postGrnAndRollup), and enforced at grns.ts:1506 / 1653 / 1860 /
-//   1926 / 2035 / 2656 / 2886. These pin the recount arithmetic that every one
-//   of those call sites trusts.
-// ---------------------------------------------------------------------------
 describe('PO -> GRN ceiling (qty - received_qty)', () => {
-  /* Mirrors the recount in grns.ts postGrnAndRollup: per PO line, sum
-     max(0, qty_accepted - returned_qty) over GRN lines whose parent GRN is
-     neither CANCELLED nor DRAFT. */
   const recount = (
     grnLines: Array<{ purchase_order_item_id: string | null; qty_accepted: number; returned_qty: number; grn_id: string }>,
     grns: Array<{ id: string; status: string }>,
@@ -539,26 +459,14 @@ describe('PO -> GRN ceiling (qty - received_qty)', () => {
   });
 
   test('KNOWN EXPOSURE: an UNLINKED GRN line (purchase_order_item_id NULL) never counts', () => {
-    /* Same shape as the unlinked-DO exposure above, and the same reason: the
-       ceiling is keyed on the link. A migrated GRN whose lines carry no
-       purchase_order_item_id receives goods that no PO line ever registers. */
     const received = recount([line('g1', 10, 0, null)], [{ id: 'g1', status: 'POSTED' }], 'poi-1');
-    expect(10 - received).toBe(10); // 10 received, ceiling still reads 10
+    expect(10 - received).toBe(10);
   });
 });
 
-// ---------------------------------------------------------------------------
-// PATH 6 — AMENDMENTS.  An SO or PO amendment does not convert anything itself;
-// it MOVES the source qty, and therefore moves the ceiling. What matters is that
-// the arithmetic fails SAFE when an amendment drops a line below what has
-// already shipped or been received: remaining goes negative, and every
-// enforcement site compares with `>`, so a negative ceiling refuses everything
-// rather than wrapping into fresh headroom.
-// ---------------------------------------------------------------------------
 describe('amendments move the ceiling, they do not bypass it', () => {
   test('an SO line amended BELOW what already shipped yields a negative ceiling', async () => {
     const map = await soDeliverableRemaining(fakeSb({
-      // amended down 10 -> 4 after 6 had already shipped
       mfg_sales_order_items: [{
         id: 'si-1', doc_no: 'SO-1', item_code: 'AKEMI-Q', qty: 4, cancelled: false,
         debtor_code: 'C1', debtor_name: 'Cust', item_group: 'mattress',
@@ -569,21 +477,18 @@ describe('amendments move the ceiling, they do not bypass it', () => {
     }) as any, ['SO-1']);
     const remaining = map.get('si-1')!.remaining;
     expect(remaining).toBe(-2);
-    // delivery-orders-mfg.ts:3336 is `qty < 1 || qty > line.remaining`
-    expect(1 > remaining).toBe(true); // even a single unit is refused
+    expect(1 > remaining).toBe(true);
   });
 
   test('a PO line amended BELOW what was already received refuses any further GRN', () => {
-    const amendedQty = 4;   // was 10
-    const receivedQty = 6;  // already receipted
+    const amendedQty = 4;
+    const receivedQty = 6;
     const remaining = amendedQty - receivedQty;
     expect(remaining).toBe(-2);
-    expect(1 > remaining).toBe(true); // grns.ts:1505 `accepted > remaining`
+    expect(1 > remaining).toBe(true);
   });
 
   test('an SO line amended UPWARD legitimately opens fresh headroom', () => {
-    // 10 -> 14 with 10 already picked: the extra 4 becomes convertible. This is
-    // the deliberate repeat-conversion case, and it must NOT be blocked.
     expect(soLineHeadroom({ qty: 14, po_qty_picked: 10 }, 0)).toBe(4);
   });
 });

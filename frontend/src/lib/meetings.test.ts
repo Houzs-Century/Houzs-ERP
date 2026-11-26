@@ -25,7 +25,7 @@ describe("meetings helpers", () => {
     const r = room();
     expect(inUsualHours(r, at("2026-11-23", 10), at("2026-11-23", 11))).toBe(true);
     expect(inUsualHours(r, at("2026-11-23", 18), at("2026-11-23", 20))).toBe(false);
-    expect(inUsualHours(r, at("2026-11-22", 10), at("2026-11-22", 11))).toBe(false); // Sunday
+    expect(inUsualHours(r, at("2026-11-22", 10), at("2026-11-22", 11))).toBe(false);
   });
 
   it("occupancy counts only usual hours and shows after hours apart", () => {

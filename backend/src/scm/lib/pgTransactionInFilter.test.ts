@@ -24,9 +24,6 @@ import { resetWritebackFlagCache } from './autocount-writeback-flag';
 
 type Row = Record<string, unknown>;
 
-/** Just enough of postgres.js for the statements pgTransactionSupabase emits.
- *  An operator it does not recognise THROWS — a fake that matched everything
- *  would pass this file for the wrong reason. */
 function fakeSql(tables: Record<string, Row[]>) {
   const statements: string[] = [];
   const val = (token: string, values: unknown[]) => values[Number(token.slice(1)) - 1];
@@ -156,11 +153,6 @@ describe('an amendment approve queues its AutoCount edit through the transaction
   });
 
   test('an UNEXPECTED error in the compose is written down, never dropped without a trace', async () => {
-    /* The second half of 0888: the shim turns any statement failure into a
-       plain Error, and noteReadFailure used to return early for everything
-       that was not a named refusal or an AcReadError — so four days of missed
-       amendments left no row and no log. Provoked here by a statement the
-       executor refuses, which reaches enqueueEdit exactly as the `in` did. */
     const w = world();
     const unsafe = w.sql.unsafe;
     w.sql.unsafe = async (text: string, values?: unknown[]) => {

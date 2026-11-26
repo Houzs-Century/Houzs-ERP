@@ -16,7 +16,6 @@ export const ordersOf = (r: SettlementRow) => (
     ? r.linked.map((l) => ({
       key: l.payment_id,
       docNo: l.doc_no ?? l.payment_id,
-      /* No document number: the payment id is shown, and it opens nothing. */
       source: l.doc_no ? l.payment_source : null,
       customer: l.customer_name ?? null,
       sales: l.salesperson ?? null,
@@ -63,7 +62,6 @@ export const isQrLine = (r: Pick<SettlementRow, 'channel'>): boolean => r.channe
 /** What a QR line's Reference column says: HLB prints a placeholder there, never a reference. */
 export const QR_REF_WORDS = 'DuitNow QR';
 
-/* A QR line's sale is the Online payment keyed for it, so its words say so. */
 const QR_STATUS_WORDS: Record<LineStatus, string> = {
   done: 'done',
   matched: 'linked to its Online sale',

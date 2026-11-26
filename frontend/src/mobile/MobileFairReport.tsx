@@ -23,47 +23,18 @@ import { formatDate } from "../lib/utils";
 import { buildVariantSummary, orderLineIdentity } from "@2990s/shared";
 import "./mobile.css";
 
-/*
- * MobileFairReport — the phone surface of the Fair Report (the exhibition-sales
- * report with three document-stage views: Sales Orders / Delivery / Invoices).
- * It is the phone twin of the desktop pages/scm-v2/FairReport.tsx and reuses the
- * SAME read hooks (useFairReport / useFairReportDetail → GET /scm/reports/
- * fair-report[/:docNo]); the server does all the fair-anchoring, the money
- * splits and the per-stage summaries, so this screen only fetches, filters and
- * renders. No new endpoint, no client-side money math beyond formatting.
- *
- * PERMISSION mirrors the backend fairReportAccess exactly (auth/salesAccess):
- *   * ordinary salespeople → no access (the menu row + this screen are gated in
- *     MobileApp with canViewFairReport — off, not hidden)
- *   * Sales Director        → SO stage only (Delivery + Invoices tabs absent)
- *   * management            → all three stages
- * The tabs are driven by fairAllowedStages(user), and a stage's query is held
- * (`enabled`) until its tab is both selected AND allowed, so a Sales Director
- * never even fires the do/invoice queries the backend would 403.
- *
- * The mobile shell has no router and does not keep filters in the URL (unlike
- * the desktop page's useSearchParams), so stage + the 7 filters + the open
- * detail are plain component state, matching every other mobile screen.
- *
- * English · MYR · DD/MM/YYYY · no emoji.
- */
 
-// ── money / number formatting (mirror the desktop page's cell / rm / pct) ────
-/** Bare 2dp amount, zero/absent → em dash so a compact card reads cleanly. */
 const cell = (centi: number | null | undefined): string => {
   const v = Number(centi ?? 0);
   return v ? fmtAmt(v) : "—";
 };
-/** RM-prefixed amount (always shows 0.00). */
 const rm = (centi: number | null | undefined): string => fmtSen(centi);
 const pct = (p: number | null | undefined): string => (p == null ? "—" : `${p.toFixed(1)}%`);
-/** Signed money for the DO cost drift (+ grew at delivery, − shrank). */
 const signedMoney = (centi: number | null | undefined): string => {
   const v = Number(centi ?? 0);
   if (!v) return "—";
   return `${v > 0 ? "+" : "−"}${cell(Math.abs(v))}`;
 };
-/** Signed margin points (DO vs SO). */
 const pts = (a: number | null | undefined, b: number | null | undefined): string => {
   if (a == null || b == null) return "—";
   const d = a - b;
@@ -85,9 +56,6 @@ const catRows = (c: FairCostByCategory): [string, number][] => [
   ["Service", c.service_cost_sen],
 ];
 
-// ── accumulated filter options (same idea as the desktop page's accumulate) ──
-// The 7 filters are populated from whatever rows have loaded; the set only ever
-// grows so a dropdown stays usable after a filter narrows the result.
 type OptionMaps = {
   venues: string[];
   projects: Record<string, string>;
@@ -105,7 +73,6 @@ function accumulate(prev: OptionMaps, rows: FairDims[]): OptionMaps {
   const salespersons = { ...prev.salespersons };
   let changed = false;
   for (const r of rows) {
-    // Venue keys on the TEXT (venue_id is a dead scm.venues FK, NULL on modern SOs).
     if (r.venue && !venues.has(r.venue)) { venues.add(r.venue); changed = true; }
     if (r.project_id != null && r.project) {
       const label = r.project_start_date
@@ -137,17 +104,11 @@ export function MobileFairReport({ onBack }: { onBack: () => void }) {
   const [stage, setStage] = useState<FairStage>(() => allowed[0] ?? "so");
   const [filters, setFilters] = useState<FairFilters>({});
   const [sheetOpen, setSheetOpen] = useState(false);
-  // The tapped order (by SO doc_no — the detail endpoint is keyed on it, and DO
-  // / Invoice rows carry so_no) → full-screen detail. null = list.
   const [openSo, setOpenSo] = useState<string | null>(null);
 
-  // Clamp to a stage this user may actually open (fairAllowedStages), so a Sales
-  // Director can never land on Delivery/Invoices even via stale state.
   const activeStage: FairStage = allowed.includes(stage) ? stage : (allowed[0] ?? "so");
   const q = useFairReport(activeStage, filters, allowed.includes(activeStage));
   const data = q.data;
-  // A 403 (not in the report's cohort) must not read as a transient "retry" —
-  // distinguish the permission denial from a load failure.
   const errorInfo = q.isError ? fairReportErrorInfo(q.error) : null;
 
   const [opts, setOpts] = useState<OptionMaps>(EMPTY_OPTS);
@@ -180,7 +141,6 @@ export function MobileFairReport({ onBack }: { onBack: () => void }) {
             )}
           </button>
         </div>
-        {/* Stage tabs — only the stages this user may open (fairAllowedStages). */}
         <div className="chips" style={{ marginTop: 11 }}>
           {STAGE_TABS.filter((t) => allowed.includes(t.key)).map((t) => (
             <button key={t.key} onClick={() => setStage(t.key)} className={activeStage === t.key ? "chip on" : "chip"}>{t.label}</button>
@@ -270,7 +230,6 @@ export function MobileFairReport({ onBack }: { onBack: () => void }) {
   );
 }
 
-// ── stage cards ───────────────────────────────────────────────────────────────
 function BrandPill({ brand }: { brand: string | null }) {
   if (!brand) return null;
   return <span className="badge" style={{ background: "var(--amber-bg)", color: "var(--gold)" }}>{brand}</span>;
@@ -366,18 +325,7 @@ function InvoiceCard({ r, onOpen }: { r: FairInvoiceRow; onOpen: () => void }) {
   );
 }
 
-// ── per-stage summary cards ─────────────────────────────────────────────────
-// SO / DO / Invoice each get a header summary (the desktop KpiRow —
-// pages/scm-v2/FairReport.tsx:412-465 — plus the SO filtered-totals foot,
-// 531-553). Before this only the P&L tab carried a summary card, so a manager
-// scanning the SO / Delivery / Invoice tabs saw just "<n> records" with no
-// Revenue / Outstanding / Paid / cost / margin header. Money math stays on the
-// server; these cards only format `data.summary`. Rendered only when the stage
-// has rows (an all-zero card above a "No records" empty state reads worse than
-// the empty state alone).
 function SoSummary({ s, rows }: { s: FairSoSummary; rows: FairSoRow[] }) {
-  // Deposits collected — summed from the loaded rows, exactly as the desktop
-  // KpiRow's "Paid" tile does (the summary echoes every matching row).
   const paid = rows.reduce((a, r) => a + Number(r.paid_total_sen ?? 0), 0);
   return (
     <div className={cardCls} style={{ padding: "13px 14px", background: "var(--bg)" }}>
@@ -474,12 +422,9 @@ function PnlCard({ r, onOpen }: { r: FairPnlRow; onOpen: () => void }) {
   );
 }
 
-// ── filter bottom-sheet ─────────────────────────────────────────────────────
 function FilterSheet({ filters, opts, onApply, onClose }: {
   filters: FairFilters; opts: OptionMaps; onApply: (f: FairFilters) => void; onClose: () => void;
 }) {
-  // Edit a draft, commit on Apply (a select/date change shouldn't refetch on
-  // every keystroke while the sheet is open) — matches the mockup's Apply button.
   const [draft, setDraft] = useState<FairFilters>(filters);
   const set = (patch: Partial<FairFilters>) => setDraft((d) => ({ ...d, ...patch }));
   const selStyle: React.CSSProperties = { width: "100%" };
@@ -569,7 +514,6 @@ function FRow({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-// ── full-screen order detail ────────────────────────────────────────────────
 function DetailHeadBtn({ onBack }: { onBack: () => void }) {
   return (
     <button onClick={onBack} aria-label="Back" style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", fontSize: 24, lineHeight: 1, padding: "0 4px 0 0", fontFamily: "inherit" }}>←</button>
@@ -590,7 +534,6 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
 
   return (
     <div className="hz-m" style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", background: "var(--app-bg)" }}>
-      {/* dark top bar — back · SO No + Order Form · status */}
       <header style={{ display: "flex", alignItems: "center", gap: 11, background: "var(--ink-dark)", color: "#fff", padding: "calc(env(safe-area-inset-top) + 13px) 14px 13px" }}>
         <DetailHeadBtn onBack={onBack} />
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -612,13 +555,11 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
         )}
         {d && (
           <>
-            {/* customer + brand + venue/date */}
             <div style={{ fontSize: 18, fontWeight: 800, color: "var(--ink)" }}>{d.salesperson ? d.salesperson : d.so_no}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, color: "var(--mut)", marginTop: 7 }}>
               <BrandPill brand={d.branding} />
               <span>{d.venue ? `${d.venue} · ` : ""}{formatDate(d.so_date)}</span>
             </div>
-            {/* Project / Fair pill */}
             {d.project && (
               <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 11, background: "var(--amber-bg)", border: "1px solid #ecdcb4", borderRadius: 10, padding: "9px 12px" }}>
                 <span style={{ fontSize: 8.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".05em", color: "var(--gold)" }}>Project / Fair</span>
@@ -626,7 +567,6 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
               </div>
             )}
 
-            {/* 2×3 key figures */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 9, marginTop: 15 }}>
               <Fig k="Amount" v={rm(d.amount_sen)} />
               <Fig k="Selling" v={rm(d.selling_sen)} />
@@ -636,7 +576,6 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
               <Fig k="Balance" v={rm(d.balance_sen)} />
             </div>
 
-            {/* SO → DO → Invoice linkage, stacked vertically */}
             <div style={secH}>Document linkage · SO → DO → Invoice</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <FlowStep node="SO" label="Sales Order" no={d.linkage.so_no} sub={`Confirmed ${formatDate(d.so_date)}`} done />
@@ -644,14 +583,9 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
               <FlowStep node="SI" label="Invoice" no={d.linkage.invoice_nos[0] ?? "—"} sub={d.linkage.invoice_nos.length ? (d.linkage.invoice_nos.length > 1 ? `+${d.linkage.invoice_nos.length - 1} more` : "Invoiced") : "Not invoiced"} done={!!d.linkage.invoice_nos.length} />
             </div>
 
-            {/* order lines — selling & cost, stacked */}
             <div style={secH}>Order lines · selling &amp; cost</div>
             {d.lines.length === 0 && <div style={{ fontSize: 12, color: "var(--mut)" }}>No lines.</div>}
             {d.lines.map((l, i) => {
-              /* Item CODE + variant, same shared order-line rule as the desktop
-                 Fair Report and every other order-line surface (owner
-                 2026-07-24). Was item_code + a description badge — which showed
-                 the code twice when the description contained it, and no variant. */
               const { primary, secondary } = orderLineIdentity({
                 code: l.item_code,
                 description: l.description,
@@ -674,7 +608,6 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
               );
             })}
 
-            {/* cost by category */}
             <div style={secH}>Cost by category</div>
             <div className="card" style={{ padding: 0, overflow: "hidden" }}>
               {catRows(d.cost_by_category).map(([label, v]) => (
@@ -689,7 +622,6 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
               </div>
             </div>
 
-            {/* deposit by tender (+ bank / plan) */}
             <div style={secH}>Deposit by tender</div>
             {d.payments.length === 0 && <div style={{ fontSize: 12, color: "var(--mut)" }}>No payments recorded.</div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -702,7 +634,6 @@ function FairDetail({ docNo, onBack }: { docNo: string; onBack: () => void }) {
               ))}
             </div>
 
-            {/* payment method summary */}
             <div style={secH}>Payment method</div>
             <div className="card" style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 13px", fontSize: 13 }}>
               <span style={{ fontSize: 9, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--mut)" }}>Method</span>

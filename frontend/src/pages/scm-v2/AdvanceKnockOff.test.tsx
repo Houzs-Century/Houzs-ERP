@@ -48,7 +48,6 @@ beforeEach(() => {
   h.piRows = [
     pi('pi-1', 'HC-PI-2609-021', '2026-09-05', 68_000, 0),
     pi('pi-2', 'HC-PI-2610-131', '2026-10-03', 447_500, 0),
-    /* None of these can take the advance: another supplier's, a draft, one paid in full. */
     pi('pi-x', 'HC-PI-OTHER', '2026-09-01', 10_000, 0, { supplier_id: 'sup-2' }),
     pi('pi-d', 'HC-PI-DRAFT', '2026-09-01', 10_000, 0, { status: 'DRAFT' }),
     pi('pi-p', 'HC-PI-PAID', '2026-09-01', 10_000, 10_000),
@@ -66,7 +65,6 @@ describe('Advance on this voucher', () => {
     expect(within(table).getAllByRole('checkbox').map((c) => c.getAttribute('aria-label'))).toEqual([
       'Knock off HC-API-2608-009', 'Knock off HC-PI-2609-021', 'Knock off HC-PI-2610-131',
     ]);
-    /* The same columns as an AP Payment's bills. */
     expect(within(table).getAllByRole('columnheader').map((c) => c.textContent)).toEqual(['', 'Invoice', 'Date', 'Supplier Ref', 'Amount', 'Outstanding', 'Knock off']);
     expect(within(table).getByText('REF-pi-1')).toBeTruthy();
     expect(screen.queryByText('HC-PI-OTHER')).toBeNull();

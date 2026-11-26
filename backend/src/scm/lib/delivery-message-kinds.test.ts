@@ -23,9 +23,7 @@ describe('message kinds → Connect automation names', () => {
     expect(KIND_AUTOMATION.amend).toBe('New Amend');
     expect(KIND_AUTOMATION.driver_info).toBe('Driver Info');
     expect(KIND_AUTOMATION.postage).toBe('Postage Confirm');
-    // Must equal the Connect automation name byte-for-byte (houzs-connect #157).
     expect(KIND_AUTOMATION.overdue_order).toBe('Overdue Order');
-    // East Malaysia touchpoints — byte-for-byte the seeded Connect automation names.
     expect(KIND_AUTOMATION.eastmy_prep).toBe('East Malaysia Prep Notice');
     expect(KIND_AUTOMATION.eastmy_shipped).toBe('East Malaysia Shipped');
     expect(KIND_AUTOMATION.eastmy_arrived).toBe('East Malaysia Arrived');
@@ -33,8 +31,6 @@ describe('message kinds → Connect automation names', () => {
   });
 
   it('only the conversation openers reset the contact (Delivery Lock must survive a reminder)', () => {
-    // eastmy_prep opens the details conversation (its callback is eastmy_ack), so
-    // it resets; Shipped / Arrived are one-way and must not.
     expect([...OPENER_KINDS].sort()).toEqual(['amend', 'assr_arrangement', 'delivery', 'eastmy_prep', 'postpone']);
     expect(OPENER_KINDS.has('driver_info')).toBe(false);
     expect(OPENER_KINDS.has('balance_reminder')).toBe(false);
@@ -44,16 +40,12 @@ describe('message kinds → Connect automation names', () => {
 
   it('a one-way heads-up and the East Malaysia touchpoints move no Delivery Message Status', () => {
     expect([...NO_STATUS_MOVE_KINDS].sort()).toEqual(['eastmy_arrived', 'eastmy_prep', 'eastmy_shipped', 'overdue_order']);
-    // The delivery-date conversation's statuses still move for the normal sends.
     expect(NO_STATUS_MOVE_KINDS.has('delivery')).toBe(false);
     expect(NO_STATUS_MOVE_KINDS.has('balance_reminder')).toBe(false);
   });
 
   it('a Service Case leg can be sent Postpone, the Reminders and Driver Info; SO-only sends are excluded', () => {
     expect([...ASSR_LEG_SEND_KINDS].sort()).toEqual(['driver_info', 'postpone', 'reminder_1', 'reminder_2', 'reminder_3']);
-    // The date confirms (delivery/amend) become Service Arrangement, handled on
-    // their own path, and the money / address sends read a Sales Order, so none
-    // of these split out to the ASSR sender.
     for (const k of ['delivery', 'amend', 'balance_reminder', 'postage', 'delivery_completed', 'overdue_order', 'assr_arrangement'] as const) {
       expect(ASSR_LEG_SEND_KINDS.has(k)).toBe(false);
     }
@@ -74,15 +66,12 @@ describe('joinDeliveryAddress', () => {
 
 describe('kindAttributes', () => {
   it('openers and simple reminders add nothing beyond the shared bundle', () => {
-    // eastmy_prep is a plain opener too: the shared bundle carries ref_1 /
-    // callback_url / refs_all (+ amount / bank_block when owed).
     for (const k of ['delivery', 'amend', 'reminder_1', 'reminder_2', 'reminder_3', 'delivery_completed', 'eastmy_prep'] as const) {
       expect(kindAttributes(k, row, '2026-10-08', 0, undefined)).toEqual({ attributes: {} });
     }
   });
 
   it('East Malaysia shipped reads consignment + ETA off the row; skips when either is missing', () => {
-    // No Consignment No. / ETA on the row -> skipped, never sent with a blank.
     expect(kindAttributes('eastmy_shipped', row, null, 0, undefined).skip).toBe('eastmy_shipment_fields_required');
     expect(kindAttributes('eastmy_shipped', { ...row, consignment_no: 'MSCU1234567' }, null, 0, undefined).skip)
       .toBe('eastmy_shipment_fields_required');
@@ -126,7 +115,6 @@ describe('kindAttributes', () => {
   });
 
   it('postpone reads the reason and new date off the board row; skips when either is missing', () => {
-    // No Amend Reason / no new Delivery Date on the row -> skipped, not sent blank.
     expect(kindAttributes('postpone', row, '2026-10-08', 0, undefined).skip).toBe('postpone_needs_reason_date');
     expect(kindAttributes('postpone', { ...row, amend_reason: 'Our strict quality control checks' }, '2026-10-08', 0, undefined).skip)
       .toBe('postpone_needs_reason_date');
@@ -145,7 +133,6 @@ describe('kindAttributes', () => {
   });
 
   it('overdue order sends the board Amend Reason as amend_date_reason; skips when blank', () => {
-    // No Amend Reason on the row -> skipped, never sent as the literal "{amend_date_reason}".
     expect(kindAttributes('overdue_order', row, '2026-10-08', 0, undefined).skip).toBe('overdue_order_needs_reason');
     const r = kindAttributes('overdue_order', { ...row, amend_reason: 'Our strict quality control checks' }, '2026-10-08', 0, undefined);
     expect(r.attributes).toEqual({ amend_date_reason: 'Our strict quality control checks' });

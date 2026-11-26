@@ -25,7 +25,6 @@ import { MAX_STOPS, roadRoute, stopKey, type Point, type RoadLeg } from './road-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema-parameterised scm client, same alias as geocode.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
-/* ── Pure ───────────────────────────────────────────────────────────────── */
 
 function clockMinutes(token: string, apHint: 'am' | 'pm' | null): number | null {
   const m = /^(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?$/.exec(token.trim());
@@ -131,9 +130,7 @@ export function buildDayRuns(rows: readonly RunStopIn[], homeWarehouseOf: (plate
   return runs.sort((a, b) => a.plateKey.localeCompare(b.plateKey));
 }
 
-/* ── Reads ──────────────────────────────────────────────────────────────── */
 
-/** A failed read stops the work; a guess would be a wrong figure kept as right. */
 async function need<T>(what: string, p: Promise<{ data: T[]; error: { message: string } | null }>): Promise<T[]> {
   const r = await p;
   if (r.error) throw new Error(`${what}: ${r.error.message}`);
@@ -147,7 +144,6 @@ const str = (v: unknown): string | null => (v == null || v === '' ? null : Strin
 export async function loadDayRuns(sb: SupabaseClient, env: Env, date: string): Promise<{ runs: DayRun[]; homes: Map<string, Point>; warehousePoints: Map<string, Point> }> {
   const fail = (what: string, e: { message: string } | null) => { if (e) throw new Error(`${what}: ${e.message}`); };
 
-  // 1. The lorries (shared master) and live trips dated the day.
   const { data: lorryRows, error: lErr } = await sb.from('lorries').select('id, plate');
   fail('lorries', lErr);
   const plateById = new Map(((lorryRows ?? []) as Array<{ id: string; plate: string }>).map((l) => [String(l.id), String(l.plate)]));
@@ -158,7 +154,6 @@ export async function loadDayRuns(sb: SupabaseClient, env: Env, date: string): P
   const stopRows = await need('stopRows', chunkIn<{ trip_id: string; do_id: string | null; stop_no: number | null }>([...tripById.keys()], (b, from, to) =>
       sb.from('trip_stops').select('trip_id, do_id, stop_no').in('trip_id', b).order('trip_id').range(from, to)));
 
-  // 2. SOs on those trips (through their DOs), and SOs due the day.
   const tripDoIds = [...new Set(stopRows.map((s) => s.do_id).filter((x): x is string => !!x))];
   const tripDos = await need('tripDos', chunkIn<{ id: string; so_doc_no: string | null }>(tripDoIds, (b, from, to) => sb.from('delivery_orders').select('id, so_doc_no').in('id', b).order('id').range(from, to)));
   const docByDo = new Map(tripDos.map((d) => [d.id, d.so_doc_no ?? '']));
@@ -175,11 +170,10 @@ export async function loadDayRuns(sb: SupabaseClient, env: Env, date: string): P
   const allDos = await need('allDos', chunkIn<{ id: string; so_doc_no: string; time_range: string | null }>(docNos, (b, from, to) =>
     sb.from('delivery_orders').select('id, so_doc_no, time_range').in('so_doc_no', b).order('id').range(from, to)));
   const latestDo = new Map<string, { id: string; time_range: string | null }>();
-  for (const d of allDos) latestDo.set(d.so_doc_no, d); // ordered by id: the last one wins, the board's rule
+  for (const d of allDos) latestDo.set(d.so_doc_no, d);
   const latestIds = [...new Set([...latestDo.values()].map((d) => d.id))];
   const crewRows = await need('crewRows', chunkIn<{ do_id: string; lorry_plate: string | null }>(latestIds, (b, from, to) => sb.from('delivery_order_crew').select('do_id, lorry_plate').in('do_id', b).order('do_id').range(from, to)));
   const crewPlate = new Map(crewRows.map((c) => [c.do_id, c.lorry_plate]));
-  // An SO on ANY live trip is not "assigned, no trip", whatever the trip's date.
   const allDoIds = allDos.map((d) => d.id);
   const anyStops = await need('anyStops', chunkIn<{ do_id: string; trip_id: string }>(allDoIds, (b, from, to) => sb.from('trip_stops').select('do_id, trip_id').in('do_id', b).order('do_id').range(from, to)));
   const anyTripIds = [...new Set(anyStops.map((s) => s.trip_id))];
@@ -188,7 +182,6 @@ export async function loadDayRuns(sb: SupabaseClient, env: Env, date: string): P
   const doSo = new Map(allDos.map((d) => [d.id, d.so_doc_no]));
   const onLiveTrip = new Set(anyStops.filter((s) => liveTrip.has(s.trip_id)).map((s) => doSo.get(s.do_id)).filter((x): x is string => !!x));
 
-  // 3. Where each order ships from (its first line's warehouse) and where it goes.
   const itemRows = await need('itemRows', chunkIn<{ doc_no: string; warehouse_id: string | null }>(docNos, (b, from, to) =>
     sb.from('mfg_sales_order_items').select('doc_no, warehouse_id').in('doc_no', b).order('doc_no').range(from, to)));
   const whByDoc = new Map<string, string>();
@@ -200,7 +193,6 @@ export async function loadDayRuns(sb: SupabaseClient, env: Env, date: string): P
   }
   const pointByDoc = await locate(sb, env, addrByDoc);
 
-  // 4. The stop rows: trip stops first, then assigned orders not on any live trip.
   const rows: RunStopIn[] = [];
   const push = (dn: string, plate: string, lorryId: string | null, companyId: number, stopNo: number | null, tripWh: string | null) => {
     const so = soByDoc.get(dn);
@@ -223,7 +215,6 @@ export async function loadDayRuns(sb: SupabaseClient, env: Env, date: string): P
     push(dn, plate, idByPlate.get(normalizePlate(plate)) ?? null, Number(soByDoc.get(dn)?.company_id ?? 0), null, null);
   }
 
-  // 5. Homes: the lorry's own warehouse first (lorry-depots.ts), else the run's warehouse.
   const { lorryDepots } = await loadLorryDepots(sb, env);
   const runs = buildDayRuns(rows, (k) => (k in lorryDepots ? lorryDepots[k]!.warehouseId : null));
   const homes = new Map(Object.entries(lorryDepots).map(([k, d]) => [k, { lat: d.lat, lng: d.lng }]));
@@ -242,7 +233,6 @@ export async function loadDayRuns(sb: SupabaseClient, env: Env, date: string): P
   return { runs, homes, warehousePoints };
 }
 
-/** Cache first in one read, then Google for each miss (once ever, geocode.ts keeps it). */
 async function locate(sb: SupabaseClient, env: Env, addrByDoc: Map<string, string>): Promise<Map<string, Point>> {
   const keys = [...new Set([...addrByDoc.values()].map(normalizeAddress).filter(Boolean))];
   const cached = new Map<string, Point>();
@@ -268,7 +258,6 @@ async function locate(sb: SupabaseClient, env: Env, addrByDoc: Map<string, strin
   return out;
 }
 
-/* ── Work out and keep ──────────────────────────────────────────────────── */
 
 export type StopLeg = { ref: string | null; distanceM: number; durationS: number };
 
@@ -300,11 +289,10 @@ export async function computeDayRoutes(sb: SupabaseClient, env: Env, date: strin
     if (run.stops.length > MAX_STOPS) { outcomes.push({ ...base, result: 'skipped', reason: `more than ${MAX_STOPS} located stops` }); continue; }
     const key = stopKey(home, run.stops);
     const prev = kept.find((k) => k.lorry_id === run.lorryId && Number(k.company_id) === run.companyId);
-    // A figure kept before the per-stop legs were stored is worked out once more.
     if (prev && prev.stop_key === key && prev.legs != null) { keep.add(prev.id); outcomes.push({ ...base, result: 'kept', reason: null }); continue; }
     const road = await roadRoute(env, home, run.stops);
     if (!road.ok) {
-      if (prev) keep.add(prev.id); // a Google failure keeps yesterday's answer rather than none
+      if (prev) keep.add(prev.id);
       outcomes.push({ ...base, result: 'skipped', reason: road.reason });
       continue;
     }

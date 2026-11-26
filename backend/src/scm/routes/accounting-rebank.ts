@@ -1,9 +1,3 @@
-// GET  /accounting/receipts/rebank?from=YYYY-MM-DD&to=YYYY-MM-DD — the transfer
-//      receipts in the range booked on another bank than the company's
-//      Receive into (BANK_DEFAULT), each with why it cannot move, if it cannot.
-// POST /accounting/receipts/rebank { items: [{ source, paymentId }] } — move
-//      them: reverse on the original date, book again on Receive into.
-// Rules in acc/receipt-rebank.ts. Registered by accounting.ts.
 
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
@@ -50,7 +44,6 @@ export const rebankMoveHandler = async (c: Ctx): Promise<Response> => {
   if (items.length > MAX_REBANK_PER_CALL) {
     return c.json({ error: 'too_many', message: `At most ${MAX_REBANK_PER_CALL} receipts per move.` }, 400);
   }
-  /* Each receipt moves in its own transaction (RECEIPT_REBANK_MODE, acc/rebank-transaction.ts). */
   const r = await rebankReceipts(c.get('supabase'), co.companyId, items, rebankTxFor(c.env));
   if (!r.ok) return c.json({ error: 'load_failed', reason: r.reason }, 500);
   return c.json({ target: r.target, results: r.results });

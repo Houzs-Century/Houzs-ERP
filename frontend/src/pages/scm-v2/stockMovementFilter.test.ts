@@ -54,7 +54,6 @@ describe('filterMovements', () => {
     expect(ids(filterMovements(ROWS, filter({ sourceDoc: 'hc-do' })))).toEqual(['b']);
     expect(ids(filterMovements(ROWS, filter({ sourceDoc: 'HC-' })))).toEqual(['a', 'b']);
     expect(ids(filterMovements(ROWS, filter({ sourceDoc: 'bal' })))).toEqual(['d']);
-    // A source-doc term never matches an ADJUSTMENT with a null doc.
     expect(ids(filterMovements(ROWS, filter({ sourceDoc: 'x' })))).toEqual([]);
   });
 

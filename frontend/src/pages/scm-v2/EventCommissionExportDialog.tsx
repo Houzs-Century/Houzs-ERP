@@ -23,7 +23,6 @@ export type EcTells<T> = {
 };
 type Told = { columns?: readonly unknown[]; keys?: string[]; filters?: Record<string, string[]> };
 
-/** A table's column filters in words: "Salesperson: Ali, Bob · Brand: AKEMI". */
 const filterWords = (filters: Record<string, string[]>, all: ReadonlyArray<{ key: string; label: string }>): string | null => {
   const words = Object.entries(filters).filter(([, v]) => v.length > 0)
     .map(([k, v]) => `${all.find((c) => c.key === k)?.label ?? k}: ${v.slice(0, 3).join(', ')}${v.length > 3 ? ` +${v.length - 3}` : ''}`);
@@ -35,7 +34,6 @@ const filterWords = (filters: Record<string, string[]>, all: ReadonlyArray<{ key
 export function useEcTables() {
   const told = useRef<Partial<Record<EcTableKey | 'fairOrdersProbe', Told>>>({});
   const made = useRef(new Map<string, unknown>());
-  /** The props a table passes back through; the same functions every render. */
   const tell = useCallback(<K extends EcTableKey>(key: K, as: K | 'fairOrdersProbe' = key): EcTells<EcRows[K]> => {
     const had = made.current.get(as);
     if (had) return had as EcTells<EcRows[K]>;
@@ -49,7 +47,6 @@ export function useEcTables() {
     made.current.set(as, tells);
     return tells;
   }, []);
-  /** A table as it shows now; one that has not said yet, its default columns and every row. */
   const shown = useCallback(<K extends EcTableKey>(key: K, all: ReadonlyArray<Column<EcRows[K]>>): ShownTable<EcRows[K]> => {
     const t = told.current[key];
     return {
@@ -58,7 +55,6 @@ export function useEcTables() {
       filters: t?.filters ? filterWords(t.filters, all) : null,
     };
   }, []);
-  /** The keys of the columns a fair's orders show — told by an open fair, else by the hidden probe. */
   const fairOrderKeys = useCallback((): string[] | null => {
     const cols = (told.current.fairOrders?.columns ?? told.current.fairOrdersProbe?.columns) as ReadonlyArray<{ key: string }> | undefined;
     return cols ? cols.map((c) => c.key) : null;
@@ -73,10 +69,8 @@ const TITLES: Record<EcFormat, string> = { excel: 'Export to Excel', pdf: 'Expor
 
 export function EventCommissionExportDialog({ format, people, onClose, onExport }: {
   format: EcFormat;
-  /** The salespeople on the report, A to Z. */
   people: readonly string[];
   onClose: () => void;
-  /** Makes the file; a failure is shown here and the dialog stays open. */
   onExport: (choice: EcChoice) => Promise<void>;
 }) {
   const [part, setPart] = useState<EcPart>('full');

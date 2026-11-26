@@ -60,7 +60,6 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/currencies",
   "/scm/fabric-tracking",
   "/scm/fair-pending",
-  // Warehouse loading queue (no-price "what to load" list, scm.warehouse.inventory).
   "/scm/loading-list",
   "/scm/warehouses",
   "/scm/warehouses/racks",
@@ -175,7 +174,6 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/delivery-orders/new",
   "/scm/delivery-orders/from-so",
   "/scm/delivery-orders/:id",
-  // The DO print's "SCAN . MARK LOADED" QR lands here (warehouse loading confirmation).
   "/scm/do-load",
   "/scm/sales-invoices",
   "/scm/sales-invoices/new",

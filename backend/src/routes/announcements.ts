@@ -1,22 +1,3 @@
-// ============================================================
-// Announcements — office posts every logged-in user sees as a top-of-screen
-// banner with a "Got it" acknowledgement. Ported from Hookka
-// (src/api/routes/announcements.ts), adapted for Houzs:
-//   - Single-tenant (no org_id).
-//   - No worker portal: every user is office staff who logs in via /api/auth.
-//   - Targeting reframed: ALL_USERS | DEPARTMENT_IDS | POSITION_IDS | USER_IDS
-//     | MIXED. Lists hold INTEGER ids (matches users.id / departments.id /
-//     positions.id). Workers / dept-codes don't exist on this side.
-//   - No web push (Houzs has no push_subscriptions). BrowserPushSink already
-//     fires native Notifications off the polled activity feed; reusing that
-//     here is a future enhancement.
-//   - Translate-announcement.ts is ported and called best-effort — and, since
-//     2026-09-06, AFTER the response under waitUntil (queueTranslation). The
-//     row is written with translations NULL; the FE shows the original text
-//     until the fill lands, or for good when ANTHROPIC_API_KEY is unset.
-//   - No runtime self-apply DDL block: Houzs migrates-before-deploy
-//     (mig 0058 must be applied before this route's first request).
-// ============================================================
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermissionOrSalesDirector } from "../middleware/auth";
@@ -92,36 +73,11 @@ import {
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Multi-company: announcements are a UNIFIED module with a COMPANY-TARGET
-// dimension (owner decision 2026-07). Rather than hard-isolating each company's
-// stream by the active/switched company, a notice carries target_company_ids
-// (mig 0113); a reader sees it only if that list is NULL/empty (= all companies)
-// OR intersects the reader's OWN companies (c.get('allowedCompanyIds') — their
-// user_companies grants, fail-open to all when unresolved). The per-row
-// company_id (mig 0093) is retained as the AUTHORING company (stamped on POST,
-// used for read-receipt ack tagging); it no longer gates visibility. The
-// company gate is an ADDITIONAL AND filter layered on top of the existing
-// dept/position/user audience match — a notice must pass BOTH.
 
-// The four announcement categories. GENERAL is the back-compat default.
 
-// Targeting kinds. ALL_USERS = everyone (the back-compat default).
 
-// One attached media file on an announcement. `r2Key` lives in POD_BUCKET.
-// `name` is the original filename; `mime` drives the renderer (image/video/pdf).
 
-// Rich-media LAYOUT hint (mig 0140). The author picks how the media is laid out;
-// every renderer (desktop pop-up + page, mobile detail) honours the SAME hint so
-// a notice looks identical everywhere. Both keys optional — a missing key means
-// "derive a default from the attachment count", which is exactly how pre-0140
-// (NULL) rows keep rendering unchanged.
-//   · photo: how the photo set is arranged — "1" one big, "2" side-by-side,
-//     "3" three across, "4" a 2x2 grid.
-//   · video: the video block's shape — "1x1" square, "1x2" portrait (tall).
 
-// Parse the stored media_layout JSON, dropping anything not in the small allowed
-// set. Returns null when empty/unrecognised so toPublic emits `mediaLayout: null`
-// and the client falls back to count-derived defaults.
 function readMediaLayout(raw: unknown): MediaLayout | null {
   let obj: unknown = raw;
   if (typeof obj === "string") {
@@ -146,14 +102,8 @@ function readMediaLayout(raw: unknown): MediaLayout | null {
 }
 
 
-// Categories that block by default — the value the require_ack flag takes when
-// the composer does not say otherwise, and the rule a pre-migration row falls
-// back to. Mirrors frontend/src/components/announcementCategory.ts.
 
-// The stored flag, or null when the column is absent / NULL (pre-migration row,
-// D1 test mirror) so the client applies the category rule itself.
 
-// Not yet reached its scheduled posting instant. NULL / unparseable = live now.
 
 
 function isRemindedSince(
@@ -213,16 +163,12 @@ export function normalizeAttachments(raw: unknown): AnnouncementAttachment[] {
 }
 
 
-// Derive the canonical target_type from which target lists are non-empty.
-// Empty all -> ALL_USERS; one bucket -> that bucket's enum; multiple -> MIXED.
 function deriveTargetType(
   deptIds: number[],
   positionIds: number[],
   userIds: number[],
   divisions: DivisionTarget[] = [],
 ): TargetType {
-  // A division is a slice of a department, so it counts as the DEPARTMENT
-  // bucket — the target_type CHECK constraint keeps its five values.
   const deptBucket = deptIds.length > 0 || divisions.length > 0;
   const buckets =
     (deptBucket ? 1 : 0) +
@@ -235,17 +181,6 @@ function deriveTargetType(
   return "USER_IDS";
 }
 
-// The rich body as the client may send it. Returns the canonical HTML, or null
-// when there is nothing a plain string could not carry (no marks, no lists, no
-// sizes) — that keeps every unformatted notice on the pre-feature plain path.
-// `canonical` is the same fragment even when `html` folded to null — the
-// plain-text shadow is derived from it, never from the client's string.
-// `error` is set only for a fragment past the hard cap; the caller 400s it.
-//
-// Inline images (2026-09-05): an `<img data-att>` may only name one of THIS
-// notice's attachments (`attachmentKeys` = the manifest about to be stored).
-// The serve route refuses any other key anyway, so stripping here only turns
-// a broken image into no image — but it keeps the stored body honest.
 function readBodyHtml(
   v: unknown,
   attachmentKeys: readonly string[],
@@ -286,7 +221,6 @@ export function toPublic(r: AnnouncementRow) {
     requireAck: readRequireAck(r.requireAck ?? r.require_ack ?? null),
     scheduledAt: r.scheduledAt ?? r.scheduled_at ?? null,
     escalatedAt: r.escalatedAt ?? r.escalated_at ?? null,
-    // Approval workflow (mig 20260906T1509).
     approvalStatus: readApprovalStatus(r),
     submittedBy: r.submittedBy ?? r.submitted_by ?? null,
     submittedAt: r.submittedAt ?? r.submitted_at ?? null,
@@ -294,15 +228,11 @@ export function toPublic(r: AnnouncementRow) {
     reviewedAt: r.reviewedAt ?? r.reviewed_at ?? null,
     rejectReason: r.rejectReason ?? r.reject_reason ?? null,
     refNo: r.refNo ?? r.ref_no ?? null,
-    // Void (mig 20260907T1030).
     voidedBy: r.voidedBy ?? r.voided_by ?? null,
     voidedAt: r.voidedAt ?? r.voided_at ?? null,
     voidReason: r.voidReason ?? r.void_reason ?? null,
-    // Document type (mig 20260908T0300): ANN or a registered code (MEMO).
     docType: readDocType(r),
     numberDeptId: readNumberDept(r),
-    // System-notice tag ('scan' for background slip-scan results). Lets the
-    // client suppress the read-receipt roster on private per-user notices.
     source: (r.source ?? null) as string | null,
   };
 }
@@ -310,17 +240,9 @@ export function toPublic(r: AnnouncementRow) {
 type PublicAnnouncement = ReturnType<typeof toPublic> & {
   createdByName?: string | null;
   targetDeptNames?: string[];
-  /** "Operation › Driver Team" per targetDivisions entry, same order. */
   targetDivisionNames?: string[];
 };
 
-// Author and department NAMES for a batch of rows. Resolved here because a
-// plain reader cannot load /api/users or /api/departments (both sit behind
-// users.read), yet the redesigned inbox shows "Lee Wei · Operation" on every
-// row and groups the SOP Library by department. Two small lookups per request,
-// scoped to the ids actually present; a lookup that fails leaves the names
-// absent rather than failing the list. Ids are validated integers, so the
-// inline IN lists are safe (d1-compat prepared SQL, no `--` comments).
 async function withNames(
   env: Env,
   rows: AnnouncementRow[],
@@ -373,10 +295,6 @@ function genId(): string {
   return `ann-${crypto.randomUUID().slice(0, 12).replace(/-/g, "")}`;
 }
 
-// Fetch one announcement the caller is allowed to see under the company gate.
-// A notice targeting only companies the caller does NOT belong to resolves to
-// null (callers answer 404, indistinguishable from a nonexistent id). The gate
-// is skipped (fail-open) when the caller's allow-list is unresolved.
 export async function getScopedAnnouncement(
   c: { env: Env; get: (k: string) => unknown },
   id: string,
@@ -392,15 +310,6 @@ export async function getScopedAnnouncement(
 }
 
 
-// Company gate: an announcement is visible to a reader whose granted companies
-// are `allowed` IFF its target_company_ids is empty (= all companies) OR
-// intersects `allowed`. Fail-open when the reader's allow-list is UNRESOLVED
-// (single-company Houzs / D1 test mirror / cold-start) — matches the
-// allowedCompaniesSql idiom so legacy single-company reads run unchanged.
-// `allowed === []` is NOT that case: it means the reader is granted no active
-// company, so a company-TARGETED notice must stay hidden (see the sentinel doc
-// on allowedCompanyIds). A notice targeting ALL companies stays visible either
-// way — that gate is the notice's audience, not the company boundary.
 export function companyCanSee(r: AnnouncementRow, allowed: number[] | undefined): boolean {
   const targets = readTargetCompanyIds(r);
   if (targets.length === 0) return true;
@@ -441,10 +350,6 @@ export function salesDirectorScope(c: { get: (k: string) => unknown }): SdScope 
   return { restricted: false, deptId: null };
 }
 
-// Validate + normalise a restricted Sales Director's requested audience. Returns
-// the (possibly defaulted) dept/user id lists to persist, or a plain-language
-// error to answer 403 on. An empty selection defaults to the WHOLE own
-// department (never ALL_USERS). Company / position targets are rejected.
 async function enforceSalesDirectorScope(
   c: { env: Env; get: (k: string) => unknown },
   scope: SdScope,
@@ -520,9 +425,6 @@ async function enforceSalesDirectorScope(
   return { ok: true, deptIds, userIds: req.userIds };
 }
 
-// True when a restricted Sales Director is acting on a notice they did NOT
-// author. Ownership-gates edit / delete / remind / receipts so a Sales Director
-// can only manage their OWN posts (a full announcer is never restricted).
 export function sdBlockedFromRow(scope: SdScope, row: AnnouncementRow, userId: number | null): boolean {
   if (!scope.restricted) return false;
   const author = row.createdBy ?? row.created_by ?? null;
@@ -552,19 +454,10 @@ export function sdBlockedFromRow(scope: SdScope, row: AnnouncementRow, userId: n
 // untouched.
 // ============================================================
 app.get("/", async (c) => {
-  // Authentication is still mandatory — the /api/* auth wall (index.ts) is what
-  // supplies `user`, and every filter below is keyed on their id / dept /
-  // position. Mirror /banner's explicit check rather than trusting the wall:
-  // a missing user must 401, never fall through to an unscoped list.
   const user = c.get("user");
   if (!user || !user.id) {
     return c.json({ success: false, error: "Your session has expired. Please sign in again." }, 401);
   }
-  // System per-user notices (source='scan' slip-scan results, source=
-  // 'service_case' service-case assignments) are delivered only through the
-  // notification bell (/banner?scope=system, on both shells) — they must NOT
-  // clutter this office composer list. Human-authored posts have source NULL,
-  // so filter to those.
   const res = await c.env.DB
     .prepare(
       `SELECT * FROM announcements WHERE source IS NULL ORDER BY created_at DESC`,
@@ -572,24 +465,17 @@ app.get("/", async (c) => {
     .all<AnnouncementRow>();
   const allowed = allowedCompanyIds(c);
   const granted = user.permissions_set ?? user.permissions ?? [];
-  // The approval desk (announcements.approve) reads the ledger as a manager
-  // does: the queue it acts on is the pending rows, which no reader is served.
   const isManager =
     hasPermission(granted, "*") ||
     hasPermission(granted, "announcements.write") ||
     hasPermission(granted, APPROVE_PERMISSION);
   const sd = salesDirectorScope(c);
-  // Company gate first (applies to managers AND readers): a notice is listed
-  // only for a caller who belongs to a targeted company (or it targets all).
   const visible = (res.results ?? []).filter((r) => companyCanSee(r, allowed));
   const rows = isManager
     ? visible
     : await (async () => {
         const division = await callerDivision(c.env, user.id);
         return visible.filter((r) => {
-          // A Sales Director sees + manages their OWN posts here regardless of
-          // active/expiry (so the desktop page isn't empty for them), plus their
-          // normal audience feed. Full managers already saw everything above.
           if (sd.restricted && (r.createdBy ?? r.created_by ?? null) === user.id) {
             return true;
           }
@@ -608,13 +494,6 @@ app.get("/", async (c) => {
   return c.json({ success: true, data: await withNames(c.env, rows) });
 });
 
-// ============================================================
-// BANNER (every authed user) — newest ACTIVE + not-expired + audience-matching
-// rows + this user's acked ids (for the popup gate). Default = the POP-UP
-// slice (human posts only); ?scope=system = the BELL slice (machine notices).
-// No permission gate: anyone who passes the /api/* auth wall can see their
-// own banner.
-// ============================================================
 app.get("/banner", async (c) => {
   const user = c.get("user");
   if (!user || !user.id) {
@@ -638,27 +517,9 @@ app.get("/banner", async (c) => {
   // requesting the unscoped feed gets the human slice too.
   const scope = (c.req.query("scope") ?? "").toLowerCase();
   const systemOnly = scope === "system";
-  // The payload depends only on this boolean: default and scope=human are the
-  // identical human slice, so BOTH key as "human" (one entry, shared). Keyed
-  // separately from "system" so the two payloads can never answer each other.
   const bannerScope: BannerScope = systemOnly ? "system" : "human";
 
-  // PER-USER + PER-SCOPE KV snapshot (inbox.ts pattern) — this payload is
-  // per-user three times over (own ackedIds, dept/position/user-id targeting,
-  // the reader's company grants) AND per-scope (human vs system filter), so it
-  // must NEVER enter a shared cache; the key's scope dimensions are the USER id
-  // and the slice. The family version orphans every user's entry on any
-  // broadcast-shaped mutation (create/edit/delete/remind below); per-user
-  // changes (own ack, a private notice) bust BOTH of that user's slices.
-  // TTL is CONFIG_CACHE_TTL_SECONDS.banner (300s / 5 min); the desktop + mobile
-  // pollers run at 3 min (as of 2026-08-20), so a poll lands mostly on a cache
-  // hit and only re-pays the DB round trip once per ~5 min. A reader may serve up
-  // to TTL-stale, the trade the human slice already makes. Best-effort: any KV
-  // trouble serves the live build.
   const bannerVersion = await configCacheVersion(c.env, "banner");
-  // Both slices now take the cached path (the key carries the slice). The only
-  // bypass is a best-effort one: an UNUSABLE cache version (KV unbound /
-  // erroring) reads null, and a guessed version could serve an orphaned entry.
   const cacheKey =
     bannerVersion == null
       ? null
@@ -671,7 +532,6 @@ app.get("/banner", async (c) => {
         return c.json(JSON.parse(cached));
       }
     } catch {
-      /* fall through to the live build */
     }
   }
 
@@ -689,12 +549,6 @@ app.get("/banner", async (c) => {
   // for a notice the caller's companies cannot see never reaches the payload.
   const [res, ackRes, myReminders] = await Promise.all([
     c.env.DB
-      // WHERE is_active = 1 pushes the active filter to SQL so this uses the
-      // (is_active, created_at DESC) index (mig 0058) as a range scan instead of
-      // reading the WHOLE table on every ~60s cache miss (polled from every page,
-      // measured ~900ms on prod 2026-08-20). Behaviour-identical: the JS
-      // isActiveFlag filter below already drops exactly the is_active<>1 rows the
-      // integer column can hold, so no row that used to be served is lost.
       .prepare(`SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC`)
       .all<AnnouncementRow>(),
     c.env.DB
@@ -735,7 +589,6 @@ app.get("/banner", async (c) => {
   for (const r of active) {
     if (!ackedAtById.has(r.id)) continue;
     const ackedAt = ackedAtById.get(r.id) ?? null;
-    // Whole-notice reminder OR this reader's own (per-department) reminder.
     const remindedAt = laterOf(r.remindedAt ?? r.reminded_at ?? null, myReminders.get(r.id) ?? null);
     if (isRemindedSince(remindedAt, ackedAt)) continue;
     ackedIds.push(r.id);
@@ -743,8 +596,6 @@ app.get("/banner", async (c) => {
 
   const payload = {
     success: true,
-    // The per-notice remindedAt the client compares against its local ack is
-    // the reader's EFFECTIVE one (notice-level or their own row).
     data: (await withNames(c.env, active)).map((p) => ({
       ...p,
       remindedAt: laterOf(p.remindedAt, myReminders.get(p.id) ?? null),
@@ -752,19 +603,12 @@ app.get("/banner", async (c) => {
     ackedIds,
   };
   if (cacheKey) {
-    // Not awaited — the response does not depend on the write landing, and the
-    // banner is polled from every page, so a KV round trip on each miss was
-    // charged to a request that is already on the slow path. Measured on prod
-    // 2026-08-01: announcements/banner was the slowest call on several routes,
-    // peaking at 527ms. Same waitUntil-with-floating-fallback shape as
-    // routes/inbox.ts and /auth/me.
     const fill = (async () => {
       try {
         await c.env.SESSION_CACHE?.put(cacheKey, JSON.stringify(payload), {
           expirationTtl: CONFIG_CACHE_TTL_SECONDS.banner,
         });
       } catch {
-        /* non-fatal */
       }
     })();
     try {
@@ -777,36 +621,9 @@ app.get("/banner", async (c) => {
   return c.json(payload);
 });
 
-// ============================================================
-// GET /:id/acks — read-receipt for one notice. Roster = the notice's ACTUAL
-// audience (not the whole company), split into who has acked and who hasn't, so
-// a private USER_IDS notice reads "Read 1 / 1", not "1 / 48".
-// Gated on announcements.WRITE — only publishers/admins see who read a notice
-// (owner: a normal user must not see the read-receipts). The frontend already
-// only renders this for write-holders; this is the server-side backstop.
-// ============================================================
-// ── Roster + ack helpers shared by the receipts, summary, team and escalation
-// reads below. One SELECT shape, one definition of "in the audience", one
-// definition of a pending person's state, so the drawer, the manage table,
-// the dashboard card and the supervisor notice can never disagree.
 
 
-// The read-receipt / ack-analytics routes (/:id/acks, /ack-summary,
-// /ack-trend, /team-pending, /:id/escalate) live in
-// routes/announcementReceipts.ts since 2026-09-09 — mounted on the same
-// prefix right after this router.
 
-// ============================================================
-// POST / — create. Body validated server-side.
-// ============================================================
-// Run the four-language translation AFTER the response. The row is already
-// written (translations NULL); translateAndStore fills the column when the
-// reply lands and drops it if the text was edited meanwhile. Same
-// waitUntil-with-floating-fallback shape as the banner cache fill above —
-// c.executionCtx throws in the bare-Hono test harness.
-// The composer's draft key (mig 20260907T0010): opaque, minted client-side,
-// meaningful only to the author who sent it. Shape-checked so the column
-// never holds free text; anything else is treated as "no key".
 const CLIENT_KEY_RE = /^[A-Za-z0-9._-]{8,64}$/;
 function readClientKey(v: unknown): string | null {
   if (typeof v !== "string") return null;
@@ -867,17 +684,11 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
     const dup = await findByClientKey(c.env, keyOwner, clientKey);
     if (dup) return c.json({ success: true, data: toPublic(dup), duplicate: true }, 201);
   }
-  // Rich body wins when present: `body` is then DERIVED from it server-side
-  // (never trusted from the client) so the two columns can never disagree. A
-  // client that sends only `body` — the phone, a script, an old build — takes
-  // the plain path exactly as before.
   const attachments = normalizeAttachments(body.attachments);
   const rawHtml = body.bodyHtml ?? body.body_html;
   const rich = readBodyHtml(rawHtml, attachments.map((a) => a.r2Key));
   if (rich.error) return c.json({ success: false, error: rich.error }, 400);
   const bodyHtml = rich.html;
-  // Any html at all (even one that folded to plain and stores NULL) is the
-  // source of truth for the plain text; `body` is read only when no html came.
   const text =
     typeof rawHtml === "string" && rawHtml.trim()
       ? richTextToPlain(rich.canonical)
@@ -906,8 +717,6 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   const reqExcluded = readIntArray(
     (body.excludedUserIds ?? body.excluded_user_ids) as string | number[] | null | undefined,
   );
-  // Company-target dimension. Empty (author picked "Both"/all, or single-company
-  // Houzs) stores NULL = visible to every company.
   const reqCompanyIds = readIntArray(
     (body.targetCompanyIds ?? body.target_company_ids) as
       | string
@@ -916,9 +725,6 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
       | undefined,
   );
 
-  // Enforce the Sales-Director audience scope (own Sales department, or specific
-  // salespeople in it). A full announcer (`*` / announcements.write) is never
-  // restricted. This is the AUTHORITY — the FE composer only mirrors it.
   const sd = salesDirectorScope(c);
   let effDeptIds = reqDeptIds;
   let effPositionIds = reqPositionIds;
@@ -943,12 +749,8 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
 
   const targetType = deriveTargetType(effDeptIds, effPositionIds, effUserIds, reqDivisions);
   const category = readCategory(body.category);
-  // "Require acknowledgement" (mig 20260905T1125): an explicit boolean wins;
-  // otherwise the category default — WARNING / SOP on, GENERAL / LEARNING off.
   const requireAck =
     typeof body.requireAck === "boolean" ? body.requireAck : categoryRequiresAck(category);
-  // Scheduled posting: a future instant holds the notice back from every
-  // reader until then. A past / absent value posts at once (stored NULL).
   let scheduledAt: string | null = null;
   if (body.scheduledAt != null && String(body.scheduledAt).trim() !== "") {
     const t = Date.parse(String(body.scheduledAt));
@@ -960,39 +762,19 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
 
   const id = genId();
   const nowIso = new Date().toISOString();
-  // Multi-company: stamp the composing company. Column + bind appended ONLY
-  // when the company context is resolved (sales.ts idiom) so the pre-migration
-  // window / D1 test mirror inserts unchanged; the PG DEFAULT covers the rest.
   const companyId = activeCompanyId(c);
   const stampCo = companyId != null;
-  // Translations are filled in AFTER the response (queueTranslation below):
-  // the row is written with NULL and the FE shows the original text until the
-  // background job lands. The old await here held "Posting…" for 40-100 s on
-  // a rich notice and the owner's repeated clicks each inserted a row.
-  // Approval workflow (mig 20260906T1509): a new notice enters the approval
-  // queue — or stays a draft when the composer says so. Nobody is served it
-  // until an approver acts (deliverableNow requires APPROVED).
   const asDraft = body.draft === true;
   const initialStatus = asDraft ? "DRAFT" : "PENDING_APPROVAL";
-  // Document type (mig 20260908T0300): ANN unless the composer picked a
-  // registered type (MEMO) — the [TYPE] segment of the number and the key
-  // the attachment policy is read by.
   const docTypeRes = await resolveDocType(c.env, body.docType);
   if ("error" in docTypeRes) return c.json({ success: false, error: docTypeRes.error }, 400);
   const docType = docTypeRes.code;
-  // Numbered under (mig 20260909T0900): the composer's pick, else the submitter's own.
   const numberDept = await resolveNumberDept(c.env, body.numberDeptId);
   if ("error" in numberDept) return c.json({ success: false, error: numberDept.error }, 400);
-  // Attachment policy (mig 20260907T0715, Settings → Documents): a notice
-  // may not enter the queue without a file when its type demands one.
-  // A draft is always allowed — the gate is on submission.
   if (!asDraft && attachments.length === 0 && (await attachmentRequiredForType(c.env, docType))) {
     return c.json({ success: false, error: ATTACHMENT_REQUIRED_MESSAGE }, 400);
   }
 
-  // client_key is appended the same way: only when the client sent one, so
-  // the pre-migration window and the D1 test mirrors without the column
-  // insert exactly as before.
   const stampKey = keyOwner != null;
   const insert = c.env.DB.prepare(
     `INSERT INTO announcements
@@ -1035,9 +817,6 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
   try {
     await insert.run();
   } catch (e) {
-    // Two requests with the same key racing past the lookup above: the
-    // partial unique index (created_by, client_key) refuses the second. Hand
-    // it the winner's row instead of a 500.
     if (stampKey) {
       const dup = await findByClientKey(c.env, keyOwner, clientKey as string);
       if (dup) return c.json({ success: true, data: toPublic(dup), duplicate: true }, 201);
@@ -1055,23 +834,14 @@ app.post("/", requirePermissionOrSalesDirector("announcements.write"), async (c)
     .bind(id)
     .first<AnnouncementRow>();
 
-  // A new notice changes every targeted reader's banner — orphan ALL cached
-  // banner snapshots via the family version.
   await bumpConfigVersion(c.env, "banner");
 
   queueTranslation(c, id, { title, body: text, bodyHtml });
 
-  // The attachment log (mig 20260907T0715): who attached what, from the
-  // manifest just saved.
   if (row && attachments.length > 0) await syncAttachmentLog(c.env, id, attachments, actorOf(user));
 
-  // Into the queue: audit line + the approvers' bell. A draft waits for
-  // /:id/submit.
   if (row && !asDraft) await recordSubmission(c.env, row, actorOf(user));
 
-  // TODO: web push fan-out (no infra in Houzs yet). BrowserPushSink already
-  // fires native browser Notifications from the polled activity feed; wiring
-  // announcements into a similar polled trigger is the natural next step.
 
   return c.json({ success: true, data: row ? toPublic(row) : null }, 201);
 });
@@ -1082,16 +852,12 @@ export function actorOf(user: AuthUser | undefined): Actor {
   return { id: user?.id ?? null, email: user?.email ?? null, name: user?.name ?? null };
 }
 
-// ============================================================
-// PATCH /:id — edit fields, toggle isActive, retarget, re-translate.
-// ============================================================
 app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const id = c.req.param("id");
   const existing = await getScopedAnnouncement(c, id);
   if (!existing) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
-  // A Sales Director may only edit notices they authored.
   const sd = salesDirectorScope(c);
   if (sdBlockedFromRow(sd, existing, c.get("user")?.id ?? null)) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
@@ -1124,9 +890,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     nextTitle = title;
     textChanged = true;
   }
-  // Whoever edits last defines the format: a `bodyHtml` edit rewrites both
-  // columns (plain derived from rich); a plain `body` edit clears body_html so
-  // a phone editing a formatted notice cannot leave stale formatting behind.
   const nextAttachments =
     "attachments" in body
       ? normalizeAttachments(body.attachments)
@@ -1158,9 +921,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
   if ("attachments" in body) {
     sets.push("attachments = ?");
     binds.push(nextAttachments.length ? JSON.stringify(nextAttachments) : null);
-    // An attachment removed while the text still shows it inline: drop the
-    // inline use too, and re-derive the plain shadow, so the stored body never
-    // names a key the serve route would refuse.
     if (!textChanged && nextHtml) {
       const stripped = stripUnreferencedImages(nextHtml, nextKeys);
       if (stripped !== nextHtml) {
@@ -1172,16 +932,11 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
       }
     }
   }
-  // Media layout retarget. Present + empty/unrecognised clears to NULL (fall
-  // back to count-derived defaults); a valid hint narrows the arrangement.
   if ("mediaLayout" in body || "media_layout" in body) {
     const nextLayout = readMediaLayout(body.mediaLayout ?? body.media_layout);
     sets.push("media_layout = ?");
     binds.push(nextLayout ? JSON.stringify(nextLayout) : null);
   }
-  // Retarget when ANY targeting list is present. We rewrite all four columns
-  // together so target_type stays in sync; missing buckets fall back to the
-  // existing row's value (so a dept-only edit doesn't wipe a worker list).
   if (
     "targetDeptIds" in body ||
     "targetPositionIds" in body ||
@@ -1244,8 +999,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     sets.push("excluded_user_ids = ?");
     binds.push(nextExcluded.length ? JSON.stringify(nextExcluded) : null);
   }
-  // Company retarget. Present + empty array (or null) clears to NULL = all
-  // companies; a non-empty array narrows to those companies.
   if ("targetCompanyIds" in body || "target_company_ids" in body) {
     const nextCompanies = readIntArray(
       (body.targetCompanyIds ?? body.target_company_ids) as
@@ -1254,7 +1007,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
         | null
         | undefined,
     );
-    // A Sales Director cannot choose a company target — reject a non-empty set.
     if (sd.restricted && nextCompanies.length > 0) {
       return c.json(
         { success: false, error: "A Sales Director cannot choose a company target." },
@@ -1264,8 +1016,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     sets.push("target_company_ids = ?");
     binds.push(nextCompanies.length ? JSON.stringify(nextCompanies) : null);
   }
-  // Document type (mig 20260908T0300): editable until the notice is
-  // approved — the number is minted with it, so a published notice keeps it.
   if ("docType" in body) {
     if (readApprovalStatus(existing) === "APPROVED") {
       return c.json({ success: false, error: "The document type of a published notice cannot change." }, 409);
@@ -1324,9 +1074,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     return c.json({ success: true, data: toPublic(existing) });
   }
   if (textChanged) {
-    // The stored translation describes text that is about to change: clear
-    // it with the edit (readers see the new original, never the old
-    // translation) and refill it after the response — queueTranslation below.
     sets.push("translations = ?");
     binds.push(null);
   }
@@ -1340,12 +1087,8 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
     .bind(...binds)
     .run();
 
-  // Any edit (text, targeting, active toggle, expiry) can change who sees
-  // what — orphan all cached banner snapshots.
   await bumpConfigVersion(c.env, "banner");
 
-  // The attachment log follows the manifest (mig 20260907T0715): a key that
-  // appeared is logged under this editor, one that vanished is marked removed.
   if ("attachments" in body) await syncAttachmentLog(c.env, id, nextAttachments, actorOf(c.get("user")));
 
   if (textChanged) {
@@ -1360,18 +1103,12 @@ app.patch("/:id", requirePermissionOrSalesDirector("announcements.write"), async
   return c.json({ success: true, data: row ? toPublic(row) : null });
 });
 
-// ============================================================
-// POST /:id/remind — re-pop the banner for un-acked users.
-// scope=unacked (default): leaves acked rows intact; stamps reminded_at.
-// scope=all: wipes acks so the WHOLE roster re-pops from 0-of-N.
-// ============================================================
 app.post("/:id/remind", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const id = c.req.param("id");
   const ann = await getScopedAnnouncement(c, id);
   if (!ann) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
-  // A Sales Director may only remind on notices they authored.
   if (sdBlockedFromRow(salesDirectorScope(c), ann, c.get("user")?.id ?? null)) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
@@ -1391,17 +1128,13 @@ app.post("/:id/remind", requirePermissionOrSalesDirector("announcements.write"),
       if (Number.isFinite(n)) departmentId = n;
     }
   } catch {
-    /* default */
   }
 
-  // The audience (not every active user): the same roster the receipts show.
   const roster = audienceOf(ann, await loadRoster(c.env, readTargetCompanyIds(ann)));
   const ackedAtByUser = await loadAckMap(c.env, id);
   const now = new Date().toISOString();
 
   if (scope === "all") {
-    // "Reset all receipts" (phone only since 2026-09-05): the whole notice
-    // starts over — receipts cleared, notice-level stamp set, no per-person rows.
     await c.env.DB.prepare(
       "DELETE FROM announcement_acks WHERE announcement_id = ?",
     )
@@ -1420,8 +1153,6 @@ app.post("/:id/remind", requirePermissionOrSalesDirector("announcements.write"),
   const pending = roster.filter(
     (u) => !ackedAtByUser.has(u.id) && (departmentId == null || u.departmentId === departmentId),
   );
-  // Per-person rows carry the reminder (mig 20260906T0921): the banner re-pops
-  // for exactly these people and the drawer paints exactly them "reminded".
   await recordReminders(c.env, id, pending.map((u) => u.id), c.get("user")?.id ?? null, now);
   if (departmentId == null) {
     // A whole-notice reminder keeps the notice-level stamp too, so a reader
@@ -1432,25 +1163,17 @@ app.post("/:id/remind", requirePermissionOrSalesDirector("announcements.write"),
       .run();
   }
 
-  // The re-pop gate compares the reminder vs each user's ack — every cached
-  // banner is now stale, orphan them all.
   await bumpConfigVersion(c.env, "banner");
 
   return c.json({ success: true, pendingCount: pending.length, scope, departmentId });
 });
 
-// ============================================================
-// DELETE /:id — hard delete + clean up ack rows.
-// ============================================================
 app.delete("/:id", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const id = c.req.param("id");
-  // Cross-company guard: verify the notice belongs to the active company
-  // before touching it (or its ack rows).
   const existing = await getScopedAnnouncement(c, id);
   if (!existing) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
-  // A Sales Director may only delete notices they authored.
   if (sdBlockedFromRow(salesDirectorScope(c), existing, c.get("user")?.id ?? null)) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
@@ -1471,16 +1194,10 @@ app.delete("/:id", requirePermissionOrSalesDirector("announcements.write"), asyn
   )
     .bind(id)
     .run();
-  // The notice vanishes from every reader's banner — orphan all snapshots.
   await bumpConfigVersion(c.env, "banner");
   return c.json({ success: true });
 });
 
-// ============================================================
-// POST /:id/ack — record THIS user's ack of one active notice. Idempotent
-// (ON CONFLICT DO NOTHING) so a double-tap or retry never errors. Available
-// to every authed user — no permission gate.
-// ============================================================
 app.post("/:id/ack", async (c) => {
   const user = c.get("user");
   if (!user || !user.id) {
@@ -1491,9 +1208,6 @@ app.post("/:id/ack", async (c) => {
   if (!row || !deliverableNow(row)) {
     return c.json({ success: true, acked: false });
   }
-  // Stamp the ack with the NOTICE's company (dual-read: the pg driver
-  // camelCases result columns) — conditional so the pre-migration window /
-  // D1 test mirror inserts unchanged.
   const annCompanyId = row.companyId ?? row.company_id ?? null;
   const stampCo = annCompanyId != null;
   await c.env.DB.prepare(
@@ -1503,22 +1217,15 @@ app.post("/:id/ack", async (c) => {
   )
     .bind(id, user.id, new Date().toISOString(), ...(stampCo ? [annCompanyId] : []))
     .run();
-  // Only THIS user's ackedIds changed — bust their snapshot alone, so the
-  // popup gate sees the ack on the very next banner poll.
   await bustBannerForUser(c.env, user.id);
   return c.json({ success: true, acked: true });
 });
 
-// ============================================================
-// PUT /:id/attachments/upload?ext=... — two-step upload mirroring the projects
-// finance / phase-photos pattern. Returns { r2Key, mime }. The FE then merges
-// the manifest entry into the create/patch body.
-// ============================================================
 app.put(
   "/:id/attachments/upload",
   requirePermissionOrSalesDirector("announcements.write"),
   async (c) => {
-    const id = c.req.param("id"); // 'compose' before save; real id on edit
+    const id = c.req.param("id");
     const ext = (c.req.query("ext") || "jpg").toLowerCase();
     const MIME_BY_EXT: Record<string, string> = {
       jpg: "image/jpeg",
@@ -1550,13 +1257,6 @@ app.put(
   },
 );
 
-// ============================================================
-// PUT /:id/attachments/upload-thumb?key=... — WO-7 optional client-generated
-// thumbnail for an image attachment uploaded via the route above, stored at
-// `<r2Key>.thumb`. Same permission gate as the main upload; the prefix guard
-// mirrors the download route's. Old clients never call this. Best-effort by
-// contract — a failed/skipped thumb must not fail the attachment itself.
-// ============================================================
 app.put(
   "/:id/attachments/upload-thumb",
   requirePermissionOrSalesDirector("announcements.write"),
@@ -1566,8 +1266,6 @@ app.put(
       return c.json({ error: "forbidden key" }, 403);
     }
     const contentType = (c.req.header("Content-Type") || "").split(";")[0].trim().toLowerCase();
-    // Raster allow-list, not startsWith("image/") — the latter admits
-    // image/svg+xml, which is a stored-XSS vector when served back (audit M6).
     const THUMB_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
     if (!THUMB_TYPES.has(contentType)) {
       return c.json({ error: "Thumbnails must be JPEG, PNG, WebP, or GIF" }, 400);
@@ -1583,17 +1281,6 @@ app.put(
   },
 );
 
-// ============================================================
-// GET /:id/attachments/:key{.+} — stream the attachment. Gated by the SAME
-// audience-targeting check as the list/banner (userCanSee), NOT by the
-// announcements.read matrix permission: a broadcast to ALL_USERS (or to this
-// user's dept/position/id) must render its image/PDF even for a member who
-// lacks announcements.read (e.g. Sales) — otherwise they get a grey
-// placeholder. Managers (`*` / announcements.write) stay unaffected. The key
-// must belong to THIS announcement's attachment set, so a targeted user can't
-// pull an attachment of an announcement they aren't targeted by. The key
-// includes slashes, hence the {.+} matcher.
-// ============================================================
 app.get("/:id/attachments/:key{.+}", async (c) => {
   const user = c.get("user");
   if (!user || !user.id) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
@@ -1604,13 +1291,9 @@ app.get("/:id/attachments/:key{.+}", async (c) => {
     return c.json({ error: "forbidden key" }, 403);
   }
 
-  // The announcement must exist within the caller's active company. Unknown /
-  // cross-company id → 404 (indistinguishable from a nonexistent id).
   const ann = await getScopedAnnouncement(c, id);
   if (!ann) return c.json({ error: "Not found" }, 404);
 
-  // Audience gate — managers see everything; everyone else only announcements
-  // whose targeting includes them (same userCanSee used by list/banner).
   const granted = user.permissions_set ?? user.permissions ?? [];
   const isManager =
     hasPermission(granted, "*") || hasPermission(granted, "announcements.write");
@@ -1627,11 +1310,6 @@ app.get("/:id/attachments/:key{.+}", async (c) => {
     return c.json({ error: "Not found" }, 404);
   }
 
-  // The key must be one of THIS announcement's attachments — prevents using a
-  // visible announcement's id to stream an unrelated object. WO-7: a `.thumb`
-  // sibling is authorised against its BASE key (thumbs never appear in the
-  // manifest); a missing thumb object 404s below and the frontend falls back
-  // to the original attachment.
   const requestedBase = isThumbKey(key) ? baseKeyOf(key) : key;
   const belongs = normalizeAttachments(ann.attachments ?? null).some(
     (a) => a.r2Key === requestedBase,
@@ -1642,10 +1320,6 @@ app.get("/:id/attachments/:key{.+}", async (c) => {
   if (!obj) return c.json({ error: "Not found" }, 404);
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
-  // Never serve a stored blob inline with an executable content-type. Keep the
-  // known-safe raster/PDF types inline; force everything else (e.g. a legacy SVG
-  // thumbnail from before the upload allow-list) to download inertly. nosniff
-  // blocks MIME-sniffing back into html/svg either way (audit M6).
   const INLINE_SAFE = new Set([
     "image/jpeg",
     "image/png",

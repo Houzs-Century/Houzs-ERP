@@ -1,6 +1,3 @@
-// pdf-item-photos — the pure grouping / packing / page-fit logic behind the
-// SO + PO "ITEM PHOTOS" block, plus the fetch-collect and draw
-// plumbing driven through stubs (no jsPDF, no canvas, no network needed).
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -44,7 +41,6 @@ describe('appendPhotoMarker', () => {
   it('marks the first line only and copies the rest', () => {
     const input = ['SOFA XAMMAR L(LHF)', 'CG-001 Pearl'];
     expect(appendPhotoMarker(input)).toEqual([`SOFA XAMMAR L(LHF)${PHOTO_MARKER}`, 'CG-001 Pearl']);
-    // The input array is not mutated.
     expect(input[0]).toBe('SOFA XAMMAR L(LHF)');
   });
 
@@ -78,7 +74,6 @@ describe('buildPhotoGroups (row chips + the consecutive-identical range rule)', 
       row('SVC-DELIVERY', []),
     ]);
     expect(groups.map((g) => g.chip)).toEqual(['Item 1', 'Item 2-4']);
-    // The sofa-set shared photo prints ONCE per set.
     expect(groups[1]!.photoKeys).toEqual(shared);
     expect(groups[1]!.code).toBe('XAMMAR');
   });
@@ -148,7 +143,6 @@ describe('layoutPhotoGroups', () => {
     expect(pagesAdded).toBe(0);
     expect(placements[0]).toEqual({ x: 14, y: 100, page: 0 });
     expect(placements[1]).toEqual({ x: 14 + 80 + GROUP_GAP_X_MM, y: 100, page: 0 });
-    // Third does not fit beside the second — wraps below the tallest row.
     expect(placements[2]!.x).toBe(14);
     expect(placements[2]!.y).toBeGreaterThan(100);
     expect(placements[2]!.page).toBe(0);
@@ -161,7 +155,6 @@ describe('layoutPhotoGroups', () => {
       pageRegion,
     );
     expect(placements[0]).toEqual({ x: 14, y: 240, page: 0 });
-    // 240 + 59 > 272 — the whole group moves; nothing splits.
     expect(placements[1]).toEqual({ x: pageRegion.x, y: pageRegion.y, page: 1 });
     expect(pagesAdded).toBe(1);
     expect(endY).toBe(pageRegion.y + 59);
@@ -179,7 +172,6 @@ describe('layoutPhotoGroups', () => {
     expect(pagesAdded).toBe(0);
     expect(placements[0]).toEqual({ x: 120, y: 200, page: 0 });
     expect(placements[1]).toEqual({ x: 120 + 26 + GROUP_GAP_X_MM, y: 200, page: 0 });
-    // Width exhausted in the side zone — the third lands in the below zone.
     expect(placements[2]).toEqual({ x: 14, y: 240, page: 0 });
   });
 
@@ -212,8 +204,6 @@ describe('sniffImageMime', () => {
 
 describe('blobToSquarePdfImage', () => {
   it('returns null instead of throwing when decoding is impossible here', async () => {
-    // jsdom has no real 2d canvas / createImageBitmap pipeline — the
-    // per-photo best-effort contract is "skip, never fail".
     const out = await blobToSquarePdfImage(new Blob([new Uint8Array([1, 2, 3])]));
     expect(out).toBeNull();
   });
@@ -288,8 +278,6 @@ describe('collectPhotoImages', () => {
   });
 });
 
-/* A recording stub for the drawing surface — asserts real behaviour (headings,
-   page breaks, tile geometry) without booting jsPDF. */
 type Op =
   | { op: 'text'; text: string; x: number; y: number }
   | { op: 'rect'; x: number; y: number; w: number; h: number }
@@ -350,8 +338,6 @@ describe('drawItemPhotosBlock', () => {
     expect(res.pagesAdded).toBe(0);
     const texts = ops.filter((o): o is Extract<Op, { op: 'text' }> => o.op === 'text');
     expect(texts.map((t) => t.text)).toEqual([ITEM_PHOTOS_HEADING, '#2', 'AKEMI-K']);
-    // gone.jpg never fetched — the group renders its two live photos side by
-    // side with a thin border each, below the header line.
     const tiles = ops.filter((o) => o.op === 'image');
     const borders = ops.filter((o) => o.op === 'rect');
     expect(tiles).toHaveLength(2);
@@ -375,9 +361,6 @@ describe('drawItemPhotosBlock', () => {
       images,
       { ...baseOpts, startY: 230, onNewPage: () => { headerRepaints += 1; } },
     );
-    // Group 1 fits at 230 + heading; group 2 (a full six-wide row) cannot fit
-    // beside it, and the wrapped row would start below pageBottom — so the
-    // WHOLE group moves to an added page.
     expect(res.pagesAdded).toBe(1);
     expect(headerRepaints).toBe(1);
     expect(ops.filter((o) => o.op === 'addPage')).toHaveLength(1);
@@ -388,9 +371,6 @@ describe('drawItemPhotosBlock', () => {
   it('lays the first groups beside the sofa zone and the overflow below it', () => {
     const { doc, ops } = stubDoc();
     const images = new Map([['a.jpg', img], ['b.jpg', img], ['c.jpg', img], ['d.jpg', img]]);
-    /* Wide + tall enough for TWO 52mm one-thumb groups side by side
-       (52 + 6 gap + 52 = 110 <= 116); the 106mm two-thumb group wraps to
-       the full-width zone below. */
     const side = { x: 120, y: 150, w: 116, bottom: 240 };
     const res = drawItemPhotosBlock(
       doc,
@@ -404,10 +384,8 @@ describe('drawItemPhotosBlock', () => {
     );
     expect(res.drew).toBe(true);
     const texts = ops.filter((o): o is Extract<Op, { op: 'text' }> => o.op === 'text');
-    // Heading sits in the beside-zone, not at the left margin.
     expect(texts[0]).toMatchObject({ text: ITEM_PHOTOS_HEADING, x: 120 });
     const tiles = ops.filter((o): o is Extract<Op, { op: 'image' }> => o.op === 'image');
-    // Items 1+2 (one 52mm tile each) fit beside; item 3 (106mm) wraps below.
     expect(tiles[0]!.x).toBe(120);
     expect(tiles[1]!.x).toBe(120 + THUMB_MM + GROUP_GAP_X_MM);
     expect(tiles[2]!.x).toBe(14);

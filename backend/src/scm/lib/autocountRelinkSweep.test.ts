@@ -1,16 +1,8 @@
-// The hands-free sweep that clears the keyless CONVERSION backlog. These tests
-// pin the two things a live account book cannot take back:
-//   • it writes NOTHING in 'plan' — no key stamped, no edit queued;
-//   • in 'apply' it queues a keyed edit ONLY when the run finished the keying,
-//     and NEVER for a document a line of which it could not match.
-// The book read and enqueueEdit are mocked at the module boundary: the point
-// here is the WIRING and the guards, not the host transport or the composer.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 let bookLines: Array<{ DtlKey: number; ItemCode: string; Desc2?: string | null }> = [];
 let currentSb: unknown;
 const enqueueEditMock = vi.fn(async (_sb: unknown, _opts: Record<string, unknown>) => true);
-/* The cutover map, per test. Keyed by UPPERCASED ERP code, as bindingsFor is. */
 let bindingsMock = new Map<string, string>();
 
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => currentSb }));
@@ -40,7 +32,6 @@ function setup(flag: string, tables: Record<string, Row[]>) {
   return currentSb as ReturnType<typeof fakeSb>;
 }
 
-/* A keyless delivery order the book holds under HC-DO-2609-020, three lines. */
 function keylessDo(overrides: { erpLines?: Row[] } = {}) {
   return {
     autocount_outbox: [{
@@ -95,7 +86,6 @@ describe('relink sweep — plan mode writes nothing', () => {
     expect(r.docs[0].wouldEnqueue).toBe(true);
     expect(r.linesStamped).toBe(0);
     expect(enqueueEditMock).not.toHaveBeenCalled();
-    // the rows are untouched
     const after = await app.from('delivery_order_items').select('linked_ac_dtlkey').eq('id', 'l1').maybeSingle();
     expect(after.data.linked_ac_dtlkey).toBeNull();
   });
@@ -120,9 +110,6 @@ describe('relink sweep — apply mode', () => {
   });
 
   it('does NOT queue an edit when a line cannot be matched — refuses, leaves it keyless', async () => {
-    /* Two book lines share a code with no Desc2 to separate them, and two ERP
-       lines share it too: planLineRelink refuses both, so a key is left blank
-       and the document is never handed to enqueueEdit. */
     bookLines = [
       { DtlKey: 6001, ItemCode: 'HOK-2008(A) (K)', Desc2: null },
       { DtlKey: 6002, ItemCode: 'HOK-2008(A) (K)', Desc2: null },
@@ -163,8 +150,6 @@ describe('relink sweep — apply mode', () => {
  */
 describe('the sweep writes its run down', () => {
   it('records counts AND the per-document refusals', async () => {
-    /* The book has none of this document's item codes, so every line refuses —
-       exactly the shape that produced an unexplained "stamped 0". */
     bookLines = [{ DtlKey: 9001, ItemCode: 'SOMETHING-ELSE', Desc2: null }];
     const sb = setup('plan', keylessDo());
 
@@ -178,18 +163,12 @@ describe('the sweep writes its run down', () => {
     expect(run.mode).toBe('plan');
     expect(run.scanned).toBe(1);
     expect(run.linesStamped).toBe(0);
-    /* The part nobody could see: WHY it was zero. */
     expect(run.docs).toHaveLength(1);
     expect(run.docs[0].keylessBefore).toBeGreaterThan(0);
     expect(run.docs[0].refused.join(' ')).toContain('no unclaimed line with that item code');
   });
 
-  /* A candidate read that fails used to look exactly like a quiet day: both
-     returned scanned 0 and said nothing at all. */
   it('a failed candidate read is recorded, not silent', async () => {
-    /* `missing` is fakeSb's second argument: asking for a column the table does
-       not have fails the WHOLE query with 42703, which is the real edge this
-       fake exists to reproduce. The sweep selects last_error. */
     currentSb = fakeSb(
       { app_config: [{ key: 'scm.autocount_relink_sweep', value: 'plan' }], autocount_outbox: [] },
       { autocount_outbox: ['last_error'] },
@@ -233,11 +212,6 @@ describe('a code the book spells differently', () => {
     expect(run.docs[0].wouldStamp).toBe(1);
   });
 
-  /* FAIL-CLOSED IS KEPT. The resolver has two sources — the live bindings and
-     the cutover CSV index — so a missing binding is not the same as an
-     unresolvable code (the first draft of this test assumed it was, and the
-     code was right). A code NEITHER source knows falls back to the raw one and
-     refuses, exactly as before. */
   it('a code neither source knows still refuses rather than guessing', async () => {
     bindingsMock = new Map();
     bookLines = [{ DtlKey: 4101, ItemCode: 'AK-ARMOUR MATT (SK)', Desc2: null }];
@@ -286,8 +260,6 @@ describe('declaring the line the book never had', () => {
     expect(enqueueEditMock.mock.calls[0][1]).toMatchObject({ newLineIds: ['pillow'] });
   });
 
-  /* THE TRAP. The book HAS a pillow line; the mattress row is what is missing,
-     so "everything else keyed" does not hold and nothing may be declared. */
   it('declares nothing while another line is still unmatched for a different reason', async () => {
     bookLines = [
       { DtlKey: 6001, ItemCode: 'AK-SLEEP ESSENTIAL 7 HOLES', Desc2: null },
@@ -305,8 +277,6 @@ describe('declaring the line the book never had', () => {
     expect(enqueueEditMock).not.toHaveBeenCalled();
   });
 
-  /* A document where NOTHING matched has proved nothing about itself, so its
-     unmatched lines are not evidence that the book lacks them. */
   it('declares nothing when this run stamped no key at all', async () => {
     bookLines = [];
     setup('apply', twoLines('AK-SLEEP ESSENTIAL 7 HOLES'));

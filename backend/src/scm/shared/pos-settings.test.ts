@@ -1,5 +1,3 @@
-// The POS settings document: defaults a device can rely on, a stored value
-// that only overrides keys of the same type, and the receipt header lines.
 import { describe, expect, test } from "vitest";
 import { normalizePosSettings, normalizePosSettingsGroup, posSettingsDefaults, receiptHeaderLines } from "./pos-settings";
 

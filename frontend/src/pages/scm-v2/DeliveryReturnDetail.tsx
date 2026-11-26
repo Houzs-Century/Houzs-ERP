@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// DeliveryReturnDetail — the Delivery Return EDITOR.
-//
-// No route of its own: DeliveryReturnDetailV2 (read-only) lazy-loads this page
-// when ?edit=1 lands on /scm/delivery-returns/:id. Save or Cancel returns to
-// the read-only page, so this file is edit-only (the read view, totals, print
-// and status actions all live on V2).
-//
-// Editable: Customer / Return Info / Emergency Contact / Delivery Address and
-// each line's product, qty, price, discount and remark. A line can be removed.
-// Lines cannot be ADDED here: every return line must name a delivered DO line
-// (409 do_link_required), so new goods come in through "From Delivery Order".
-// Stock is re-synced server-side on every line write.
-// ----------------------------------------------------------------------------
 
 import {
   forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
@@ -47,8 +33,6 @@ import { DetailLoadFailure } from './DetailLoadFailure';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* Closed returns. The V2 page hides Edit for these; a typed ?edit=1 URL gets a
-   notice instead of an editor. CANCELLED is final server-side. */
 const LOCKED_STATUSES = ['REFUNDED', 'CREDIT_NOTED', 'CANCELLED', 'REJECTED'];
 
 type DrHeader = {
@@ -90,8 +74,6 @@ type DrItem = {
   qty_returned: number;
   unit_price_sen: number;
   discount_sen: number;
-  /* Stripped from the payload for a non-finance caller; the server keeps the
-     stored cost when such a caller posts it back, so 0 here is harmless. */
   unit_cost_sen?: number | null;
   variants: Record<string, unknown> | null;
   notes: string | null;
@@ -127,8 +109,6 @@ export const DeliveryReturnDetail = () => {
   const [saving, setSaving] = useState(false);
   const customerCardRef = useRef<CustomerCardHandle | null>(null);
 
-  /* Seed a draft for any line that has none yet and drop drafts for lines that
-     are gone (a removed line). Existing drafts keep the operator's typing. */
   useEffect(() => {
     setDrafts((prev) => {
       const next: Record<string, SoLineDraft | undefined> = {};
@@ -296,8 +276,6 @@ export const DeliveryReturnDetail = () => {
                 onChange={cb.onChange}
                 onRemove={cb.onRemove}
                 canRemove={true}
-                /* Downstream document: the variants rode in from the DO line;
-                   they are not re-required or re-seeded here. */
                 variantsRequired={false}
                 specLockedReason={null}
                 lineDateLocked={false}
@@ -313,10 +291,6 @@ export const DeliveryReturnDetail = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Customer / Return Info / Emergency / Delivery Address — editable cards.
-   Mirrors DeliveryOrderDetail's CustomerCard (adapted to DR fields).
-   ════════════════════════════════════════════════════════════════════════ */
 
 type CustomerCardHandle = {
   save: (cb: { onSuccess: () => void; onError: (msg: string) => void }) => void;
@@ -419,7 +393,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
 
   return (
     <>
-      {/* ── CUSTOMER ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Customer</h2></header>
         <div className={styles.cardBody}>
@@ -476,7 +449,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── RETURN INFO (date / reason / note) ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Return Info</h2></header>
         <div className={styles.cardBody}>
@@ -520,7 +492,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── EMERGENCY CONTACT ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Emergency Contact</h2>
@@ -559,7 +530,6 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
         </div>
       </section>
 
-      {/* ── DELIVERY ADDRESS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Delivery Address</h2></header>
         <div className={styles.cardBody}>

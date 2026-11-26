@@ -21,22 +21,15 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 
 export type PdfAttachment = { fileName: string; mime: string; bytes: ArrayBuffer };
 
-/* A4 in PDF points — pdf-lib speaks pt, the jsPDF page above speaks mm. */
 const A4_W = 595.28;
 const A4_H = 841.89;
 const MARGIN = 28;
 
 const ascii = (s: string): string => s.replace(/[^\x20-\x7e]/g, '?');
 
-/* Append ONE attachment to `out` — the shared arm of the single-voucher merge
-   and the batch assembly, so a bill embeds (or fails onto its notice page)
-   identically in both. */
 async function appendAttachment(out: PDFDocument, f: PdfAttachment): Promise<void> {
   try {
     if (f.mime === 'application/pdf') {
-      /* ignoreEncryption: a bank's protected statement still OPENS for
-         copying more often than not; one that truly cannot be read throws
-         into the notice path below. */
       const src = await PDFDocument.load(f.bytes, { ignoreEncryption: true });
       const pages = await out.copyPages(src, src.getPageIndices());
       for (const p of pages) out.addPage(p);
@@ -48,7 +41,6 @@ async function appendAttachment(out: PDFDocument, f: PdfAttachment): Promise<voi
       const h = img.height * scale;
       page.drawImage(img, { x: (A4_W - w) / 2, y: (A4_H - h) / 2, width: w, height: h });
     } else {
-      /* webp and anything else pdf-lib cannot decode here. */
       throw new Error(`${f.mime} cannot be embedded on the Worker`);
     }
   } catch (e) {

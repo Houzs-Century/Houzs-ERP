@@ -64,7 +64,6 @@ const RUN_COLUMNS: Column<OwnFleetRun>[] = [
   },
 ];
 
-/* Nothing prices the trips yet: say why, and how to fix it. */
 const NoOwnCard = ({ data, onCreate }: { data: OwnFleetCosts; onCreate: () => void }) => (
   <section aria-label="No own fleet card" className={cn(CARD, 'flex flex-wrap items-center justify-between gap-3 px-5 py-4')}>
     {data.severalCards.length > 1 ? (
@@ -82,7 +81,6 @@ const NoOwnCard = ({ data, onCreate }: { data: OwnFleetCosts; onCreate: () => vo
   </section>
 );
 
-/* How one trip was priced: its orders and the card's lines. */
 const RunDrawer = ({ run, onClose }: { run: OwnFleetRun; onClose: () => void }) => (
   <ResizableDrawer onClose={onClose} storageKey="carriers-own-fleet-trip" defaultWidth={480} ariaLabel="Own fleet trip"
     title={`${run.plate || 'Lorry'} · ${fmtDate(run.runDate)}`}

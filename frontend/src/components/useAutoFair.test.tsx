@@ -53,7 +53,6 @@ describe("useAutoFair — the keyer's fair on a new order", () => {
     const spy = vi.fn();
     render(<Harness enabled initial={BLANK} spy={spy} />);
     expect(spy).toHaveBeenCalledTimes(1);
-    /* Three days have passed at a 4-day fair, so the day is the operator's to pick. */
     expect(valueNow()).toEqual({ venue: 'IOIGECC', organizer: 'MLE', startDate: '2026-10-17', endDate: '2026-10-20', day: null });
     expect(screen.getByText(/Filled in: your fair today\./)).toBeTruthy();
   });
@@ -82,7 +81,7 @@ describe("useAutoFair — the keyer's fair on a new order", () => {
     render(<Harness enabled initial={BLANK} spy={spy} />);
     act(() => { fireEvent.click(screen.getByText('clear')); });
     expect(valueNow()).toEqual(BLANK);
-    expect(spy).toHaveBeenCalledTimes(2); // the fill, then the clear — no second fill
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 
   it('no fair found: fills nothing, says why, and hands the reason to /validate', () => {

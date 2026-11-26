@@ -41,26 +41,7 @@ export function PageGuard({
 }: {
   page: string;
   minLevel?: AccessLevel;
-  /** When true, a Sales-department user is allowed in even if their page-access
-   *  for `page` is 'none'. Used for the Service-Cases routes (/assr, /assr/:id,
-   *  /my-cases, /my-cases/:id): #399 exposed the "My Cases" nav leaf to Sales
-   *  and #400 granted the backend read (scoped to their OWN cases), but a Sales
-   *  rep without the service_cases matrix page would still hit <Forbidden> here.
-   *  The backend stays the real authority.
-   *
-   *  ANSWERED BY THE SERVER (`org.sales.staff` = pmsAccess.isSalesUser, the same
-   *  classifier requireServiceCaseAccess admits on) rather than by the local
-   *  salesAccess.isSalesStaff mirror, which stated the dept/position terms in the
-   *  opposite order and carried its own regex copy. */
   allowSales?: boolean;
-  /** When true, a Sales Director is allowed in even without page-access for
-   *  `page`. Used for /team: a Sales Director gets a DEPARTMENT-SCOPED Team view
-   *  (own-dept Members / Org Chart / Departments + Invite; NO Positions). The
-   *  backend scopes every Team endpoint to his department and 403s the positions
-   *  endpoints.
-   *
-   *  ANSWERED BY THE SERVER (`org.salesDirector` = pmsAccess.isSalesDirectorUser,
-   *  exact normalised name on both sides). */
   allowSalesDirector?: boolean;
   children: ReactNode;
 }) {

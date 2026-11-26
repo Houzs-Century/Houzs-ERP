@@ -1,6 +1,3 @@
-// The quick-look drawer for a Compliance Blocked lorry names the document that
-// grounds it. GET /vehicles/:id keeps each type's renewals BESIDE the lorry, not
-// on it as the board row does, and reading vehicle.compliance crashed the page.
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -16,7 +13,6 @@ const doc = (over: Record<string, unknown>) => ({
   result: null, reinspectionDeadline: null, notes: null, daysRemaining: 360, reminderLevel: "OK", tone: "ok", files: [], ...over,
 });
 const empty = { currentId: null, flatExpiry: null, history: [] };
-// The vehicle object exactly as the endpoint sends it: no `compliance` key.
 const vehicle = {
   id: "l-1", plate: "VKL 3321", region: "WH-KL", driverName: null, vehicleType: "LORRY_17FT", model: "Isuzu", mileageKm: 84250, mileageDate: "2026-11-26",
   mileageSource: "reading", mileageFlagged: false, nextServiceKm: null, nextServiceDate: null, lastServiceWorkshop: null, outOfService: false,

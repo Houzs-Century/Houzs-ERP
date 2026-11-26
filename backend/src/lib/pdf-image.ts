@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// pdf-image — image bytes → something jsPDF can embed, on the Worker.
-//
-// The browser re-encodes every photo / logo through a canvas (any format in,
-// a right-sized JPEG out). The Worker has no canvas, so it embeds what jsPDF
-// already understands — JPEG and PNG — as they are, sized from their own
-// headers, and returns null for anything else (WebP, GIF, HEIC). The caller
-// treats null exactly as the browser treats a failed decode: the photo is left
-// out and the document still prints.
-// ----------------------------------------------------------------------------
 
 import { sniffImageMime, type PdfPhotoImage } from "./shared-pdf";
 
@@ -27,7 +17,6 @@ export function imageSize(bytes: Uint8Array, mime: "image/jpeg" | "image/png"): 
       continue;
     }
     const marker = bytes[i + 1];
-    // SOF0..SOF15 carry the frame size; C4 (DHT), C8 (JPG) and CC (DAC) are not frames.
     if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
       const h = (bytes[i + 5] << 8) | bytes[i + 6];
       const w = (bytes[i + 7] << 8) | bytes[i + 8];

@@ -53,8 +53,6 @@ async function readBody(c: Ctx): Promise<Record<string, unknown>> {
   }
 }
 
-// Local 09:00-17:30 (delivery 08:30-17:00), Foreign worker 09:00-19:00 (delivery
-// 08:30-18:30), Driver 08:30-17:00 (no delivery variation).
 const DEFAULT_GROUPS = [
   { name: "Local staff", start: 9 * 60, end: 17 * 60 + 30, dStart: 8 * 60 + 30, dEnd: 17 * 60 },
   { name: "Foreign worker", start: 9 * 60, end: 19 * 60, dStart: 8 * 60 + 30, dEnd: 18 * 60 + 30 },
@@ -77,7 +75,6 @@ hrShifts.get("/shift-groups", async (c) => {
   return c.json({ groups, employees, canManage: canManage(c) });
 });
 
-/** Assign (or clear, with null) an employee's shift group. */
 hrShifts.put("/employees/:id/shift-group", async (c) => {
   if (!canManage(c)) return c.json(FORBIDDEN, 403);
   const co = requireActiveCompanyId(c);

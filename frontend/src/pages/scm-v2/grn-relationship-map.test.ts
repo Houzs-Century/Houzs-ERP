@@ -1,10 +1,3 @@
-// Unit tests for the pure ChainNode builder behind the Goods Received (GRN)
-// Relationship Map. They assert the map's load-bearing behaviour: the chain is
-// ANCHORED to this GRN (the hook feeds edge-walked parent-PO / PI / PR nodes, so
-// a sibling GRN's invoice never paints this GRN's PI node done — the builder
-// renders exactly what it is given), reading SO -> PO -> GRN (current) -> PI/PR
-// with honest done / pending states, and a stock-buy GRN with no source SO says
-// so rather than lying that its PO is "Not created".
 
 import { describe, expect, it } from 'vitest';
 import type { FlowNode } from '../../vendor/scm/lib/flow-queries';

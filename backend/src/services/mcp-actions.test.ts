@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { actionOutcome, exportAlive, flowAnchorFromId, flowAnchorFromSearch, myRange, parseWhen, pdfDisposition, pdfKind, pickDateAmount, proposeEmail, proposeMeeting, shapeFlow, type MeetingBootstrap } from "./mcp-actions";
 import { admitMcpWrite, armAction, ARMED_TTL_MS } from "./mcp-inner";
 
-const NOW = Date.parse("2026-11-26T02:00:00Z"); // 10:00 Malaysia time
+const NOW = Date.parse("2026-11-26T02:00:00Z");
 const boot: MeetingBootstrap = {
   me: "u1",
   people: [

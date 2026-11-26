@@ -1,19 +1,7 @@
-// ----------------------------------------------------------------------------
-// print-bundle — what a Sales Order / Purchase Order printout is made of: which
-// detail endpoint, which response keys, which extra reads. ONE copy for the
-// browser's print chain (lib/printDocumentPdf.ts, with authedFetch) and the
-// Worker's AI Connector get_pdf (backend/src/services/mcp-pdf.ts, reading as the
-// connector's user), so the two printouts are made from the same data.
-// Pure: the reader is injected.
-// ----------------------------------------------------------------------------
 
 import type { ScmJsonGetter } from './supplier-doc-data-core';
 
 type Json = Record<string, unknown>;
-/* `payments` / `pwpCodes` ride BESIDE the header rather than inside it: the
-   Sales Order generator takes them as its own positional arguments, and folding
-   them into the header would put two keys on the object every other generator
-   spreads. */
 export type PrintBundle = { header: Json; items: unknown[]; payments?: unknown[]; pwpCodes?: unknown[] };
 
 /** The Purchase Order print needs its ship-to warehouse resolved: the PO header
@@ -27,12 +15,6 @@ export async function purchaseOrderHeaderForPdf(getJson: ScmJsonGetter, po: Json
   let location: string | null = null;
   const wid = po.purchase_location_id as string | null;
   if (wid) {
-    /* A FAILED READ MUST NOT BECOME "no warehouse". This used to end in
-       `.catch(() => undefined)`, which prints the supplier's copy of the PO with
-       an EMPTY Deliver-to — telling the supplier to ship nowhere in particular
-       because a lookup blipped. It is the same shape as the Sales Order payments
-       read below, and `check-swallowed-reads.mjs` caught it. The error
-       propagates; the caller shows a sentence and NO document. */
     const res = await getJson<{ warehouses?: Array<Json> }>("/inventory/warehouses?includeInactive=true");
     const wh = (res.warehouses ?? []).find((w) => w.id === wid);
     code = (wh?.code as string | null) ?? null;

@@ -1,6 +1,3 @@
-// The operator + value editor for ONE SO list filter row, shared by the phone
-// sheet and the desktop panel. It edits a draft row through `onChange`; whether
-// the row is complete, and what it means, is the shared model's business.
 import { useMemo, useState } from "react";
 import {
   SO_DATE_PRESETS,

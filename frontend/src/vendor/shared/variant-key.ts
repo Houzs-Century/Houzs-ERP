@@ -39,42 +39,19 @@ export type InventoryItemGroup =
 /** Loose attribute bag — callers map a SO/PO/GRN line onto this shape. */
 export type VariantAttrs = {
   fabricCode?: string | null;
-  /** Many SO/POS lines store the fabric pick as `colorCode` / `colourCode`
-   *  (Commander's variant editor) rather than `fabricCode`. These are aliases
-   *  for the SAME physical attribute — the fabric — so the key treats a missing
-   *  fabricCode as the colorCode/colourCode. Without this, two bedframes that
-   *  differ ONLY by colour collapsed into one bucket (the colour never entered
-   *  the key). Fixes the long-standing fabric/colour key mismatch. */
   colorCode?: string | null;
   colourCode?: string | null;
-  /** The GRN / Purchase-Invoice / Purchase-Return / Stock-Adjustment variant
-   *  editors store the fabric pick under `fabricColor` (schema's variants jsonb
-   *  key). Same physical attribute as fabricCode/colorCode — aliased here so a
-   *  sofa/bedframe RECEIVED with a fabric isn't keyed/summarised without it
-   *  (which left bedframe inbound stock un-matchable to its SO line). */
   fabricColor?: string | null;
-  seatHeight?: string | null; // sofa
-  /** POS configurator stores the sofa seat-size pick as `depth`
-   *  (so-variant-rule declares `depth` ≡ `seatHeight` — same physical axis).
-   *  Aliased here exactly like fabricColor so a POS-created sofa keys into the
-   *  SAME stock bucket as a Backend-keyed identical sofa. NOTE: rows written
-   *  before this fix may sit under legacy keys (POS sofas keyed without
-   *  seat/leg) — historical keys are NOT migrated. */
-  depth?: string | null; // sofa (POS vocabulary for seatHeight)
-  gap?: string | null; // bedframe
-  divanHeight?: string | null; // bedframe
-  legHeight?: string | null; // sofa + bedframe
-  /** POS leg picker stores the sofa leg pick as `sofaLegHeight`
-   *  (so-variant-rule: `sofaLegHeight` ≡ `legHeight`). Same aliasing as depth. */
-  sofaLegHeight?: string | null; // sofa (POS vocabulary for legHeight)
-  totalHeight?: string | null; // bedframe (derived from divan+leg+gap)
-  /** Special-order config — labels/specs that change the physical item.
-   *  Accepts strings or {code|label} objects; order-independent. */
+  seatHeight?: string | null;
+  depth?: string | null;
+  gap?: string | null;
+  divanHeight?: string | null;
+  legHeight?: string | null;
+  sofaLegHeight?: string | null;
+  totalHeight?: string | null;
   specials?: Array<string | { code?: string | null; label?: string | null }> | null;
 };
 
-/** Which physical attributes count toward identity, per category, in a fixed
- *  order so the key is deterministic. Specials are appended for every group. */
 const ATTRS_BY_GROUP: Record<string, Array<keyof VariantAttrs>> = {
   sofa: ['fabricCode', 'seatHeight', 'legHeight'],
   bedframe: ['fabricCode', 'gap', 'divanHeight', 'legHeight', 'totalHeight'],
@@ -96,7 +73,6 @@ const ATTRS_BY_GROUP: Record<string, Array<keyof VariantAttrs>> = {
 const norm = (v: unknown): string =>
   v == null ? '' : normaliseTypographicQuotes(String(v).trim().toLowerCase());
 
-/** Specials → a normalized, order-independent, comma-joined string. */
 const normSpecials = (specials: VariantAttrs['specials']): string => {
   if (!Array.isArray(specials) || specials.length === 0) return '';
   return specials
@@ -124,15 +100,6 @@ export function computeVariantKey(
   const parts: string[] = [];
 
   for (const k of ATTRS_BY_GROUP[group] ?? []) {
-    // Fabric is stored under any of fabricCode / colorCode / colourCode /
-    // fabricColor (the GRN-family editors use fabricColor) — treat them as one
-    // attribute so colour participates in the bucket identity regardless of which
-    // form wrote the line. Seat / leg get the same treatment for the POS sofa
-    // vocabulary (so-variant-rule axes): seatHeight ← depth, legHeight ←
-    // sofaLegHeight — otherwise a POS sofa and an identical Backend sofa land
-    // in different stock buckets (audit 2026-06-11 I3). Canonical key wins
-    // when both are present. Historical rows are NOT migrated — pre-fix stock
-    // may sit under legacy keys (POS sofas keyed without seat/leg).
     const raw = k === 'fabricCode'
       ? (a.fabricCode ?? a.colorCode ?? a.colourCode ?? a.fabricColor)
       : k === 'seatHeight'
@@ -176,7 +143,6 @@ const SLUG_ORDER = ['fabriccode', 'seatheight', 'gap', 'divanheight', 'legheight
 
 const PLACEHOLDERS = new Set(['', 'default', 'none', 'na', 'n/a', 'nil', 'null', 'undefined']);
 
-/** Identity value form: lowercased, quote-folded, inch words and marks, spaces and hyphens removed. */
 const identityValue = (v: unknown): string =>
   norm(v)
     .replace(/(\d)\s*(?:inches|inch|in)\b\.?/g, '$1')
@@ -243,7 +209,6 @@ export function pickStockBucketKey(
   return same[0] ? (same[0].variantKey ?? '') : w;
 }
 
-/** Human-readable labels for the canonical key's attribute slugs. */
 const VARIANT_LABELS: Record<string, string> = {
   fabriccode: 'Fabric',
   seatheight: 'Seat',
@@ -288,12 +253,8 @@ export function formatVariantKey(
       if (eq < 0) return part;
       const slug = part.slice(0, eq);
       const value = part.slice(eq + 1);
-      // Fabric code is bare (no "Fabric" prefix — matches buildVariantSummary);
-      // everything else upper-cases the slug label to read like the SO summary.
       if (slug === 'fabriccode') {
         const code = value.toUpperCase();
-        // Distinct-only, same guard as buildVariantSummary — a supplier code
-        // equal to the internal code adds no parens.
         return sup && sup.toUpperCase() !== code ? `${code} (${sup})` : code;
       }
       const label = (VARIANT_LABELS[slug] ?? slug).toUpperCase();

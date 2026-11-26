@@ -8,7 +8,6 @@ describe('orderComparator', () => {
     expect(by(['c', 'a', 'b'], ['a', 'b', 'c'])).toEqual(['c', 'a', 'b']);
   });
   it('keeps unlisted keys after the listed ones, in their input order', () => {
-    // b,d unlisted → after a,c (a before c per the order), keeping b before d.
     expect(by(['a', 'c'], ['b', 'a', 'd', 'c'])).toEqual(['a', 'c', 'b', 'd']);
   });
   it('an empty order leaves everything in its natural order', () => {
@@ -19,7 +18,6 @@ describe('orderComparator', () => {
 describe('mergeShownOrder', () => {
   const live = (...k: string[]) => new Set(k);
   it('a drag in a filtered view keeps the hidden rows in their places (HC-0224)', () => {
-    // x is hidden by a funnel; the shown rows a,b,c are re-ordered c,a,b.
     expect(mergeShownOrder(['a', 'x', 'b'], ['c', 'a', 'b'], live('a', 'b', 'c', 'x'))).toEqual(['c', 'x', 'a', 'b']);
   });
   it('drops saved keys that are no longer loaded', () => {

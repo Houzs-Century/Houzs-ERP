@@ -16,8 +16,6 @@ const ALLOWED = [
   "Logistic Admin",
 ];
 
-// Everyone else on the live positions table — notably Driver (the owner's
-// example) and Finance / HR (his explicit "no").
 const DENIED = [
   "Driver",
   "Outsource Transporter",

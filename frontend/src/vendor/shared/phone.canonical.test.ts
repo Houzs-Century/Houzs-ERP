@@ -3,15 +3,6 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { canonicalizeSinglePhone, formatPhone } from './phone';
 
-// canonicalizeSinglePhone exists for ONE reason: the company branding phone is
-// a free-text field that is printed on every invoice and delivery order, and it
-// has historically held more than one number. normalizePhone strips every
-// non-digit, so running it over "03-1234 5678 / 019-876 5432" would concatenate
-// the two into one nonsense string and print THAT to customers.
-//
-// The contract is therefore asymmetric on purpose: canonicalise only what is
-// unambiguously one number, and return everything else untouched. Refusing is
-// always safe — the worst case is a value that keeps the format a human typed.
 describe('canonicalizeSinglePhone — canonicalises one number', () => {
   test('a Malaysian landline in local form gains the country code', () => {
     expect(canonicalizeSinglePhone('03-1234 5678')).toBe('+60312345678');
@@ -38,8 +29,6 @@ describe('canonicalizeSinglePhone — canonicalises one number', () => {
 
 describe('canonicalizeSinglePhone — REFUSES anything that is not one number', () => {
   test('two numbers separated by a slash are left exactly as typed', () => {
-    // The failure this function exists to prevent. Without the guard this
-    // becomes "+6031234567801987654 32"-shaped garbage on every document.
     const two = '03-1234 5678 / 019-876 5432';
     expect(canonicalizeSinglePhone(two)).toBe(two);
   });
@@ -66,8 +55,6 @@ describe('canonicalizeSinglePhone — REFUSES anything that is not one number', 
 
 describe('what the document actually renders', () => {
   test('a legacy local-form landline renders with the country code', () => {
-    // The branding row was saved before the write path canonicalised, so the
-    // read path has to do it too or the change would not show until re-save.
     expect(formatPhone(canonicalizeSinglePhone('03-1234 5678'))).toBe('+60 3-1234 5678');
   });
 
@@ -77,13 +64,6 @@ describe('what the document actually renders', () => {
   });
 });
 
-// The backend and the frontend each carry a copy of this module. They are meant
-// to be the same file, and on 2026-07-22 they were NOT: the frontend had a
-// splitE164 fix from 2026-06-24 (a bare "197770309" was being claimed by US +1)
-// that the backend copy never received. Nothing caught it because nothing
-// compared them, and the backend never calls splitE164 — so the drift was
-// invisible right up until somebody would have called it and got a fixed bug
-// back. This test is the thing that compares them.
 describe('the two copies of this module are the same file', () => {
   test('backend/src/scm/shared/phone.ts is byte-identical to this one', () => {
     const here = resolve(process.cwd(), 'src/vendor/shared/phone.ts');
@@ -93,10 +73,6 @@ describe('the two copies of this module are the same file', () => {
   });
 });
 
-// formatPhone used to return any non-+60 value untouched, so a Singapore
-// customer's number printed on an invoice as the unbroken run "+6561234567"
-// beside a Malaysian one reading "+60 12-345 6789". These pin the grouping —
-// and, first, that the Malaysian rules were not disturbed while adding it.
 describe('formatPhone — Malaysia is unchanged', () => {
   test('mobile and landline keep their exact existing shape', () => {
     expect(formatPhone('+60123456789')).toBe('+60 12-345 6789');
@@ -118,8 +94,6 @@ describe('formatPhone — a foreign number is legible instead of a digit run', (
   });
 
   test('readable, NOT locale-canonical — Thailand groups 2-3-4 in real life', () => {
-    // Recorded rather than hidden: without libphonenumber this is grouping for
-    // legibility, not a numbering-plan implementation.
     expect(formatPhone('+66812345678')).toBe('+66 812 345 678');
   });
 });

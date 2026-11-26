@@ -34,8 +34,6 @@ export function MigratedReadonlyBanner({
   rounded = 10,
 }: {
   header: SoDetailGateHeader | null | undefined;
-  /** Desktop uses the page's 12px card radius, mobile its 12px card radius —
-   *  same number today, kept a prop so a skin change needs no second copy. */
   rounded?: number;
 }) {
   if (!migratedReadonly(header)) return null;

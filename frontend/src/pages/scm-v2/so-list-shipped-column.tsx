@@ -15,8 +15,6 @@ import {
   type ShippedProgressFields,
 } from "../../vendor/scm/lib/shipped-progress";
 
-/* Re-exported so a surface that renders the CELL (the drill-down line) and
-   the COLUMN (the list row) takes one import, not two. */
 export { ShippedProgressPill };
 
 export function shippedProgressColumn<R extends ShippedProgressFields>(): Column<R> {
@@ -31,9 +29,6 @@ export function shippedProgressColumn<R extends ShippedProgressFields>(): Column
       const p = shippedProgressOf(r);
       return p.state === "unknown" ? "" : (shippedProgressLabel(p) ?? "");
     },
-    /* Least-complete first, so the orders still owing goods sort to the top.
-       `unknown` sorts LAST — it is not a small number, it is no number, and
-       heading the list with rows that say nothing helps nobody. */
     sortValue: (r) => {
       const p = shippedProgressOf(r);
       if (p.state === "unknown") return 2;

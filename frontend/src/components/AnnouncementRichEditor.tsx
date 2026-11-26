@@ -70,41 +70,23 @@ type Props = {
   onChange: (html: string) => void;
   placeholder?: string;
   className?: string;
-  /** Minimum height of the editable area, in px. */
   minHeight?: number;
   id?: string;
   disabled?: boolean;
-  /** Ask the user for a link target (the app's prompt dialog). Absent = no
-   *  Link button — the phone composer has no dialog provider. */
   onPromptLink?: (current: string) => Promise<string | null>;
-  /** Upload a picked image and return its attachment key + a local preview
-   *  URL, or null when the upload failed (the composer has already toasted).
-   *  Absent = no Image button. */
   onInsertImage?: (file: File) => Promise<RichEditorImage | null>;
-  /** Resolve an attachment key to something an <img src> can show while
-   *  editing (the composer's local previews). Unknown key = no src. */
   imageSrc?: (key: string) => string | undefined;
 };
 
-/** The dropdown: Default (no span) + the numeric point sizes. The legacy
- *  sm / lg / xl tokens are read (mapped to their px) but not offered. */
 const SIZE_OPTIONS: Array<{ key: Size; label: string }> = [
   { key: "md", label: "Default" },
-  // The numeric entries of the grammar, in its order — ONE home (RICH_SIZES).
   ...RICH_SIZES.filter((n) => /^[0-9]+$/.test(n)).map((n) => ({ key: n as Size, label: n })),
 ];
 const LEGACY_SIZE: Record<string, RichSize> = { sm: "11", lg: "16", xl: "20" };
-/** The block a caret sits in — what a collapsed-selection size applies to. */
 const BLOCK_SELECTOR = "p,h1,h2,li,td,th";
 
-// The sentinel the fontSize command leaves behind. 7 is the largest legacy
-// size, which nothing else in this app produces, so it is safe to key on.
 const FONT_SENTINEL = "7";
-// Any colour works: the styled element is rewritten into <mark> at once and
-// the reader's CSS paints the real highlight. Picked to match .ann-rich mark.
 const HILITE_SENTINEL = "#f3ece0";
-// A 2×2 starter: one header row, one body row. <br> keeps an empty cell
-// clickable in contenteditable (an empty <td> collapses to nothing).
 export const TABLE_TEMPLATE =
   "<table><tr><th>Column</th><th>Column</th></tr><tr><td><br></td><td><br></td></tr></table><p><br></p>";
 
@@ -116,7 +98,6 @@ function exec(command: string, arg?: string): void {
   try {
     document.execCommand(command, false, arg);
   } catch {
-    /* an editing command the browser does not know is a no-op, not a crash */
   }
 }
 
@@ -138,17 +119,12 @@ export function normalizeLinkHref(input: string): string | null {
   if (!v || /[\s<>"'`\\]/.test(v)) return null;
   if (/^https?:\/\//i.test(v)) return v;
   if (/^mailto:/i.test(v)) return /^mailto:[^@]+@[^@]+$/i.test(v) ? v : null;
-  // Some other scheme (javascript:, data:, ftp:) — but "host:8080/x" is a
-  // port, not a scheme, so a digit right after the colon is not one.
   if (/^[a-z][a-z0-9+.-]*:(?![0-9])/i.test(v)) return null;
   if (/^[^@]+@[^@]+\.[^@]+$/.test(v)) return `mailto:${v}`;
   if (/^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(\/.*)?$/i.test(v)) return `https://${v}`;
   return null;
 }
 
-/** Rewrite every <font size="7"> the fontSize command produced into the
- *  canonical span (or unwrap it for "normal"), and remove any nested size
- *  spans inside so the newest choice is the only one that applies. */
 function foldFontSentinels(root: HTMLElement, size: Size): void {
   const fonts = Array.from(root.querySelectorAll(`font[size="${FONT_SENTINEL}"]`));
   for (const font of fonts) {
@@ -161,8 +137,6 @@ function foldFontSentinels(root: HTMLElement, size: Size): void {
     span.setAttribute("data-size", size);
     while (font.firstChild) span.appendChild(font.firstChild);
     font.replaceWith(span);
-    // A size span that now wraps nothing but the new one (Enter carried the
-    // previous size into this paragraph) is redundant: unwrap it.
     let outer = span.parentElement;
     while (outer && outer.matches("span[data-size]") && outer.childNodes.length === 1) {
       unwrap(outer);
@@ -171,8 +145,6 @@ function foldFontSentinels(root: HTMLElement, size: Size): void {
   }
 }
 
-/** Rewrite whatever the hiliteColor command styled into <mark>, and flatten
- *  a mark that landed inside another mark. */
 function foldHighlights(root: HTMLElement): void {
   const styled = Array.from(root.querySelectorAll<HTMLElement>("[style]")).filter(
     (el) => el.style.backgroundColor !== "",
@@ -192,7 +164,6 @@ function unwrap(el: Element): void {
   parent.removeChild(el);
 }
 
-/** Give every stored image its editing-time src (the stored value has none). */
 function hydrateImages(root: HTMLElement, imageSrc?: (key: string) => string | undefined): void {
   root.querySelectorAll<HTMLImageElement>("img[data-att]").forEach((img) => {
     const key = img.getAttribute("data-att") ?? "";
@@ -223,8 +194,6 @@ function sizeAtSelection(root: HTMLElement): Size {
   return (RICH_SIZES as readonly string[]).includes(v) ? (v as RichSize) : "md";
 }
 
-/** With nothing selected, select the caret's whole block so the size
- *  applies to the paragraph; returns true when it did. */
 function selectBlockIfCollapsed(root: HTMLElement): boolean {
   const sel = window.getSelection();
   if (!sel) return false;
@@ -242,14 +211,10 @@ function blockAtSelection(root: HTMLElement): Block {
   return tag === "h1" || tag === "h2" ? tag : "p";
 }
 
-/** Unwrap every element matching `selector` that the current selection
- *  touches. Used by Clear, where removeFormat leaves marks and links alone. */
 function unwrapInSelection(root: HTMLElement, selector: string): void {
   const sel = typeof window !== "undefined" ? window.getSelection() : null;
   if (!sel || sel.rangeCount === 0) return;
   const range = sel.getRangeAt(0);
-  // Boundary comparison rather than Range.intersectsNode: same answer, and
-  // implemented by every DOM the editor runs in (jsdom included).
   const hits = Array.from(root.querySelectorAll(selector)).filter((el) => {
     const r = document.createRange();
     r.selectNode(el);
@@ -275,8 +240,6 @@ export function AnnouncementRichEditor({
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  // The Size <select> takes focus when opened; the selection it should apply
-  // to is remembered on the way in and put back before the command runs.
   const savedRange = useRef<Range | null>(null);
   const lastEmitted = useRef<string | null>(null);
   const [empty, setEmpty] = useState(true);
@@ -293,7 +256,6 @@ export function AnnouncementRichEditor({
     size: "md" as Size,
   });
 
-  // External value → DOM, only when it is not what we just reported.
   useEffect(() => {
     const el = ref.current;
     if (!el || value === lastEmitted.current) return;
@@ -304,9 +266,6 @@ export function AnnouncementRichEditor({
     setEmpty(isBlankHtml(safe));
   }, [value, imageSrc]);
 
-  // Paragraphs, not <div>s, when Enter is pressed (Chrome's default is div;
-  // the canonicaliser folds either, but <p> keeps the DOM and the stored
-  // value identical, which makes the caret behave across a re-sanitise).
   useEffect(() => {
     exec("defaultParagraphSeparator", "p");
     exec("styleWithCSS", "false");
@@ -394,7 +353,6 @@ export function AnnouncementRichEditor({
     (block: Block) => {
       const el = ref.current;
       if (!el || disabled) return;
-      // Clicking the active heading turns it back into a paragraph.
       const next = blockAtSelection(el) === block ? "p" : block;
       run("formatBlock", `<${next}>`);
     },
@@ -406,8 +364,6 @@ export function AnnouncementRichEditor({
     if (!el || disabled) return;
     el.focus();
     const current = closestIn(el, "mark");
-    // An emptied highlighted line leaves <mark><br></mark> with the caret
-    // parked beside (not inside) it; the click means "no highlight here".
     const block = closestIn(el, "p,h1,h2,li,td,th");
     const emptied = block
       ? Array.from(block.querySelectorAll("mark")).filter((m) => !m.textContent)
@@ -432,7 +388,6 @@ export function AnnouncementRichEditor({
       refreshMarks();
       return;
     }
-    // The prompt steals focus; remember the selection and put it back.
     const sel = window.getSelection();
     const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
     const typed = await onPromptLink("");
@@ -445,7 +400,6 @@ export function AnnouncementRichEditor({
       sel.addRange(range);
     }
     if (!range || range.collapsed) {
-      // Nothing selected: the address itself becomes the link text.
       const text = href.replace(/^mailto:/i, "");
       exec("insertHTML", `<a href="${href}">${text}</a>&nbsp;`);
     } else {

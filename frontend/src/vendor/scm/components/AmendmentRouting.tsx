@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// AmendmentRouting — presentational chips for the amendment TYPE badges and the
-// per-row / grouped DEPARTMENT routing. Tailwind-styled, shared by the three
-// desktop + shared-surface amendment views (AmendmentDetailV2, PoAmendmentDetailV2,
-// the SalesOrderDetail diff modal). The two mobile surfaces render the same data
-// with their own inline-style idiom — the SHARED part is the classification
-// (amendment-routing.ts), not the pixels.
-//
-// Advisory only: this shows WHO is responsible for WHAT. It never changes the
-// single-signature apply gate. No emoji (owner rule).
-// ----------------------------------------------------------------------------
 
 import {
   routeField,
@@ -20,8 +9,6 @@ import {
   type AmendmentType,
 } from '../lib/amendment-routing';
 
-/* Muted, theme-token tints per type so the badge reads as a quiet label, not a
-   status alarm. Processing = brand accent; Delivery/Commercial = a warm/info tone. */
 const TYPE_CHIP: Record<AmendmentType, string> = {
   PROCESSING: 'border-primary/30 bg-primary/10 text-primary-ink',
   DELIVERY_COMMERCIAL: 'border-accent-bright/30 bg-accent-bright/10 text-ink',

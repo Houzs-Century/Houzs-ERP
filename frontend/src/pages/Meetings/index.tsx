@@ -13,18 +13,6 @@ import { ListView, MiniMonth, MonthView, RoomsTimeline, TimeGrid } from "./Meeti
 import { BTN, ConflictDialog, MeetingDetail, MeetingEditor, PersonSearch, PRI, QuickBook, ScopeQuestion, type MeetingFile } from "./MeetingsDialogs";
 import { EmailPage, LinkDialog, LinksPage, LogPage, MyMeetings, RoomDialog, RoomsPage, roomForm, type LinkForm, type RoomForm } from "./MeetingsAdmin";
 
-/**
- * Meetings — the meeting rooms every company shares, Google Calendar style.
- *
- * The rooms, meetings and guest links live in the Houzs IT Hub (backend
- * routes/meetings.ts relays every call), so a colleague in Hookka ERP sees what is
- * booked here. The hub decides every rule (a person or room already booked, the
- * room's gap, closed dates, longest booking); this page draws its answer, including
- * the conflict dialog it builds from a 409.
- *
- * URL is state: ?tab=calendar|mine|rooms|links|email|log, &view=day|week|month|rooms|list,
- * &date=YYYY-MM-DD. Polling, not WebSockets: the calendar re-reads every minute.
- */
 
 const POLL_MS = 60_000;
 const COLOR_KEY = "meetings.colorBy";
@@ -88,7 +76,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
   const flash = useCallback((t: string) => setToast(t), []);
   const showError = useCallback((e: unknown) => setToast(message(e)), []);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 8000); return () => clearTimeout(t); }, [toast]);
-  useEffect(() => { try { localStorage.setItem(COLOR_KEY, colorBy); } catch { /* a private window keeps the default */ } }, [colorBy]);
+  useEffect(() => { try { localStorage.setItem(COLOR_KEY, colorBy); } catch { } }, [colorBy]);
   useEffect(() => { const t = setInterval(() => { setNow(Date.now()); setTick((n) => n + 1); }, POLL_MS); return () => clearInterval(t); }, []);
   const reload = useCallback(() => setTick((n) => n + 1), []);
 
@@ -150,7 +138,6 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
     setPendingFiles([]);
   };
 
-  /** Save a new or changed meeting; a conflict opens its dialog instead. */
   const save = async (d: Draft, isNew: boolean, scope: "one" | "following" = "one") => {
     setSaving(true);
     try {
@@ -195,7 +182,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
     try {
       const r = await fresh<{ meeting: Meeting; history: { at: string; who: string; text: string }[]; files: MeetingFile[] }>(`/api/meetings/meetings/${m.id}`);
       setDetail((cur) => (cur && cur.m.id === m.id ? { ...cur, m: r.meeting, history: r.history, files: r.files } : cur));
-    } catch { /* the popover still shows what the calendar had */ }
+    } catch { }
   };
 
   const newDraft = (s?: number, e?: number, roomId?: number | null) => {

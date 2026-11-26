@@ -1,8 +1,3 @@
-// The labels a rack SEED run creates. Two contracts:
-//   · the owner's real KL WAREHOUSE numbering (L1.1 … L21.2 / R1.1 … R17.2),
-//   · and the FLAT shape every seed run made before 2026-09-09 — `levels: 1`
-//     must still produce exactly "<prefix> 1".."<prefix> N", or an old run is
-//     no longer reproducible from its own inputs.
 import { describe, expect, it } from 'vitest';
 import { buildSeedRackLabels, MAX_SEED_RACKS } from './rack-labels';
 
@@ -10,7 +5,6 @@ describe('buildSeedRackLabels', () => {
   it('keeps the historic flat shape when levels is 1', () => {
     expect(buildSeedRackLabels({ prefix: 'Rack', count: 3 }))
       .toEqual(['Rack 1', 'Rack 2', 'Rack 3']);
-    // levels explicitly 1 is the same thing, not a second shape.
     expect(buildSeedRackLabels({ prefix: 'Rack', count: 3, levels: 1 }))
       .toEqual(['Rack 1', 'Rack 2', 'Rack 3']);
   });
@@ -54,7 +48,6 @@ describe('buildSeedRackLabels', () => {
   });
 
   it('caps at MAX_SEED_RACKS, counting LABELS and not aisles', () => {
-    // 150 aisles x 2 levels = 300 labels; the cap is on what gets written.
     const capped = buildSeedRackLabels({ prefix: 'Rack', series: 'L', count: 150, levels: 2 });
     expect(capped).toHaveLength(MAX_SEED_RACKS);
     expect(capped[MAX_SEED_RACKS - 1]).toBe('Rack L100.2');

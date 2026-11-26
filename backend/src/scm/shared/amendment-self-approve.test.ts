@@ -17,7 +17,6 @@ describe('laneSelfApproves', () => {
   it('never shortcuts the other lanes, whatever the caller holds', () => {
     expect(laneSelfApproves('LINES', logistic)).toBe(false);
     expect(laneSelfApproves('PRICE', logistic)).toBe(false);
-    // A legacy (lane NULL) row keeps the old two-gate chain.
     expect(laneSelfApproves(null, logistic)).toBe(false);
     expect(selfApproveRefusal('LINES', logistic)).toMatch(/always needs its approver/);
   });

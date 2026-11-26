@@ -66,15 +66,10 @@ describe('MRP sofa tab — every module row names its own supplier', () => {
   test('three bound modules of one SO all show the supplier', () => {
     render(<MemoryRouter><Mrp /></MemoryRouter>);
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
-    /* Leaf rows only — the outer table row that CONTAINS the module table also
-       matches on text, and counting it would make the length assertion pass for
-       the wrong reason. */
     const textOf = (el: Element): string => String(el.textContent);
     const moduleRows = screen.getAllByRole('row')
       .filter((r) => /9028-/.test(textOf(r)) && r.querySelectorAll('tr').length === 0);
     expect(moduleRows).toHaveLength(3);
-    /* The whole shape in one assertion, so a failure prints which module lost
-       its supplier rather than a bare "expected null". */
     const supplierShownIn = (row: Element): string => {
       const select = row.querySelector('select');
       if (!select) return '— none —';

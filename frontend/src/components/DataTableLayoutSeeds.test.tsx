@@ -9,10 +9,6 @@ import {
 } from "../lib/tableLayouts";
 import { api } from "../api/client";
 
-/* Full-layout page seeds on DataTable (the Delivery Planning board's four views,
-   carried from the SCM DataGrid 2026-09-26): a manager's team-wide override
-   wins over the code seed, one written while the board was a DataGrid is read
-   through DataGrid's rules, and the board's key is NOT split per company. */
 
 vi.mock("../api/client", () => ({
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), del: vi.fn() },
@@ -106,8 +102,6 @@ describe("DataTable layout seeds", () => {
   });
 
   it("reads an override saved while the board was a DataGrid through DataGrid's rules", async () => {
-    // DataGrid: a non-empty hidden list means every other column shows,
-    // defaultHidden Charlie included.
     respond({ sharedLayouts: { "dg:old-board": [{ id: 6, name: "narrow", layout: L({ order: ["a", "b", "c", "d"], hidden: ["d"] }) }] } });
     await hydrateTableLayouts();
     render(

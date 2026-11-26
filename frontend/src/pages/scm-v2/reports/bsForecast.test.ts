@@ -1,8 +1,3 @@
-/* The Balance Sheet's forecast helpers (step 6 of the forecast port): the
-   columns — each month after the shown month-ends as its forecast alone,
-   newest first; a shown month the forecast covers as Actual | Forecast; the
-   forecast figures not opening — and the note. The page's own test drives
-   them through the screen (Reports.test.tsx). Made-up figures. */
 import { describe, expect, it } from 'vitest';
 import { bsForecastColumns, bsForecastNote, fbKey } from './bsForecast';
 import type { BsForecast } from '../../../vendor/scm/lib/bs-forecast-queries';

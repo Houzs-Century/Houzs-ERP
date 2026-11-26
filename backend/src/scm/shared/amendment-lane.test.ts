@@ -1,6 +1,3 @@
-// amendment-lane — the two-lane split IS the permission boundary (which desk
-// may approve which change), so its classification is pinned by test: a change
-// that silently swaps lanes is a change in WHO can approve it.
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -36,8 +33,6 @@ describe('classifyHeaderKey', () => {
   });
 
   it('routes the customer-info block to DELIVERY (owner 2026-08-21)', () => {
-    // The lane whose label has always read "delivery / customer info" finally
-    // carries customer info: name / phone / email sign with Logistics.
     expect(classifyHeaderKey('debtorName')).toBe('DELIVERY');
     expect(classifyHeaderKey('phone')).toBe('DELIVERY');
     expect(classifyHeaderKey('email')).toBe('DELIVERY');
@@ -99,11 +94,8 @@ describe('classifyLineItemCode', () => {
 describe('splitAmendmentByLane', () => {
   type L = { id: string; code: string | null };
   const byCode = (l: L) => ({ itemCode: l.code });
-  // No price lane: the two-lane behaviour the split has always had (HOUZS, and
-  // every caller before the 2026-09-21 PRICE lane).
   const noPrice = () => false;
   const noSplit = () => null;
-  // No add/cancel-line carve-out: the behaviour before the 2026-11-16 lane.
   const noAddRemove = () => false;
 
   it('splits a mixed submission into both lanes (proc date rides LINES)', () => {
@@ -168,9 +160,6 @@ describe('splitAmendmentByLane', () => {
   });
 
   it('splits a bare-code service line into DELIVERY via item_group', () => {
-    // The go-live shape that mis-routed to Purchasing: a real product line plus a
-    // DISPOSE service line whose code has no SVC- prefix. The item_group in the
-    // identity lands the DISPOSE line in its own DELIVERY (Logistics) document.
     type LG = { id: string; code: string | null; group: string | null };
     const split = splitAmendmentByLane<LG>(
       {},
@@ -275,7 +264,6 @@ describe('lane state machine', () => {
       expect(canLaneTransition('REQUESTED', action)).toBe(true);
       expect(canLaneTransition('SO_APPROVED', action)).toBe(false);
       expect(canLaneTransition('REJECTED', action)).toBe(false);
-      // Legacy-only states can never host a lane action.
       expect(canLaneTransition('SUPPLIER_PENDING', action)).toBe(false);
       expect(canLaneTransition('PO_APPROVED', action)).toBe(false);
       expect(canLaneTransition('SENT', action)).toBe(false);

@@ -32,7 +32,6 @@ describe('findCrewLeave — inclusive range, same semantics as the backend', () 
   });
 
   it('never crosses driver and helper id space (mig 0208 XOR)', () => {
-    // 'h1' is a HELPER id — asking for a driver with that id must not match.
     expect(isCrewOnLeave(ROWS, 'driver', 'h1', '2026-08-03')).toBe(false);
     expect(isCrewOnLeave(ROWS, 'helper', 'h1', '2026-08-03')).toBe(true);
     expect(isCrewOnLeave(ROWS, 'helper', 'd1', '2026-08-02')).toBe(false);

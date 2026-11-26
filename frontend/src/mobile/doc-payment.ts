@@ -17,7 +17,6 @@ import { piAwaitsPayment, PI_PAYMENT_ROUTE_HINT, type PayablePi } from "../vendo
 
 type DocHeader = Record<string, unknown> | null | undefined;
 
-/** true when total minus paid still leaves a balance. */
 function hasBalance(h: DocHeader): boolean {
   const total = Number(h?.total_sen ?? h?.local_total_sen ?? 0);
   const paid = Number(h?.paid_sen ?? 0);

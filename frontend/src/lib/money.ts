@@ -34,40 +34,29 @@
 
 export type MoneyParseOk = {
   ok: true;
-  /** Integer sen. 0 when `empty`. */
   sen: number;
-  /** True when the field was blank — "nothing entered", not "unreadable". */
   empty: boolean;
 };
 
 export type MoneyParseFail = {
   ok: false;
-  /** One plain-language sentence, ready to show the user. No codes, no jargon. */
   message: string;
 };
 
 export type MoneyParseResult = MoneyParseOk | MoneyParseFail;
 
-/** Largest amount we will accept: RM 9,999,999,999.99. Well inside integer
- *  precision once expressed in sen, and far above any real furniture order —
- *  a value past this is a mis-paste, not a price. */
 const MAX_SEN = 999_999_999_999;
 
-/**
- * Normalise the characters a human (or their keyboard) may have produced into
- * plain ASCII. Full-width digits and punctuation come from IME input; the
- * non-breaking space comes from copy-paste out of Excel and web pages.
- */
 function normaliseDigits(raw: string): string {
   let out = '';
   for (const ch of raw) {
     const code = ch.codePointAt(0)!;
-    if (code >= 0xff10 && code <= 0xff19) out += String.fromCharCode(code - 0xff10 + 0x30); // ０-９
-    else if (code === 0xff0e) out += '.'; // ．
-    else if (code === 0xff0c) out += ','; // ，
-    else if (code === 0xff0b) out += '+'; // ＋
-    else if (code === 0xff0d || code === 0x2212) out += '-'; // －, −
-    else if (code === 0x00a0 || code === 0x202f || code === 0x2007) out += ' '; // NBSP family
+    if (code >= 0xff10 && code <= 0xff19) out += String.fromCharCode(code - 0xff10 + 0x30);
+    else if (code === 0xff0e) out += '.';
+    else if (code === 0xff0c) out += ',';
+    else if (code === 0xff0b) out += '+';
+    else if (code === 0xff0d || code === 0x2212) out += '-';
+    else if (code === 0x00a0 || code === 0x202f || code === 0x2007) out += ' ';
     else out += ch;
   }
   return out;
@@ -90,10 +79,6 @@ export function parseScaledDecimal(
 
   if (raw == null) return { ok: true, sen: 0, empty: true };
 
-  /* A number that arrived already parsed (a default, a server value) is trusted
-     only if it is finite. NaN/Infinity reaching here means an earlier `|| 0`
-     site upstream, and passing it through would launder exactly the bug this
-     file exists to stop. */
   if (typeof raw === 'number') {
     if (!Number.isFinite(raw)) {
       return { ok: false, message: `${label} isn't a number we can read. Please type it again.` };
@@ -108,23 +93,16 @@ export function parseScaledDecimal(
   const original = raw.trim();
   if (original === '') return { ok: true, sen: 0, empty: true };
 
-  // Accept what a human plainly meant: currency prefix, stray spaces.
   let s = normaliseDigits(original).trim();
   s = s.replace(/^(rm|myr|\$)\s*/i, '').trim();
 
-  // Sign, if any, before we look at the digits.
   let negative = false;
   if (s.startsWith('-')) { negative = true; s = s.slice(1).trim(); }
   else if (s.startsWith('+')) { s = s.slice(1).trim(); }
 
-  // Internal spaces are never meaningful in an amount ("1 200" is a paste).
   s = s.replace(/\s+/g, '');
   if (s === '') return { ok: false, message: `${label} looks incomplete. Please type the number again.` };
 
-  /* Thousands separators are accepted ONLY in a shape that is unambiguously
-     grouping: 1,200 / 12,345,678. "1,20" is refused rather than quietly read as
-     120, because in a decimal-comma locale it means 1.20 and we cannot know
-     which the person meant. Guessing here is how "1,200" became RM 1.00. */
   const [intPartRaw, ...restParts] = s.split('.');
   if (restParts.length > 1) {
     return { ok: false, message: `${label} has more than one decimal point, so we can't tell what it should be. Please type it again.` };
@@ -152,9 +130,6 @@ export function parseScaledDecimal(
     return { ok: false, message: `${label} isn't a number we can read. Please type digits only, for example 1200.50.` };
   }
 
-  /* Refused, not rounded. Silently turning 1.005 into RM 1.01 (or 1.00) is a
-     small lie told with confidence, and the person who typed it is the only one
-     who knows which they meant. */
   if (fracPartRaw.length > decimals) {
     return {
       ok: false,
@@ -168,8 +143,6 @@ export function parseScaledDecimal(
     return { ok: false, message: `${label} can't be negative. Please enter a positive amount.` };
   }
 
-  // Integer assembly — never a float multiply. "12.3" with decimals 2 becomes
-  // 12 * 100 + 30.
   const frac = fracPartRaw.padEnd(decimals, '0');
   const scale = 10 ** decimals;
   const whole = intPart === '' ? 0 : Number(intPart);

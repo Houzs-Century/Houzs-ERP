@@ -1,6 +1,3 @@
-// The other-debtor bill create posts a document with its journal, so a double
-// press must reach the server under one Idempotency-Key (lib/idempotency.ts).
-// authed-fetch is mocked at the module seam (accounting-queries-gl.test.tsx).
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';

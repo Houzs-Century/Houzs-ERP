@@ -15,16 +15,6 @@ import { isExternalPosition, EXTERNAL_POSITION_MESSAGE } from "../../lib/externa
 import { useBranding } from "../../hooks/useBranding";
 import { defaultPersonalLocalPart, mailDomainOf } from "../MailCenter/mail-personal";
 
-/* Invite Member — design handoff screen 03. One centered modal: person &
- * email, an assignment summary prefilled from the Directory's current
- * department (editable in place via "Change"), and a position chip picker.
- * Assignment and position are set BEFORE sending, not patched afterward.
- *
- * The design's "Bulk paste" and "Import from AutoCount" input modes have no
- * backend today (invites are one POST each) — the tabs render disabled as
- * placeholders for that follow-up. The role concept stays hidden: a baseline
- * role is auto-assigned (mirror of the backend's resolveDefaultRoleId);
- * access follows the chosen position. */
 
 type CompanyOpt = { id: number; code: string; name: string };
 
@@ -45,11 +35,9 @@ export function parseBulkEmails(text: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const raw of text.split(/[\s,;]+/)) {
-    const token = raw.trim().replace(/^.*<([^>]+)>.*$/, "$1"); // "Name <a@b>" → a@b
+    const token = raw.trim().replace(/^.*<([^>]+)>.*$/, "$1");
     const email = token.toLowerCase();
     if (!email) continue;
-    // Deliberately lenient — the server does the authoritative validation; this
-    // only keeps obvious non-emails out of the send loop and out of the count.
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
     if (seen.has(email)) continue;
     seen.add(email);
@@ -81,7 +69,6 @@ export function TeamInviteModal({
   members: TeamMember[];
   companies: CompanyOpt[];
   salesDirScoped?: boolean;
-  /** Department the Directory is currently scoped to — prefills Assignment. */
   presetDeptId: number | null;
   onInvited: () => void;
 }) {
@@ -97,10 +84,6 @@ export function TeamInviteModal({
   const [division, setDivision] = useState("");
   const [managerId, setManagerId] = useState<number | null>(null);
   const [positionId, setPositionId] = useState<number | null>(null);
-  // Role = what the member may DO (the Title decides what they see). Defaults to
-  // the baseline role and is chosen here, so a new member no longer lands on the
-  // 0-key placeholder until someone remembers the profile (2026-09-16). A scoped
-  // Sales Director never chooses it — the server forces the baseline.
   const [roleId, setRoleId] = useState<number | null>(() => defaultRoleId(roles));
   const [companyIds, setCompanyIds] = useState<number[]>([]);
   const [editingAssignment, setEditingAssignment] = useState(false);
@@ -119,7 +102,6 @@ export function TeamInviteModal({
 
   const multiCompany = companies.length > 1;
 
-  // Re-seed from the Directory context each time the modal opens.
   useEffect(() => {
     if (!open) return;
     setName("");
@@ -152,10 +134,6 @@ export function TeamInviteModal({
     [positions, deptId],
   );
   const position = positions.find((p) => p.id === positionId) ?? null;
-  /* POS Access — a 2990's Home salesperson signs into the showroom tablet with
-     a 6-digit PIN. Offered at invite time so the credential goes out with the
-     account rather than being remembered later; the backend refuses a PIN on
-     any non-sales position, so the same rule decides whether the box appears. */
   const showPosPin = showsPosPinCard({
     companyIds,
     companies,
@@ -200,8 +178,6 @@ export function TeamInviteModal({
         ...(withPassword && password ? { password } : {}),
         ...(showPosPin && posPin.length === 6 ? { pos_pin: posPin } : {}),
       });
-      // Division isn't part of the invite payload — set it on the placeholder
-      // user row the invite just created, so the member lands in their team.
       if (division.trim()) {
         try {
           const fresh = await api.get<{ users: TeamMember[] }>("/api/users");
@@ -230,12 +206,6 @@ export function TeamInviteModal({
     }
   }
 
-  // Bulk send — the SAME assignment (dept / position / manager / role / company /
-  // team) applied to every pasted email, one invite POST each. Per-person fields
-  // (name, phone, password, POS PIN) are NOT offered in bulk; those are set on
-  // the member afterward. Failures are collected per-email and reported, never
-  // aborting the rest — a duplicate or a typo in the middle must not swallow the
-  // twenty good invites around it.
   async function sendBulk() {
     if (bulkEmails.length === 0 || bulkBusy) return;
     if (roleId == null && !salesDirScoped) {
@@ -259,8 +229,6 @@ export function TeamInviteModal({
         results.push({ email: addr, ok: false, error: e instanceof Error ? e.message : "failed" });
       }
     }
-    // One roster read, then stamp the shared team on every member the batch
-    // created — the same placeholder-row PATCH the single path does, batched.
     const invited = results.filter((r) => r.ok).map((r) => r.email);
     if (division.trim() && invited.length > 0) {
       try {
@@ -475,8 +443,6 @@ export function TeamInviteModal({
         </div>
       ) : (
         <div className="flex flex-col gap-5 p-1">
-          {/* Input modes — Single + Bulk paste both work; AutoCount import still
-              awaits an employee pipeline (separate research). */}
           <div className="flex w-max items-center gap-1 rounded-md bg-surface-2 p-1">
             {(["single", "bulk"] as const).map((mode) => (
               <button
@@ -573,7 +539,6 @@ export function TeamInviteModal({
             </div>
           )}
 
-          {/* Assignment — prefilled from the Directory's selected department. */}
           <div className="rounded-md border border-border-subtle bg-surface-2 p-4">
             <div className="flex items-center justify-between">
               <Eyebrow>Assignment{presetDeptId != null ? " (prefilled from Directory)" : ""}</Eyebrow>
@@ -587,8 +552,6 @@ export function TeamInviteModal({
             {assignmentChips}
             {editingAssignment && (
               <div className="mt-3 grid gap-x-5 gap-y-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
-                {/* Company chips live in the summary row above (always visible)
-                    — the edit area only carries the fields that need pickers. */}
                 <div>
                   <div className="text-[11.5px] text-ink-muted">Department</div>
                   <div className="mt-1">
@@ -653,8 +616,6 @@ export function TeamInviteModal({
             )}
           </div>
 
-          {/* Role — what the member may DO. Hidden for a scoped Sales Director:
-              the server forces the baseline role for that caller. */}
           {!salesDirScoped && (
             <div className="rounded-md border border-border-subtle bg-surface-2 p-4">
               <Eyebrow>Role</Eyebrow>
@@ -683,7 +644,6 @@ export function TeamInviteModal({
             </div>
           )}
 
-          {/* Position — drives page access. */}
           <div className="rounded-md border border-border-subtle bg-surface-2 p-4">
             <Eyebrow>Position</Eyebrow>
             {deptPositions.length === 0 ? (
@@ -759,8 +719,6 @@ export function TeamInviteModal({
             </div>
           )}
 
-          {/* Optional direct-create: set a password now → active account. Single
-              only — a shared password across a paste of people is never right. */}
           {inputMode === "single" && (
             <div className="flex flex-col gap-2 border-t border-border-subtle pt-4">
               <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-ink-secondary">

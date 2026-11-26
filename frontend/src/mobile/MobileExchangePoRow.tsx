@@ -5,12 +5,6 @@ import { writeScmHandoff } from "../lib/scmHandoffStorage";
 const INK = "#11140f";
 const MUTED = "#767b6e";
 
-/* Mobile case-detail "Exchange PO": the case's own REAL exchange purchase orders
-   (read-only), plus a "Raise exchange PO" button that seeds the mobile New-PO
-   form for a one-to-one exchange and carries the case id so the created PO stamps
-   assr_case_id. onRaise opens the PO-create screen (MobileApp); it is undefined —
-   and the button hidden — with no create permission. Its own module because
-   MobileServiceCase.tsx sits at its file-size ceiling. */
 export function MobileExchangePoRow({ c, onRaise }: { c: Any; onRaise?: () => void }) {
   const text = assrExchangePoText(c);
   const caseId = Number(c.id);

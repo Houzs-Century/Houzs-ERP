@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// fleet-day-model.ts — PURE view-model transforms for the A4 day map + run-sheet.
-//
-// The page + run-sheet stay thin: the shaping that turns the API's day trips into
-// map routes (only geocoded stops become pins) and the small display helpers
-// (ETA offset -> clock, time window text) live here so they are unit-testable
-// without React or a Google map.
-// ----------------------------------------------------------------------------
 
 import type { FleetDayTrip } from './fleet-day-queries';
 import type { FleetMapRoute } from '../components/FleetDayMap';

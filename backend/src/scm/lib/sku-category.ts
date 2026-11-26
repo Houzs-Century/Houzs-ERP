@@ -26,7 +26,6 @@
    See docs/bugs/0514.
    -------------------------------------------------------------------------- */
 
-/** The shape this helper needs off a request line. */
 import { pgrestIn } from './pgrest-in-list';
 import { REQUIRED_VARIANT_AXES_BY_CATEGORY } from '../shared/so-variant-rule';
 
@@ -38,8 +37,6 @@ export type CategoryResolvableLine = {
 const codeOf = (it: CategoryResolvableLine): string =>
   String(it.itemCode ?? '').trim();
 
-/** The `material_kind` that HAS a product row. Anything else (raw material,
- *  service) has no category to resolve and keeps whatever the caller sent. */
 const PRODUCT_KIND = 'mfg_product';
 
 /**
@@ -71,13 +68,6 @@ export async function skuCategoryMap(
     let q = pgrestIn(sb.from('mfg_products').select('code, category'), 'code', codes);
     if (companyId != null) q = q.eq('company_id', companyId);
     const { data, error } = await q;
-    /* FAIL SOFT, BUT NEVER SILENT. An empty map sends every line back to the
-       caller's own value, which is the pre-2026-08-22 behaviour — a product read
-       that blipped must not stop a receipt being saved. But a read that failed
-       and a catalogue with no rows are different facts, and only one of them is
-       somebody's problem: without this line the failure looks exactly like "no
-       products matched", and every line silently keeps a category the SKU could
-       have corrected. */
     if (error) {
       /* eslint-disable-next-line no-console */
       console.error('[sku-category] product read failed — lines keep the caller\'s group:', error.message);
@@ -88,7 +78,6 @@ export async function skuCategoryMap(
       if (cat) out.set(r.code, cat);
     }
   } catch {
-    /* Fail-soft — see the contract above. */
   }
   return out;
 }
@@ -207,7 +196,6 @@ export function lineIdentityFields(
    precondition — that the group is correct — nobody checked, and said nothing
    when it failed. This is that check. */
 
-/** Attribute keys that only a sofa/bedframe group composes into the key. */
 const COMPOSED_ONLY_FOR_SOFA_OR_BEDFRAME = [
   'fabricCode', 'colorCode', 'colourCode', 'fabricColor',
   'seatHeight', 'depth', 'gap', 'divanHeight', 'legHeight', 'sofaLegHeight',
@@ -216,8 +204,6 @@ const COMPOSED_ONLY_FOR_SOFA_OR_BEDFRAME = [
 const COMPOSING_GROUPS = new Set(['sofa', 'bedframe']);
 /* The Sofa Accessory group (owner 2026-09-14) composes the FABRIC and nothing else. */
 const FABRIC_ONLY_GROUPS = new Set(['fabric_accessory']);
-/* The spellings a fabric arrives under — read from the category's own required
-   axis, so this detector and the SO completeness rule cannot drift apart. */
 const FABRIC_KEYS = new Set<string>(
   (REQUIRED_VARIANT_AXES_BY_CATEGORY.fabric_accessory ?? []).flatMap((a) => a.aliases),
 );

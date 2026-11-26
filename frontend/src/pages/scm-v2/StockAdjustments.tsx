@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// StockAdjustments — list of manual stock adjustment DOCUMENTS (write-offs,
-// found stock, damage, recount fixes) at /scm/stock-adjustments, one row per
-// numbered document (BUG-66 — it used to list raw movement rows with no number
-// and nothing to open). A row opens /scm/stock-adjustments/:id.
-// + New Adjustment routes to /scm/stock-adjustments/new.
-//
-// 2026-07-09 REDESIGN per Nick's design_handoff_stock_adjustments handoff —
-// Theme C "Ink & Petrol" with real DS components (PageHeader, StatCard,
-// DataTable, Badge, Button). Reads useStockAdjustments + useWarehouses;
-// warehouse pill filter; StatStrip surfaces at-a-glance metrics (Adjustments
-// · 30d, Net qty delta, Damage/loss, Supplier returns).
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -31,11 +18,6 @@ import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { cn } from "../../lib/utils";
 import { DateField } from "../../vendor/scm/components/DateField";
 
-/* Warehouse pill tone — the handoff prescribes a coloured status dot per
-   warehouse role: petrol for a real fulfilment warehouse (HQ / KL WH /
-   Kelana showroom), brass for a Cash & Carry / Display face, red for a
-   service-return staging pad (goods heading back to a supplier). Derived
-   from the warehouse code / name so we don't need a per-row column. */
 function warehouseToneOf(w: { code: string; name: string }): "petrol" | "brass" | "red" {
   const s = `${w.code} ${w.name}`.toLowerCase();
   if (s.includes("return") || s.includes("service")) return "red";
@@ -44,8 +26,6 @@ function warehouseToneOf(w: { code: string; name: string }): "petrol" | "brass" 
 }
 const TONE_HEX = { petrol: "#16695f", brass: "#a16a2e", red: "#b23a3a" } as const;
 
-/* Reason → Badge tone. Design: warning for damage / loss / give-away,
-   neutral for returns, success for corrections. Fall back to neutral. */
 function reasonTone(reasonCode: string | null): "warning" | "neutral" | "success" | "accent" {
   if (!reasonCode) return "neutral";
   const s = reasonCode.toLowerCase();
@@ -57,8 +37,6 @@ function reasonTone(reasonCode: string | null): "warning" | "neutral" | "success
 
 type AdjustmentRow = StockAdjustmentDoc & { netQty: number; reasons: string[]; notesText: string };
 
-/* Per-document figures the table shows: net of the signed line qtys, the
-   distinct reasons, and the header notes (else the line notes). */
 const toRow = (d: StockAdjustmentDoc): AdjustmentRow => ({
   ...d,
   netQty: d.lines.reduce((s, l) => s + l.qty, 0),
@@ -79,7 +57,6 @@ export function StockAdjustments() {
   ]);
 
   const warehouses = useWarehouses();
-  // performed_by is a scm.staff uuid — resolve it, never print the id.
   const { actorNameOf } = useStaffLookup();
   const { data, isLoading, error } = useStockAdjustments({
     warehouseId: warehouseId ?? undefined,
@@ -92,9 +69,6 @@ export function StockAdjustments() {
     [warehouses.data],
   );
 
-  /* Row filter — server already applied warehouse + date, so we only
-     need to whittle by the search query client-side: the document number, or
-     any of its lines' SKU / product name. */
   const rows: AdjustmentRow[] = useMemo(() => {
     const all = (data ?? []).map(toRow);
     const q = search.trim().toLowerCase();
@@ -108,9 +82,6 @@ export function StockAdjustments() {
     );
   }, [data, search]);
 
-  /* Warehouse pill counts — how many adjustments fall under each warehouse
-     over the current date-filtered ledger. Uses the pre-search `data` so a
-     warehouse doesn't visually empty out as the operator types. */
   const countsByWarehouse = useMemo(() => {
     const m = new Map<string, number>();
     for (const row of data ?? []) {
@@ -119,13 +90,6 @@ export function StockAdjustments() {
     return m;
   }, [data]);
 
-  /* Stats — computed off the FULL ledger, not the SKU-filtered view, so the
-     KPIs stay stable while the operator narrows the table.
-       · Adjustments · 30d — count of rows in the last 30 days
-       · Net qty delta     — sum(qty); coloured red when negative (more out
-                             than in)
-       · Damage / loss     — count where reason indicates damage/loss/give
-       · Supplier returns  — count where reason indicates a return */
   const stats = useMemo(() => {
     const all = data ?? [];
     const now = new Date();
@@ -299,7 +263,6 @@ export function StockAdjustments() {
         }
       />
 
-      {/* KPI strip — Adjustments 30d · Net qty delta · Damage/loss · Supplier returns */}
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Adjustments · 30d"
@@ -330,9 +293,6 @@ export function StockAdjustments() {
         />
       </div>
 
-      {/* Warehouse filter — compact pills, wrap onto multiple rows if needed.
-          Each pill: coloured tone dot · name/sub stack · count badge. Active
-          state paints dark ink (#13201c) per handoff. */}
       <div className="mt-6">
         <div className="mb-2.5 flex items-center justify-between">
           <span className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
@@ -390,7 +350,6 @@ export function StockAdjustments() {
         </div>
       </div>
 
-      {/* Filter row — SKU search + From/To dates + Clear (only when a filter is active). */}
       <div className="mt-5 flex flex-wrap items-center gap-2.5">
         <div className="flex h-10 min-w-[280px] flex-1 items-center gap-2 rounded-lg border border-border bg-surface px-3.5">
           <svg
@@ -445,7 +404,6 @@ export function StockAdjustments() {
         )}
       </div>
 
-      {/* Count line — petrol tick + label. */}
       <div className="mt-4 mb-3 flex items-center gap-2.5">
         <span className="inline-block h-4 w-[3px] rounded-sm bg-primary" />
         <span className="text-[12.5px] font-bold uppercase tracking-wider text-ink">
@@ -458,13 +416,10 @@ export function StockAdjustments() {
       {error && !isLoading && (
         <div className="mb-4 rounded-lg border border-err/30 bg-err-bg px-3.5 py-2.5 text-[12px] text-err">
           <strong>Failed to load.</strong>{" "}
-          {/* authedFetch already humanised `message`; fallback for a non-Error throw. */}
           {error instanceof Error ? error.message : "Something went wrong."}
         </div>
       )}
 
-      {/* Table — DS DataTable with column chooser, CSV export, per-column
-          filters and search built-in. */}
       <DataTable<AdjustmentRow>
         tableId="stock-adjustment-docs"
         exportName="stock-adjustments"

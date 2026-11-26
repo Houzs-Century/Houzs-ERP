@@ -3,22 +3,14 @@ import type { Env } from "../types";
 import { verifyAndIssueCustomerToken } from "../services/caseTracking";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
 
-// Public tracking form endpoint. Unauthenticated — mounted before the
-// /api/* auth gate. Validates (case number, phone) against assr_cases
-// and issues a 30-min token on match.
 
 const app = new Hono<{ Bindings: Env }>();
 
 async function bruteGuard() {
-  // Small always-on sleep so repeated enumeration attempts cost real
-  // time. Not a substitute for proper rate limiting but blunts brute
-  // force across the predictable ASSR-number space.
   await new Promise((r) => setTimeout(r, 500));
 }
 
 app.post("/", async (c) => {
-  // Per-IP brute-force cap on the (case-no + phone) lookup — the ASSR-number
-  // space is predictable, so this backs up the 500ms bruteGuard() below.
   const limited = await checkRateLimit(c, "track", clientIp(c), 20, 900);
   if (limited) return limited;
 

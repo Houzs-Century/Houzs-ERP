@@ -1,7 +1,3 @@
-// Unit tests for the pure ChainNode builders behind the DO / SI / DR
-// Relationship Maps (audit R8). They assert the exact display gaps the live
-// `/document-flow` read closes: the DO's false "GRN Not created", the SI's
-// dropped payment nodes, and the DR's hard-coded "Upstream …" placeholders.
 
 import { describe, expect, it } from 'vitest';
 import type { FlowNode } from '../../vendor/scm/lib/flow-queries';
@@ -23,7 +19,6 @@ const node = (type: FlowNode['type'], id: string, label: string): FlowNode => ({
 const cell = (nodes: ReturnType<typeof buildDoChainNodes>, type: string) =>
   nodes.find((n) => n.type === type)!;
 
-/* Every procurement route open, unless a test says otherwise. */
 const OPEN = { canOpenPo: true, canOpenGrn: true, canOpenPi: true };
 const SHUT = { canOpenPo: false, canOpenGrn: false, canOpenPi: false };
 
@@ -36,7 +31,7 @@ describe('buildDoChainNodes — the owner two-chain shape (2026-07-23) on the DO
     );
     const grn = cell(nodes, 'GRN');
     expect(grn.state).toBe('done');
-    expect(grn.doc).toBe('GRN-9'); // NOT "Not created"
+    expect(grn.doc).toBe('GRN-9');
     expect(grn.meta).toBe('Tap to open');
   });
 
@@ -63,10 +58,6 @@ describe('buildDoChainNodes — the owner two-chain shape (2026-07-23) on the DO
     expect(cell(nodes, 'Delivery Order').state).toBe('current');
   });
 
-  /* THE CHANGE. The five-node chain put the GRN in the sales row with no room
-     for the purchase order that produced it, so the DO page could say goods were
-     received and never say what they were bought on. The graph has carried `po`
-     and `pi` all along — only this builder never read them. */
   it('renders SEVEN nodes, in the order the canvas positions them', () => {
     const nodes = buildDoChainNodes(header, [], [], [], [], [], OPEN);
     expect(nodes.map((n) => n.type)).toEqual([
@@ -106,8 +97,6 @@ describe('buildDoChainNodes — the owner two-chain shape (2026-07-23) on the DO
       header, [], [], [node('po', 'p1', 'PO-1')], [], [node('pi', 'pi-1', 'PI-1')], SHUT,
     );
     expect(cell(nodes, 'Purchase Invoice').doc).toBe('PI-1');
-    /* A salesperson must never be handed a node that navigates into <Forbidden>
-       — the tile says what it is and answers in a notice instead. */
     expect(cell(nodes, 'Purchase Order').meta).toBe('Procurement document');
     expect(cell(nodes, 'Purchase Invoice').meta).toBe('Procurement document');
   });
@@ -127,7 +116,6 @@ describe('buildSiChainNodes (audit R8 — SI restores payment nodes)', () => {
     expect(pay.state).toBe('done');
     expect(pay.doc).toBe('2 payments');
     expect(pay.actionable).toBe(true);
-    // The dead "no GRN" tile is gone — no GRN node on the SI chain any more.
     expect(nodes.find((n) => n.type === 'GRN')).toBeUndefined();
   });
 
@@ -160,16 +148,16 @@ describe('buildDrChainNodes (audit R8 — DR shows real SO + SI, not "Upstream �
     const so = cell(nodes, 'Sales Order');
     const si = cell(nodes, 'Sales Invoice');
     expect(so.state).toBe('done');
-    expect(so.doc).toBe('SO-1'); // NOT "Upstream of DO"
+    expect(so.doc).toBe('SO-1');
     expect(si.state).toBe('done');
-    expect(si.doc).toBe('INV-1'); // NOT "Upstream doc"
+    expect(si.doc).toBe('INV-1');
     expect(cell(nodes, 'Delivery Return').state).toBe('current');
   });
 
   it('falls back to the header DO number and honest empties when the graph is bare', () => {
     const nodes = buildDrChainNodes(header, [], [], []);
     expect(cell(nodes, 'Delivery Order').doc).toBe('DO-1');
-    expect(cell(nodes, 'Delivery Order').state).toBe('done'); // do_doc_no on header
+    expect(cell(nodes, 'Delivery Order').state).toBe('done');
     expect(cell(nodes, 'Sales Order').doc).toBe('Not linked');
     expect(cell(nodes, 'Sales Invoice').doc).toBe('Not created');
     expect(nodes).toHaveLength(5);
@@ -190,7 +178,7 @@ describe('Customer PO node resolves off `ref` — the only filled column on live
       [], [], [], [], [], OPEN,
     );
     const po = cell(nodes, 'Customer PO');
-    expect(po.doc).toBe('HC10995'); // NOT "Not linked"
+    expect(po.doc).toBe('HC10995');
     expect(po.meta).toBe("Customer's own doc");
   });
 

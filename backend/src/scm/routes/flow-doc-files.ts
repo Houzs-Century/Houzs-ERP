@@ -49,8 +49,6 @@ const loader = (o: LoadOpts): DocFilesSpec['load'] => async (c: any) => {
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!data) return { resp: c.json({ error: 'not_found', message: `That ${o.noun} is not in the company you are working in.` }, 404) };
   const row = data as Row;
-  /* The delivery return's own GET hides another salesperson's return (404);
-     its files must not be the side door. */
   if (o.salesScoped && await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), row.salesperson_id)) {
     return { resp: c.json({ error: 'not_found' }, 404) };
   }
@@ -106,11 +104,6 @@ export const PURCHASE_RETURN_FILES: DocFilesSpec = {
   lockedRefusal: { error: 'evidence_locked', message: 'The return is completed — its files stay.' },
 };
 
-/* Spelled out per router, not built in a loop: the route capability matrix
-   (scripts/generate-route-capability-matrix.mjs) reads each route from its
-   literal registration. The '*' bridge runs on every request to the
-   document's prefix, ahead of the document's own router; it is idempotent
-   (middleware/auth.ts), the same as grns-list-enrichment's on /grns. */
 type R = Hono<{ Bindings: Env; Variables: Variables }>;
 const withAuth = (r: R): R => { r.use('*', supabaseAuth); return r; };
 

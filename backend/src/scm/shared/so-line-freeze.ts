@@ -48,17 +48,13 @@
 export type SoFreezeDownstreamLine = {
   kind: 'DO' | 'SI';
   so_item_id: string | null;
-  /** Sales invoice lines only: the delivery-order line it billed, if any. */
   do_item_id?: string | null;
   status: string | null;
 };
 
 export type SoLineFreeze = {
-  /** Sales-order line ids a live delivery order or invoice line names. */
   frozenLineIds: ReadonlySet<string>;
-  /** Rule 3: a live downstream line names no line, so every line is frozen. */
   unlinked: boolean;
-  /** Any live delivery order / invoice on this order (by header or by line). */
   hasLiveDownstream: boolean;
 };
 
@@ -108,10 +104,6 @@ export const SO_FULLY_FROZEN_REFUSAL = {
   message: 'Everything on this Sales Order is already on a Delivery Order or Sales Invoice — cancel one of them first to change it.',
 } as const;
 
-/* ── What the SCREENS read ──────────────────────────────────────────────────
-   The browser cannot see delivery order lines, so the server stamps the verdict
-   on the detail payload: `downstream_frozen` on each line and
-   `downstream_fully_frozen` on the header. */
 
 /** A line the editor must render greyed and read-only. */
 export function soItemFrozen(item: { downstream_frozen?: unknown } | null | undefined): boolean {

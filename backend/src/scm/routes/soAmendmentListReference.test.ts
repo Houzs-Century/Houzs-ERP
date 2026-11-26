@@ -31,7 +31,6 @@ const ORDERS = (): Row[] => [
   { doc_no: 'HC-SO-012442', ref: 'MR TAN / SUNWAY', customer_so_no: 'MR TAN / SUNWAY', company_id: 1 },
   { doc_no: 'HC-SO-012713', ref: null, customer_so_no: 'CUST-PO-7', company_id: 1 },
   { doc_no: 'HC-SO-004928', ref: null, customer_so_no: null, company_id: 1 },
-  // Same number, another company: must never be the one read.
   { doc_no: 'HC-SO-012713', ref: 'OTHER COMPANY REF', customer_so_no: 'OTHER', company_id: 2 },
 ];
 
@@ -76,7 +75,6 @@ describe('GET /so-amendments — the Sales Order reference on each row', () => {
   });
 
   it('a failed reference read fails the list instead of reading as "no reference"', async () => {
-    // PostgREST fails the WHOLE read when a selected column is missing (42703).
     sb = fakeSb({ so_amendments: AMENDMENTS(), mfg_sales_orders: ORDERS() }, { mfg_sales_orders: ['customer_so_no'] });
     const res = await app().request('/');
     expect(res.status).toBe(500);

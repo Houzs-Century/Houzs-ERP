@@ -55,7 +55,6 @@ describe('findVarianceBreaches', () => {
   });
 
   test('value rule: small qty on an expensive SKU still breaches', () => {
-    // 2 × RM300 = RM600 > RM500, though |2| ≤ 5.
     expect(findVarianceBreaches([
       { itemCode: 'MAT-LUX', adjustment: -2, unitCostSen: 30_000 },
     ], T)).toEqual(['MAT-LUX']);
@@ -63,7 +62,7 @@ describe('findVarianceBreaches', () => {
 
   test('value exactly at the limit passes', () => {
     expect(findVarianceBreaches([
-      { itemCode: 'EDGE', adjustment: 5, unitCostSen: 10_000 }, // = RM500
+      { itemCode: 'EDGE', adjustment: 5, unitCostSen: 10_000 },
     ], T)).toEqual([]);
   });
 
@@ -77,8 +76,8 @@ describe('findVarianceBreaches', () => {
   test('zero-adjustment lines never breach, and codes deduplicate in order', () => {
     expect(findVarianceBreaches([
       { itemCode: 'Z', adjustment: 0, unitCostSen: 999_999 },
-      { itemCode: 'CODY', adjustment: 7, unitCostSen: null },   // variant bucket 1
-      { itemCode: 'CODY', adjustment: -8, unitCostSen: null },  // variant bucket 2
+      { itemCode: 'CODY', adjustment: 7, unitCostSen: null },
+      { itemCode: 'CODY', adjustment: -8, unitCostSen: null },
       { itemCode: 'BF-16', adjustment: 6, unitCostSen: null },
     ], T)).toEqual(['CODY', 'BF-16']);
   });

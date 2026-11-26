@@ -38,9 +38,6 @@ describe('the date is the answer, both ways', () => {
     expect(cleared()).toBe(PROCEED_FROM_STATUS);
   });
 
-  /* THE GAP THIS CLOSES, stated as the old behaviour. The forward rule has
-     always answered null here, and nothing else was asked — which is exactly
-     why the order sat IN_PRODUCTION with no date. */
   test('the forward rule alone still says nothing about a clearing', () => {
     expect(statusAfterProcessingDateSet({
       currentStatus: PROCEED_TO_STATUS,
@@ -51,8 +48,6 @@ describe('the date is the answer, both ways', () => {
 });
 
 describe('what it must never do', () => {
-  /* An order already delivered or invoiced is not "not in production" - it is
-     further along. Demoting it would hide a real document from the board. */
   test('an order with a delivery order or invoice is left alone', () => {
     expect(cleared({ hasDownstream: true })).toBeNull();
   });
@@ -63,8 +58,6 @@ describe('what it must never do', () => {
     }
   });
 
-  /* The UN-PROCEED is the TRANSITION, not the absence. An order that never
-     carried a date is not un-proceeding every time somebody saves it. */
   test('an order that never had a date is not un-proceeding', () => {
     expect(cleared({ storedProcessingDate: null })).toBeNull();
     expect(cleared({ storedProcessingDate: '   ' })).toBeNull();

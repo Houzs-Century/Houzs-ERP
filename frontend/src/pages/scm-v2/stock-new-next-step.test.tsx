@@ -1,17 +1,3 @@
-/* After a Stock Transfer or Stock Adjustment saves, the next step is offered
-   the way GRN and Purchase Invoice already offer it: open what was saved, or
-   start another (staff request 2026-09-14).
-
-   THE TRAP THIS PINS. StockTransferNew mints ONE idempotency key per mount
-   (lib/idempotency.ts). A "New stock transfer" that navigated to
-   /scm/stock-transfers/new from /scm/stock-transfers/new is a no-op for the
-   router: the page would not remount, the key would not rotate, and the
-   operator's SECOND, different transfer would go out under the FIRST one's key
-   — the server answers that with a replay of transfer #1 or a 409
-   idempotency_key_reused, and no second transfer is written. GrnNew.tsx carries
-   the long form of this warning. So "New" must remount the form: the test
-   posts twice across a "New" and asserts the two requests carry DIFFERENT
-   keys, with the real useIdempotencyKey (not a stub). */
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -19,7 +5,6 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 type TransferCall = { idempotencyKey?: string; fromWarehouseId: string; toWarehouseId: string; items: Array<{ itemCode: string; qty: number }> };
 const transferCalls: TransferCall[] = [];
-// One entry per posted adjustment DOCUMENT (BUG-66: one POST per Save).
 const adjustCalls: Array<{ warehouseId: string; lines: Array<{ itemCode: string; qty: number; reasonCode: string }> }> = [];
 
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, can: () => false }) }));

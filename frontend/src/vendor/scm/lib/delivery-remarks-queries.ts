@@ -1,6 +1,3 @@
-// Last Mile order-drawer remarks thread (phase 3) — a shared note list per sales
-// order (scm.delivery_remarks via /delivery-remarks). Dispatch + customer service
-// read and add; the board shows a REMARK pill off the lightweight /flags read.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 

@@ -1,7 +1,3 @@
-/* The Meetings page, mounted with the API faked. What these pin is what a person sees
- * and what the page sends: the calendar draws the hub's meetings, a booking conflict
- * opens the dialog built from the 409 body (and never drops anyone), room editing is
- * offered only with Manage meeting rooms, and the guest link is this ERP's address. */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -51,7 +47,6 @@ describe("Meetings", () => {
     serve(false);
     open("/meetings?view=day");
     const ev = await screen.findByRole("button", { name: /Weekly sales review/ });
-    // jsdom has no PointerEvent; the keyboard path opens the same popover.
     fireEvent.keyDown(ev, { key: "Enter" });
     const dlg = await screen.findByRole("dialog", { name: "Meeting details" });
     expect(within(dlg).getByText(/Adrian/)).toBeTruthy();

@@ -34,18 +34,12 @@ type SoRow = {
   sales_location: string | null; warehouse_name: string | null;
   customer_state: string | null; ref: string | null; po_doc_no: string | null;
   customer_so_no: string | null;
-  /* Branding — header `branding`, falling back to the derived label built from
-     `first_item_category` + `first_item_branding`. All three are already in the
-     list payload (backend mfg-sales-orders.ts:1782/1793); drives the card brand
-     pill (desktop parity). */
   branding: string | null; first_item_branding: string | null;
   first_item_category: string | null;
   customer_delivery_date: string | null; processing_date: string | null;
   so_date: string | null; created_at: string | null;
   local_total_sen: number | null; total_revenue_sen: number | null; paid_total_sen: number | null;
   balance_sen: number | null; balance_sen_live: number | null;
-  /* Fulfilment status the list endpoint derives per SO (only rendered when the
-     row actually carries it — a Draft/Cancelled SO has none). */
   planning_state: string | null;
   is_fully_ready: boolean | null; is_main_ready: boolean | null; ready_categories: string[] | null;
   /* Union of per-line source-PO chips (owner 2026-08-02) — the mobile twin of
@@ -60,21 +54,14 @@ type SoRow = {
   source_po_adj?: boolean;
 };
 
-/* Numeric DD/MM/YYYY, TZ-aware (owner-locked desktop/mobile date format — never
-   month names). Delegates to the shared helper so YYYY-MM-DD strings render in
-   Asia/Kuala_Lumpur and never drift a day on an off-zone device. */
 const dm = (d: string | null | undefined) => formatDate(d);
 const total = (r: SoRow) => r.local_total_sen ?? r.total_revenue_sen ?? 0;
 const paid = (r: SoRow) => r.paid_total_sen ?? 0;
-const balance = (r: SoRow) => r.balance_sen_live ?? (total(r) - paid(r)); // never the stored balance_sen: so-list-balance.ts
+const balance = (r: SoRow) => r.balance_sen_live ?? (total(r) - paid(r));
 const isCancelled = (r: SoRow) => (r.status ?? "").toLowerCase() === "cancelled";
 const isDraft = (r: SoRow) => (r.status ?? "").toLowerCase() === "draft";
 const soDate = (r: SoRow) => r.so_date ?? r.created_at ?? null;
 
-/* Brand + tone — copied verbatim from the desktop list (MfgSalesOrdersListV2:
-   brandOf/brandTone) so both surfaces resolve the same tone from the same
-   payload. 2990/SOFA = success, BEDFRAME = accent, AKEMI/blank = neutral, any
-   other brand = warning. Mirrored, not paraphrased. */
 /* Desktop parity, and the same fix: the trailing `|| "—"` printed a dash on
    every order whose first line carries no brand TEXT — which is every sofa —
    while the rule that turns a category into a label lived on other pages. One
@@ -82,9 +69,6 @@ const soDate = (r: SoRow) => r.so_date ?? r.created_at ?? null;
 const brandOf = (r: SoRow): string =>
   (isPlaceholderBrandText(r.branding) ? "" : (r.branding ?? "").trim()) ||
   brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
-/* This surface carries the line's CATEGORY, so it uses the accurate entry
-   point: colour and label then share one bucket rule and cannot disagree.
-   ../../lib/brandingTone has the whole story. */
 const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_category);
 
 /* ── Draft-created notifier — localStorage ack set ─────────────────────────
@@ -96,9 +80,7 @@ const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_
    Bounded to the last N ids so the set can't grow forever. */
 const SCAN_ACK_KEY = "houzs:scan-draft-acked";
 const SCAN_ACK_MAX = 200;
-/* Only consider jobs finished within this window — an old done job the operator
-   has long since seen must not toast just because the ack set was cleared. */
-const SCAN_ACK_WINDOW_MS = 30 * 60 * 1000; // 30 min
+const SCAN_ACK_WINDOW_MS = 30 * 60 * 1000;
 
 function readAckedJobIds(): Set<string> {
   try {
@@ -114,13 +96,11 @@ function readAckedJobIds(): Set<string> {
 }
 function writeAckedJobIds(ids: Set<string>): void {
   try {
-    // Keep only the most recent SCAN_ACK_MAX ids (insertion order preserved).
     const arr = Array.from(ids);
     const trimmed = arr.length > SCAN_ACK_MAX ? arr.slice(arr.length - SCAN_ACK_MAX) : arr;
     const key = identityStorageKey(SCAN_ACK_KEY);
     if (key) localStorage.setItem(key, JSON.stringify(trimmed));
   } catch {
-    /* private-mode / quota — the toast just re-fires next open, harmless */
   }
 }
 const jobTsMs = (s: string | null | undefined): number => {
@@ -128,12 +108,6 @@ const jobTsMs = (s: string | null | undefined): number => {
   return Number.isNaN(t) ? 0 : t;
 };
 
-/* Period chips → SERVER-SIDE so_date window. The chips no longer bucket the
-   loaded rows client-side (that only ever matched the ≤500 already fetched);
-   each chip maps to an inclusive [from,to] ISO yyyy-mm-dd window sent to the
-   list endpoint, so the filter runs across the WHOLE table. Buckets are
-   identical to the old `inRange`: this-month = first→last of the current month,
-   last/next-month the adjacent months, this-year = Jan 1 → Dec 31. */
 type Range = "all" | "this-month" | "last-month" | "next-month" | "this-year";
 const RANGES: [Range, string][] = [
   ["all", "All"], ["this-month", "This month"], ["last-month", "Last month"],
@@ -149,15 +123,6 @@ function rangeToDates(range: Range): { from?: string; to?: string } {
   return soDatePresetRange(range === "this-month" ? "this_month" : range === "last-month" ? "last_month" : "next_month", today);
 }
 
-/* Status filter → the endpoint's exact `status` value. One entry per backend
-   vocabulary status (mfg-sales-orders.ts SO_STATUSES) in lifecycle order —
-   desktop parity (MfgSalesOrdersListV2 SO_STATUS_TABS). Every status is listed
-   with its live server count so the buckets always sum to All and no order can
-   hide inside an unlisted status (the old three-bucket sheet hid
-   READY_TO_SHIP / DELIVERED / ... exactly like the desktop strip did). The old
-   "Submitted" entry is gone: it was a legacy spelling no live row carries and
-   both chips resolved to CONFIRMED anyway. "other" (the server's catch-all for
-   legacy/unknown spellings) is only offered when its count is non-zero. */
 type StatusFilter =
   | "all" | "draft" | "confirmed" | "in_production" | "ready_to_ship"
   | "shipped" | "delivered" | "invoiced" | "closed" | "on_hold"
@@ -175,9 +140,6 @@ const STATUS_FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "on_hold", label: "On Hold" },
   { key: "cancelled", label: "Cancelled" },
 ];
-/* Status key → the endpoint's exact `status` param (uppercase vocabulary
-   value, incl. the OTHER catch-all the backend filters as not-in-vocabulary),
-   or null for All. */
 function statusToParam(s: StatusFilter): string | null {
   return s === "all" ? null : s.toUpperCase();
 }
@@ -191,46 +153,24 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   const confirm = useConfirm();
   const { user, can, pageAccess } = useAuth();
   const [q, setQ] = useState("");
-  /* Debounced search term — the actual value sent to the server (and keyed into
-     the infinite query) so a keystroke doesn't fire a request per character.
-     300ms after the operator stops typing the query re-runs from page 0. */
   const { requestTerm: debouncedQ } = useDebouncedSearchTerm(q);
-  // FAB "+" speed-dial — offers New Sales Order + New Service Case (parity with
-  // the desktop QuickActionsFAB two-choice). A Sales user always gets the case
-  // option (owner rule 2026-07); others get it only if their matrix grants it.
   const [fabOpen, setFabOpen] = useState(false);
-  // Shared rule with the desktop QuickActionsFAB (auth/salesAccess) — a Sales
-  // user always gets the case option; others only with the matrix grant.
   const canNewCase = !!onNewCase && quickActionAccess(user, can, pageAccess).canNewCase;
-  /* Status (the FIRST filter) and the second-level rows live in the URL — the
-     SAME shared state layer as the desktop list (so-list-filter-state.ts). */
   const soFilters = useSoListFilters();
   const status = soFilters.status as StatusFilter;
   const filterKey = soFilters.filters.map((r) => `${r.field}:${r.op}:${r.value}`).join("|");
   const [range, setRange] = useState<Range>("all");
   const [filterOpen, setFilterOpen] = useState(false);
 
-  /* Item 3 — bulk confirm. selectMode toggles the tick UI; `selected` is the set
-     of picked DRAFT doc_nos; `confirming` runs the sequential PATCH pass. */
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [confirming, setConfirming] = useState(false);
   const [confirmProgress, setConfirmProgress] = useState(0);
-  /* Long-press to ENTER select mode (and pre-tick the pressed DRAFT row). The
-     timer fires after 450ms; a tap that releases sooner opens the SO as usual.
-     `longPressFired` suppresses the click that follows the long-press release. */
   const lpTimer = useRef<number | null>(null);
   const lpFired = useRef(false);
-  /* Scroll container — the infinite-scroll trigger listens on this element (the
-     mobile screens scroll an inner overflow div, not the window). */
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  /* Server-side search + status + period + infinite scroll. Each filter is a
-     query param; changing status/range/debouncedQ swaps the query key so the
-     list restarts from page 0 and the server finds matches across the WHOLE
-     table (not just the rows already loaded). pageSize 30, sort so_date:desc
-     with a doc_no tiebreaker on the backend → no skipped/duplicated rows. */
   const buildParams = (page: number): string => {
     const p = new URLSearchParams();
     p.set("page", String(page));
@@ -269,23 +209,10 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   });
   const listLoading = isLoading || searchTransition.isSearching;
   const rows = useMemo(() => data?.pages.flatMap((p) => p.salesOrders ?? []) ?? [], [data]);
-  // Deferred MRP enrichment for every loaded card (READY chips + readiness /
-  // planning badges), healed a beat later. Shared with desktop; the hook chunks
-  // the doc set at 100 so infinite scroll stays bounded (soListEnrichment.ts).
   const { rows: enrichedRows, mrp: mrpStatus } = useEnrichedSoListRows(rows, !listLoading);
   const totalCount = data?.pages[0]?.total ?? 0;
 
-  /* Summary bar totals — full-set rev/out from the server `aggregates` (page-0
-     response), computed over the SAME filters (status/period/search) across the
-     WHOLE table, byte-identical to the desktop KPI. `fullSet` drops the old
-     "(loaded)" caveat. Defensive fallback if `aggregates` is absent (old backend
-     / mid-deploy): sum the rows LOADED SO FAR, excluding cancelled and clamping
-     balance to positive (the historical prototype behaviour), and keep "(loaded)". */
   const aggregates = data?.pages[0]?.aggregates;
-  /* Full-set per-status counts (page-0 response) — computed server-side over
-     the scope+company set narrowed by the second-level filters (not by the
-     status/period/search), exactly like the desktop pills. Absent on an old backend → the sheet
-     simply omits the numbers instead of showing fake zeros. */
   const statusCounts = data?.pages[0]?.statusCounts;
   const summary = useMemo(() => {
     if (aggregates) return { rev: aggregates.revenueSen, out: aggregates.outstandingSen, fullSet: true };
@@ -293,25 +220,11 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
     for (const r of rows) {
       if (isCancelled(r)) continue;
       rev += total(r);
-      /* Signed, matching the server's `aggregates.outstandingSen` (which sums
-         balance_sen_live straight). Dropping negatives here made the fallback
-         path disagree with the primary one the moment over-collection became
-         possible — the same figure reading differently depending on whether the
-         backend answered with aggregates. */
       out += balance(r);
     }
     return { rev, out, fullSet: false };
   }, [aggregates, rows]);
 
-  /* Infinite-scroll trigger — an IntersectionObserver watches a 1px sentinel at
-     the bottom of the list and fetches the next page when it nears the viewport
-     (rootMargin 600px pre-load). Observer callbacks run on the event loop, NOT
-     rAF, so this fires reliably even when the tab throttles rAF (a scroll+rAF
-     version silently stopped loading under throttling). Guarded by hasNextPage
-     && !isFetchingNextPage so it can't double-fire; re-observing when those flip
-     re-fires the initial-state callback, so a first page shorter than the
-     viewport (sentinel already visible) still pulls the next until the sentinel
-     scrolls out or there are no more pages. */
   useEffect(() => {
     const target = sentinelRef.current;
     if (!target || !hasNextPage) return;
@@ -329,13 +242,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
 
   const filterActive = status !== "all" || range !== "all" || soFilters.filters.length > 0;
 
-  /* ── Item 2 — "SO xxx created as draft" notification ──────────────────────
-     On mount, pull this rep's recent scan jobs and toast any DONE job (with a
-     soDocNo, finished in the last 30 min) we haven't acknowledged yet. One
-     toast per new draft, or a combined "N drafts saved" when several land at
-     once. Tapping a single-draft toast opens that SO. Acked ids are persisted
-     so the toast never re-fires on a later Orders visit. Fail-soft: any jobs
-     hiccup silently skips the notification (retry:false, no dialog). */
   const salesperson = (user?.name || user?.email || "").trim();
   const notifiedRef = useRef(false);
   const { data: jobsData } = useQuery({
@@ -364,18 +270,14 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
       .sort((a, b) => jobTsMs(b.updatedAt ?? b.createdAt) - jobTsMs(a.updatedAt ?? a.createdAt));
     const failures = all.filter((j) => j.status === "error" && fresh(j));
     if (drafts.length === 0 && failures.length === 0) return;
-    notifiedRef.current = true; // once per screen mount — never double-fire on navigation
+    notifiedRef.current = true;
 
-    // Ack everything we're about to surface, so re-mounts don't repeat it.
     for (const j of [...drafts, ...failures]) acked.add(j.id);
     writeAckedJobIds(acked);
 
-    // Single draft, nothing else → open it straight after the toast.
     if (drafts.length === 1 && failures.length === 0) {
       const j = drafts[0];
       const doc = j.soDocNo!;
-      // A shell/blank or payment-warning draft carries a plain note in `error`;
-      // a possible-duplicate carries the earlier doc no. Either rides in the body.
       const extra = j.duplicateOf
         ? ` This looks like a possible duplicate of ${j.duplicateOf}.`
         : j.error
@@ -385,14 +287,12 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
         title: "Scan complete",
         body: `${doc} was saved as a draft.${extra} Tap OK, then open it from your Orders to review.`,
       }).then(() => {
-        // Nudge the list so the new draft is visible before the operator taps in.
         void refetch();
         onOpen(doc);
       });
       return;
     }
 
-    // Several drafts and/or a system failure → one combined summary, no auto-open.
     const parts: string[] = [];
     if (drafts.length > 0) {
       parts.push(
@@ -412,8 +312,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
     }).then(() => void refetch());
   }, [jobsData, notify, onOpen, refetch]);
 
-  /* ── Item 3 — bulk confirm helpers ──────────────────────────────────────
-     Only DRAFT rows are selectable. exitSelect resets the whole selection UI. */
   const exitSelect = () => {
     setSelectMode(false);
     setSelected(new Set());
@@ -430,16 +328,11 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   const clearLongPress = () => {
     if (lpTimer.current !== null) { window.clearTimeout(lpTimer.current); lpTimer.current = null; }
   };
-  /* A row tap: in select mode a DRAFT row toggles its tick (non-draft rows are
-     inert); otherwise it opens the SO. A long-press that already fired swallows
-     this click. */
   const onCardTap = (r: SoRow) => {
     if (lpFired.current) { lpFired.current = false; return; }
     if (selectMode) { if (isDraft(r)) toggleSelect(r.doc_no); return; }
     onOpen(r.doc_no);
   };
-  /* Long-press on a DRAFT row enters select mode and pre-ticks it. Ignored while
-     already selecting or confirming, and on non-draft rows. */
   const onCardPressStart = (r: SoRow) => {
     if (selectMode || confirming || !isDraft(r)) return;
     lpFired.current = false;
@@ -450,16 +343,9 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
       setSelected(new Set([r.doc_no]));
     }, 450);
   };
-  /* Sequentially PATCH each selected DRAFT → CONFIRMED via the SAME status
-     endpoint the single-confirm path uses (MobileSODetail.setStatus):
-     PATCH /mfg-sales-orders/:docNo/status {status:'CONFIRMED'}. One at a time so
-     a mid-batch failure is contained; tallies N confirmed / M failed and toasts
-     a summary, then refetches the list. */
   const bulkConfirm = async () => {
     if (confirming || selected.size === 0) return;
     const docs = Array.from(selected);
-    /* The cards carry no lines: read each order's codes for the SOFFIO reminder
-       before anything is confirmed. An unreadable order stops the batch. */
     let codes: string[];
     try {
       codes = (await Promise.all(docs.map((d) => fetchSoItemCodes(d)))).flat();
@@ -481,10 +367,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
       }
       setConfirmProgress((p) => p + 1);
     }
-    /* Refresh the list + any open detail caches so statuses reflect the change.
-       The single-confirm twin (MobileSODetail) goes through the vendored status
-       hook, which invalidates the shared SO lists; this loop PATCHes raw, so it
-       owes them the same invalidation — once, after the whole batch. */
     invalidateSoShared(qc);
     await Promise.all([
       refetch(),
@@ -512,8 +394,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
             <div className="scr-title">Sales Orders</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {/* Item 3 — Select toggle: enters/exits DRAFT multiselect. In select
-                mode it reads "Done" and clears the picks. */}
             {selectMode ? (
               <button onClick={exitSelect} className="iconbtn" aria-label="Exit selection" style={{ width: "auto", padding: "0 12px", fontFamily: "inherit", fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-primary)" }}>
                 Done
@@ -552,18 +432,11 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
       </header>
 
       <div ref={scrollRef} className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 120 }}>
-        {/* Summary bar — N orders (server total for the filter) · RM rev · RM
-            outstanding. When the server supplies full-set `aggregates` the money
-            totals are the whole filtered set (no caveat). The "(loaded)" suffix
-            only appears in the defensive fallback, where rev/out reflect just the
-            rows scrolled in so far. */}
         {!listLoading && !error && (
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", fontSize: 11.5, color: "var(--mut)", margin: "0 2px 11px" }}>
             <span><b style={{ color: "var(--ink)" }}>{totalCount}</b> orders</span>
             <span style={{ opacity: .4 }}>·</span>
             <span className="money">{fmtSen(summary.rev)} rev{summary.fullSet ? "" : " (loaded)"}</span>
-            {/* Non-zero either way — a net over-collection is not "nothing to
-                show", and it is red for the same reason a debt is. */}
             {summary.out !== 0 && <>
               <span style={{ opacity: .4 }}>·</span>
               <span className="money" style={{ color: "var(--red)" }}>
@@ -574,7 +447,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
         )}
         <MrpAsOf status={mrpStatus} className="mx-0.5 mb-2.5" />
 
-        {/* Period filter chips (h-scroll). */}
         <div className="chips" style={{ marginBottom: 11 }}>
           {RANGES.map(([key, label]) => (
             <button key={key} onClick={() => setRange(key)} className={range === key ? "chip on" : "chip"}>{label}</button>
@@ -606,23 +478,11 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
               const warehouse = resolveSoLocation(r).label;
               const brand = brandOf(r);
               return (
-                /* Owner-locked SO card (prototype `soRowCard`):
-                   L1  {customer name}                          ·  {status badge}
-                   L2  {doc_no} · {customer_so_no}     |  {warehouse}
-                   L3  Processing {date}  ->  Delivery {date}
-                   L4  (Stock chip · Planning chip — only when the row carries them)
-                   L5  {created_at} · created                   ·  {total} (bold) */
                 <div key={r.doc_no} onClick={() => onOpen(r.doc_no)} className={cancelled ? "card cancelled" : "card"} style={{ cursor: "pointer", padding: "12px 13px", ...(cancelled ? { opacity: .55, filter: "grayscale(.5)" } : null) }}>
-                  {/* Line 1 — customer name / status */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                     <span style={{ minWidth: 0, fontSize: 14, fontWeight: 800, color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.debtor_name || "—"}</span>
                     <StatusPill status={r.status} />
                   </div>
-                  {/* Line 2 — doc_no · brand pill · customer_so_no on their OWN
-                      full-width row (owner: the SO number + reference were
-                      squeezed to "SO-260… · HC 1…" by the warehouse sharing the
-                      line). doc_no + brand pill stay whole (flex:none); only the
-                      ref ellipsises if truly long, so the pill never crams it. */}
                   <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, marginTop: 5, fontSize: 11.5, color: "var(--mut)" }}>
                     {/* Struck through when cancelled — same doc-number-only strike as
                         the desktop lists' dt-cancel-strike (owner 2026-08-02). */}
@@ -630,14 +490,12 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                     {brand !== "—" && <BrandPill brand={brand} row={r} />}
                     {r.customer_so_no && <><span style={{ opacity: .4, flex: "none" }}>·</span><span className="money" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.customer_so_no}</span></>}
                   </div>
-                  {/* Line 2b — warehouse on its own line so it never crowds the ids */}
                   {warehouse && (
                     <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0, marginTop: 4, fontSize: 11.5, fontWeight: 600, color: "var(--ink2)" }}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M3 21V8l9-5 9 5v13" /><path d="M7 21v-8h10v8" /></svg>
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{warehouse}</span>
                     </div>
                   )}
-                  {/* Line 3 — Processing -> Delivery */}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 11, color: "var(--ink2)" }}>
                     <span style={{ color: "var(--mut2)", fontWeight: 600 }}>Processing</span>
                     <span className="money" style={{ fontWeight: 600 }}>{dm(r.processing_date)}</span>
@@ -645,7 +503,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                     <span style={{ color: "var(--mut2)", fontWeight: 600 }}>Delivery</span>
                     <span className="money" style={{ fontWeight: 600 }}>{dm(r.customer_delivery_date)}</span>
                   </div>
-                  {/* Line 4 — fulfilment chips (only when live + present) */}
                   <FulfilChips row={r} />
                   {/* Line 4b — source PO union + raised POs (desktop PO No.
                       column's mobile twin; owner 2026-08-02, raised arm added
@@ -657,7 +514,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                     if (source.length === 0 && raised.length === 0 && !r.source_po_adj) return null;
                     return <SourcePosRowMobile pos={source} raised={raised} adj={r.source_po_adj} />;
                   })()}
-                  {/* Line 5 — created / total */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9, paddingTop: 9, borderTop: "1px solid var(--line2)" }}>
                     <span style={{ fontSize: 10, color: "var(--mut2)" }}>{dm(soDate(r))} · created</span>
                     <span className="money" style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>{fmtSen(total(r))}</span>
@@ -667,14 +523,9 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                 }}
               />
             )}
-            {/* Infinite-scroll sentinel — the IntersectionObserver watches this
-                1px marker at the list's bottom; it enters view (+600px) near the
-                end and pulls the next page. Only present while more pages exist. */}
             {rows.length > 0 && hasNextPage && (
               <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
             )}
-            {/* Infinite-scroll footer — "Loading more…" while the next page is in
-                flight; nothing once every page is loaded (hasNextPage false). */}
             {rows.length > 0 && isFetchingNextPage && (
               <div style={{ textAlign: "center", padding: "14px 0 2px", fontSize: 11.5, color: "var(--mut)" }}>Loading more…</div>
             )}
@@ -689,8 +540,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
         )}
       </div>
 
-      {/* Filter sheet — status list (first filter) + MORE FILTERS rows (owner-
-          approved layout 2026-09-14). MobileSoFilterSheet.tsx. */}
       {filterOpen && (
         <MobileSoFilterSheet
           appliedStatus={status}
@@ -707,9 +556,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
         />
       )}
 
-      {/* Floating green "+" FAB. When a Service Case can also be created it opens
-          a two-choice sheet (New Sales Order / New Service Case), matching the
-          desktop QuickActionsFAB; otherwise it opens New Sales Order directly. */}
       <button
         onClick={() => { if (canNewCase) setFabOpen(true); else onNew(); }}
         aria-label={canNewCase ? "Create" : "New sales order"}
@@ -718,8 +564,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
       </button>
 
-      {/* FAB "+" action sheet — New Sales Order / New Service Case. Reuses the
-          same bottom-sheet chrome as the status filter above. */}
       {fabOpen && (
         <div className="sheet-bd" onClick={() => setFabOpen(false)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()} style={{ maxHeight: "60%" }}>
@@ -758,11 +602,6 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   );
 }
 
-/* status → spec badge tone: DRAFT=b-amber · SUBMITTED=b-brand ·
-   CONFIRMED=b-green · CANCELLED=b-red. Any other live status reads as b-brand.
-   Draft is the amber "pending" pill (+ hairline border), identical to the detail
-   StatusPill (MobileSODetail) and the desktop warning tone — it used to be grey,
-   which read as an ordinary neutral state rather than "not confirmed yet". */
 function StatusPill({ status }: { status: string | null }) {
   const s = (status ?? "").toUpperCase();
   const cls =
@@ -774,20 +613,8 @@ function StatusPill({ status }: { status: string | null }) {
   return <span className={`badge ${cls}`} style={{ flex: "none", ...(s === "DRAFT" ? { border: "1px solid #e0cf9e" } : null) }}>{label}</span>;
 }
 
-/* Brand pill — desktop list parity (brandOf/brandTone), rendered in the card's
-   OWN .badge family so it matches StatusPill exactly (same 9px uppercase pill,
-   same radius/tokens — no new colour, shape, or size). Tone → existing badge
-   class: 2990/SOFA green, AKEMI/blank grey, everything else (incl. bedframe)
-   the amber "pending"-family pill; the brand TEXT carries the identity, the
-   colour is the secondary cue. Sits inline on the doc_no row: flex:none so it
-   never shrinks, and a maxWidth+ellipsis so a long brand truncates itself
-   instead of crowding the customer ref beside it. */
 function BrandPill({ brand, row }: { brand: string; row: SoRow }) {
   const tone = brandTone(row);
-  /* Four tones, four classes. This map had only three, so a BEDFRAME chip
-     (accent) fell through to the mattress amber — the desktop and the phone
-     showed the same order in two different colours. `b-brand` is the fourth
-     colour mobile.css already ships; no new class was needed. */
   const cls = tone === "success" ? "b-green" : tone === "neutral" ? "b-grey"
     : tone === "accent" ? "b-brand" : "b-amber";
   return (
@@ -795,10 +622,6 @@ function BrandPill({ brand, row }: { brand: string; row: SoRow }) {
   );
 }
 
-/* Stock + Delivery-Planning chips (prototype `soFulfilChips`). Rendered ONLY
-   when the SO is live (not Draft/Cancelled) AND the row actually carries the
-   derived status — never faked. Stock reads the readiness booleans the list
-   endpoint emits; planning reads the derived `planning_state`. */
 function FulfilChips({ row }: { row: SoRow }) {
   const s = (row.status ?? "").toLowerCase();
   if (s === "draft" || s === "cancelled") return null;

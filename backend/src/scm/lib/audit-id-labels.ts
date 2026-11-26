@@ -67,7 +67,6 @@ function changesOf(entry: Record<string, unknown>): Change[] {
   return Array.isArray(fc) ? (fc.filter((c) => c && typeof c === 'object') as Change[]) : [];
 }
 
-// Minimal shape of the PostgREST client this needs, so a test can hand in a stub.
 export type AuditLabelReader = {
   from(table: string): {
     select(cols: string): { in(col: string, vals: string[]): PromiseLike<{ data: unknown; error: { message: string } | null }> };

@@ -32,7 +32,6 @@ describe('the listing table', () => {
     ]);
     expect(t.head).toEqual(['Kind', 'No.', 'Customer / Debtor', 'Ref', 'Date', 'Due', 'Description', 'Total', 'Paid', 'Outstanding', 'Status']);
     expect(t.body[0]).toEqual(['Sales Invoice', 'HC-SI-2609-001', 'TAN AH KOW (300-C001)', 'HC-SO-2609-004', '2026/09/03', '2026/09/30', 'Bedroom set', 'RM 4,400.00', 'RM 600.00', 'RM 3,800.00', 'SENT']);
-    /* A bill has no due date and no order behind it: the date slot prints the dash every document prints, the ref stays blank. */
     expect(t.body[1]).toEqual(['Debtor Bill', 'HC-ODB-2609-001', 'AHMAD BIN ALI', '', '2026/09/03', '—', '', 'RM 500.00', 'RM 200.00', 'RM 300.00', 'POSTED']);
     expect(t.totals).toEqual({ count: 2, totalSen: 490_000, paidSen: 80_000, outstandingSen: 410_000 });
   });

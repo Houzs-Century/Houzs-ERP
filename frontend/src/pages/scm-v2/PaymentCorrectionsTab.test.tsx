@@ -55,7 +55,6 @@ const REPORT: PaymentCorrections = {
       reason: 'Balance collected on delivery', beforeRule: false, recordedBy: 'Chew', recordedOn: '2026-09-12T01:00:00Z',
       originalJeNo: null, contraJeNo: null, jeNo: 'JE-2609-0070',
     },
-    /* The owner's add from before the rule: no reason, marked as such. */
     {
       id: 'd', at: '2026-09-14T00:30:00Z', by: 'Chew', docNo: '2990-SO-2606-025', customer: 'Ng Boon',
       kind: 'added', changes: [{ field: 'amountSen', from: null, to: 20_000 }],
@@ -74,7 +73,6 @@ const draw = () => render(
   </QueryClientProvider>,
 );
 
-/* The month's tiles; the list below has its own row count. */
 const tiles = () => screen.getByRole('group', { name: 'Payment corrections figures' });
 
 describe('the corrections tab', () => {
@@ -101,13 +99,11 @@ describe('the corrections tab', () => {
        beside the edit of her payment; a dash where nothing could be read. */
     expect(screen.getByText('Rachael')).toBeTruthy();
     expect(screen.getByText(/2026\/08\/29/)).toBeTruthy();
-    /* The add: what was recorded, booked once; the kinds wear their tags. */
     expect(screen.getByText('Added — RM 1,500.00 (cash on 2026/09/12)')).toBeTruthy();
     expect(screen.getByText('booked JE-2609-0070')).toBeTruthy();
     expect(screen.getByText('Balance collected on delivery')).toBeTruthy();
     expect(screen.getAllByText('Added').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Deleted').length).toBeGreaterThan(0);
-    /* The row from before the rule says so instead of showing a blank reason. */
     expect(screen.getByText('Before the rule')).toBeTruthy();
   });
 
@@ -143,7 +139,6 @@ describe('the corrections tab', () => {
     await waitFor(() => expect(generateSpy).toHaveBeenCalledWith(expect.objectContaining({ month: '2026-09' }), { action: 'print' }));
     await waitFor(() => expect(notifySpy).toHaveBeenCalledWith({ title: 'PDF generation failed', body: 'The Chinese font could not be fetched.', tone: 'error' }));
     expect(screen.getByRole('table')).toBeTruthy();
-    /* And a PDF that works opens the preview and raises no notice. */
     generateSpy.mockReset();
     generateSpy.mockResolvedValue(undefined);
     notifySpy.mockReset();

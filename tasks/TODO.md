@@ -154,6 +154,10 @@ Measured on prod 2026-10-22, warm: Overview `procurement-overview` 5.5 s, Invent
 - AI reads on the scan queue (bill reader, request bill, supplier CN, receipt): after the deploy, compare `scan_timing` and p95 of the four `/enqueue` doors with the old synchronous ones; remove the synchronous doors (`/payment-vouchers/extract`, `/credit-notes/scan`, `/payment-requests/read-bill`, `/scan-payment/extract`) once no request reaches them for a week — dev — 2026-11-11
 - Hard-bound cost backfill (`backfill-hard-bound-cost.mjs`, company 1): run the PLAN after #5619 is merged and the cutover no-spec revert has been applied; APPLY waits on the owner (closed months 2026-09 / 2026-10 expected) — 2026-11-10
 
+- AutoCount outbox can post a document twice: host saves, reply lost (fetch error/5xx), `mark()` re-queues, next sweep saves again; no DocNo check before `Save()`, no fetch timeout. TLA+ counterexample `formal/ac-outbox-claim/AcOutboxClaimFinding.cfg`. Unverified: does AutoCount refuse a duplicate DocNo. Waiting on owner decision, since 2026-11-25 — dev
+- Trips `POST /:id/location` reads the trip by id with no company predicate (crew-gated only); add `scopeToAllowedCompanies` like `GET /active/locations`. Found by PR #6050, since 2026-11-26 — dev
+- Fair ledger cost categories live twice (backend `LEDGER_COST_CATEGORIES`, frontend `LEDGER_COST_CATS`); serve the frontend from the API. Found by PR #6050, since 2026-11-26 — dev
+
 ## Recurring
 - Monthly: read every `docs/modules/*.md` against the code it describes and correct what drifted; the guides are orientation, the code is the authority (last done 2026-09-16) — dev
 

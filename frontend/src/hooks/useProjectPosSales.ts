@@ -1,6 +1,3 @@
-/* The Houzs POS bills of one event (GET /api/project-pos-sales/:projectId),
- * read once by the project page's Sales section and by the mobile panel. The
- * filter is part of the cache key, so each filter is its own read. */
 import { api } from "../api/client";
 import { useQuery, type QueryState } from "./useQuery";
 import {

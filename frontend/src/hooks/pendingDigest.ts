@@ -19,7 +19,6 @@ export type PendingRow = {
   name: string;
   start_date?: string | null;
   end_date?: string | null;
-  /** '|'-joined open task titles for THIS caller; absent on some lanes. */
   my_pending_titles?: string | null;
 };
 
@@ -29,16 +28,13 @@ export type DigestTier = "past_event" | "this_week" | "later";
 export type DigestGroup = {
   tier: DigestTier;
   events: PendingRow[];
-  /** Task titles owed across this group, deduped, for the popup's detail line. */
   titles: string[];
 };
 
 export type PendingDigest = {
   total: number;
   groups: DigestGroup[];
-  /** The worst tier present, or null when there is nothing to nag about. */
   worst: DigestTier | null;
-  /** past_event / this_week may not be postponed — see the popup. */
   mustAcknowledge: boolean;
 };
 
@@ -98,9 +94,6 @@ export function buildDigest(rows: PendingRow[], today = localToday()): PendingDi
     total: rows.length,
     groups,
     worst,
-    // An event that has already finished, or one running within the week, is
-    // not something to postpone — the popup drops "Remind later" for those,
-    // reusing the announcement modal's own mandatory-acknowledgement rule.
     mustAcknowledge: worst === "past_event" || worst === "this_week",
   };
 }

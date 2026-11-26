@@ -1,6 +1,3 @@
-// Meetings: the shapes the IT Hub answers with (backend routes/meetings.ts relays them)
-// and the pure helpers the desktop page and the phone share. No React here, so every
-// rule the page shows (which colour, which lane, what a conflict says) is tested alone.
 
 export const MIN = 60_000;
 export const HOUR = 3_600_000;
@@ -14,7 +11,6 @@ export type Room = {
   id: number;
   name: string;
   location: string;
-  /** Full street address for visitors (shown with a map link in emails). */
   address?: string;
   floor: string;
   seats: number;
@@ -43,7 +39,6 @@ export type Meeting = {
   attendees: string[];
   notes: string;
   video: { type: "none" | "meet" | "zoom" | "link"; url: string };
-  /** null on meetings saved before reminders existed. */
   reminders: Reminder[] | null;
   status: "scheduled" | "live" | "ended";
   startedAt: string | null;
@@ -52,9 +47,7 @@ export type Meeting = {
   createdIn: string;
   linkId: number | null;
   guest: Guest | null;
-  /** Outside guests invited by email. */
   guestEmails?: string[];
-  /** The emails sent for it; only the organiser and booker get this. */
   emails?: { kind: string; to: string[]; sentAt: string | null; attempts: number; error: string | null }[];
 };
 export type Bootstrap = { me: string; canManage: boolean; rooms: Room[]; people: Person[]; unread: number; meetConnected?: boolean };
@@ -98,7 +91,6 @@ export type Draft = {
   videoType: Meeting["video"]["type"];
   videoUrl: string;
   notes: string;
-  /** Outside guests invited by email. */
   guestEmails: string[];
   reminders: Reminder[];
   repeat: "none" | "daily" | "weekdays" | "weekly" | "monthly";

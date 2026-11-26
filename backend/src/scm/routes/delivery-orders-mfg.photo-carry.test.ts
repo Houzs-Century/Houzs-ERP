@@ -27,14 +27,6 @@ import { createDoFromSoLinesHandler } from './delivery-orders-mfg';
 
 type Row = Record<string, unknown>;
 
-/* Captures every row written to delivery_order_items, which is what these
-   assertions are about. Reads are served from `tables`; writes to anything else
-   (the audit row, the AutoCount skip record, the totals rollup) are accepted
-   and ignored so the convert can run to completion without the fake modelling
-   the whole schema. A Proxy, unlike the PO harness's fixed method list, because
-   this handler's read surface is far wider (remaining derivation, warehouse
-   resolution, sofa guards, doc-no minting) — any unmodelled chained method
-   filters nothing and resolves to the current row set. */
 function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
   let minted = 0;
   const mk = (table: string) => {
@@ -59,15 +51,11 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
         if (prop === 'insert') return (payload: Row | Row[]) => {
           const rows = Array.isArray(payload) ? payload : [payload];
           if (table === 'delivery_order_items') captured.push(...rows);
-          /* The DO header insert is chained `.select('id, do_number').single()`,
-             so hand back a row carrying the id the line insert keys off. */
           state.rows = table === 'delivery_orders'
             ? rows.map((r) => ({ ...r, id: `do-new-${++minted}` }))
             : rows;
           return proxy;
         };
-        // select / order / like / not / or / gte / lte / update / delete / …
-        // — chainable no-ops over the current row set.
         return (..._args: unknown[]) => proxy;
       },
     });
@@ -75,16 +63,12 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
   };
   return {
     from: (table: string) => mk(table),
-    /* The doc-no counter RPC — report it MISSING (PGRST202, the shape
-       isMissingRpc recognises) so minting falls back to the live-max path,
-       which needs only the (empty) delivery_orders table. */
     rpc: () => Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'Could not find the function in this harness' } }),
   };
 }
 
 const SO_DOC = 'SO-2608-101';
 
-/** One SO line as the convert reads it. `photos` is the whole point. */
 const soLine = (id: string, itemCode: string, photos: string[] | null): Row => ({
   id,
   doc_no: SO_DOC,
@@ -106,13 +90,10 @@ const soLine = (id: string, itemCode: string, photos: string[] | null): Row => (
   debtor_name: 'Customer One',
 });
 
-/** Runs the real /from-sos convert over the given SO lines; returns the
- *  captured delivery_order_items rows. */
 async function convertAndCapture(soLines: Row[]): Promise<Row[]> {
   const captured: Row[] = [];
   const sb = fakeSb({
     mfg_sales_order_items: soLines,
-    // CONFIRMED — anything else is refused by firstUndeliverableSo before the map.
     mfg_sales_orders: [{
       doc_no: SO_DOC, company_id: 1, status: 'CONFIRMED', on_hold: false,
       debtor_code: 'C001', debtor_name: 'Customer One',
@@ -142,8 +123,6 @@ async function convertAndCapture(soLines: Row[]): Promise<Row[]> {
       if (key === 'supabase') return sb;
       if (key === 'user') return { id: 'user-1' };
       if (key === 'houzsUser') return { id: 7, name: 'Harness' };
-      // companyId / allowedCompanyIds / companies stay undefined — the company
-      // resolves from the picked rows' own company_id (the handler's contract).
       return undefined;
     },
     env: {},
@@ -168,16 +147,10 @@ describe('SO -> DO convert carries the line photos (mig 20260828T0746)', () => {
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.photo_urls).toEqual(['so-items/SO-2608-101/si-1/aaa.jpg']);
-    // The provenance link the photo authorisation (and coverage math) keys off.
     expect(rows[0]!.so_item_id).toBe('si-1');
   });
 
   test('every compartment line of one sofa build keeps the shared build photo', async () => {
-    /* The trap this pins: an AutoCount-style sofa build is several compartment
-       lines carrying the SAME photo. Deduplicating photos across the DO would
-       leave every compartment but one with no photo at all — the driver sees a
-       blank line for goods that are on the lorry. (item_group stays MATTRESS so
-       the dye-lot batch guard — a different rule — stays out of the frame.) */
     const shared = 'so-items/SO-2608-101/si-1/build.jpg';
     const rows = await convertAndCapture([
       soLine('si-1', 'SOFA-A-LHF', [shared]),

@@ -1,6 +1,3 @@
-/* The POD an "Undo delivered" took off the order stays viewable (owner-approved
- * 2026-11-10): one collapsed section per earlier attempt, with its photos (and
- * the one-PDF download), signature and GPS. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";

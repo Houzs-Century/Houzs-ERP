@@ -1,6 +1,3 @@
-/* Sister review G18: the amendment modal minted a new idempotency key on every
- * press (`po-amd-<id>-<Date.now()>`), so a retry after a lost reply reached the
- * server as a second request. One attempt keeps one key across presses. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

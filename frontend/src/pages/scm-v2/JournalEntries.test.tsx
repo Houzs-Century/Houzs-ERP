@@ -133,10 +133,8 @@ describe('the page', () => {
     const cells2 = Array.from(second.children).map((c) => c.textContent);
     expect(cells2[cells2.length - 2]).toBe('300.00');
     expect(screen.getByText('4 of 4 entries in the period')).toBeTruthy();
-    /* The head: Books, the tab's name, the actions. */
     expect(screen.getByText('Finance · Books')).toBeTruthy();
     for (const label of ['New manual journal', 'Excel', 'PDF', 'Print']) expect(screen.getByRole('button', { name: label })).toBeTruthy();
-    /* The columns are dragged wider and fitted, each header with its edge. */
     expect(container.querySelectorAll('[title="Drag to resize · double-click to fit"]')).toHaveLength(9);
   });
 

@@ -44,10 +44,8 @@ const statusWord = (s: string): string => s.replace(/_/g, ' ').toLowerCase();
 
 type View = 'deposit' | 'balance';
 const VIEWS: ReadonlyArray<{ value: View; label: string }> = [{ value: 'deposit', label: 'Deposit' }, { value: 'balance', label: 'Balance' }];
-/** The threshold's usual choices; any other whole % is Other…. */
 const THRESHOLDS = [10, 20, 30, 40, 50, 60, 70, 80, 90] as const;
 
-/* The CSV of the open view — one line per salesman, then one per order. */
 export const collectionCsv = (r: CollectionReport, view: View, onlyBelow: boolean): string => {
   const esc = (v: string | number | null) => `"${guardFormula(String(v ?? '')).replace(/"/g, '""')}"`;
   const lines: string[] = [];
@@ -82,14 +80,12 @@ const downloadText = (name: string, text: string) => {
   URL.revokeObjectURL(url);
 };
 
-/** A view's grid: its heads, widths and the figures of a salesman, an order and the total. */
 type ViewGrid = {
   heads: string[];
   widths: ColumnWidthSpec;
   seller: (row: CollectionRow, thresholdPct: number) => Cell[];
   order: (o: CollectionOrder) => Cell[];
   total: (row: CollectionRow) => Cell[];
-  /** The orders a salesman opens to. */
   orders: (row: CollectionRow, onlyBelow: boolean) => CollectionOrder[];
   none: string;
 };
@@ -165,7 +161,6 @@ const BALANCE: ViewGrid = {
 const GRIDS: Record<View, ViewGrid> = { deposit: DEPOSIT, balance: BALANCE };
 const headOf = (h: string, thresholdPct: number): string => (h === 'Below N%' ? `Below ${thresholdPct}%` : h);
 
-/** An order's line as the grid and the sheet name it. */
 const orderName = (o: CollectionOrder): string =>
   `${o.docNo}${o.invoiceNumber ? ` · ${o.invoiceNumber}` : ''} · ${o.customer ?? '—'} · ${fmtDateOrDash(o.soDate)} · ${statusWord(o.status)}`;
 
@@ -234,8 +229,6 @@ export const CollectionTab = () => {
   const balance = useColumnWidths('cob', BALANCE.widths);
   const cw = view === 'deposit' ? deposit : balance;
 
-  /* The salesmen the period had, for the filter — read off an unfiltered
-     answer so picking one does not empty the list. */
   const [sellers, setSellers] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
     if (d && salesperson == null) setSellers(d.rows.filter((x) => x.salespersonId).map((x) => ({ id: x.salespersonId as string, name: x.salesperson })));
@@ -351,7 +344,6 @@ export const CollectionTab = () => {
   );
 };
 
-/** The skeleton's tiles: the view's labels before the figures. */
 const EMPTY: CollectionReport = {
   from: '', to: '', thresholdPct: 50, rows: [],
   totals: {
@@ -360,7 +352,6 @@ const EMPTY: CollectionReport = {
   },
 };
 
-/** One line of the grid: its name, then the view's figures. */
 function Line({ template, className, name, cells, data }: {
   template: string; className: string; name: ReactNode; cells: Cell[]; data?: Record<string, string>;
 }) {

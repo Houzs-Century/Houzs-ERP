@@ -1,7 +1,3 @@
-// How an AutoCount deposit note is known (acc/autocount-deposits.ts raises it).
-// A leaf with no imports: the credit-note readers (credit-note-si.ts, the AR
-// Aging) and the note's posting (credit-notes.ts) need the mark, and the
-// module that raises the note imports them.
 
 /** The source document every AutoCount deposit note carries. */
 export const AUTOCOUNT_DEPOSIT_REF = 'AUTOCOUNT DEPOSIT';

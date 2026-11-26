@@ -73,9 +73,7 @@ export const refusalText = (err: unknown, fallback: string): string => {
     const parsed = JSON.parse(e?.body ?? '') as { message?: string; reason?: string };
     const own = parsed.message ?? parsed.reason;
     if (typeof own === 'string' && own.trim()) return own;
-  } catch { /* not JSON — fall through */ }
-  /* An EMPTY message is silence too — fall through to the caller's sentence
-     rather than render a blank red line. */
+  } catch { }
   return e?.message?.trim() ? e.message : fallback;
 };
 

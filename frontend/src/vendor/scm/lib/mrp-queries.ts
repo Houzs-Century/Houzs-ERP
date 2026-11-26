@@ -1,12 +1,3 @@
-// Vendored from apps/backend/src/lib/mrp-queries.ts — the TanStack Query hooks
-// for /mrp (the trading-company Stock Status Report) + per-category lead times.
-//
-// HOUZS VENDOR NOTE: the source module's lead-time PUT mutation hand-rolled a
-// fetch with a supabase.auth.getSession() bearer token. Here the same write
-// goes through the vendored authedFetch (→ /api/scm/mrp-lead-times), which
-// reads the token from localStorage['auth:token']; the supabase import and the
-// raw fetch are dropped. Everything else (the MRP read hooks + types) is copied
-// verbatim.
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -17,40 +8,29 @@ export type MrpAllocSource = 'stock' | 'po' | 'shortage';
 export type MrpLine = {
   soItemId: string;
   soDocNo: string;
-  /* Canonical stored listing order within the SO (migration 0165) — the Sofa
-     tab orders an SO's module rows by this so they read LHF → NA → RHF exactly
-     as the SO detail + SO PDF do. NULL on legacy lines (created_at fallback). */
   lineNo?: number | null;
   createdAt?: string | null;
   debtorName: string | null;
-  customerState: string | null;  // staff #8 — info-only, from the SO's customer_state
+  customerState: string | null;
   soDate: string | null;
   deliveryDate: string | null;
   processingDate: string | null;
-  /* Commander 2026-05-29 — order-by date = delivery − category lead days. */
   orderByDate: string | null;
   qty: number;
   source: MrpAllocSource;
   poNumber: string | null;
   poEta: string | null;
   shortageQty: number;
-  /* Commander 2026-05-31 — when source==='po', the covering PO's supplier so a
-     covered line shows it READ-ONLY (a raised PO's supplier can't change).
-     NULL on stock / shortage lines. */
   poSupplierId: string | null;
   poSupplierName: string | null;
   /* HC-0128 — supplier the line's content routes to (Hydraulic / NB fabric ->
      NB FURNITURE), pre-selected over the SKU's main. Absent on a snapshot
      stored before the field existed. */
   ruleSupplierId?: string | null;
-  /* Sofa only — the batch (= PO number) the whole set is planned from. */
   batchNo?: string | null;
 };
 
 export type MrpSku = {
-  /* Commander 2026-05-31 — each row is scoped to ONE warehouse (per-WH MRP);
-     the same SKU+variant in two warehouses produces two rows. NULL when the
-     demand line has no warehouse bound yet. */
   warehouseId: string | null;
   warehouseCode: string | null;
   warehouseName: string | null;
@@ -78,16 +58,14 @@ export type SofaSet = {
   warehouseName: string | null;
   soItemId: string;
   soDocNo: string;
-  /* Canonical stored listing order within the SO (migration 0165). NULL on
-     legacy lines → groupBySo falls back to created_at, then item_code. */
   lineNo: number | null;
   createdAt: string | null;
   debtorName: string | null;
-  customerState: string | null;  // staff #8 — info-only, from the SO's customer_state
+  customerState: string | null;
   soDate: string | null;
   deliveryDate: string | null;
   processingDate: string | null;
-  orderByDate: string | null; // delivery − category lead days
+  orderByDate: string | null;
   itemCode: string;
   description: string | null;
   variantLabel: string | null;
@@ -96,16 +74,11 @@ export type SofaSet = {
   qty: number;
   orderedQty: number;
   shortageQty: number;
-  poNumber: string | null; // PO(s) this set's units were raised into
-  poEta: string | null;    // earliest PO-line delivery date (when goods arrive)
-  poSupplierId: string | null;   // covering PO's supplier (read-only on covered sets)
-  poSupplierName: string | null; // …resolved name; null for stock/shortage sets
-  /* On-hand units of the covering batch this line consumed (the stock slice of
-     orderedQty). Optional on the type so fixtures from before the field parse. */
+  poNumber: string | null;
+  poEta: string | null;
+  poSupplierId: string | null;
+  poSupplierName: string | null;
   stockQty?: number;
-  /* The batch (= PO number) the WHOLE set is planned from: the received dye lot
-     for a stock set, the covering PO otherwise; null when nothing covers it. A
-     sofa set is one batch or nothing (1 PO = 1 batch, never split). */
   batchNo?: string | null;
   suppliers: Array<{ supplierId: string; code: string; name: string; isMain: boolean }>;
 };
@@ -122,11 +95,8 @@ export type MrpResponse = {
      (owner, 2026-08-16). Optional on the type only so a response from a backend
      that predates the field still parses. */
   undated?: {
-    /** General (non-sofa) path — respects the category + warehouse filters. */
     lines: number;
     shortageUnits: number;
-    /** Sofa path — SOFA-by-construction and NOT category-filtered, so read it
-        on the sofa view only or it overstates every other tab. */
     sofaSets: number;
     sofaShortageUnits: number;
     hidden: boolean;
@@ -138,23 +108,11 @@ export type MrpResponse = {
     sofaSetCount: number;
     sofaSetShortageCount: number;
   };
-  /* Stored-planning-snapshot metadata (backend option B, 2026-08-19). `stored`
-     is true when this response came from the saved snapshot (the default view),
-     false when it was computed live (a filtered/undated view, or before the
-     company's first snapshot). `computedAt` is when the plan was calculated, so
-     the page can show "as of <time>". Optional so a response from a backend that
-     predates the snapshot still parses. */
   computedAt?: string;
   stored?: boolean;
 };
 
 /** Stock Status Report / MRP — recomputed server-side on every call. */
-/* `category: null` is the Others tab asking for EVERYTHING and sorting the rows
-   out itself (pages/scm-v2/mrp-views.ts). It is a distinct state from a missing
-   parameter and from 'all', and it is typed rather than encoded as a magic
-   string so a caller cannot pass it by accident: this page's whole bug class is
-   one filter meaning two things. It joins the QUERY KEY too — 'all' and a
-   category must never share a cache entry. */
 export function useMrp(params: { category: string | null; warehouseId: string; includeUndated?: boolean }) {
   const { category, warehouseId, includeUndated } = params;
   /* Undated demand is HIDDEN unless the caller asks for it (owner 2026-08-18;
@@ -169,13 +127,6 @@ export function useMrp(params: { category: string | null; warehouseId: string; i
       const q = new URLSearchParams();
       if (category && category !== 'all') q.set('category', category);
       if (warehouseId && warehouseId !== 'all') q.set('warehouseId', warehouseId);
-      /* ALWAYS sent, in BOTH directions. The old `if (includeUndated) set(...)`
-         expressed "hide" by SILENCE, which only worked while the server default
-         happened to agree. Now that the default is true, silence would mean
-         "show" and unticking the box would have changed nothing on screen —
-         the omitted-parameter no-op this repo keeps re-learning. The client
-         states what it wants and the response's `undated.hidden` states what it
-         got, so a flag the server did not honour is visible from the answer. */
       q.set('includeUndated', wantUndated ? 'true' : 'false');
       const qs = q.toString();
       return authedFetch<MrpResponse>(`/mrp${qs ? `?${qs}` : ''}`);
@@ -184,10 +135,6 @@ export function useMrp(params: { category: string | null; warehouseId: string; i
   });
 }
 
-/* Manual "Regenerate" — recompute the stored MRP snapshot server-side and
-   refresh every MRP view. POSTs /mrp/regenerate (option B, 2026-08-19); on
-   success the whole 'mrp' query family is invalidated so the page re-reads the
-   fresh snapshot. */
 export function useRegenerateMrp() {
   const qc = useQueryClient();
   return useMutation({
@@ -197,17 +144,10 @@ export function useRegenerateMrp() {
   });
 }
 
-/* ── Per-category lead times (Commander 2026-05-29), now per-WAREHOUSE
-      (Commander 2026-06-22, migration 0184 / SCM mig 0036) ──────────────────── */
-/* A lead-time category is a lower-cased product category. Open on purpose
-   (2990-0063): the server lists them from the catalogue, so a category added in
-   Products gets a lead-time row without a code change here. */
 export type LeadCategory = string;
 export type CategoryLeadTimes = Partial<Record<LeadCategory, number>>;
 export interface LeadCategoryOption { key: LeadCategory; label: string }
 
-/* Per-warehouse lead-time map, SET values only. The global-defaults bucket is
-   under the key "null"; each warehouse under its uuid. */
 export const GLOBAL_LEAD_KEY = 'null';
 export type WarehouseLeadTimes = Record<string, CategoryLeadTimes>;
 
@@ -219,11 +159,6 @@ export function useCategoryLeadTimes() {
   });
 }
 
-/* What a blank lead-time box falls back to, for the "When blank" column. Mirrors
-   resolveLeadDays (backend scm/lib/lead-time.ts): the category's own number,
-   then (Sofa Accessory only) Sofa's, then Others', else 0. `layers` are the
-   sources in priority order (e.g. supplier override, then base); the box being
-   edited is layers[0] for its own category, so that one is skipped. */
 export function leadFallbackLabel(
   category: LeadCategory,
   layers: Array<(c: LeadCategory) => number | undefined>,
@@ -250,7 +185,7 @@ export function useUpdateCategoryLeadTime() {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['mrp-lead-times'] });
-      qc.invalidateQueries({ queryKey: ['mrp'] }); // order-by dates recompute
+      qc.invalidateQueries({ queryKey: ['mrp'] });
     },
     onError: writeFailed,
   });

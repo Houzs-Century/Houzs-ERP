@@ -1,14 +1,10 @@
-/* The phone payment row moved out of MobileNewSO.tsx (size ceiling) unchanged.
- * Pins what it did there: the method decides the sub-fields, a row with money
- * and no slip says the slip is required, edits and the remove cross reach the
- * owner, and Convert shows its source pick. */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../vendor/scm/lib/authed-fetch", async (orig) => ({
   ...(await orig<typeof import("../vendor/scm/lib/authed-fetch")>()),
-  authedFetch: vi.fn(() => new Promise(() => undefined)), // the dropdowns fall back to their seed lists
+  authedFetch: vi.fn(() => new Promise(() => undefined)),
 }));
 vi.mock("../auth/AuthContext", () => ({ useAuth: () => ({ user: { id: 1, name: "Owner" }, can: () => false }) }));
 

@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// acc/payments — customer payments into the ledger, through the one gate.
-//
-// The sales side already records payments well (2,703 rows, RM 9.34M at the
-// time this module landed) — what it never did is book them. This module owns
-// that booking: Dr cash/bank/acquirer-transit, Cr AR, per the rules table.
-//
-// Idempotent per payment ROW: source_type 'SOPAY'/'SIPAY', source_doc_no = the
-// payment row's uuid. The engine's guard fails closed and the database's
-// acc_je_one_active_source index refuses a duplicate ACTIVE posting outright,
-// so the insert hook, the backfill endpoint and any retry can all run against
-// the same row without double-booking a sen.
-//
-// What is deliberately NOT posted:
-//   • method = 'imported' — migration-era rows; AutoCount's book already
-//     carries that money (the same seam as migrated_no_stock documents).
-//   • zero/negative amounts — a refund is a different document, not a
-//     negative receipt.
-// ----------------------------------------------------------------------------
 
 import { postJournal, reverseJournal, validateJournal, type ReverseJournalResult } from './engine';
 import { resolveRoles, customerPaymentLines, orderMoneyTransferLines, type RuleLine } from './rules';
@@ -35,7 +16,6 @@ export type SoPaymentRow = {
   company_id: number | null;
   /** A converted row (method `converted`): the cancelled order it moved money from (docs/bugs/0927). */
   converted_from_so_doc_no?: string | null;
-  /** When the row was keyed — for a converted row, the day the money was moved, which dates the transfer; the row keeps the ORIGINAL paid_at. */
   created_at?: string | null;
 };
 
@@ -51,9 +31,6 @@ export type PostPaymentResult =
   | { ok: true; status: 'would_post'; entryDate: string; lines: RuleLine[] }
   | { ok: false; status: string; reason?: string };
 
-/** Resolve the acquirer's transit account by the DISPLAY name the sales panel
-    stores (brief §2.13: same row for screen and ledger). Unmapped or unreadable
-    → null, and the caller books to the generic EDC transit LOUDLY. */
 async function transitFor(
   sb: any,
   companyId: number | null,
@@ -94,8 +71,6 @@ export const customerPartyCode = (debtorCode: string | null | undefined, custome
   return id !== '' ? id : null;
 };
 
-/** The date the money moved (§2.5: document date drives reports), falling back
-    to nothing — a payment with no paid_at is refused rather than dated today. */
 const paymentDate = (paidAt: string | null): string | null => {
   const d = (paidAt ?? '').slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
@@ -198,8 +173,6 @@ async function postConvertedPayment(sb: any, p: SoPaymentRow, opts: { dryRun?: b
   if (!from.ok) return { ok: false, status: 'so_read_failed', reason: from.reason };
   if (!to.ok) return { ok: false, status: 'so_read_failed', reason: to.reason };
   const companyId = to.companyId ?? p.company_id ?? null;
-  /* The transfer is dated the day it was made; a converted row keeps the
-     original paid_at for the screen, so the entry date rides beside it. */
   const entryDate = (p.created_at ? mytDateOf(p.created_at) : null) ?? paymentDate(p.paid_at);
   if (!entryDate) return { ok: false, status: 'bad_paid_at', reason: `converted payment ${p.id} has no usable date` };
   const roles = await resolveRoles(sb, companyId);
@@ -275,18 +248,10 @@ export async function postSiPayment(sb: any, p: SiPaymentRow, opts: { bankAccoun
   if (siErr) return { ok: false, status: 'si_read_failed', reason: siErr.message };
   const inv = si as { invoice_number?: string; company_id?: number | null; debtor_code?: string | null; debtor_name?: string | null; migrated_no_stock?: boolean | null; so_doc_no?: string | null } | null;
   if (!inv) return { ok: false, status: 'si_not_found', reason: p.sales_invoice_id };
-  /* A migrated invoice booked NO receivable here (AutoCount carries it), so
-     its payment must not relieve an AR this ledger never recorded. */
   if (inv.migrated_no_stock === true) return { ok: true, status: 'skipped_imported' };
 
   const companyId = inv.company_id ?? p.company_id ?? null;
 
-  /* THE CUSTOMER'S CODE on the AR leg, by the rule the invoice's own revenue
-     entry follows (post-si-revenue.ts): the debtor code when the business keeps
-     one (HOUZS), else the order's customer_id (2990 keeps no debtor codes).
-     Reading the invoice's debtor code alone booked every 2990 invoice payment
-     under no customer, so the customer's sub-ledger still showed the invoice
-     owed (Conts #395). The order read is company-scoped. */
   let customerCode: string | null = customerPartyCode(inv.debtor_code, null);
   if (!customerCode && inv.so_doc_no && companyId != null) {
     const { data: so, error: soErr } = await sb.from('mfg_sales_orders')
@@ -323,23 +288,17 @@ export async function postSiPayment(sb: any, p: SiPaymentRow, opts: { bankAccoun
   return { ok: false, status: r.status, reason: r.reason };
 }
 
-/* ── Backfill — walk every SO payment row that has no ACTIVE ledger entry and
-   post it. Batched and idempotent: safe to call repeatedly until `remaining`
-   is zero; a row that fails is reported, not retried in-loop, and does not
-   stop the batch (§2.14: the failure list IS the output). */
 /** One candidate's verdict in a backfill run — real or dry (docs/bugs/0652). */
 export type BackfillRow = { id: string; docNo: string; paidOn: string; method: string; amountSen: number; status: string; reason?: string };
 
 export async function backfillSoPayments(
   sb: any,
   batchLimit = 200,
-  /** dryRun: put each candidate through the gate's checks and report; write nothing. */
   opts: { dryRun?: boolean } = {},
 ): Promise<{
   ok: boolean; dryRun: boolean; scanned: number; posted: number; wouldPost: number; skipped: number;
   failed: Array<{ id: string; status: string; reason?: string }>; rows: BackfillRow[]; remaining: number; reason?: string;
 }> {
-  // Every payment id that already carries an ACTIVE entry.
   const postedIds = new Set<string>();
   {
     let from = 0;
@@ -359,7 +318,6 @@ export async function backfillSoPayments(
     }
   }
 
-  // Candidate payment rows, oldest first — a deterministic, resumable order.
   const candidates: SoPaymentRow[] = [];
   {
     let from = 0;
@@ -529,8 +487,6 @@ export async function unbookedPayments(
   | { ok: true; since: string | null; rows: UnbookedPayment[]; totalSen: number; neverBooked?: NeverBooked }
   | { ok: false; reason: string }
 > {
-  /* Every payment id that already carries an ACTIVE entry, and the earliest
-     date any of them was booked on. One read serves both. */
   const booked = new Set<string>();
   let since: string | null = null;
   {
@@ -576,8 +532,6 @@ export async function unbookedPayments(
     for (const r of raw) {
       const id = String(r.id ?? '');
       if (!id || booked.has(id)) continue;
-      /* The same three the poster itself skips, or the panel would report as
-         failures the rows it was told to leave alone. */
       const method = String(r.method ?? '');
       if (method === 'imported') continue;
       const amountSen = Number(r.amount_sen ?? 0);
@@ -600,17 +554,10 @@ export async function unbookedPayments(
   if (siErr) return { ok: false, reason: `SI payments: ${siErr.message}` };
   take('SIPAY', (siRaw ?? []) as Array<Record<string, any>>, (r) => String(r.sales_invoice_id ?? ''));
 
-  /* Oldest first: the one that has been wrong longest is the one to chase. */
   rows.sort((a, b) => a.paidOn.localeCompare(b.paidOn));
   return { ok: true, since, rows, totalSen: rows.reduce((s, r) => s + r.amountSen, 0) };
 }
 
-/* ── A payment that no longer says what its entry says ──────────────────────
-   The reads behind acc/payment-drift's decision. Both payment tables are
-   PAGED in full rather than bounded by a date: the date is one of the things
-   that can have been edited, so a window would hide exactly the row it was
-   looking for. Only ACTIVE (posted, not reversed) SOPAY/SIPAY entries count —
-   a reversed one has already been superseded and says nothing about today. */
 export async function paymentEntryDisagreements(
   sb: any,
   companyId: number,
@@ -645,8 +592,6 @@ export async function paymentEntryDisagreements(
       from += page;
     }
   }
-  /* Nothing has been booked here, so nothing can disagree. Skipping the two
-     table scans in that case keeps a fresh company cheap. */
   if (entries.length === 0) return { ok: true, rows: [], scanned: 0 };
 
   const payments: PaymentFact[] = [];

@@ -83,7 +83,6 @@ describe('the deposit invoice sheet — A4, the Sales Invoice layout (owner 2026
     expect(has(draws, ': 2990-SO-2609-001')).toBe(true);
     expect(has(draws, ': Cash')).toBe(true);
     expect(has(draws, ': Issued')).toBe(true);
-    /* The design's A4 family (batch 5 step 10): the line, TOTAL, the deposit received against it, nothing due. */
     expect(has(draws, 'Deposit for sales order 2990-SO-2609-001 · paid by Cash on 2026/09/05')).toBe(true);
     expect(draws.some((d) => d.text === 'TOTAL')).toBe(true);
     expect(has(draws, 'Deposit received')).toBe(true);
@@ -98,14 +97,12 @@ describe('the deposit invoice sheet — A4, the Sales Invoice layout (owner 2026
     expect(has(draws, 'CANCELLED')).toBe(false);
     expect(has(draws, 'VOID')).toBe(false);
     expect(has(draws, 'Closed by')).toBe(false);
-    /* No order on the sheet: nothing about it is guessed. */
     expect(has(draws, 'Order total')).toBe(false);
     expect(has(draws, 'Balance on order')).toBe(false);
   });
 
   test("with its order: the customer's address, phone and e-mail, and where the order stands after this deposit", async () => {
     const { draws } = await render({ order: ORDER });
-    /* The address wraps to the column; read back in order it is the order's lines, composed as the SO print composes them. */
     expect(draws.map((d) => d.text).join(' ')).toContain('No. 12, Jalan Contoh 3, Taman Contoh, 47300 Petaling Jaya Selangor');
     expect(has(draws, formatPhone('0123456789'))).toBe(true);
     expect(has(draws, 'larding@example.com')).toBe(true);
@@ -131,7 +128,6 @@ describe('the deposit invoice sheet — A4, the Sales Invoice layout (owner 2026
 
   test('a cancelled invoice reads as void, with its reason', async () => {
     const { draws } = await render({ status: 'CANCELLED', cancel_reason: 'payment on 2990-SO-2609-001 edited — re-issued' });
-    /* VOID across it (the design's word, A4) and the reason under NOTE. */
     expect(has(draws, 'VOID')).toBe(true);
     expect(has(draws, ': Cancelled')).toBe(true);
     expect(has(draws, 'Cancelled · payment on 2990-SO-2609-001 edited')).toBe(true);

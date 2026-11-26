@@ -1,7 +1,3 @@
-// ----------------------------------------------------------------------------
-// Shared tiny React hooks. Anything that appears in two or more components or
-// pages belongs here.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react';
 

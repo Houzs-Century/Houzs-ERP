@@ -68,7 +68,6 @@ const draw = (line: BankLine = LINE) => {
   render(wrap(<BankRecordJournal line={line} accountCode="310-0010" onClose={onClose} onToast={onToast} />));
   return { onClose, onToast };
 };
-/* The other side's account, typed to and picked — then Save & post. */
 const recordAsCharge = () => {
   const box = screen.getByLabelText('Line 1 account') as HTMLInputElement;
   fireEvent.focus(box);
@@ -109,7 +108,6 @@ describe('Record journal', () => {
     expect(screen.getByLabelText('Bank debit').textContent).toBe('');
     expect((screen.getByLabelText('Line 1 debit') as HTMLInputElement).value).toBe('25.00');
     expect((screen.getByLabelText('Narration') as HTMLInputElement).value).toBe('SC 2310 · SERVICE CHARGE IBG');
-    /* No draft from a bank line: it is posted and matched, or nothing. */
     expect(screen.queryByText('Save draft')).toBeNull();
     expect((screen.getByText('Save & post') as HTMLButtonElement).disabled).toBe(true);
   });
@@ -185,7 +183,6 @@ describe('Record journal', () => {
     await waitFor(() => expect(alertText()).toContain('Posted HC-JE-2610-0901, but the bank line was not matched: Whether this month is closed'));
     expect(alertText()).toContain('The line stays open — match it to HC-JE-2610-0901 by hand, or press Match again.');
     expect(onClose).not.toHaveBeenCalled();
-    /* Posted: the lines can no longer change, and the button only asks the match again. */
     expect(screen.getByLabelText('Line 1 debit').closest('fieldset')!.disabled).toBe(true);
     fireEvent.click(screen.getByText('Match again'));
     await waitFor(() => expect(onClose).toHaveBeenCalled());

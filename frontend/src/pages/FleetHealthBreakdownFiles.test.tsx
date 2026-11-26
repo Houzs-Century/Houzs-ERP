@@ -1,4 +1,3 @@
-// A breakdown / incident case keeps the scene photos and videos.
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

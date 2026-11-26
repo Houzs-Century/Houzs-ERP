@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// ListingPickerDialog — Task #120, AutoCount-style "Listing" picker.
-//
-// Replaces / augments the single "Print Listing" button on the Sales Order
-// family L1 pages (Sales Orders, Delivery Orders, Sales Invoices,
-// Delivery Returns). Opens a small modal with four radio-button choices:
-//
-//   1. Listing                     — stay on the current L1 page (refresh)
-//   2. Detail Listing              — navigate to the module's L2 page
-//   3. Outstanding Listing         — apply ?outstanding=1 to the current L1
-//   4. Outstanding Detail Listing  — L2 with ?outstanding=1
-//
-// L2 routes for modules that don't have one yet are flagged as disabled with
-// a "coming soon" hint.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react';
 import { ListChecks, ChevronDown, X } from 'lucide-react';
@@ -72,12 +57,9 @@ export function defaultOptions(opts: {
 export interface ListingPickerDialogProps {
   open: boolean;
   onClose: () => void;
-  /** Fired when commander clicks OK after picking a non-disabled option. */
   onChoose: (choice: ListingChoice) => void;
-  /** Whether the module has a Detail Listing (L2) page wired up. */
   detailListingAvailable: boolean;
   title?: string;
-  /** Initially-selected option. Defaults to "listing". */
   initial?: ListingChoice;
 }
 
@@ -92,10 +74,8 @@ export const ListingPickerDialog = ({
   const [picked, setPicked] = useState<ListingChoice>(initial);
   const options = defaultOptions({ detailListingAvailable });
 
-  // Reset picked when reopened.
   useEffect(() => { if (open) setPicked(initial); }, [open, initial]);
 
-  // Escape to close.
   useEscapeLayer(onClose, open);
 
   if (!open) return null;

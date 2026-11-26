@@ -1,21 +1,3 @@
-// ----------------------------------------------------------------------------
-// warehouse-floorplan — the ONE logic layer behind the Warehouse "Rack Overview"
-// floor plan (WarehouseFloorPlan.tsx). Pure, dependency-free, unit-tested: parse
-// a rack label, sort NATURALLY (the L1/L10/L2 fix), group slots into rack
-// columns and physical banks, and match a slot against the toolbar filters.
-//
-// A backend `Rack` row IS one physical slot. Its `rack` string is stored WITH a
-// leading word — the real KL racks are "Rack L1.1", not "L1.1" — so the design's
-// "rack" (a column of two levels) and "bank" (a row of racks) are DERIVED by
-// parsing the TRAILING token of that label:
-//
-//   "Rack L1.1"  ->  prefix "L"  ·  rackNo 1  ·  level 1
-//                    column key "L1"          series "L"
-//
-// A ZONE groups racks by (series, rackNo range): the KL warehouse is ZONE A
-// (L1–L8, R1–R8) and ZONE B (L9–L21, R9–R17), each drawn as an L row and an R
-// row with one aisle between. WAREHOUSE_ZONES is the single edit point.
-// ----------------------------------------------------------------------------
 
 import type { Rack, RackItem, RackStatus } from './warehouse-queries';
 
@@ -49,18 +31,8 @@ export const WAREHOUSE_ZONES: ZoneConfig[] = [
   },
 ];
 
-/* The assignable zone labels, in plan order — derived from WAREHOUSE_ZONES so the
-   UI zone pickers (drawer / batch bar / rack form) never hard-code the names and
-   stay a single source of truth with the layout. */
 export const ZONE_LABELS: string[] = WAREHOUSE_ZONES.map((z) => z.label);
 
-/* ── Rack label parsing ───────────────────────────────────────────────────
-   Reads the TRAILING `<letters><number>[sep<number>]` token, so a stored label
-   with a leading word — the real KL racks are "Rack L1.1", not "L1.1" — still
-   yields prefix "L", rackNo 1, level 1. Also handles "R17.2", "12.1", "L1-2",
-   bare "L1". A label with no number does not parse (rackNo NaN) and sinks to the
-   bottom of any sort. NOT `^`-anchored, on purpose: the token is matched at the
-   END so a "Rack " prefix is skipped. */
 const RACK_LABEL_RE = /([A-Za-z]*)\s*(\d+)(?:\s*[.\-/ ]\s*(\d+))?\s*$/;
 
 export type ParsedRackLabel = {
@@ -84,16 +56,11 @@ export function parseRackLabel(label: string | null | undefined): ParsedRackLabe
   };
 }
 
-/* Column key for a rack (prefix + rackNo), e.g. "L1" — the two levels "L1.1" and
-   "L1.2" share it. Unparseable labels are their own single column (raw label). */
 export function rackKeyOf(label: string): string {
   const p = parseRackLabel(label);
   return p.parsed && !Number.isNaN(p.rackNo) ? `${p.prefix}${p.rackNo}` : label.trim();
 }
 
-/* Natural comparator — prefix, then rackNo NUMERICALLY, then level. This is the
-   fix for the old lexicographic order that read L1, L10, L2. Unparseable labels
-   sort last, among themselves by raw text. */
 export function compareRackLabels(a: string, b: string): number {
   const pa = parseRackLabel(a);
   const pb = parseRackLabel(b);
@@ -108,10 +75,6 @@ export function compareRackLabels(a: string, b: string): number {
   return (pa.level ?? 0) - (pb.level ?? 0);
 }
 
-/* ── Slot view model ──────────────────────────────────────────────────────
-   Flattens a `Rack` (+ its items) into the fields the floor plan renders. A slot
-   can hold several items; product / customer / doc aggregate, qty sums, in-date
-   takes the earliest. `search` is the lower-cased haystack for free-text match. */
 export type Slot = {
   rack: Rack;
   id: string;
@@ -120,7 +83,6 @@ export type Slot = {
   rackKey: string;
   rackName: string;
   level: number | null;
-  /* Manual zone override from the rack row (null = derive from the number). */
   zone: string | null;
   status: SlotStatus;
   itemCount: number;
@@ -140,14 +102,12 @@ const STATUS_MAP: Record<RackStatus, SlotStatus> = {
   EMPTY: 'empty',
 };
 
-/* One clear product description for an item — never empty. */
 export function itemDescription(it: RackItem): string {
   const name = (it.product_name || it.item_code || '').trim();
   const size = (it.size_label || '').trim();
   return (size && !name.includes(size) ? `${name} ${size}`.trim() : name) || 'Item';
 }
 
-/* customer · doc, whichever are present. */
 export function itemMeta(it: RackItem): string {
   return [it.customer_name || '', it.source_doc_no || ''].filter(Boolean).join(' · ');
 }
@@ -195,11 +155,6 @@ export function toSlot(rack: Rack): Slot {
   };
 }
 
-/* ── Filters ──────────────────────────────────────────────────────────────
-   `matchSlot` is the highlight-and-dim predicate: a passing slot is a "hit"
-   (ring + full opacity), a failing one is dimmed (never hidden). Product /
-   customer match ANY item on the slot; the date range tests the earliest
-   in-date; `q` is a substring across id / product / customer / doc. */
 export type FloorFilters = {
   q: string;
   product: string;
@@ -243,9 +198,6 @@ export function statusCounts(slots: Slot[]): Record<SlotStatus, number> {
   return out;
 }
 
-/* ── Zones, banks, rack columns ───────────────────────────────────────────
-   A rack column holds a rack's levels; a bank is one series' row of columns
-   within a zone; a zone groups its banks (L then R) and carries the aisle. */
 export type RackColumn = {
   key: string;
   name: string;
@@ -308,12 +260,6 @@ function buildBank(prefix: string, group: Slot[]): Bank {
   return { prefix, label, used: occupied, total: group.length, utilPct: pct(occupied, group.length), racks };
 }
 
-/* The zone a slot belongs to. A manual `zone` override wins — but only when it
-   names a configured zone that actually has a bank for this slot's series, so a
-   stray value can never strand a slot in a zone with nowhere to draw it.
-   Otherwise the number-range rule decides (series + rackNo in a bank's [from,to]).
-   Returns null when neither assigns it (unparseable / out-of-range and no valid
-   override) — those fall to the trailing UNZONED zone. */
 export function resolvedZoneLabel(slot: Slot, zones: ZoneConfig[] = WAREHOUSE_ZONES): string | null {
   const override = (slot.zone ?? '').trim();
   if (override) {
@@ -330,11 +276,6 @@ export function resolvedZoneLabel(slot: Slot, zones: ZoneConfig[] = WAREHOUSE_ZO
   return null;
 }
 
-/* Group slots into the configured zones. Each slot's zone is resolved once (a
-   manual override, else the series + rackNo range). Anything that resolves to no
-   zone — an unexpected series, an out-of-range or unparseable number with no
-   valid override — still renders under a trailing UNZONED zone, so nothing
-   disappears. Within a zone a slot joins the bank matching its series. */
 export function buildZones(slots: Slot[], zones: ZoneConfig[] = WAREHOUSE_ZONES): Zone[] {
   const zoneOf = new Map<Slot, string | null>();
   for (const s of slots) zoneOf.set(s, resolvedZoneLabel(s, zones));

@@ -26,7 +26,6 @@ import { DeliveryOrderNewV2 } from "./DeliveryOrderNewV2";
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  // 01:30 on 10 November in Malaysia; still the 9th in UTC.
   vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));
   authedFetch.mockReset();
   authedFetch.mockImplementation(async (url: string) => {

@@ -143,8 +143,6 @@ export function useCellRange<T, L>({
       setRange(null);
       return;
     }
-    // No text selection and no native row drag from a number cell; an open
-    // editor elsewhere still has to blur so it saves.
     e.preventDefault();
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) document.activeElement.blur();
     if (e.shiftKey && range) {
@@ -157,7 +155,6 @@ export function useCellRange<T, L>({
     setRange({ anchor: cell, focus: cell });
     setDragging(true);
   };
-  // A drag or Shift+click picks cells; it must not also open the row.
   const onClickCapture = (e: ReactMouseEvent) => {
     if (!swallowClickRef.current) return;
     swallowClickRef.current = false;

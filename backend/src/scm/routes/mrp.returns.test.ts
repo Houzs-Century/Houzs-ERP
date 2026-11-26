@@ -1,7 +1,3 @@
-// 2990-0011 (Sim, 2026-10-20): a customer-rejected Delivery Return is not
-// demand again. 2990-DR-2610-001 brought back the XAMMAR set of
-// 2990-SO-2606-001; the returned set stays in stock for the next matching
-// order, and a customer who still wants the item gets a new SO.
 import { describe, expect, test, vi } from 'vitest';
 
 /* Delivered rides MRP's demand read as embedded DO lines (lib/mrp-delivered.ts,
@@ -47,8 +43,6 @@ const sofaLine = (docNo: string, delivery: string, doLines: Row[] = []): Row => 
   so: { debtor_name: 'x', status: 'READY_TO_SHIP', so_date: '2026-06-11', customer_delivery_date: delivery, processing_date: '2026-06-17', customer_state: null },
 });
 
-/* The 2606-001 set shipped on a DELIVERED DO. Whether it came back is not read:
-   MRP nets delivered GROSS of returns, so a returned set is stock, not demand. */
 const shipped = [{ qty: 1, delivery_order: { status: 'DELIVERED' } }];
 const run = () => computeMrp(fakeSb({
   mfg_sales_order_items: [sofaLine('2990-SO-2606-001', '2026-07-19', shipped), sofaLine('2990-SO-2611-001', '2026-12-01')],

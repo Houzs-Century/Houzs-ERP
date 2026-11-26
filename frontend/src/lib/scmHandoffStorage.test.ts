@@ -74,9 +74,6 @@ describe("SCM handoff storage", () => {
   });
 
   it("keeps durable payment intents when a session ends", () => {
-    // clearAllScmHandoffs is what a 401 / logout / company switch runs. Those
-    // intents are money already collected, so ending a session must not be able
-    // to delete them.
     bindBrowserStorageIdentity(1);
     writeScmHandoff("soPaymentRetry", { payment: "owner-1" }, "SO-1");
 

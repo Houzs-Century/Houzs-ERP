@@ -1,4 +1,3 @@
-// The date-range presets and the day arithmetic behind DateRangeButton.
 import { describe, expect, test } from 'vitest';
 import {
   OUTSTANDING_DEFAULT_PRESET, OUTSTANDING_RANGE_PRESETS, PROJECT_REPORT_RANGE_PRESETS, REPORT_RANGE_PRESETS,
@@ -22,7 +21,6 @@ describe('presetRange — each preset counted back from today', () => {
   });
 
   test('Last 12 months is the window Outstanding always opened on (a year back to the day)', () => {
-    // The page used to read todayMyt(-365): the same 365 days back.
     expect(presetRange('last12Months', TODAY).from).toBe(addDays(TODAY, -365));
     expect(OUTSTANDING_DEFAULT_PRESET).toBe('last12Months');
   });
@@ -106,7 +104,6 @@ describe('future ranges (Project Overview, owner 2026-11-18)', () => {
     expect(presetLabel('wholeMonth')).toBe('This month');
     expect(PROJECT_REPORT_RANGE_PRESETS).toEqual(expect.arrayContaining(['nextMonth', 'nextQuarter', 'next12Months']));
     expect(presetOf({ from: '2026-12-01', to: '2026-12-31' }, PROJECT_REPORT_RANGE_PRESETS, '2026-11-18')).toBe('nextMonth');
-    /* The Finance reports keep their past-only list. */
     expect(REPORT_RANGE_PRESETS).not.toContain('nextMonth');
   });
 });

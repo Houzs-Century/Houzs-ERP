@@ -1,5 +1,3 @@
-// Verification step outcome picker: Accepted (green), Needs more info (yellow),
-// Rejected (red). Kept out of ServiceCases.tsx, which is at its size ceiling.
 import type { ReactElement } from "react";
 import { Check } from "lucide-react";
 import { cn } from "../../lib/utils";

@@ -1,11 +1,6 @@
-// Month grid(s) for picking a date RANGE on the SO list filters. Presentation
-// only: it reports yyyy-mm-dd strings and knows nothing about which column they
-// filter. Monday-first, like the presets in the shared model. Two months side by
-// side on desktop, one on a phone.
 import { useState } from "react";
 import { soAddDays, soIsYmd } from "../../vendor/shared/so-list-filter-model";
 
-/* Names from Intl rather than typed lists: 2024-01-01 was a Monday. */
 const WEEKDAYS = Array.from({ length: 7 }, (_, i) =>
   new Date(Date.UTC(2024, 0, 1 + i)).toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }).slice(0, 2));
 const monthName = (first: string) =>

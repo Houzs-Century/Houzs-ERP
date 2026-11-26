@@ -1,6 +1,3 @@
-// GoodsReceivedDetailV2 — Theme C redesign of the GRN detail page. Stock-in
-// doc: goods land at a warehouse, PO's received_qty rolls up. Aside hero =
-// Received value + qty landed, tinted green once posted.
 
 import { lazy, useCallback, useMemo, useState, type ReactNode } from "react";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
@@ -98,10 +95,7 @@ type GrnHeader = HoldFields & {
 type GrnItem = {
   id: string;
   item_code?: string | null;
-  /* Supplier's own code, snapshotted per line at receipt (backend returns it). */
   supplier_sku?: string | null;
-  /* The line's own remark (grn_items.notes). The column and the line PATCH that
-     accepts it have both existed since the table did; nothing rendered it. */
   notes?: string | null;
   description?: string | null;
   description2?: string | null;
@@ -115,8 +109,6 @@ type GrnItem = {
      PO line's qty, stamped by the detail GET (null on manual lines). */
   qty_received?: number | null;
   qty_accepted?: number | null;
-  /* The one rack the line is on (NULL when split over several — those are in
-     scm.grn_item_racks, read by useGrnItemRacks). */
   rack_id?: string | null;
   ordered_qty?: number | null;
   source_po_id?: string | null;
@@ -124,14 +116,10 @@ type GrnItem = {
   unit_price_sen?: number;
   line_total_sen?: number;
   warehouse_code?: string | null;
-  /* Per-line delivery date (mig 0101) — the ETA the supplier's shipment landed
-     under. Nullable; falls back to the header receive date when unset. */
   delivery_date?: string | null;
-  /* Landed-cost allocation (Phase 1-A) — freight (MYR sen) allocated to this line. */
   allocated_charge_sen?: number | null;
 };
 
-/* Landed-cost allocation (Phase 1-A) — human labels for the freight basis. */
 const ALLOC_LABEL: Record<string, string> = { QTY: 'By quantity', VALUE: 'By value', CBM: 'By volume (CBM)' };
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
@@ -141,10 +129,6 @@ const supplierCodeOf = (h: GrnHeader): string => h.supplier?.code || "—";
 const poOf = (h: GrnHeader): string => h.purchase_order?.po_number || "—";
 
 type Effective = "draft" | "posted" | "cancelled" | "on_hold";
-/* ON_HOLD named explicitly (mig 0319). The fall-through is "draft", so a HELD
-   goods receipt would have read as an un-posted DRAFT — which is the opposite
-   of what it is: a held GRN has already posted, and its stock IN already
-   fired. A hold is a paperwork pause, never a stock event. */
 const effectiveOf = (h: GrnHeader): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
@@ -235,7 +219,6 @@ function ReceivedHeroCard({ header, items }: { header: GrnHeader; items: GrnItem
   const total = header.total_sen ?? 0;
   const { orderedQty, receivedQty } = receivedOf(items);
   const isPosted = eff === "posted";
-  // Multi-currency (Phase 1-A) — MYR-equivalent for a foreign receipt (no-op for MYR).
   const isForeign = String(header.currency ?? "MYR").toUpperCase() !== "MYR";
   const rate = resolveFxRate(header.exchange_rate);
   return (
@@ -282,29 +265,14 @@ function HeroLine({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
   );
 }
 
-// ─── Legacy inline editor (lazy) ───────────────────────────────────────────
-// V2 is READ-ONLY by design. The variant-capable draft editor (editable
-// Description + per-category BEDFRAME/SOFA variant editor) lives in the legacy
-// ./GoodsReceivedDetail page — we forward to it whenever ?edit=1 lands on this
-// route so the Edit button actually opens editable fields. Mirrors how
-// SalesOrderDetailV2 forwards ?edit=1 to ./SalesOrderDetail. Lazy-loaded so the
-// editor bundle only ships when someone actually clicks Edit.
 const GoodsReceivedDetailInlineEditor = lazy(() =>
   import("./GoodsReceivedDetail").then((m) => ({ default: m.GoodsReceivedDetail })),
 );
 
-/* Thin router — the only hooks it calls are useSearchParams and useLocation
-   (both unconditional, at the top), so Rules of Hooks
-   are respected when the ?edit=1 flip swaps between the read-only body and the
-   lazy inline editor (the two children have different hook counts). */
 export function GoodsReceivedDetailV2() {
   const [params] = useSearchParams();
   const location = useLocation();
   if (params.get("edit") === "1") {
-    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
-       so a failed editor chunk shows the panel in place of the editor and
-       clears when the operator moves to another document, instead of leaning
-       on a boundary in a file this one cannot see. */
     return (
       <LazySlot
         resetKey={`grn-editor:${location.pathname}`}
@@ -323,15 +291,8 @@ function GoodsReceivedDetailV2ReadOnly() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
 
-  /* History drawer. This page already had a History button, but it navigated to
-     `?tab=history` — a param nothing in this file ever read, so it changed the
-     URL and rendered nothing. It now opens the shared audit drawer. Stable close
-     handler so the memoized panel is not re-created on every parent render. */
   const [historyOpen, setHistoryOpen] = useState(false);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
-  // Relationship map — the receipt-side twin of the PO map (same shared 5-node
-  // canvas), so staff can see what this GRN converted FROM (PO/SO) and TO
-  // (PI/PR). Consumed after `grn` resolves below.
   const [relMapOpen, setRelMapOpen] = useState(false);
 
   const detail = useGrnDetail(id ?? null);
@@ -360,8 +321,6 @@ function GoodsReceivedDetailV2ReadOnly() {
     };
   }, [racksQ.data?.racks, splitQ.data]);
 
-  // The 5-node receipt chain + what each node does when clicked (shared hook,
-  // one logic layer — mirrors how the PO / DO detail pages consume their map).
   const {
     nodes: chainNodes,
     onNodeClick: onChainNodeClick,
@@ -376,11 +335,6 @@ function GoodsReceivedDetailV2ReadOnly() {
     { label: grn?.grn_number ?? id ?? "GRN" },
   ]);
 
-  /* Supplier SKU — the supplier's own code, snapshotted per line at receipt.
-     Lines that never snapshotted one (older GRNs) fall back to the live
-     supplier↔material binding — the same two-step the PO detail and the printed
-     GRN use (supplierCodeFor). The binding fetch is skipped when every line
-     already carries a snapshot; useSupplierDetail(null) is disabled. */
   const needsSkuLookup = useMemo(
     () => items.some((l) => !(l.supplier_sku ?? "").trim()),
     [items]
@@ -407,9 +361,6 @@ function GoodsReceivedDetailV2ReadOnly() {
      inside the editor, under a different name on each document, so the owner
      read it as missing (docs/bugs/0853). */
   const goAddLine = () => id && navigate(addLineHref(`/scm/grns/${id}`));
-  // Render + download the GRN PDF via the shared jspdf generator (client-side),
-  // mirroring the V1 GoodsReceivedDetail handler. The old `?print=1` navigation
-  // was dead — nothing consumed that param — so the button did nothing.
   const deliverPrintPdf = (action: PdfAction) => {
     if (!grn) return;
     return import("../../vendor/scm/lib/grn-pdf")
@@ -486,8 +437,6 @@ function GoodsReceivedDetailV2ReadOnly() {
       },
     },
     {
-      /* Next to Item: our code and the supplier's code for the same line, the
-         pair the purchaser reconciles against the supplier's delivery note. */
       key: "supplierSku",
       label: "Supplier SKU",
       width: "132px",
@@ -508,9 +457,6 @@ function GoodsReceivedDetailV2ReadOnly() {
       },
     },
     {
-      /* #26 — the purchase order THIS line came from, clickable. Per line, not
-         the header's: one receipt / invoice can span several orders. A line with
-         no PO behind it shows a dash (vendor/scm/lib/line-po-link.ts). */
       key: "sourcePo",
       label: "PO",
       width: "128px",
@@ -522,7 +468,6 @@ function GoodsReceivedDetailV2ReadOnly() {
       label: "Ordered",
       width: "84px",
       align: "right",
-      // Source PO line's qty (stamped by the detail GET); "—" on manual lines.
       getValue: (l) => l.ordered_qty ?? "",
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
@@ -535,8 +480,6 @@ function GoodsReceivedDetailV2ReadOnly() {
       label: "Received",
       width: "92px",
       align: "right",
-      // qty_accepted = landed in stock — the same figure the billing picker's
-      // REMAINING and the PO received-rollup key off.
       getValue: (l) => l.qty_accepted ?? 0,
       render: (l) => {
         const rec = Number(l.qty_accepted ?? 0);
@@ -617,9 +560,6 @@ function GoodsReceivedDetailV2ReadOnly() {
           <FocAmount
             line={l}
             amount={fmtMoney(l.line_total_sen ?? 0, grn?.currency)}
-            /* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen).
-               Dropped on a free line: a freebie that carries allocated freight
-               still cost nothing to buy, which is what the badge claims. */
             sub={freight > 0
               ? <span className="font-money text-[10.5px] text-accent-ink">+freight {fmtMoney(freight, "MYR")}</span>
               : undefined}
@@ -678,7 +618,6 @@ function GoodsReceivedDetailV2ReadOnly() {
           <div className="mt-2">
             <span className="inline-flex items-center gap-1.5">
               <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
-              {/* mig 0324 — BESIDE the status, never instead of it. */}
               <HoldChip onHold={grn.on_hold} reason={grn.hold_reason} />
             </span>
           </div>
@@ -696,7 +635,6 @@ function GoodsReceivedDetailV2ReadOnly() {
                 <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">{supplierNameOf(grn)}</h1>
                 <span className="inline-flex items-center gap-1.5">
                   <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
-                  {/* mig 0324 — BESIDE the status, never instead of it. */}
                   <HoldChip onHold={grn.on_hold} reason={grn.hold_reason} />
                 </span>
               </div>
@@ -766,8 +704,6 @@ function GoodsReceivedDetailV2ReadOnly() {
                 <Field label="Delivery note" value={grn.delivery_note_ref || "—"} muted={!grn.delivery_note_ref} mono={!!grn.delivery_note_ref} />
                 <Field label="Warehouse" value={grn.warehouse_code || "—"} muted={!grn.warehouse_code} mono={!!grn.warehouse_code} />
                 <Field label="Currency" value={grn.currency} />
-                {/* Multi-currency / landed cost (Phase 1-A) — shown only for a
-                    foreign receipt; an MYR GRN is byte-for-byte the old layout. */}
                 {String(grn.currency ?? "MYR").toUpperCase() !== "MYR" && (
                   <Field label={`Exchange rate (MYR / 1 ${grn.currency})`} value={String(resolveFxRate(grn.exchange_rate))} mono />
                 )}
@@ -816,30 +752,21 @@ function GoodsReceivedDetailV2ReadOnly() {
         </DetailGrid>
       </div>
 
-      {/* History drawer — portals to <body>, so its position here is only
-          about lifecycle, not layout. */}
       {historyOpen && (
         <DocumentHistoryDrawer doc="GRN" id={String(grn.id)}
           label={grn.grn_number} onClose={closeHistory} />
       )}
 
-      {/* Relationship map modal — the receipt-side twin of the PO map (same
-          shared 5-node canvas, read as the receipt chain). */}
       <DocumentRelationshipMapModal
         open={relMapOpen}
         onClose={() => setRelMapOpen(false)}
         nodes={chainNodes}
         onNodeClick={(n) => {
-          // Close only when the click actually navigated away; an in-app notice
-          // (multi-doc lists / access gates) renders OVER the map.
           if (onChainNodeClick(n)) setRelMapOpen(false);
         }}
         rowLabels={{ primary: "Receipt chain", secondary: "After goods receipt" }}
         pairing={chainPairing}
       />
-      {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. The picked one opens in its own tab of the
-          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}

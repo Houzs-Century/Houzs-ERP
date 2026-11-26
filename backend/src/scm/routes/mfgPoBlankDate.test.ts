@@ -1,21 +1,3 @@
-// A blank optional date must be STORED AS NULL, not sent to Postgres as "".
-//
-// The production failure, 2026-08-17: PATCH /api/scm/mfg-purchase-orders/<id>
-// with {"supplierDeliveryDate2":"","supplierDeliveryDate3":"","supplierDeliveryDate4":""}
-// answered 500 {"error":"update_failed","reason":"invalid input syntax for type
-// date: \"\""}. The same request with those keys null, or omitted, answered 200.
-// Every Purchase Order that left the optional Supplier Date 2/3/4 blank — most
-// of them — failed to save, and staff saw "Save failed - The system hit a
-// problem."
-//
-// The unit rule lives in lib/date-coerce.test.ts. This one is about the WIRING:
-// it drives the real PATCH handler and asserts what actually reached the
-// database, because the coercion helper existing is not the same fact as the
-// handler calling it. Against the pre-fix handler the stored value is "" and
-// both cases below fail.
-//
-// The fake PostgREST does not type-check columns, so this test cannot reproduce
-// the 500 itself — it pins the value that would have caused it.
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -38,15 +20,10 @@ const sb = fakeSb({
   entity_audit_log: [],
 });
 
-/* supabaseAuth replaces whatever the caller set with the service client, so the
-   fake has to be injected at that seam rather than through the context. */
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => sb }));
 
 const po = () => (sb.tables.purchase_orders[0] ?? {}) as Row;
 
-/* The global /api/* auth normally sets these; supabaseAuth reads `user` for the
-   caller's identity and companyContext sets `companyId`. Both are stubbed here
-   so the handler under test sees the same context a real request gives it. */
 const CALLER = {
   id: '7',
   email: 'buyer@houzs.test',
@@ -56,18 +33,7 @@ const CALLER = {
   created_at: '',
 } as unknown as User;
 
-/* Imported HERE, at module scope, and not inside patch(). mfg-purchase-orders
-   is ~4,700 lines and pulls a large graph behind it; awaited inside the test
-   body, that transform+evaluate is charged against testTimeout, so the suite
-   passes alone and times out at 5000ms in the full 345-file run where every
-   worker is competing for the same CPU. Reproduced deterministically with
-   `vitest run --config vitest.light.config.mts --testTimeout=1000`: before this
-   change, `Test timed out in 1000ms` at the first `it`; after it, green.
-   A top-level await runs during COLLECTION, which no test timeout bounds.
-   The vi.mock factory above is hoisted over this and only reads `sb` when
-   getSupabaseService() is CALLED, which is per-request, so the order holds. */
 const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
-/* The header PATCH needs the version the editor loaded (sister review G6). */
 const withVersion = (body: Record<string, unknown>) => ({
   expectedUpdatedAt: (sb.tables.purchase_orders.find((r) => r.id === 'po-1') as Row | undefined)?.updated_at, ...body,
 });

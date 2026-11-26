@@ -32,8 +32,6 @@ export const ASSISTANT_DENIED_POSITIONS: ReadonlySet<string> = new Set([
   "sales person",
 ]);
 
-// Every position on the live `positions` table, normalised — mirror of the backend
-// set of the same name. A named position absent here fails CLOSED (see below).
 export const ASSISTANT_KNOWN_POSITIONS: ReadonlySet<string> = new Set([
   "super admin",
   "hr manager",
@@ -62,9 +60,6 @@ export function canUseAssistant(
     | {
         permissions?: unknown;
         position_name?: string | null;
-        /** The server-resolved capability set from /auth/me; when present its
-         *  `org.assistant.use` answer (the same backend gate) wins over the two
-         *  name lists below, which stay only as the stale-deploy fallback. */
         capabilities?: Partial<Record<string, boolean>>;
       }
     | null

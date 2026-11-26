@@ -45,9 +45,6 @@ import { useNotify } from './NotifyDialog';
 import { writeFailedAs } from '../lib/mutation-error';
 import { projectRowParts } from '../lib/project-picker-row';
 import { splitHighlight } from '../lib/split-highlight';
-// App-level client for the PMS project list (/api/projects lives outside the
-// /api/scm mount that the vendored authed-fetch targets). Same app-import
-// precedent as DataGrid's activeCompany subscription.
 import { api } from '../../../api/client';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 import { DateField } from "./DateField";
@@ -57,14 +54,9 @@ import { useLocalities, resolvePostcode } from '../lib/localities-queries';
 import { knownPostcodeInText, DP_POSTCODE_REQUIRED_JOB_TYPES } from '../lib/postcode-in-address';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
-/* The Postcode caption stacks like the drawer's own captions, so the input lines up with City beside it. */
 const DP_POSTCODE_CLASSES = { field: styles.stackField, label: `${styles.eyebrow} ${styles.stackLabel}`, select: styles.searchInput };
 
-/* Job types + labels come from the SHARED canonical list (DP_JOB_TYPES /
-   DP_JOB_TYPE_LABEL in delivery-planning-queries) — the same set the board renders
-   in its Type chip — so this dropdown can never drift from what's shown elsewhere. */
 
-/* What the SOURCE reference means for each type, and the field it maps to. */
 function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: string; kind: 'so' | 'supplier' | 'project' | 'assr' | 'workshop' | 'transfer' | 'none' } {
   switch (jobType) {
     case 'SUPPLIER_PICKUP': return { label: 'Supplier', hint: 'supplier id — party auto-fills from the supplier master', kind: 'supplier' };
@@ -73,17 +65,11 @@ function sourceMeta(jobType: DpOrderCreate['jobType']): { label: string; hint: s
     case 'SERVICE': return { label: 'Service case', hint: 'service case id — customer auto-fills', kind: 'assr' };
     case 'LORRY_SERVICE': return { label: 'Workshop', hint: 'workshop id — name, contact + address auto-fill from the workshop master', kind: 'workshop' };
     case 'TRANSFER': return { label: 'Stock transfer', hint: 'transfer id — the destination warehouse auto-fills from the document', kind: 'transfer' };
-    /* Create-mode DELIVERY is "Delivery (no SO)": no document to pick - an SO-backed
-       delivery is scheduled from "Delivery order" instead (a so_doc_no here would hide it). */
     case 'DELIVERY': return { label: 'Customer', hint: '', kind: 'none' };
     default: return { label: 'Sales order', hint: 'SO No. — customer auto-fills (optional)', kind: 'so' };
   }
 }
 
-/* The slice of a PMS project row this picker needs (GET /api/projects → { data }).
-   code / name / venue / state / brand / start_date / end_date all come back on the
-   list row already (snake_case, the same spelling the Projects list reads); the
-   row is composed from them in project-picker-row.ts. */
 type ProjectPickRow = {
   id: number;
   code: string | null;
@@ -96,14 +82,6 @@ type ProjectPickRow = {
   end_date: string | null;
 };
 
-/* The slice of the workshop master this picker needs — mig 0241, served by
-   GET /api/fleet-maintenance/workshops as { workshops } in camelCase. That
-   master is deliberately NOT scm.suppliers ("a workshop you send a lorry to is
-   none of those"), so it needs its own picker rather than reusing the supplier
-   one. */
-/* The slice of a service case the ASSR legs need (GET /api/assr → { data }).
-   Only enough to recognise the case in a dropdown — the party comes from the
-   case itself when the board renders the leg. */
 type AssrPickRow = {
   id: number;
   assr_no: string;
@@ -132,26 +110,16 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   const schedule = useScheduleDelivery();
   const notify = useNotify();
 
-  /* Which of the nine menu entries is selected. The entry — not a job type —
-     is the drawer's mode switch: five of them CREATE a dp_order, four SCHEDULE
-     a document that is already on the board (see DP_ENTRY_MENU for why). */
   const [entryKey, setEntryKey] = useState<string>(DP_ENTRY_MENU[0].key);
   const entry = DP_ENTRY_MENU.find((e) => e.key === entryKey) ?? DP_ENTRY_MENU[0];
   const isSchedule = entry.mode === 'schedule';
 
-  /* Schedule-mode state: which existing document, and the date to write on it.
-     Kept apart from `form` because none of the party fields apply — the
-     document already owns its customer and address. */
   const [docId, setDocId] = useState('');
   const [jobDate, setJobDate] = useState('');
 
   const [form, setForm] = useState({
     jobType: 'SETUP' as DpOrderCreate['jobType'],
     source: '',
-    /* LORRY_SERVICE only — the lorry being serviced. It is a SECOND reference,
-       not the source: the source (workshop) supplies the party, this supplies
-       the job's subject and is the lorry taken off the road when the job is
-       scheduled. Every other job type leaves it empty. */
     lorryId: '',
     /* TRANSFER only — the DESTINATION. Like the lorry above it is a second
        reference rather than the source: the transfer document (if any) says what
@@ -187,10 +155,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
 
   const src = sourceMeta(form.jobType);
 
-  /* A master that keeps its postcode only inside the address (HOOKKA
-     MANUFACTURING: "..., 47000 SUNGAI BULOH.") shows that postcode, and the
-     State / City it names, as soon as the address is on screen. Only an EMPTY
-     postcode / state / city is filled; the server applies the same rule. */
   const locRows = useLocalities().data;
   useEffect(() => {
     if (!locRows?.length) return;
@@ -214,17 +178,9 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     });
   }, [locRows, form.address1, form.address2, form.address3, form.address4, form.fromAddress1, form.fromAddress2]);
 
-  /* The postcode is compulsory for the job types routed by region (owner
-     2026-11-17); a picked source may still carry one the server fills, so only
-     a manual job is stopped at the button. */
   const postcodeRequired = !isSchedule && DP_POSTCODE_REQUIRED_JOB_TYPES.has(form.jobType);
   const postcodeMissing = postcodeRequired && !form.postcode.trim();
 
-  /* ── Schedule-mode pickers ───────────────────────────────────────────────
-     Only fetched for the entry that needs them. SOs come from the paged list
-     (newest first, one page is plenty for "which order am I planning today");
-     service cases come from the ASSR list, which lives outside the /api/scm
-     mount like the project list above. */
   const soQ = useMfgSalesOrdersPaged({ page: 1, pageSize: 200, sort: '-so_date' });
   const assrQ = useQuery<{ data: AssrPickRow[] }>({
     queryKey: ['dp-assr-pick'],
@@ -248,10 +204,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     [assrQ.data],
   );
 
-  /* ── Source pickers ──────────────────────────────────────────────────────
-     Fetch lazily per kind (enabled-gated) so a drawer opened for a manual
-     SETUP never touches the supplier master and vice versa. isError → the
-     free-text fallback below. */
   const suppliersQ = useSuppliers(undefined);
   const suppliersEnabled = src.kind === 'supplier';
   const projectsQ = useQuery<{ data: ProjectPickRow[] }>({
@@ -279,8 +231,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     () => new Map(projectParts.map((r) => [r.id, r.parts])),
     [projectParts],
   );
-  /* Monospace date column width = the longest date in the list (in ch), so every
-     title lines up whichever events are loaded. */
   const dateColCh = useMemo(
     () => projectParts.reduce((w, r) => Math.max(w, r.parts.date.length), 10),
     [projectParts],
@@ -289,9 +239,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     () => projectParts.map((r) => ({ value: r.id, label: r.parts.plain, search: r.parts.search })),
     [projectParts],
   );
-  /* Row renderer: date (monospace, fixed width, never cut) then [BRAND] (never
-     cut) then title + state, which truncate with an ellipsis at the end. The live
-     query is highlighted wherever it shows. */
   const renderProjectOption = (opt: SearchableSelectOption, query: string): ReactNode => {
     const parts = projectPartsById.get(opt.value);
     if (!parts) return opt.label;
@@ -317,18 +264,12 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     );
   };
 
-  /* Workshops + lorries — LORRY_SERVICE only. The workshop master lives outside
-     the /api/scm mount (same app-import precedent as the project list above) and
-     is gated on fleet.read, so a position without the fleet pages gets isError
-     and the free-text fallback rather than a dead picker. */
   const workshopsQ = useQuery<{ workshops: WorkshopPickRow[] }>({
     queryKey: ['dp-workshop-pick'],
     queryFn: () => api.get<{ workshops: WorkshopPickRow[] }>('/api/fleet-maintenance/workshops'),
     enabled: src.kind === 'workshop',
     staleTime: 60_000,
   });
-  /* Only lorries that can still be sent anywhere. An inactive one is off the
-     fleet entirely — raising a service job for it would block nothing. */
   const lorriesQ = useLorries({ fleet: 'internal' });
 
   const workshopOptions = useMemo(
@@ -344,14 +285,8 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     [lorriesQ.data],
   );
 
-  /* Transfers + warehouses — TRANSFER only. POSTED transfers only: a cancelled
-     document describes a move that is not happening, and sending a lorry for it
-     is the mistake this filter exists to prevent. */
   const transfersQ = useStockTransfers({ status: 'POSTED' });
   const warehousesQ = useWarehouses();
-  /* 3PL carriers — the outsourced-warehouse destinations for a TRANSFER (owner
-     2026-11-02). Fetched unconditionally like the warehouse list above (a small,
-     cached master); only shown when the destination toggle is on "Outsourced". */
   const threeplQ = useThreePLCompanies();
   /* Saved locations — the kept from/to address book (owner 2026-11-02 方案2). Like
      the warehouse / 3PL lists it is fetched unconditionally (small, cached) and
@@ -385,10 +320,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     [savedLocationsQ.data],
   );
 
-  /* Supplier prefill — the DETAIL row (the list view predates the structured
-     address columns), applied once per pick so later hand-edits are never
-     clobbered by a background refetch. Field precedence mirrors backend
-     dp-party.ts snapshotFromSupplier exactly. */
   const pickedSupplierId = src.kind === 'supplier' && form.source ? form.source : null;
   const supplierDetailQ = useSupplierDetail(pickedSupplierId);
   const [prefilledFor, setPrefilledFor] = useState<string | null>(null);
@@ -413,9 +344,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     setPrefilledFor(pickedSupplierId);
   }, [supplierDetailQ.data, pickedSupplierId, prefilledFor]);
 
-  /* Project prefill — from the picked LIST row (venue + state; the PIC's
-     name/phone need a users lookup the server does on create, and the venue
-     address only lives on the full project row — the hint says so). */
   const pickProject = (id: string) => {
     set('source', id);
     const p = (projectsQ.data?.data ?? []).find((r) => String(r.id) === id);
@@ -428,10 +356,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     }));
   };
 
-  /* Workshop prefill — straight off the picked LIST row; unlike the supplier
-     master there is no richer detail view to wait for. Field precedence mirrors
-     backend dp-party.ts snapshotFromWorkshop exactly (named contact first, the
-     office line second), so what the operator previews is what gets stored. */
   const pickWorkshop = (id: string) => {
     const w = (workshopsQ.data?.workshops ?? []).find((r) => r.id === id);
     setForm((s) => ({
@@ -446,9 +370,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     }));
   };
 
-  /* Warehouse prefill — mirrors backend dp-party.ts snapshotFromWarehouse field
-     for field: the master's free-text `location` is the only street line there
-     is, the name falls back to the code, and there is no contact to invent. */
   const applyWarehouse = (id: string, prev: typeof form): typeof form => {
     const w = (warehousesQ.data ?? []).find((r) => r.id === id);
     return {
@@ -465,9 +386,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
   };
   const pickWarehouse = (id: string) => setForm((s) => applyWarehouse(id, s));
 
-  /* 3PL destination prefill — mirrors backend dp-party.ts snapshotFromThreepl: the
-     carrier's single free-text address is the only street line, the name falls
-     back to the code, and the named contact leads the office line. */
   const pickThreepl = (id: string) => {
     const t = (threeplQ.data ?? []).find((r) => r.id === id);
     setForm((s) => ({
@@ -541,21 +459,12 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
     }));
   };
 
-  /* Picking a transfer document fills the destination FROM the document, then
-     the party from that destination — the same two steps the server takes when
-     only stockTransferId is sent. The operator can still change the warehouse
-     afterwards; whatever is on screen is what gets stored. */
   const pickTransfer = (id: string) => {
     const t = (transfersQ.data ?? []).find((r) => r.id === id);
     const dest = t?.to_warehouse_id ?? '';
     setForm((s) => (dest ? applyWarehouse(dest, { ...s, source: id }) : { ...s, source: id }));
   };
 
-  /* Schedule-mode submit — put a DATE on a document that is already a board row.
-     No dp_order is inserted: the SO/DO and the three ASSR legs are synthesised
-     from their own source, so creating one would double the line or be eaten by
-     the anti-double-count guard. This is the same PATCH the board's own inline
-     date cell fires, which is why the row appears with no further wiring. */
   const submitSchedule = () => {
     if (!isSchedule || !docId || !jobDate) return;
     schedule.mutate(
@@ -590,13 +499,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       else if (src.kind === 'workshop') body.workshopId = ref;
       else if (src.kind === 'transfer') body.stockTransferId = ref;
       else if (src.kind === 'so') body.soDocNo = ref;
-      /* kind 'none' (Delivery (no SO)) sends no document ref at all. */
     }
-    /* The destination rides alongside the transfer document, not instead of it:
-       an ad-hoc move has a destination and no document, and a document-backed one
-       records where the fleet was actually sent even if the document's
-       destination is edited later. Only the picked kind's id is sent — our
-       warehouse or an outsourced 3PL, never both. */
     if (form.jobType === 'TRANSFER') {
       if (form.destKind === 'saved') {
         if (form.savedLocationId) body.savedLocationId = form.savedLocationId;
@@ -605,8 +508,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       } else if (form.warehouseId) {
         body.warehouseId = form.warehouseId;
       }
-      /* ORIGIN ("from") — optional, only the picked kind's id, plus any typed-over
-         origin fields as fromOverrides (snapshot keys). */
       if (form.fromKind === 'saved') {
         if (form.fromSavedLocationId) body.fromSavedLocationId = form.fromSavedLocationId;
       } else if (form.fromKind === 'threepl') {
@@ -626,9 +527,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       }
       if (Object.keys(fromOv).length) body.fromOverrides = fromOv;
     }
-    /* The serviced lorry rides alongside the source, not instead of it: the
-       workshop is the party, this is the job's subject. Sent for LORRY_SERVICE
-       only, so switching type can never smuggle a stale lorry onto a setup job. */
     if (form.jobType === 'LORRY_SERVICE' && form.lorryId) body.lorryId = form.lorryId;
     if (form.requestedDate) body.requestedDate = form.requestedDate;
     if (form.remark.trim()) body.remark = form.remark.trim();
@@ -641,8 +539,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
       body.salesAmountSen = sen;
     }
 
-    // Manual fields → overrides (win over the server's auto-fill). Only non-empty
-    // keys, so a blank field never clobbers an auto-filled value.
     const ov: Record<string, string | null> = {};
     const map: Array<[keyof typeof form, string]> = [
       ['partyName', 'party_name'], ['contactName', 'contact_name'], ['contactPhone', 'contact_phone'],
@@ -663,12 +559,8 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
 
   const fieldRow: CSSProperties = { display: 'block', marginBottom: 'var(--space-3)' };
   const inputStyle: CSSProperties = { width: '100%' };
-  // minmax(0, 1fr): a wide control (the date field) must not squeeze its neighbour on a phone.
   const row2: CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 'var(--space-3)' };
 
-  /* Which control the source field renders as. A failed list fetch (403 for a
-     position without that master's page, or a network hiccup) falls back to
-     the original free-text id input rather than a dead picker. */
   const sourceControl =
     src.kind === 'supplier' && !suppliersQ.isError ? 'supplier-picker'
     : src.kind === 'project' && !projectsQ.isError ? 'project-picker'
@@ -690,12 +582,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             <select className={styles.searchInput} style={inputStyle}
               value={entryKey}
               onChange={(e) => {
-                // A supplier id is meaningless on a SETUP and vice versa — and
-                // so is the party the old source prefilled (a venue name must
-                // not survive into "Supplier name" as a would-be override).
-                // Switching entry clears the pick AND the party fields;
-                // date/remark stay, they are type-agnostic. The schedule-mode
-                // document + date clear too — an SO number is not a service case.
                 const key = e.target.value;
                 const next = DP_ENTRY_MENU.find((x) => x.key === key) ?? DP_ENTRY_MENU[0];
                 setEntryKey(key);
@@ -705,10 +591,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                   ...s,
                   jobType: next.mode === 'create' ? next.jobType : s.jobType,
                   source: '',
-                  // Same reasoning for the serviced lorry: it only means
-                  // anything on a LORRY_SERVICE, so it clears with the rest. The
-                  // transfer destination (warehouse/3PL) clears back to our own
-                  // warehouse too.
                   lorryId: '',
                   destKind: 'warehouse',
                   warehouseId: '',
@@ -731,11 +613,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             </select>
           </label>
 
-          {/* ── Schedule mode — put a date on a document that already exists ──
-              Deliberately a MUCH shorter body: there is no party to fill in,
-              because the sales order or the service case already owns its
-              customer and address. The panel says so, so the next reader does
-              not go looking for the address fields. */}
           {isSchedule ? (
             <>
               <div style={{
@@ -862,10 +739,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
           </label>
           )}
 
-          {/* The lorry being serviced. LORRY_SERVICE only, and the one field on
-              this drawer that is genuinely REQUIRED: without it the job knows
-              which workshop it is going to but not which vehicle, and nothing
-              comes off the road when it is scheduled. */}
           {form.jobType === 'LORRY_SERVICE' && (
             <label style={fieldRow}>
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
@@ -998,13 +871,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             </div>
           )}
 
-          {/* Where the goods are going. TRANSFER only, and required for the same
-              reason the lorry is on a service job: a move with no destination
-              has no address, so the driver has nowhere to be sent. The destination
-              is one of OUR warehouses or an OUTSOURCED 3PL warehouse (owner
-              2026-11-02); the toggle switches the picker, and either pick fills the
-              address below, which stays editable. The shared Party fields below are
-              this destination. */}
           {form.jobType === 'TRANSFER' && (
             <label style={fieldRow}>
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
@@ -1158,12 +1024,6 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
           <Button variant="ghost" size="md" onClick={onClose}>Cancel</Button>
-          {/* Every entry has one thing it cannot do without — a lorry for a
-              service, a destination for a transfer, a document and a date for
-              anything being scheduled. The button says no rather than letting
-              the server reject it, or worse, accept a job nobody can act on.
-              The LABEL changes too: "Create" would be a lie in schedule mode,
-              where nothing is created. */}
           <Button variant="primary" size="md" onClick={submit}
             disabled={create.isPending || schedule.isPending
               || (isSchedule && (!docId || !jobDate))
@@ -1172,10 +1032,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 && !(form.destKind === 'saved' ? form.savedLocationId.trim()
                   : form.destKind === 'threepl' ? form.threeplCompanyId.trim()
                   : form.warehouseId.trim()))
-              /* A manual job with no postcode (none picked, none in the address). */
               || (postcodeMissing && !form.source.trim())
-              /* No address typed and no source the server could fill it from.
-                 With a source picked the server decides and says why. */
               || (!isSchedule && !form.source.trim()
                 && ![form.address1, form.address2, form.address3, form.address4].some((v) => v.trim()))}>
             {isSchedule

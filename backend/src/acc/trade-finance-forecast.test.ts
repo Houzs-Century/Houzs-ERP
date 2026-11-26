@@ -1,12 +1,3 @@
-/* The Cash Flow's trade-finance plan, the rules (step 5 of the forecast port;
-   the door is backend/tests/cashFlowForecast.test.ts). Pinned: a facility is a
-   liability named TRADE FINANCE, not the bank account of the same name; the
-   repayments pay the oldest draws first; the rate per draw is the last six
-   repayments' interest over their principal; a draw is repaid a tenor after
-   it (past due in the current month) with its interest on the interest
-   account; a chosen supplier's dues — owed bills, then Forecast P&L figures
-   from the current month on — are drawn in their month unless unticked and
-   repaid a tenor later; the months owed run on. Made-up names and figures. */
 import { describe, expect, test } from 'vitest';
 import type { CashLeg } from './cashflow-pnl-forecast';
 import { defaultRateBp, interestOf, isFacilityAccount, lenderOf, openDraws, repayYm, supplierDues, tfPlan } from './trade-finance-forecast';
@@ -28,7 +19,6 @@ describe('the facility and its draws', () => {
       { date: '2026-11-05', debitSen: 0, creditSen: 50 },
     ])).toEqual([{ date: '2026-09-14', sen: 150 }, { date: '2026-11-05', sen: 50 }]);
     const rep = (date: string, principalSen: number, interestSen: number) => ({ date, principalSen, interestSen });
-    /* The oldest of seven is left out; one with no interest does not count. */
     expect(defaultRateBp([rep('2026-01-01', 100, 50), ...['02', '03', '04', '05', '06'].map((m) => rep(`2026-${m}-01`, 10_000, 100)), rep('2026-07-01', 10_000, 200), rep('2026-08-01', 10_000, 0)])).toBe(117);
     expect(defaultRateBp([])).toBe(0);
     expect(repayYm('2026-11', 60)).toBe('2027-01');

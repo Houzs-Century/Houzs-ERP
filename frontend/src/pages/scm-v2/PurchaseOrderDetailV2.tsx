@@ -1,13 +1,3 @@
-// PurchaseOrderDetailV2 — Theme C redesign of the Purchase Order detail
-// page. Twin of the sales-side detail V2 template, pivoted for procurement:
-// money moves OUT to a supplier, receipt progresses through DRAFT → SUBMITTED
-// → PARTIALLY_RECEIVED → RECEIVED. No customer, no delivery address; the
-// relationship IS with the supplier.
-//
-// Route: /scm/purchase-orders/:id (App.tsx flips ScmPurchaseOrderDetailV2 here).
-// Data: usePurchaseOrderDetail / useCancelPurchaseOrder /
-//       useConfirmPurchaseOrder / useReopenPurchaseOrder
-//       (vendored suppliers-queries slice).
 
 import { lazy, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -72,21 +62,14 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
-// PO amendment create flow (feat/amendment-ui). Localized entry point — the
-// "Raise amendment" button + its modal. NOTE: this file is also edited by the
-// concurrent relmap-clickable-amendment work; this addition is confined to the
-// import + one button + modal state to keep the merge trivial.
 import { PoAmendmentCreateModal } from "../../components/scm-v2/PoAmendmentCreateModal";
 // Relationship map (owner 2026-07-27) — the purchase-side twin of the SO/DO/
 // SI/DR maps: same shared 5-node canvas, chain + clicks from the PO hook.
 import { DocumentRelationshipMapModal, DocumentChoiceDialog } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { usePoRelationshipMap } from "./po-relationship-map";
 import { usePoCancelAction } from "./use-po-cancel-action";
-// Per-line SO allocations (mig 0235) — split a consolidated line across the
-// customers (and stock) it serves; sub-numbered PO-xxxx-yy-01, -02, ...
 import { PoLineAllocationsModal } from "../../components/scm-v2/PoLineAllocationsModal";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
-// Carried line photos (mig 0274) — the shared read-only strip, PO-sourced.
 import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
@@ -98,7 +81,6 @@ import { FocAmount } from "../../vendor/scm/components/FocAmount";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 import { resolvePoRecipients, supplierEmailList } from "../../vendor/shared/supplier-emails";
 import { poEmailPhotosNote } from "../../vendor/scm/lib/po-email-photos";
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
 
@@ -109,7 +91,6 @@ const supplierCodeOf = (h: PoHeaderRow): string => h.supplier?.code || "—";
 const totalOf = (h: PoHeaderRow): number =>
   h.total_sen ?? h.subtotal_sen ?? 0;
 
-// PO effective lifecycle for hero + tone.
 type Effective =
   | "on_hold"
   | "draft"
@@ -117,15 +98,6 @@ type Effective =
   | "partial"
   | "received"
   | "cancelled";
-/* THE LAST LINE USED TO BE `return "cancelled"`, and that is why ON_HOLD had to
-   be added here and not only to the label maps: a status this chain does not
-   name reads as CANCELLED, so a HELD purchase order would have told the buyer
-   his order was cancelled. A hold is the opposite of a cancel — it is the
-   reversible one — so the wrong word here is not a cosmetic slip.
-
-   The fall-through is now CANCELLED only for CANCELLED. Anything genuinely
-   unrecognised falls to "on_hold"'s neighbour rather than to a terminal claim:
-   an unknown status is not evidence that an order is dead. */
 const effectiveOf = (h: PoHeaderRow): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "DRAFT") return "draft";
@@ -145,9 +117,6 @@ const EFFECTIVE_TONE: Record<
   partial: { tone: "warning", label: "Partially received", blurb: "Partially received · balance still due" },
   received: { tone: "success", label: "Received", blurb: "Received · loop closed" },
   cancelled: { tone: "error", label: "Cancelled", blurb: "Cancelled · no further action" },
-  /* ON_HOLD (mig 0318). A held PO is not receivable — grns.ts filters
-     receivable POs through an allow-list — and it is REVERSIBLE, which is
-     the whole reason it exists beside CANCELLED. */
   on_hold: { tone: "warning", label: "On Hold", blurb: "On hold · receiving paused, reversible" },
 };
 
@@ -157,9 +126,6 @@ const STAGE_LABEL: Record<string, string> = {
   PARTIALLY_RECEIVED: "Partially received",
   RECEIVED: "Received",
   CANCELLED: "Cancelled",
-  /* A status with no label here renders as nothing, or as its raw slug. ASSR
-     paid for that when `voided` reached the customer portal as the word
-     "voided", so every value the column can hold gets a word. */
   ON_HOLD: "On Hold",
 };
 
@@ -175,7 +141,6 @@ const initialsOf = (name: string | null | undefined): string => {
   );
 };
 
-// Received-vs-ordered breakdown from live line items.
 const receivedOf = (items: PoItemRow[]): { orderedQty: number; receivedQty: number; pct: number } => {
   let orderedQty = 0;
   let receivedQty = 0;
@@ -187,7 +152,6 @@ const receivedOf = (items: PoItemRow[]): { orderedQty: number; receivedQty: numb
   return { orderedQty, receivedQty, pct };
 };
 
-// ─── Field cell ────────────────────────────────────────────────────────────
 
 function Field({
   label,
@@ -215,7 +179,6 @@ function Field({
   );
 }
 
-// ─── Aside primitives ───────────────────────────────────────────────────────
 
 function AsideCard({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -299,12 +262,6 @@ function ActivityRow({
   );
 }
 
-// ─── PO total hero — money-out slab ────────────────────────────────────────
-//
-// PO is a money-out doc. The hero shows the committed total; while pending
-// it renders in accent-bright (warning), once fully received it flips to
-// success (green). Ordered + received qty ride as sub-lines so ops can see
-// how far the PO is through its receipt lifecycle without opening any line.
 
 function PoTotalHeroCard({
   header,
@@ -344,7 +301,6 @@ function PoTotalHeroCard({
         <HeroLine k="Total" v={fmtMoney(total, header.currency)} strong />
       </div>
 
-      {/* Receipt progress — the PO's most operational signal. */}
       <div className="mt-4 border-t border-white/10 pt-4">
         <div className="flex items-center justify-between text-[12px] text-sidebar-ink-muted">
           <span>Receipt progress</span>
@@ -387,31 +343,15 @@ function HeroLine({
   );
 }
 
-// ─── Legacy inline editor (lazy) ───────────────────────────────────────────
-// V2 is READ-ONLY by design. The full inline editor — which also hosts the
-// SO-amendment "Revision ready" banner (Approve PO + Send) + Revisions tab —
-// lives in ./PurchaseOrderDetail. We forward to it whenever ?edit=1 lands on
-// this route so the Edit button (and the Amendments queue's PO rows) actually
-// open editable fields + the amendment banner. Mirrors SalesOrderDetailV2's
-// forward. Lazy-loaded so the editor bundle only ships when someone edits.
 const PurchaseOrderDetailInlineEditor = lazy(() =>
   import("./PurchaseOrderDetail").then((m) => ({ default: m.PurchaseOrderDetail })),
 );
 
-// ─── Main page ─────────────────────────────────────────────────────────────
 
-/* Thin router — only calls useSearchParams and useLocation (both unconditional,
-   at the top) so Rules of Hooks are respected when
-   the ?edit=1 flip swaps between the read-only body and the lazy inline editor
-   (the two children have different hook counts). */
 export function PurchaseOrderDetailV2() {
   const [params] = useSearchParams();
   const location = useLocation();
   if (params.get("edit") === "1") {
-    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
-       so a failed editor chunk shows the panel in place of the editor and
-       clears when the operator moves to another document, instead of leaning
-       on a boundary in a file this one cannot see. */
     return (
       <LazySlot
         resetKey={`po-editor:${location.pathname}`}
@@ -467,28 +407,12 @@ function PurchaseOrderDetailV2ReadOnly() {
       void notify({ title: "Photo not deleted", body: e instanceof Error ? e.message : "Delete failed.", tone: "error" });
     }
   };
-  // In-flight guard for the supplier send — see doSendToSupplier.
   const [sendingToSupplier, setSendingToSupplier] = useState(false);
-  // PO amendment create modal (feat/amendment-ui) — localized state.
   const [showAmendModal, setShowAmendModal] = useState(false);
-  // Relationship map modal — open state only; the chain itself comes from
-  // usePoRelationshipMap below (after the header row resolves).
   const [relMapOpen, setRelMapOpen] = useState(false);
-  /* History drawer. The button used to navigate to `?tab=history`, a param
-     nothing in this file reads, so it changed the URL and nothing else — while
-     the backend had been recording this PO's every change all along. */
   const [historyOpen, setHistoryOpen] = useState(false);
-  // Allocation editor (mig 0235) — which line's split is open. Deliberately
-  // available at every status except CANCELLED (backend rule): the historical
-  // consolidated lines the owner wants to attribute live on RECEIVED POs.
   const [allocLineId, setAllocLineId] = useState<string | null>(null);
 
-  /* Nick 2026-07-09 — Ship-to warehouse cell was rendering the raw
-     `purchase_location_id` UUID because the field only carries the id;
-     the backend join for the name/code hasn't been surfaced on this
-     header shape. Look it up client-side via the same useWarehouses
-     hook every other PO screen uses. includeInactive so a warehouse
-     that was toggled off after the PO was raised still resolves. */
   const warehousesQ = useWarehouses({ includeInactive: true });
   const warehouseNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -501,7 +425,6 @@ function PurchaseOrderDetailV2ReadOnly() {
   const purchaseOrder =
     (detail.data as { purchaseOrder?: PoHeaderRow } | undefined)?.purchaseOrder ??
     null;
-  /* A link by PO number (the server resolves it) moves to the id address, which every action on this page uses. */
   const resolvedPoId = purchaseOrder?.id;
   useEffect(() => {
     if (id && resolvedPoId && id !== resolvedPoId) navigate(`/scm/purchase-orders/${resolvedPoId}${window.location.search}`, { replace: true });
@@ -511,8 +434,6 @@ function PurchaseOrderDetailV2ReadOnly() {
     [detail.data]
   );
 
-  // The 5-node purchase chain + what each node does when clicked (shared hook,
-  // one logic layer — mirrors how the SO detail pages consume their map).
   const {
     nodes: chainNodes,
     onNodeClick: onChainNodeClick,
@@ -529,15 +450,6 @@ function PurchaseOrderDetailV2ReadOnly() {
     { label: purchaseOrder?.po_number ?? id ?? "Purchase Order" },
   ]);
 
-  /* Supplier SKU — the code the SUPPLIER acts on, and the one the purchaser
-     quotes on the phone. Lines SNAPSHOT it at PO creation (`supplier_sku`);
-     lines raised before that column existed didn't, so fall back to the live
-     supplier↔material binding — the same two-step the PRINTED PO already runs
-     (supplierCodeFor). The screen must not say "—" where the PDF prints a code.
-
-     The binding fetch is skipped entirely when every line carries a snapshot,
-     which is the normal case; `useSupplierDetail(null)` is disabled, so this
-     costs nothing on a modern PO. */
   const needsSkuLookup = useMemo(
     () => items.some((l) => !(l.supplier_sku ?? "").trim()),
     [items]
@@ -567,13 +479,8 @@ function PurchaseOrderDetailV2ReadOnly() {
      inside the editor, under a different name per document, so it read as
      missing (docs/bugs/0853). */
   const goAddLine = () => id && navigate(addLineHref(`/scm/purchase-orders/${id}`));
-  // Render + download the PO PDF via the shared jspdf generator (client-side),
-  // mirroring the V1 PurchaseOrderDetail handler. The old `?print=1` navigation
-  // was dead — nothing consumed that param — so the button did nothing.
   const deliverPrintPdf = (action: PdfAction) => {
     if (!purchaseOrder) return;
-    // PR #102 — pre-resolve purchase_location name + deliver-to address (the
-    // PDF can't hit the API), same as the V1 detail page.
     const wh = (warehousesQ.data ?? []).find(
       (w) => w.id === purchaseOrder.purchase_location_id
     );
@@ -614,20 +521,9 @@ function PurchaseOrderDetailV2ReadOnly() {
   const goReturnFromPo = () =>
     id && navigate(convertToLink('poToPr', id));
 
-  /* Email this PO to its supplier — a HUMAN action (the agent only drafts). The
-     PDF is rendered here in the browser (the backend has no PDF engine) and posted
-     as base64; the backend attaches it and sends via the gated purchase_order
-     channel. Confirm first — it goes to an external party.
-
-     The confirm SHOWS THE ADDRESS, because "send to the supplier" is not the
-     decision the operator is actually making: the supplier record may carry a
-     stale or wrong contact, and the moment to catch that is before the send, not
-     from the audit trail afterwards. */
   const doSendToSupplier = async () => {
     if (!id || !purchaseOrder) return;
     if (sendingToSupplier) return;
-    /* To = Email, Cc = Email 2 / Email 3 — the same rule the server sends by
-       (vendor/shared/supplier-emails), so the confirm names every address. */
     const recipients = resolvePoRecipients(purchaseOrder.supplier);
     if (!recipients.ok && recipients.error === "no_supplier_email") {
       notify({
@@ -654,10 +550,6 @@ function PurchaseOrderDetailV2ReadOnly() {
       confirmLabel: "Send to supplier",
     });
     if (!ok) return;
-    /* Guard the double-click at the source as well as at the backend claim. The
-       backend refusal is the one that is authoritative (a second tab, a retried
-       request); this only spares the operator a confusing error for the common
-       case of clicking twice on a slow send. */
     setSendingToSupplier(true);
     try {
       const wh = (warehousesQ.data ?? []).find((w) => w.id === purchaseOrder.purchase_location_id);
@@ -682,21 +574,12 @@ function PurchaseOrderDetailV2ReadOnly() {
         notify({ title: "Not sent", body: res.result?.reason ?? "The email channel may be off — check email settings.", tone: "error" });
       }
     } catch (e) {
-      /* The backend's refusals (cancelled PO, bad address, oversize PDF, a send
-         moments ago) reach here already in plain language: authedFetch runs the
-         response through humanApiError and throws an Error carrying that
-         sentence, so e.message is the operator-facing text. */
       notify({ title: "Send failed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" });
     } finally {
       setSendingToSupplier(false);
     }
   };
 
-  /* ONE control commits a draft PO, and it calls the endpoint that writes.
-     `doSubmit` (PATCH /submit) is gone — see po-next-step.ts for the handler
-     that never had an update in it. The confirm dialog is kept because
-     confirming is what makes the PO live supply and drops its SO lines out of
-     the From-SO picker; the wording now matches what the button does. */
   const doConfirm = async () => {
     if (!id) return;
     if (await confirm({
@@ -739,9 +622,6 @@ function PurchaseOrderDetailV2ReadOnly() {
       open_amendment?: { id: string; status: string; amendment_no: string } | null;
     })?.open_amendment ?? null;
 
-  // Line item columns — carries a Received and a Balance column so ops can see
-  // per-line where the PO stands vs the supplier's shipments. Any of these can
-  // be hidden from the Columns drawer; only Item is alwaysVisible.
   const lineColumns: Column<PoItemRow>[] = [
     {
       key: "item",
@@ -795,9 +675,6 @@ function PurchaseOrderDetailV2ReadOnly() {
                 {remark}
               </div>
             )}
-            {/* SO-drift redline — what the source SO now requests vs what this
-                PO still holds. The same note the editor shows, so the reader
-                sees the pending change without opening the SO. */}
             {showDrift && l.so_drift && (
               <div className="mt-1 grid gap-0.5 rounded border border-err/30 bg-err/5 px-2 py-1 text-[11px] font-semibold text-err">
                 {l.so_drift.itemChanged && (
@@ -815,11 +692,6 @@ function PurchaseOrderDetailV2ReadOnly() {
         );
       },
     },
-    /* Remark as its OWN column — hidden by default because the text already
-       renders under the item above, where it is read. This column exists so the
-       remark is SEARCHABLE, filterable and lands in the CSV export: a `render`
-       has no getValue, so without it the text is invisible to every one of
-       those. Exact twin of SalesOrderDetailV2's Remark column. */
     {
       key: "remark",
       label: "Remark",
@@ -836,16 +708,11 @@ function PurchaseOrderDetailV2ReadOnly() {
       },
     },
     {
-      /* Sits next to Item deliberately: the two codes for the same thing —
-         ours on the left, theirs on the right — read as a pair, which is how
-         the purchaser uses them when chasing a line with the supplier. */
       key: "supplierSku",
       label: "Supplier SKU",
       width: "132px",
       getValue: (l) => {
         const code = supplierCodeFor(l, skuByMaterialCode);
-        // getValue feeds sort / search / export — an em dash is a RENDER
-        // fallback, not a value, so unknown sorts and exports as empty.
         return code === "—" ? "" : code;
       },
       render: (l) => {
@@ -969,13 +836,6 @@ function PurchaseOrderDetailV2ReadOnly() {
       },
     },
     {
-      /* mig 0235 — the consolidated-PO split: which customer (or STOCK) each
-         slice of this line was BOUGHT for, as sub-numbered chips. The Split
-         button opens the editor; it stays available on RECEIVED POs on purpose
-         (the backend refuses only CANCELLED) — attributing historical
-         consolidated buys by hand is what the editor exists for. Slices are
-         procurement provenance (Decision, purchase-order.md 2026-08-06: soft
-         until DO) — muted tone, "bought for" wording, never "assigned". */
       key: "allocations",
       label: "Allocations",
       width: "230px",
@@ -1076,7 +936,6 @@ function PurchaseOrderDetailV2ReadOnly() {
     },
   ];
 
-  // ── Loading / error states ───────────────────────────────────────────
   if (!id) {
     return <div className="p-8 text-center text-ink-muted">No purchase order specified.</div>;
   }
@@ -1111,24 +970,16 @@ function PurchaseOrderDetailV2ReadOnly() {
   };
 
   const rawStatus = (purchaseOrder.status || "").toUpperCase();
-  /* Both status questions now come from vendor/scm/lib/po-next-step.ts, which
-     also records why the old pair was wrong: `canSubmit` gated a DRAFT onto
-     PATCH /submit, a handler with no write path that 409s every draft, while
-     `canConfirm` gated /confirm — the endpoint that actually performs the
-     DRAFT → SUBMITTED write — onto SUBMITTED, where it is an explicit no-op.
-     The predicates were inverted relative to their endpoints. */
   const confirmReason = poConfirmBlockReason(purchaseOrder.status);
   const canConfirm = confirmReason === null;
   const grnReason = grnTransferBlockReason(purchaseOrder.status);
   const canConvertToGrn = grnReason === null;
-  // A part-received PO has a GRN, which the server refuses to cancel past (poHasDownstream); close its short line by PO amendment instead.
   const canCancel = rawStatus !== "CANCELLED" && rawStatus !== "RECEIVED" && rawStatus !== "PARTIALLY_RECEIVED";
   const canReopen = rawStatus === "CANCELLED";
   const isCancelled = rawStatus === "CANCELLED";
 
   return (
     <div className="pb-56 md:pb-0">
-      {/* Mobile-only dark sticky header */}
       <div className="sticky top-0 z-20 -mx-4 -mt-4 bg-sidebar text-sidebar-ink shadow-slab md:hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-3">
           <button
@@ -1159,14 +1010,12 @@ function PurchaseOrderDetailV2ReadOnly() {
               <Badge tone={badgeTone} variant="solid" size="xs">
                 {stageLabel}
               </Badge>
-              {/* mig 0324 — BESIDE the status, never instead of it. */}
               <HoldChip onHold={purchaseOrder.on_hold} reason={purchaseOrder.hold_reason} />
             </span>
           </div>
         </div>
       </div>
 
-      {/* Desktop sticky header */}
       <div className="sticky top-0 z-10 -mx-4 hidden border-b border-border bg-bg/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6 md:block">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3 min-w-0">
@@ -1187,7 +1036,6 @@ function PurchaseOrderDetailV2ReadOnly() {
                   <Badge tone={badgeTone} size="sm">
                     {stageLabel}
                   </Badge>
-                  {/* mig 0324 — BESIDE the status, never instead of it. */}
                   <HoldChip onHold={purchaseOrder.on_hold} reason={purchaseOrder.hold_reason} />
                 </span>
               </div>
@@ -1249,10 +1097,6 @@ function PurchaseOrderDetailV2ReadOnly() {
                 Reopen
               </Button>
             )}
-            {/* ── ALWAYS RENDERED, disabled with the reason. Two fixed slots:
-                "commit this document" and "produce the next document", each
-                keeping one meaning at every status, so the operator never has to
-                read the status badge to learn what a button will do. ── */}
             <Button
               variant="secondary"
               icon={<CheckCircle2 size={14} />}
@@ -1273,17 +1117,11 @@ function PurchaseOrderDetailV2ReadOnly() {
             >
               {transferToLabel('grn')}
             </Button>
-            {/* Raise amendment — a live (confirmed, non-cancelled) PO can be
-                revised through the single-approver amendment flow. The backend
-                one-open guard 409s a second request; the modal surfaces that. */}
             {purchaseOrder.status !== "DRAFT" && purchaseOrder.status !== "CANCELLED" && can("scm.po_amendment.create") && (
               <Button variant="secondary" icon={<FilePenLine size={14} />} onClick={() => setShowAmendModal(true)}>
                 Raise amendment
               </Button>
             )}
-            {/* Raise Return — once anything has been received against this PO.
-                Offered only to someone who can open the Purchase Returns area:
-                a button that lands on Forbidden is worse than no button. */}
             {(purchaseOrder.status === 'PARTIALLY_RECEIVED' || purchaseOrder.status === 'RECEIVED')
               && pageAccess('scm.procurement.pr') !== 'none' && (
               <Button variant="secondary" icon={<Undo2 size={14} />} onClick={goReturnFromPo}>
@@ -1295,8 +1133,6 @@ function PurchaseOrderDetailV2ReadOnly() {
               Edit
             </Button>
           </div>
-          {/* The reasons as TEXT, not only as a `title` — a tooltip needs a
-              hover and says nothing on a touch screen. */}
           <div className="flex max-w-[440px] flex-col items-end gap-0.5 text-right">
             <NextStepNote id="po-confirm-reason" reason={confirmReason} />
             <NextStepNote id="po-grn-reason" reason={grnReason} />
@@ -1314,9 +1150,6 @@ function PurchaseOrderDetailV2ReadOnly() {
         />
       )}
 
-      {/* Allocation editor (mig 0235) — split ONE line across its customers +
-          stock. Lives on the read-only V2 page (not the ?edit=1 editor) because
-          it must stay reachable on RECEIVED POs, where the editor is locked. */}
       {allocLineId && (
         <PoLineAllocationsModal
           poId={purchaseOrder.id}
@@ -1326,9 +1159,7 @@ function PurchaseOrderDetailV2ReadOnly() {
         />
       )}
 
-      {/* Detail body */}
       <div className="py-5">
-        {/* Mobile-only PO total hero */}
         <div className="mb-3 rounded-lg border border-border bg-surface p-4 shadow-stone md:hidden">
           <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
             PO total
@@ -1343,7 +1174,6 @@ function PurchaseOrderDetailV2ReadOnly() {
 
         <DetailGrid>
           <DetailMain>
-            {/* Supplier */}
             <Section title="Supplier">
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-3">
                 <Field label="Supplier" value={supplierNameOf(purchaseOrder)} />
@@ -1372,7 +1202,6 @@ function PurchaseOrderDetailV2ReadOnly() {
               </div>
             </Section>
 
-            {/* PO info */}
             <Section title="PO info">
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-4">
                 <Field label="PO date" value={fmtDate(purchaseOrder.po_date)} />
@@ -1423,7 +1252,6 @@ function PurchaseOrderDetailV2ReadOnly() {
               )}
             </Section>
 
-            {/* Line items */}
             <Section title={`Line items · ${items.length}`}>
               {/* Revision-pending / SO-drift banner (owner 2026-07-27). A pending
                   SO amendment means this PO must be re-approved before the
@@ -1553,18 +1381,6 @@ function PurchaseOrderDetailV2ReadOnly() {
         </DetailGrid>
       </div>
 
-      {/* Fixed bottom action bar (phone).
-
-          ONE SLOT USED TO HOLD THREE DIFFERENT ACTIONS — Submit, then Transfer
-          to GRN, then Edit — chosen by status, in the same green full-width
-          button, same pixels. Whichever one a purchaser pressed yesterday, the
-          same tap does something else today, and nothing on the bar says which.
-          That is the owner's complaint in its phone-shaped form.
-
-          Now: the commit slot and the transfer slot each keep one meaning and
-          are disabled with their reason when the state forbids them, and Edit
-          stops impersonating them. The reasons render as TEXT because a `title`
-          tooltip cannot be summoned on a touch screen. */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">
         <div className="mb-1.5 flex flex-col gap-0.5">
           <NextStepNote id="po-confirm-reason-phone" reason={confirmReason} />
@@ -1622,15 +1438,11 @@ function PurchaseOrderDetailV2ReadOnly() {
         </div>
       </div>
 
-      {/* Relationship map modal — the purchase-side twin of the SO map (same
-          shared 5-node canvas, read as the purchase chain). */}
       <DocumentRelationshipMapModal
         open={relMapOpen}
         onClose={() => setRelMapOpen(false)}
         nodes={chainNodes}
         onNodeClick={(n) => {
-          // Close only when the click actually navigated away; an in-app
-          // notice (multi-doc lists / access gates) renders OVER the map.
           if (onChainNodeClick(n)) setRelMapOpen(false);
         }}
         amendments={chainAmendments}
@@ -1641,9 +1453,6 @@ function PurchaseOrderDetailV2ReadOnly() {
         amendmentsLabel="Related amendments (Sales Order & this PO)"
         pairing={chainPairing}
       />
-      {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. The picked one opens in its own tab of the
-          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}

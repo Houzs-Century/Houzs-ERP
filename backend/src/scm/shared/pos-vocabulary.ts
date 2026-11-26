@@ -1,11 +1,3 @@
-/* Houzs POS — the vocabularies the booth app's sync and the ERP's POS Sales
- * surfaces share: the payment methods a bill can be paid by, the word a
- * receipt row carries (PAID / VOID / RETURN), and the empty totals record.
- *
- * ONE home. backend/src/scm/shared/pos-vocabulary.ts is the original and
- * frontend/src/vendor/shared/pos-vocabulary.ts its byte-identical copy
- * (check-shared-mirrors.mjs). Money is integer sen.
- */
 
 /** The label is the ONE statement of the method list; the array is derived. */
 export const POS_METHOD_LABEL = {
@@ -35,20 +27,16 @@ export function isPosReceiptStatus(v: unknown): v is PosReceiptStatus {
 }
 
 export type PosSalesTotals = {
-  /** Receipts in the list (every type and status). */
   count: number;
   paid_count: number;
   void_count: number;
   return_count: number;
-  /** PAID sales minus PAID returns — what the booth actually took. */
   net_sen: number;
-  /** PAID sales only (gross of returns). */
   sales_sen: number;
   return_sen: number;
   void_sen: number;
   discount_sen: number;
   sst_sen: number;
-  /** Net received per payment method, PAID bills only; refunds are negative. */
   by_method: Record<string, number>;
 };
 

@@ -1,10 +1,3 @@
-// Fleet Health, the dashboard (route /fleet-health), in the approved design of
-// 2026-11-07: summary tiles, three charts, the compliance reminders, then every
-// in-house lorry with a side view drawn to its own box size.
-//
-// All derived state (status, reminder levels, KPIs) comes from the backend
-// (services/fleet-status.ts); this page only renders it. Moved out of
-// FleetHealth.tsx, which sits at its size ceiling; the record sections stay there.
 import { useMemo, useState, useRef, useEffect } from "react";
 import { useSearchParams, Link, useNavigate } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
@@ -24,7 +17,6 @@ import {
   type DashboardPayload, type DocView, type VehicleRow, type VehicleStatus,
 } from "../FleetHealth";
 
-/** A compact expiry cell: the date + a days-remaining sub-line in its tone. */
 function ExpiryCell({ doc }: { doc: DocView | undefined }) {
   if (!doc) return <span className="text-[12px] text-ink-muted">Not on file</span>;
   const toneText = doc.tone === "crit" ? "text-err" : doc.tone === "warn" ? "text-warning-text" : "text-ink-muted";
@@ -62,8 +54,6 @@ export function FleetHealth() {
   const cancelPeek = () => {
     if (peekTimer.current != null) { window.clearTimeout(peekTimer.current); peekTimer.current = null; }
   };
-  // The suite had no unmount for a year and leaked exactly this kind of timer
-  // into a torn-down jsdom (BUG-HISTORY, 2026-08-02).
   useEffect(() => cancelPeek, []);
   const peek = (id: string) => {
     cancelPeek();
@@ -137,7 +127,6 @@ export function FleetHealth() {
   const toggleStatus = (status: string) => setParam("status", statusFilter === status ? "ALL" : status);
 
   const all = dash.data?.vehicles ?? [];
-  // Lorries that cannot go out (fleet-status canDispatch: only AVAILABLE / SERVICE_DUE can).
   const grounded = all.filter((v) => v.status !== "AVAILABLE" && v.status !== "SERVICE_DUE");
   const regionOptions = useMemo(() => {
     const present = [...new Set(all.map((v) => v.region).filter((r): r is string => !!r))].sort();
@@ -149,8 +138,6 @@ export function FleetHealth() {
     [all, region, statusFilter],
   );
 
-  // The reminders: every actionable current document, most-urgent first. Derived
-  // from the same payload the KPIs use, so it can never disagree with the board.
   const reminders = useMemo(() => {
     const scope = region === "ALL" ? all : all.filter((v) => v.region === region);
     const items: Array<{ v: VehicleRow; doc: DocView }> = [];
@@ -285,7 +272,6 @@ export function FleetHealth() {
             );
           })}
         </div>
-        {/* A failed load is not an empty fleet: say so instead of "No lorries". */}
         {dash.error && !dash.data ? (
           <div role="alert" className={cn(CARD, "flex flex-wrap items-center justify-between gap-3 border-err/30 px-5 py-6")}>
             <span className="text-[14px] font-semibold text-err">Could not load the fleet: {dash.error}</span>
@@ -293,8 +279,6 @@ export function FleetHealth() {
           </div>
         ) : (
         <div className={cn(CARD, "overflow-hidden [&>div>div:first-child]:px-4 [&>div>div:first-child]:pt-3")}>
-          {/* The grid's toolbar (row count, Export, Wrap, Columns) is its first child and has no
-              padding of its own; inside this card it would touch the card's edges. */}
           <DataTable<VehicleRow>
             tableId="fleet-health-board"
             exportName="fleet-health"

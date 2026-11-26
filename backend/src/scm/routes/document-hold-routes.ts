@@ -70,15 +70,8 @@ import { deferAllocationRecompute, deferQueuedAllocationDrain, enqueueStockAlloc
 /** The five documents, and what their own route is keyed by. */
 export type HoldDocument = 'so' | 'po' | 'grn' | 'pi' | 'do';
 
-/* A held Sales Order gives up its allocated stock and a released one may take
-   it back (so-stock-allocation.ts gates held orders), so the hold must start a
-   sweep. The queue row is the durable half — the five-minute cron drains it if
-   this Worker dies — and the deferred sweep is the fast half, the same one the
-   SO header PATCH uses. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches HoldRouteConfig.afterWrite; the five routers share one untyped context
 async function resweepAllocation(c: any, sb: any, docNo: string): Promise<void> {
-  /* The marker is already written, so a failed queue row must not turn the
-     answer into a 500; the deferred sweep below still runs. */
   try { await enqueueStockAllocationRecompute(sb, `so-hold:${docNo}`); }
   catch (error) {
     // eslint-disable-next-line no-console
@@ -86,7 +79,6 @@ async function resweepAllocation(c: any, sb: any, docNo: string): Promise<void> 
     deferAllocationRecompute(c, sb, 'post-hold');
     return;
   }
-  /* Drain the row just queued rather than sweep and then catch it up (two sweeps). */
   deferQueuedAllocationDrain(c, sb, 'post-hold');
 }
 
@@ -98,7 +90,6 @@ const CONFIGS: Record<HoldDocument, HoldRouteConfig> = {
   do:  { table: 'delivery_orders',    keyColumn: 'id',     param: 'id',    responseKey: 'deliveryOrder',   echoColumns: 'do_number, status',      afterWrite: null },
 };
 
-/** The route path each document mounts the hold on. */
 const PATHS: Record<HoldDocument, string> = {
   so: '/:docNo/hold', po: '/:id/hold', grn: '/:id/hold', pi: '/:id/hold', do: '/:id/hold',
 };

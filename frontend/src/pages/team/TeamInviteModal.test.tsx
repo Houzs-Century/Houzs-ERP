@@ -1,7 +1,3 @@
-/* The desktop Invite modal carries a Role select (2026-09-16): it defaults to
- * the baseline role (defaultRoleId), the admin can pick another, and the chosen
- * id is what POST /api/users/invite receives. A scoped Sales Director sees no
- * Role field — the server forces the baseline for that caller. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 

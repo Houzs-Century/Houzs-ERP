@@ -2,13 +2,6 @@ import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
 import { resolveTrackToken, type TrackedCase } from "../services/caseTracking";
 
-// Portal tracking middleware. A valid bearer token resolves to exactly
-// one case (scoped by assr_id), which the downstream routes read via
-// `c.get("trackedCase")`. No cross-case access is possible from a
-// single token, which is the entire point of this auth model.
-//
-// Deliberately does NOT honour DASHBOARD_API_KEY — the service key
-// must never grant portal access under any circumstance.
 
 declare module "hono" {
   interface ContextVariableMap {

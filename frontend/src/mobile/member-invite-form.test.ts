@@ -82,9 +82,6 @@ describe("memberEditFormFor", () => {
   });
 });
 
-/* The list is only right while it matches the server, so derive the server's
-   answer from the handler: every `body.<field>` PATCH /:id reads, minus every
-   `delete body.<field>` inside its scoped Sales Director branch. */
 describe("the editable list is what PATCH /api/users/:id applies for a scoped Sales Director", () => {
   const route = readFileSync(resolve(HERE, "../../../backend/src/routes/users.ts"), "utf8");
   const REGISTRATION = 'app.patch("/:id"';
@@ -152,9 +149,6 @@ describe("MobileApp routes both members forms through the helpers", () => {
   });
 });
 
-/* Desktop and phone must agree on WHO is scoped: the desktop Team page derives
-   salesDirScoped from the same two facts and hands the member profile
-   canManage && !salesDirScoped, which locks every assignment field. */
 describe("the desktop Team page decides scoped from the same two facts", () => {
   const team = stripComments(readFileSync(resolve(HERE, "../pages/Team.tsx"), "utf8"));
   const directory = stripComments(readFileSync(resolve(HERE, "../pages/team/TeamDirectory.tsx"), "utf8"));

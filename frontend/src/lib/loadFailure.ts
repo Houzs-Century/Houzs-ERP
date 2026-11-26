@@ -1,9 +1,3 @@
-/* "Not found" is a claim about the record; a timeout or a 500 is a claim about
-   the request. Detail pages used to show "X not found" for both, so an operator
-   on a bad connection re-keyed an order that already existed (a duplicate), and
-   the warehouse DO scan told staff to re-print a perfectly good DO. Only a real
-   404, or a successful answer with no record in it, is "not found"; anything
-   else is "could not load" with the reason and a Retry. */
 
 /** Both error shapes in this app carry a numeric `.status` (see lib/retryPolicy.ts). */
 export function isNotFoundError(error: unknown): boolean {

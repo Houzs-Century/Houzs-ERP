@@ -1,8 +1,3 @@
-// PINS GET /mfg-purchase-orders/outstanding-so-items, so overlapping its reads
-// (perf/do-create-and-picker) can be shown to change nothing: the pooled MRP
-// shortage path, the degraded picked-cap path when MRP throws, and the header
-// gates (cancelled / draft / on-hold / held orders). Snapshotted against the
-// code before that change.
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';

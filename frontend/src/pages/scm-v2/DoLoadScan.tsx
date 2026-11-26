@@ -67,12 +67,6 @@ export const DoLoadScan = () => {
   const id = params.get('id');
   const detailQ = useMfgDeliveryOrderDetail(id);
   const updateStatus = useUpdateMfgDeliveryOrderStatus();
-  /* What THIS scan wrote, held locally rather than read back off the refetched
-     row. Two reasons, and the second is the one that matters: the detail query
-     is invalidated by the mutation, so between success and refetch the row still
-     carries the OLD status and would render the same button again; and holding
-     it here is what keeps one scan to one step, since the confirmation card
-     stands until the paper is scanned afresh. */
   const [written, setWritten] = useState<DoScanStep['status'] | null>(null);
 
   const doRow = detailQ.data?.deliveryOrder as
@@ -83,10 +77,6 @@ export const DoLoadScan = () => {
     | undefined;
   const lineCount = detailQ.data?.items.length ?? 0;
 
-  /* `?? null`, never `?? false`: the column is nullable and a missing value is
-     not a proven "not held". doScanStep treats only an explicit `true` as held,
-     so null behaves as not-held either way — but the coercion happens where the
-     rule is written, not silently here. */
   const onHold = doRow?.on_hold ?? null;
   const step = doRow ? doScanStep(doRow.status, onHold) : null;
   const blockReason = doRow ? doScanBlockReason(doRow.status, onHold) : null;
@@ -95,8 +85,6 @@ export const DoLoadScan = () => {
     if (!id) return { tone: 'warn' as const, title: 'No delivery order in this link', body: 'The QR did not carry a delivery order. Re-print the DO and scan the code on the new copy.' };
     if (detailQ.isLoading) return null;
     if (detailQ.isError || !doRow) {
-      /* Only a real 404 (or an empty answer) means the paper points nowhere.
-         A timeout on a weak dock signal used to say "re-print the DO" too. */
       const f = classifyLoadFailure(detailQ.isError ? detailQ.error : null);
       if (f.kind === 'load-failed') {
         return { tone: 'warn' as const, retry: true, title: 'Could not load the delivery order', body: `${f.reason} This is a connection problem, not a problem with the paper, so do not re-print the DO. Check the signal and press Retry.` };
@@ -108,7 +96,7 @@ export const DoLoadScan = () => {
       const tone = onHold === true ? ('hold' as const) : ('warn' as const);
       return { tone, title: `${doRow.do_number}`, body: blockReason };
     }
-    return null; // a rung is available — show the action
+    return null;
   }, [id, detailQ.isLoading, detailQ.isError, detailQ.error, doRow, written, blockReason, onHold]);
 
   return (
@@ -128,10 +116,6 @@ export const DoLoadScan = () => {
           </div>
         </div>
       )}
-      {/* Hold shares amber with the other refusals on purpose — a hold is
-          reversible and deliberate, and red is what this system reserves for
-          cancelled (HoldChip.tsx states the same rule). Only the ICON differs,
-          so the two read apart at a glance without a second colour. */}
       {verdict && (
         <div className={`flex items-start gap-3 rounded-md border px-4 py-4 text-sm ${
           verdict.tone === 'ok'

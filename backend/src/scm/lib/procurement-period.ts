@@ -19,15 +19,9 @@ export interface PLine {
   poId: string; poNumber: string; poDate: string; supplier: string; category: ProcurementCategory;
   itemCode: string | null; itemDesc: string | null; soDocNo: string | null;
   qty: number; priceSen: number;
-  /** The date first put on the PO line. */
   originalDue: string | null;
-  /** The latest date the supplier promised (originalDue when never moved). */
   promised: string | null;
-  /** When the customer needs it: the linked sales order's confirmed date, else its original date. */
   needDate: string | null;
-  /** Goods received notes; `inferred` is quantity the line records as received
-   *  with no GRN behind it (marked received on import) — dated at its due date,
-   *  counted as received, never used for lead time or on time. */
   receipts: Array<{ date: string; qty: number; rejected: number; inferred?: boolean }>;
 }
 
@@ -93,23 +87,18 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, dueT
       buckets[b].lines += 1; buckets[b].sen += sen(l, q);
       if (daysLate > 0) { late += 1; lateSen += sen(l, q); }
     }
-    /* Supplier lead: each receipt in the period, PO date → received. */
     const rc = ls.flatMap((l) => l.receipts.filter((r) => inPeriod(r.date) && !r.inferred).map((r) => ({ l, r })));
     const leads = rc.map(({ l, r }) => daysBetween(l.poDate, r.date));
     const withDue = rc.filter(({ l }) => !!l.originalDue);
     const lateBy = withDue.map(({ l, r }) => daysBetween(l.originalDue as string, r.date));
     const onTime = lateBy.filter((x) => x <= 0).length;
     const amt = (xs: typeof withDue) => xs.reduce((a, { l, r }) => a + r.qty * l.priceSen, 0);
-    /* Ordering lead: the lines raised in the period, and the lines received in
-       it whose customer date is known. */
     const ahead = raised.filter((l) => l.originalDue).map((l) => daysBetween(l.poDate, l.originalDue as string));
     const beforeNeed = raised.filter((l) => l.originalDue && l.needDate).map((l) => daysBetween(l.originalDue as string, l.needDate as string));
     const real = (l: PLine) => l.receipts.filter((r) => inPeriod(r.date) && !r.inferred);
     const slack = ls.filter((l) => l.needDate && real(l).length > 0)
       .map((l) => daysBetween(real(l).map((r) => r.date).sort().at(-1) as string, l.needDate as string));
     const p20 = slack.length ? percentile(slack, 0.2) : null;
-    /* The same received lines: the customer's date minus the date on the PO —
-       how early we ask the supplier to deliver before the customer needs it. */
     const poDueBeforeNeed = ls.filter((l) => l.needDate && l.originalDue && real(l).length > 0).map((l) => daysBetween(l.originalDue as string, l.needDate as string));
     return {
       key,
@@ -130,14 +119,11 @@ export function procurementPeriod(lines: PLine[], from: string, to: string, dueT
         receipts: rc.length, midDays: mid(leads), avgDays: avg(leads), p80Days: leads.length ? percentile(leads, 0.8) : null,
         onTimePct: pct(onTime, withDue.length), latePct: pct(withDue.length - onTime, withDue.length),
         onTimeAmountPct: pct(amt(withDue.filter((_, i) => (lateBy[i] as number) <= 0)), amt(withDue)),
-        /* Late by: the late lines' days late added up, over the number of late lines (owner). */
         avgDaysLate: avg(lateBy.filter((x) => x > 0)),
       },
       ordering: {
         lines: raised.length, avgOrderAheadDays: avg(ahead), avgDueBeforeNeedDays: avg(beforeNeed),
         measured: slack.length, midPoDueBeforeNeedDays: mid(poDueBeforeNeed), avgPoDueBeforeNeedDays: avg(poDueBeforeNeed), midArrivedBeforeNeedDays: mid(slack), p20ArrivedBeforeNeedDays: p20,
-        /* Ordering later by the 20th-percentile slack still has 80% of lines
-           arriving by the customer's date. Too few lines, or no slack: null / 0. */
         canOrderLaterDays: slack.length < MIN_SAMPLES || p20 == null ? null : Math.max(0, Math.floor(p20)),
       },
     };
@@ -209,9 +195,6 @@ export function stockScopeKeeps(scope: StockScope, kind: string): boolean {
   return kind === scope;
 }
 
-/* Orders are filled from the warehouse first, then service (it comes back and
-   ships), then display (it goes to service for repacking first) - owner
-   2026-10-19. Others sit after the warehouse. */
 const FILL_ORDER: Record<LocationKind, number> = { warehouse: 0, others: 1, service: 2, display: 3 };
 
 /** Every location's stock is matched against the open orders as one pool
@@ -234,8 +217,6 @@ export function deadStock(allRows: StockRow[], today: string, demand: Map<string
   for (const [k, rs] of items) {
     const dm = demand.get(k) ?? { scheduled: 0, unscheduled: 0 };
     let dated = dm.scheduled; let undated = dm.unscheduled;
-    /* Fill order; within a location kind the most recently moved first, so what
-       is left is the stock that has sat longest. */
     for (const r of [...rs].sort((x, y) => FILL_ORDER[x.kind] - FILL_ORDER[y.kind] || (idleOf(x) ?? Infinity) - (idleOf(y) ?? Infinity))) {
       const needed = Math.min(dated, r.qty); dated -= needed;
       const buf = Math.min(undated, r.qty - needed); undated -= buf;
@@ -258,7 +239,6 @@ export function deadStock(allRows: StockRow[], today: string, demand: Map<string
       const ds = deadSen(r); const bs = bufSen(r);
       g.skus += 1; g.valueSen += r.valueSen;
       if (ds > 0) { g.deadSkus += 1; g.deadSen += ds; g.ages[ageOf(idleOf(r))] += ds; }
-      /* ages = the dead value by how long since it last went out. */
       if (bs > 0) { g.bufferSkus += 1; g.bufferSen += bs; }
       map.set(k, g);
     }

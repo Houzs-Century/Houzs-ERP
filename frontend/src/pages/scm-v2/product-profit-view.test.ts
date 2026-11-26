@@ -118,7 +118,6 @@ describe('several months (c8; owner 2026-11-03 「要」)', () => {
     const sheet = productProfitSheet(range, view([]), rows);
     expect(sheet.meta[0]).toEqual({ label: 'Months', value: 'August 2026 – October 2026' });
     expect(profitNotes(range, view([]), rows)[0]).toMatch(/^3 months added together, each order in the month of its SO date\./);
-    /* One month reads as it always did. */
     expect(productProfitSheet(DATA, view([]), viewRows(DATA, view([]))).meta[0]).toEqual({ label: 'Month', value: 'September 2026' });
     expect(profitNotes(DATA, view([]), viewRows(DATA, view([])))[0]).toMatch(/^By SO date\./);
   });

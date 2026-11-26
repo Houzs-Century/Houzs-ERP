@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// pdf-item-photos-canvas — the BROWSER half of line photos on printed documents:
-// decode any image the browser can show and re-encode it for jsPDF through a
-// canvas. Split from pdf-item-photos.ts (the pure half, which the Worker also
-// bundles for the AI Connector's get_pdf — it has no canvas, so it embeds
-// JPEG / PNG bytes as they are and skips anything else).
-// ----------------------------------------------------------------------------
 
 import { PDF_THUMB_PX, sniffImageMime, type PdfPhotoImage } from './pdf-item-photos';
 
@@ -50,8 +43,6 @@ async function blobToPdfImageAt(blob: Blob, maxPx: number): Promise<PdfPhotoImag
     try {
       const longest = Math.max(bitmap.width, bitmap.height);
       if (!(longest > 0)) return null;
-      /* NEVER UPSCALE. A 300px source re-encoded at 1536 is the same 300px of
-         detail in nine times the bytes — bigger file, not a better photo. */
       const scale = Math.min(1, maxPx / longest);
       const cw = Math.max(1, Math.round(bitmap.width * scale));
       const ch = Math.max(1, Math.round(bitmap.height * scale));
@@ -60,15 +51,11 @@ async function blobToPdfImageAt(blob: Blob, maxPx: number): Promise<PdfPhotoImag
       canvas.height = ch;
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
-      // Flatten any alpha onto white — JPEG has no transparency and black
-      // squares read as broken photos on paper.
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, cw, ch);
       ctx.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, cw, ch);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
       if (dataUrl.startsWith('data:image/jpeg')) return { dataUrl, format: 'JPEG', w: cw, h: ch };
-      // canvas.toBlob/toDataURL silently fall back to PNG when JPEG encoding
-      // is unavailable — jsPDF takes PNG too, so keep it.
       if (dataUrl.startsWith('data:image/png')) return { dataUrl, format: 'PNG', w: cw, h: ch };
       return null;
     } finally {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { advanceInstallmentForMonth, advanceRemainingAfterMonth } from "./hr-advance-installment";
 
-const A = "2026-09"; // advance given September 2026
+const A = "2026-09";
 
 describe("advanceInstallmentForMonth", () => {
   test("lump sum: whole amount in its own month, nothing before or after", () => {
@@ -17,7 +17,6 @@ describe("advanceInstallmentForMonth", () => {
   });
 
   test("split into N months, remainder: 500 / 3 -> 167, 167, 166", () => {
-    // ceil(50000/3) = 16667; months take 16667, 16667, then the 16666 left.
     const by = ["2026-09", "2026-10", "2026-11"].map((m) => advanceInstallmentForMonth(A, 16667, 50000, m));
     expect(by).toEqual([16667, 16667, 16666]);
     expect(by.reduce((s, x) => s + x, 0)).toBe(50000);
@@ -49,7 +48,6 @@ describe("advanceInstallmentForMonth", () => {
       [7, 2],
     ] as const) {
       let total = 0;
-      // Walk far past the end of any schedule.
       for (let i = 0; i < 240; i++) {
         const m = `${2026 + Math.floor((8 + i) / 12)}-${String(((8 + i) % 12) + 1).padStart(2, "0")}`;
         total += advanceInstallmentForMonth(A, inst, amount, m);
@@ -77,8 +75,6 @@ describe("advanceRemainingAfterMonth", () => {
   });
 
   test("this month's deduction plus the remaining-after equals the balance coming in", () => {
-    // Coming into November the balance is 50000 - 2*15000 = 20000; 15000 comes
-    // off, 5000 is left — the two parts reconstruct the opening balance.
     const thisMonth = advanceInstallmentForMonth(A, 15000, 50000, "2026-11");
     const after = advanceRemainingAfterMonth(A, 15000, 50000, "2026-11");
     expect(thisMonth + after).toBe(20000);

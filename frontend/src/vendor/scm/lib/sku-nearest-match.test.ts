@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { findNearestSku, normaliseSkuCode } from './sku-nearest-match';
 
-/* Shapes taken from the live 2990 catalog so the thresholds are exercised
-   against real code lengths, not invented ones. */
 const CATALOG = [
   { code: 'BOOQIT-1A(LHF)', name: 'SOFA BOOQIT 1A(LHF)', category: 'SOFA' },
   { code: 'BOOQIT-2A(RHF)', name: 'SOFA BOOQIT 2A(RHF)', category: 'SOFA' },
@@ -27,8 +25,6 @@ describe('findNearestSku', () => {
   });
 
   it('matches across spacing and bracket differences', () => {
-    // The case that motivated the change: substantively the same code, read
-    // with different punctuation, used to resolve to nothing.
     const r = findNearestSku('BOOQIT 1A (LHF)', CATALOG);
     expect(r.sku?.code).toBe('BOOQIT-1A(LHF)');
     expect(r.source).toBe('normalised');
@@ -41,8 +37,6 @@ describe('findNearestSku', () => {
   });
 
   it('REFUSES a prefix that two different products share', () => {
-    // BOOQIT alone is 1A(LHF), 2A(RHF) and CNR — three different pieces of
-    // furniture. Guessing one would put the wrong item on a sales order.
     expect(findNearestSku('BOOQIT', CATALOG).sku).toBeNull();
   });
 
@@ -53,14 +47,10 @@ describe('findNearestSku', () => {
   });
 
   it('REFUSES when two catalog codes are equally close', () => {
-    // Equidistant from BOOQIT-1A(LHF) and BOOQIT-2A(RHF): the slip does not
-    // say which, so neither may be chosen.
     expect(findNearestSku('BOOQITXA(XHF)', CATALOG).sku).toBeNull();
   });
 
   it('REFUSES a short code that is merely close', () => {
-    // Under 5 characters the distance budget is zero — "CODY" vs "CODX" is not
-    // enough signal to commit to a bedframe.
     expect(findNearestSku('CODX', CATALOG).sku).toBeNull();
   });
 

@@ -15,8 +15,6 @@ import {
   EMPTY_FILTERS,
 } from './warehouse-floorplan';
 
-/* A backend `Rack` row = one slot; only the fields the floor plan reads matter,
-   the rest are filled with inert defaults. */
 const item = (over: Partial<RackItem> = {}): RackItem => ({
   id: `it-${Math.random().toString(36).slice(2)}`,
   rack_id: 'r',
@@ -143,7 +141,6 @@ describe('matchSlot + filter helpers', () => {
 });
 
 describe('buildZones', () => {
-  // Real "Rack …" labels spanning both zones and both series, out of order.
   const labels = ['Rack R1.1', 'Rack L2.1', 'Rack L1.1', 'Rack L1.2', 'Rack L10.1', 'Rack R9.1'];
   const slots = labels.map((l) =>
     toSlot(rack(l, l === 'Rack L1.1' ? 'OCCUPIED' : 'EMPTY', l === 'Rack L1.1' ? [item()] : [])),
@@ -203,7 +200,6 @@ describe('buildZones — manual override moves a rack between zones', () => {
     ];
     const zones = buildZones(slots);
     const zoneA = zones.find((z) => z.label === 'ZONE A');
-    // L10 now sorts in after L1 inside ZONE A's L bank; ZONE B has no L rack left.
     expect(zoneA?.banks[0].racks.map((r) => r.key)).toEqual(['L1', 'L10']);
     expect(zones.find((z) => z.label === 'ZONE B')).toBeUndefined();
   });

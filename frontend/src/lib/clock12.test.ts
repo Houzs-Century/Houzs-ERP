@@ -1,4 +1,3 @@
-/* Trip Pay Overnight tiers read "00:00"; the approved design shows 12-hour times. */
 import { describe, expect, test } from "vitest";
 import { clock12 } from "./clock12";
 

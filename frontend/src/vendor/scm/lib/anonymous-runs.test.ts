@@ -43,7 +43,6 @@ describe('foldToAnonymousRuns — no lorry identity on the Time page', () => {
         expect(run).not.toHaveProperty(key);
         for (const s of run.stops) expect(s).not.toHaveProperty(key);
       }
-      /* The plumbing slot survives, as an id only — and never a plate string. */
       expect(run.vehicleSlotId).toMatch(/^lorry-uuid-/);
       expect(JSON.stringify({ ...run, vehicleSlotId: '' })).not.toContain('VNB9058');
       expect(JSON.stringify({ ...run, vehicleSlotId: '' })).not.toContain('Ali');
@@ -94,8 +93,6 @@ describe('foldToAnonymousRuns — no lorry identity on the Time page', () => {
 
 describe('the estimated delivery window — Google ETA + installation + unload buffer (owner 2026-08-08)', () => {
   test('arrival–(finish + buffer): the 几点到几点 range', () => {
-    /* finishTime already contains the installation time (residence-rule service
-       minutes folded into the engine's clock); the buffer pads the unload. */
     expect(estWindowOf({ arrivalTime: '09:40', finishTime: '10:10' })).toBe(`09:40–${addMinutesToClock('10:10', DELIVERY_UNLOAD_BUFFER_MIN)}`);
     expect(estWindowOf({ arrivalTime: '09:40', finishTime: '10:10' }, 15)).toBe('09:40–10:25');
   });

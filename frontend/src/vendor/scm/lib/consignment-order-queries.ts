@@ -1,26 +1,3 @@
-// ----------------------------------------------------------------------------
-// Consignment Order query hooks — a faithful clone of the Sales Order hooks in
-// flow-queries.ts, repointed at the parallel backend route mounted at
-// `/consignment-orders` (which mirrors `/mfg-sales-orders` 1:1: same create
-// body, same detail shape, same line/payment/debtor-search endpoints).
-//
-// Numbering on the backend is `CS-YYMM-NNN`. The request/response types are
-// intentionally kept identical to the SO hooks so the cloned ConsignmentOrderNew
-// / ConsignmentOrderDetail / ConsignmentOrders pages can render exactly like the
-// SO ones with only the endpoint + query key swapped.
-//
-// Query key namespace: ['consignment-order'] (+ '-detail', '-audit-log', etc.)
-// so consignment cache invalidation never collides with the SO cache.
-//
-// ── HOUZS VENDOR NOTES ──────────────────────────────────────────────────────
-//   - All reads/writes route through the vendored authedFetch (→ /api/scm/...),
-//     NOT 2990's supabase REST. The supabase import is dropped.
-//   - The per-line photo multipart POST (which the source did by hand off the
-//     supabase session token + raw URL) is repointed through authedFetch — the
-//     vendored authedFetch omits the JSON content-type for FormData bodies so the
-//     multipart boundary survives, exactly like the SO photo upload.
-//   - serviceNotify maps to the vendored dialog-service serviceNotify.
-// ----------------------------------------------------------------------------
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -30,7 +7,6 @@ import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { prepareImageForUpload } from '../../../lib/imagePipeline';
 
-/* ── List ────────────────────────────────────────────────────────────── */
 export const useConsignmentOrders = (status?: string) => useQuery({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   queryKey: ['consignment-order', 'list', status ?? 'all'],
@@ -41,17 +17,6 @@ export const useConsignmentOrders = (status?: string) => useQuery({
   retry: retryUnlessClientError,
 });
 
-/* ── List (opt-in server-side pagination) ────────────────────────────────
-   Sending `page` switches /consignment-orders into its paginated contract
-   ({ salesOrders, total, page, pageSize }); the legacy useConsignmentOrders
-   above (no page) still returns the historical unpaginated array. `q` searches
-   doc_no + debtor_name (the columns the CO list already searches + that are in
-   the header select). `sort` is 'col:dir' over
-   { so_date, doc_no, debtor_name, status, local_total_sen } (default
-   so_date:desc). placeholderData keepPrevious so paging doesn't flash empty. */
-/* Full-set money KPIs returned by the paginated CO list (mirrors the SO list
-   `aggregates` contract) — summed over the SAME filters as the page, so the KPI
-   tiles stay full-set instead of page-scoped. */
 export type ConsignmentOrderAggregates = { revenueSen: number; outstandingSen: number; paidSen: number };
 export const useConsignmentOrdersPaged = (params: {
   page: number;
@@ -59,8 +24,6 @@ export const useConsignmentOrdersPaged = (params: {
   status?: string;
   q?: string;
   sort?: string;
-  /* Outstanding-only overlay (?outstanding=1) — live balance > 0. Applied
-     server-side so it stays correct across pages. */
   outstanding?: boolean;
 }) => {
   const { page, pageSize, status, q, sort, outstanding } = params;
@@ -82,7 +45,6 @@ export const useConsignmentOrdersPaged = (params: {
   });
 };
 
-/* ── Detail ──────────────────────────────────────────────────────────── */
 export const useConsignmentOrderDetail = (docNo: string | null) => useQuery({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   queryKey: ['consignment-order-detail', docNo],
@@ -90,15 +52,6 @@ export const useConsignmentOrderDetail = (docNo: string | null) => useQuery({
   enabled: Boolean(docNo), staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
 });
 
-/* ── Create ──────────────────────────────────────────────────────────── */
-/* `idempotencyKey` is OPTIONAL and must be destructured OUT of the body — the
-   rest-spread would otherwise post it as an order field. Pass one per order
-   intent (see lib/idempotency.ts): the middleware replays the first response —
-   the SAME docNo — instead of raising the consignment order twice. Omitting it
-   is exactly today's behaviour (the middleware no-ops).
-
-   Mirrors useAddConsignmentOrderPayment below, idempotent since #657 while the
-   order it pays for was not. */
 export const useCreateConsignmentOrder = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -109,7 +62,6 @@ export const useCreateConsignmentOrder = () => {
   });
 };
 
-/* ── Header update ───────────────────────────────────────────────────── */
 export const useUpdateConsignmentOrderHeader = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -124,7 +76,6 @@ export const useUpdateConsignmentOrderHeader = () => {
   });
 };
 
-/* ── Status update ───────────────────────────────────────────────────── */
 export const useUpdateConsignmentOrderStatus = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -142,7 +93,6 @@ export const useUpdateConsignmentOrderStatus = () => {
   });
 };
 
-/* ── Line items ──────────────────────────────────────────────────────── */
 export const useAddConsignmentOrderItem = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -184,12 +134,9 @@ export const useDeleteConsignmentOrderItem = () => {
   });
 };
 
-/* ── Per-line photos (multipart) ─────────────────────────────────────── */
 export type UploadConsignmentItemPhotoResult = {
   photoKey: string;
   photoUrl: string;
-  /** WO-7 — signed URL for the `.thumb` sibling; absent from pre-thumb
-   *  backends. Grids try it first and fall back to photoUrl on 404. */
   thumbUrl?: string;
   expiresAt?: string;
 };
@@ -197,16 +144,9 @@ export type UploadConsignmentItemPhotoResult = {
 export const useUploadConsignmentItemPhoto = () => {
   const qc = useQueryClient();
   return useMutation({
-    // HOUZS VENDOR: the bespoke supabase-token + raw-URL multipart POST is
-    // repointed through authedFetch (it omits the JSON content-type for
-    // FormData so the multipart boundary survives), exactly like the SO photo
-    // upload.
     mutationFn: async ({ docNo, itemId, file }: {
       docNo: string; itemId: string; file: File;
     }): Promise<UploadConsignmentItemPhotoResult> => {
-      /* WO-7 — downscale/re-encode + thumbnail in one decode pass; falls
-         back to the original file (thumb: null) when compression is
-         unavailable. */
       const prepared = await prepareImageForUpload(file);
       const fd = new FormData();
       fd.append('file', prepared.file);
@@ -225,7 +165,6 @@ export const useUploadConsignmentItemPhoto = () => {
 
 export type SignedConsignmentPhotoUrlResponse = {
   signedUrl: string;
-  /** WO-7 — signed `.thumb` sibling URL (absent from pre-thumb backends). */
   thumbUrl?: string;
   expiresAt: string;
 };
@@ -258,7 +197,6 @@ export const useDeleteConsignmentItemPhoto = () => {
   });
 };
 
-/* ── Line price override ─────────────────────────────────────────────── */
 export const useOverrideConsignmentLinePrice = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -276,7 +214,6 @@ export const useOverrideConsignmentLinePrice = () => {
   });
 };
 
-/* ── Payments ledger ─────────────────────────────────────────────────── */
 export type ConsignmentPayment = {
   id: string;
   so_doc_no: string;
@@ -304,8 +241,6 @@ export const useConsignmentOrderPayments = (docNo: string | null) => useQuery({
   retryDelay: 800,
 });
 
-/* `idempotencyKey` — optional, destructured OUT of the body. See
-   useAddSalesOrderPayment / lib/idempotency.ts for the one-key-per-intent rule. */
 export const useAddConsignmentOrderPayment = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -332,7 +267,6 @@ export const useDeleteConsignmentOrderPayment = () => {
   });
 };
 
-/* ── Debtor autocomplete ─────────────────────────────────────────────── */
 export type DebtorSuggestion = {
   debtor_code: string | null;
   debtor_name: string | null;

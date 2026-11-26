@@ -1,12 +1,7 @@
-// DEV-74 (Sim 2026-10-13): a bedframe PO line with a drawer special prints a
-// small top-view picture of the bed with an arrow on the pull-out side, so the
-// supplier does not have to read LEFT / RIGHT / FRONT out of the specs text.
-// Drawn with jsPDF lines, nothing to upload or store.
 type JsPdf = import('jspdf').jsPDF;
 
 export type DrawerSide = 'LEFT' | 'RIGHT' | 'FRONT';
 
-/* The values the bedframe specials picker stores (mig 0022 / 0030 seeds). */
 const DRAWER_RE = /^(left|right|front)\s+drawer$/i;
 
 /** Drawer sides picked on a line, from `variants.specials` (string[] | string). */
@@ -21,8 +16,6 @@ export function drawerSidesOf(variants: Record<string, unknown> | null | undefin
   return (['LEFT', 'RIGHT', 'FRONT'] as const).filter((s) => sides.has(s));
 }
 
-/* Sim 2026-10-16: a Single / Super Single bed is too narrow for two front
-   drawers. Bedframe SKUs end in their size code, `{model_code}-({size_code})`. */
 const NARROW_SIZE_RE = /\((S|SS)\)\s*$/i;
 
 export function frontDrawerCountOf(itemCode: string | null | undefined): 1 | 2 {

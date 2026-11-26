@@ -62,58 +62,29 @@ export function soPaymentSubFieldGap(d: {
 }
 
 export interface SoSubmitFacts {
-  /** Always-required identity fields. */
   customerName: string;
   phone: string;
-  /** EDIT only: the phone the order is saved with ('' when it has none); null on
-   *  a create. The PATCH refuses only BLANKING a stored phone, so an order saved
-   *  without one (an import) must stay editable without someone inventing a
-   *  number. */
   origPhone: string | null;
-  /** True when at least one line has a product picked AND qty > 0. */
   hasNamedLine: boolean;
-  /** Save-as-draft: a draft needs none of the confirm-only fields (venue,
-   *  salesperson, stock location). */
   asDraft: boolean;
-  /** Resolved venue — false when none picked. Confirm-only. */
   hasVenue: boolean;
-  /** Resolved salesperson — false when none. Confirm-only. */
   hasSalesperson: boolean;
   /** A fair EVENT was picked/auto-filled (its organizer is set). Confirm-only.
    *  Owner 2026-09-26: fair is compulsory so the Sales Report can attribute every
    *  order — a submit must EITHER pick a fair OR mark `noFair`. */
   fairChosen: boolean;
-  /** The operator explicitly marked this a No-fair / showroom sale (the escape
-   *  hatch that keeps the compulsory rule from blocking a genuine non-fair sale). */
   noFair: boolean;
-  /** Why no fair was filled in for the keyer (GET /fair-default), which words
-   *  the fair refusal (`fairMissingMessage`). Null keeps the standing sentence. */
   fairWhy: FairWhy | null;
   /** An EVENT was picked with no day of it (owner 2026-09-24,
    *  `fair-options.ts::fairDayMissing`). Confirm-only, like the venue. */
   fairDayMissing: boolean;
-  /** Whether to run the stock-location gate at all. False for a draft, an edit,
-   *  or while the mappings are still loading (an in-flight mapping table makes
-   *  every State look unmapped, and refusing an order because a read is in flight
-   *  is worse than letting the server have the last word). The company predicate
-   *  itself lives in soLocationProblem. */
   gateLocation: boolean;
-  /** Active company code — soLocationProblem decides whether the company needs a
-   *  location at all. */
   companyCode: unknown;
-  /** Sales location the State resolved ('' / null = none). */
   salesLocation: string | null | undefined;
-  /** Picked delivery State ('' / null = none) — names which stock-location cause. */
   customerState: string | null | undefined;
-  /** Tier-1 processing / proceed gate facts, delegated VERBATIM to
-   *  collectProcessingGateProblems (variants, KIV, completeness, dates). */
   gate: ProcessingGateFacts;
-  /** True when the lines mix a sofa with a bedframe / mattress. */
   sofaMixConflict: boolean;
-  /** Payment rows missing a required sub-field — all of them. */
   paymentGaps: readonly SubmitPaymentGap[];
-  /** Surface-specific blockers already SaveProblem-shaped (e.g. an unpicked
-   *  scanned line). Appended verbatim. */
   extra?: readonly SaveProblem[];
 }
 
@@ -133,10 +104,6 @@ const requiredFieldProblem = (label: string): SaveProblem => ({
 export function collectSoSubmitProblems(facts: SoSubmitFacts): SaveProblem[] {
   const out: SaveProblem[] = [];
 
-  // 1. Always-required identity / line / confirm fields. When a Processing Date
-  //    is set the tier-1 gate below RE-STATES the customer name with the reason
-  //    it is required, so the bare "Customer name is required." duplicate is
-  //    dropped on that path (mirrors the old client dedup).
   const proceeding = !!facts.gate.procDate;
   const gateWillRestateCustomer =
     proceeding && !!facts.gate.completeness && !facts.gate.completeness.hasCustomerName;
@@ -157,14 +124,8 @@ export function collectSoSubmitProblems(facts: SoSubmitFacts): SaveProblem[] {
     if (!facts.hasSalesperson) out.push(requiredFieldProblem('Salesperson'));
   }
 
-  // 2. Processing-Date / proceed gate (variants, KIV, customer/address/postcode/
-  //    delivery completeness, date rules) — delegated verbatim so its wording
-  //    cannot drift from the write paths that already return it.
   for (const p of collectProcessingGateProblems(facts.gate)) out.push(p);
 
-  // 3. Stock location — soLocationProblem owns both causes (no State picked / the
-  //    picked State has no warehouse). Confirm-only, and only for a company that
-  //    needs it (the predicate is inside soLocationProblem).
   if (facts.gateLocation) {
     const loc = soLocationProblem({
       companyCode: facts.companyCode,
@@ -174,13 +135,10 @@ export function collectSoSubmitProblems(facts: SoSubmitFacts): SaveProblem[] {
     if (loc) out.push(loc);
   }
 
-  // 4. Sofa exclusivity — one shared sentence (SOFA_MIX_REASON), the same the
-  //    write path refuses with.
   if (facts.sofaMixConflict) {
     out.push({ code: 'sofa_mix', message: SOFA_MIX_REASON, field: 'Line items' });
   }
 
-  // 5. Payment method sub-fields — every incomplete row.
   for (const g of facts.paymentGaps) {
     out.push({
       code: 'payment_method_field_required',
@@ -189,7 +147,6 @@ export function collectSoSubmitProblems(facts: SoSubmitFacts): SaveProblem[] {
     });
   }
 
-  // 6. Surface-specific extras, verbatim.
   for (const p of facts.extra ?? []) out.push(p);
 
   return out;

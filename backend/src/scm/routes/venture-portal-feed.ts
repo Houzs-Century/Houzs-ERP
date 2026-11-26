@@ -65,19 +65,11 @@ import { resolveCallerStaffId } from '../lib/salesScope';
 export const venturePortalFeed = new Hono<{ Bindings: Env; Variables: Variables }>();
 venturePortalFeed.use('*', supabaseAuth);
 
-/** Looking at the feed. */
 const READ_KEYS = ['scm.venture_portal.read', 'settings.manage'] as const;
-/** Changing the feed — strictly narrower, because everything behind it either
- *  sends sales orders outward or changes who they are sent for. */
 const MANAGE_KEYS = ['scm.venture_portal.manage', 'settings.manage'] as const;
 
-/** The contract's floor. A short shared secret on a public receiver is the one
- *  configuration mistake here that cannot be undone by fixing it later. */
 const MIN_SECRET_LEN = 32;
 
-/* The status list and the config-key list both live in lib/venture-portal-outbox
-   — imported, never re-spelled. They were hand-typed here (twice, for the
-   statuses) until check-duplicated-decisions caught it. */
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -93,12 +85,6 @@ function denyManage(c: Ctx) {
     : c.json({ error: 'forbidden', need: MANAGE_KEYS }, 403);
 }
 
-/** Enough to recognise the key, never enough to use it.
- *
- *  `setAt` is scm.sync_config's own updated_at for the vp.secret row — the ONE
- *  extra fact the page needs to say "key ....9f2a, generated on Tuesday" rather
- *  than just "a key is set". It is a timestamp, not a credential; there is
- *  nothing in here an attacker could do anything with. */
 function maskSecret(
   raw: string | null,
   setAt: string | null,
@@ -108,24 +94,8 @@ function maskSecret(
   return { set: true, length: v.length, tail: v.slice(-4), setAt };
 }
 
-/** One config row: its value and when it was last written. */
 type VpConfigRow = { v: string; updatedAt: string | null };
 
-/**
- * Null means the read FAILED, which is not the same as "nothing is configured"
- * — and the page must not render the second when the first happened.
- *
- * A MAP, NOT A Record, and that is a correctness choice rather than a style one.
- * `Record<string, T>` indexes as `T` unless `noUncheckedIndexedAccess` is on, so
- * TypeScript promises a value for `cfg['vp.url']` that PostgREST does not — the
- * row is simply absent before anybody fills the page in, which is the normal
- * state. The guards below are the only thing standing between that and
- * `undefined` reaching the page, and with a Record the linter called all of them
- * redundant and would have had them deleted. `Map.get` returns `T | undefined`,
- * so the type now says what the database says and every guard is load-bearing to
- * the compiler too. This is the trap CLAUDE.md names in the `lint:` job comment,
- * met at its source instead of suppressed at the call site.
- */
 async function readConfigRows(
   sb: ReturnType<typeof getSupabaseService>,
 ): Promise<Map<string, VpConfigRow> | null> {
@@ -153,28 +123,16 @@ async function writeConfig(
   return error ? error.message : null;
 }
 
-/**
- * Everything the page needs in one read: is it on, is it wired up, what is in
- * the queue, and what went wrong last.
- */
 venturePortalFeed.get('/status', async (c) => {
   const denied = denyRead(c);
   if (denied) return denied;
   const sb = getSupabaseService(c.env);
 
   const [scope, cfg] = await Promise.all([readFeedScope(sb), readConfigRows(sb)]);
-  /* EVERY READ BELOW IS BOUND AND A FAILURE ANSWERS 500, because a status board
-     that cannot read is not a healthy status board. Swallowed, an unreadable
-     queue renders as `failed: 0` and `pending: 0`, and vpVerdict turns that into
-     "Working — nothing waiting" on the owner's screen while orders sit
-     undelivered. A wrong green is worse than an error: one gets investigated.
-     audit:swallowed-reads caught all four of these. */
   if (cfg === null) {
     return c.json({ error: 'config_read_failed', message: 'could not read the feed connection' }, 500);
   }
 
-  /* One grouped read would need an aggregate PostgREST cannot express, so this
-     is four counts with head:true — no rows travel, only the counts. */
   const counts: Record<string, number> = {};
   const countErrors: string[] = [];
   await Promise.all(
@@ -211,10 +169,6 @@ venturePortalFeed.get('/status', async (c) => {
     return c.json({ error: 'queue_read_failed', message: lastErrorErr.message }, 500);
   }
 
-  /* The oldest thing still waiting IS the health signal. A pending count that
-     is merely large means a busy queue; a pending row from two days ago means
-     nothing is draining, and those two look identical in a count — which is
-     also why this read in particular must never be swallowed. */
   const { data: oldestPending, error: oldestErr } = await sb
     .from('venture_portal_outbox')
     .select('doc_no, created_at, attempts, last_error')
@@ -225,9 +179,6 @@ venturePortalFeed.get('/status', async (c) => {
     return c.json({ error: 'queue_read_failed', message: oldestErr.message }, 500);
   }
 
-  /* The catalogue push (items only): per company, what the portal last
-     accepted and how the latest attempt went. Bound like every read above —
-     an unreadable state must not render as "nothing to report". */
   const { data: catalogueRows, error: catalogueErr } = await sb
     .from('venture_portal_catalogue_state')
     .select('company_id, delivered_digest, delivered_at, portal_result, last_digest, last_outcome, last_attempt_at, last_http_status, last_error, last_bytes, last_parts')
@@ -237,7 +188,6 @@ venturePortalFeed.get('/status', async (c) => {
   }
   const catalogueUrl = vpCatalogueUrl(cfg.get('vp.url')?.v ?? '');
 
-  /* The Sales Attending push: per company, the same record as the catalogue's. */
   const { data: attendanceRows, error: attendanceErr } = await sb
     .from('venture_portal_attendance_state')
     .select('company_id, delivered_digest, delivered_at, portal_result, last_digest, last_outcome, last_attempt_at, last_http_status, last_error, last_bytes')
@@ -257,7 +207,6 @@ venturePortalFeed.get('/status', async (c) => {
       url: cfg.get('vp.url')?.v ?? '',
       since: cfg.get('vp.since')?.v ?? '',
       secret: maskSecret(cfg.get('vp.secret')?.v ?? null, cfg.get('vp.secret')?.updatedAt ?? null),
-      /* The three switches, answered as one question: can a delivery happen? */
       ready: Boolean(cfg.get('vp.url')?.v && cfg.get('vp.secret')?.v) && scope !== 'off',
     },
     queue: {
@@ -269,16 +218,12 @@ venturePortalFeed.get('/status', async (c) => {
       oldestPending: oldestPending?.[0] ?? null,
     },
     catalogue: {
-      /* Null with a vp.url set means the catalogue is NOT being sent — see
-         venture-portal-catalogue.ts. */
       url: catalogueUrl,
       urlProblem: cfg.get('vp.url')?.v && !catalogueUrl ? VP_CATALOGUE_URL_PROBLEM : null,
       maxPostBytes: VP_CATALOGUE_MAX_POST_BYTES,
       companies: (catalogueRows as unknown[] | null) ?? [],
     },
     attendance: {
-      /* Null with a vp.url set means Sales Attending is NOT being sent — see
-         venture-portal-attendance.ts. */
       url: attendanceUrl,
       urlProblem: cfg.get('vp.url')?.v && !attendanceUrl ? VP_ATTENDANCE_URL_PROBLEM : null,
       companies: (attendanceRows as unknown[] | null) ?? [],
@@ -287,7 +232,6 @@ venturePortalFeed.get('/status', async (c) => {
   });
 });
 
-/** The queue itself, newest first. */
 venturePortalFeed.get('/rows', async (c) => {
   const denied = denyRead(c);
   if (denied) return denied;
@@ -307,12 +251,9 @@ venturePortalFeed.get('/rows', async (c) => {
 
   const { data, error } = await q;
   if (error) return c.json({ error: 'query_failed', message: error.message }, 500);
-  /* `| null` for readVpConfig's reason: supabase-js over-promises non-null and
-     the linter would otherwise have the `?? []` deleted. */
   return c.json({ rows: (data as unknown[] | null) ?? [] });
 });
 
-/** The receiver URL and the date floor. */
 venturePortalFeed.put('/connection', async (c) => {
   const denied = denyManage(c);
   if (denied) return denied;
@@ -328,9 +269,6 @@ venturePortalFeed.put('/connection', async (c) => {
   } catch {
     return c.json({ error: 'url_invalid' }, 400);
   }
-  /* HTTPS ONLY. The body carries a customer name, every line's cost and the
-     shared secret in a header; there is no version of this that may travel in
-     clear text, and a typo'd http:// receiver would do it silently. */
   if (parsed.protocol !== 'https:') return c.json({ error: 'url_must_be_https' }, 400);
   if (since && !/^\d{4}-\d{2}-\d{2}$/.test(since)) return c.json({ error: 'since_invalid' }, 400);
 
@@ -343,13 +281,6 @@ venturePortalFeed.put('/connection', async (c) => {
   return c.json({ ok: true, url, since });
 });
 
-/**
- * Set or rotate the shared secret.
- *
- * Write-only: the response echoes the mask, never the value. The contract's
- * rotation order is portal first, then here — a window of 401s only delays
- * deliveries, because a 401 does not consume a row's attempts.
- */
 venturePortalFeed.put('/secret', async (c) => {
   const denied = denyManage(c);
   if (denied) return denied;
@@ -390,22 +321,9 @@ venturePortalFeed.post('/secret/generate', async (c) => {
 
   const secret = mintVpSecret();
   const sb = getSupabaseService(c.env);
-  /* Written through the SAME helper PUT /secret uses, so the two roads cannot
-     store it differently — one row, one key, one upsert. */
   const err = await writeConfig(sb, 'vp.secret', secret);
   if (err) return c.json({ error: 'write_failed', message: err }, 500);
 
-  /* THE AUDIT ROW CARRIES NO KEY. What it carries is who minted one, when, and
-     its last four characters — which is exactly enough to answer "is the portal
-     holding the key we generated on Tuesday?" from the ledger without the ledger
-     being worth stealing.
-
-     writeAudit, not audit(c, ...), because audit() lifts the actor off
-     c.get('user') — and inside /api/scm/* that is the PINNED scm.staff system
-     identity every caller shares (see scm/env.ts). houzsUser is the real person,
-     so the actor is passed explicitly. Best-effort by construction: a failed
-     audit insert logs and is swallowed, and must not lose the operator a key
-     that has already been written. */
   await writeAudit(c.env, {
     action: 'venture_portal.secret.generate',
     entityType: 'sync_config',
@@ -416,8 +334,6 @@ venturePortalFeed.post('/secret/generate', async (c) => {
     actorEmail: c.get('houzsUser')?.email ?? null,
   });
 
-  /* `mask` travels beside it so the page can render "key ....9f2a, generated
-     just now" without waiting for the next poll of GET /status. */
   return c.json({
     ok: true,
     secret,
@@ -426,14 +342,6 @@ venturePortalFeed.post('/secret/generate', async (c) => {
   });
 });
 
-/**
- * Turn the feed on or off, and choose which companies it covers.
- *
- * `companies` is required when enabling and may be the string 'all'. There is
- * no default: which companies' sales orders leave this system is precisely the
- * decision this endpoint exists to record, and CLAUDE.md's rule for a deciding
- * parameter is that it must never be inherited silently.
- */
 venturePortalFeed.put('/scope', async (c) => {
   const denied = denyManage(c);
   if (denied) return denied;
@@ -459,15 +367,6 @@ venturePortalFeed.put('/scope', async (c) => {
 
   const sb = getSupabaseService(c.env);
 
-  /* scm.app_config.updated_by IS A uuid (migration 0272), and houzsUser.id is an
-     INTEGER — the public.users id. Writing it straight in made Postgres refuse
-     the whole upsert with `invalid input syntax for type uuid: "90"`, so the
-     switch could not be turned on by anybody from the day the page shipped. The
-     page reported it honestly ("Not saved: ...") and the feed stayed off, which
-     is why nothing else caught it: every gate here reads code, and this was a
-     disagreement between a column type and a value that only the database sees.
-     resolveCallerStaffId returns Promise<string | null>, so the compiler now
-     refuses a number at this call site — the fix is a type, not a reminder. */
   const actorStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id ?? null);
 
   const { error } = await sb.from('app_config').upsert(
@@ -483,12 +382,6 @@ venturePortalFeed.put('/scope', async (c) => {
   );
   if (error) return c.json({ error: 'write_failed', message: error.message }, 500);
 
-  /* WHO TURNED IT ON GOES IN THE AUDIT LEDGER, not only in updated_by. This
-     setting decides whose sales orders — with their costs and margins — leave
-     this system for somewhere they become the input to somebody's commission,
-     and a delivery cannot be recalled. `updated_by` is null for anyone with no
-     scm.staff row, and audit_events takes the real integer user id, so the
-     ledger answers the question the column cannot. */
   await writeAudit(c.env, {
     action: 'venture_portal.scope.set',
     entityType: 'app_config',
@@ -501,20 +394,10 @@ venturePortalFeed.put('/scope', async (c) => {
     actorEmail: c.get('houzsUser')?.email ?? null,
   });
 
-  /* The flag has a 30s cache. Without this drop, the page would show the old
-     state for half a minute after somebody pressed the switch, which reads as
-     "the button did nothing" — the exact failure mode CLAUDE.md records as
-     worse than a crash. */
   resetFeedFlagCache();
   return c.json({ ok: true, value });
 });
 
-/**
- * Prove the route to the portal before anything is delivered.
- *
- * This is the contract's rollout step 2 as a button. It GETs the receiver's
- * health endpoint with the configured secret and sends no sales-order data.
- */
 venturePortalFeed.post('/probe', async (c) => {
   const denied = denyManage(c);
   if (denied) return denied;
@@ -522,15 +405,6 @@ venturePortalFeed.post('/probe', async (c) => {
   return c.json(result);
 });
 
-/**
- * Queue every in-scope order that has not been delivered.
- *
- * The initial backfill and the "did we miss anything" sweep are one operation
- * (see the migration's note on scm.vp_requeue_undelivered). `includeFailed`
- * releases rows parked after exhausting their attempts, which is what you press
- * AFTER fixing the cause — so it is explicit and defaults to leaving them
- * parked.
- */
 venturePortalFeed.post('/queue-undelivered', async (c) => {
   const denied = denyManage(c);
   if (denied) return denied;
@@ -541,12 +415,6 @@ venturePortalFeed.post('/queue-undelivered', async (c) => {
   return c.json(result);
 });
 
-/**
- * Send now, rather than waiting for the next five-minute sweep.
- *
- * Bounded by the same batch the cron uses unless a larger one is asked for, so
- * the backfill can be walked down in visible steps by somebody watching it.
- */
 venturePortalFeed.post('/drain', async (c) => {
   const denied = denyManage(c);
   if (denied) return denied;
@@ -557,15 +425,6 @@ venturePortalFeed.post('/drain', async (c) => {
   return c.json(result);
 });
 
-/**
- * Send the catalogue now, whether or not it changed.
- *
- * The five-minute sweep only sends a catalogue whose digest moved; this is the
- * button for "the portal lost its copy" and for a catalogue the portal refused
- * (400/422), which the sweep does not retry until the catalogue changes. It is
- * the same gates as the sweep: switch, company scope, vp.url and vp.secret.
- * Items only, like every catalogue delivery — there is no price to send.
- */
 venturePortalFeed.post('/catalogue/send', async (c) => {
   const denied = denyManage(c);
   if (denied) return denied;
@@ -573,14 +432,6 @@ venturePortalFeed.post('/catalogue/send', async (c) => {
   return c.json(result);
 });
 
-/**
- * Release ONE parked row once its cause is fixed.
- *
- * A `sent` row is refused outright. Re-sending is harmless to the portal — it
- * dedupes on snapshotAt — but the button must not read as a way to "re-push" a
- * delivered order, because the next person to reach for it will be doing so on
- * a document whose commission has already been paid.
- */
 venturePortalFeed.post('/rows/:id/requeue', async (c) => {
   // company-scope: scm.venture_portal_outbox HAS NO company_id COLUMN — a row is
   // a doc_no and a delivery state, and this page is deliberately cross-company
@@ -620,9 +471,6 @@ venturePortalFeed.post('/rows/:id/requeue', async (c) => {
       updated_at: new Date().toISOString(),
     })
     .eq('id', id)
-    /* Re-read the status in the predicate: between the SELECT above and this
-       UPDATE the sweep may have delivered it, and re-opening a delivered row
-       would queue a second delivery nobody asked for. */
     .eq('status', status);
   if (updErr) return c.json({ error: 'write_failed', message: updErr.message }, 500);
   return c.json({ ok: true, doc_no: (row as { doc_no: string }).doc_no });

@@ -1,28 +1,3 @@
-// ----------------------------------------------------------------------------
-// /fabric-tracking — fabric inventory + per-context price tiers.
-//
-// Ported (simplified) from HOOKKA src/api/routes/fabric-tracking.ts. The
-// HOOKKA version live-aggregates SOH/PO/usage from raw_materials, cost_ledger
-// and active FAB_CUT job_cards — none of which exist in 2990s yet. So this
-// version reads the static fabric_trackings table directly. Metric columns
-// (SOH, po_outstanding, usage windows, shortage) are whatever was snapshotted
-// at seed time. Forward port: re-compute live when raw_materials lands.
-//
-// Endpoints:
-//   GET   /fabric-tracking?category=B.M-FABR&search=avani
-//   POST  /fabric-tracking                — create one (PR #43)
-//         400 non_fabric_code when fabricCode opens with a product word.
-//   POST  /fabric-tracking/bulk-upsert    — Commander 2026-05-26 Export/Import:
-//         body: { rows: Array<{fabricCode, ... any column}> }
-//         Per-column partial upsert by id (derived from fabricCode if missing).
-//         A product-code row is rejected into `errors` and skipped; the rest
-//         of the import still lands. See NON_FABRIC_HEAD below for why.
-//   DELETE /fabric-tracking/:id           — delete one (PR #43)
-//   PATCH /fabric-tracking/:id/tier
-//         body: { field: 'sofaPriceTier' | 'bedframePriceTier', tier: 'PRICE_1'..'PRICE_4' (PRICE_4 sofa only) }
-//   PATCH /fabric-tracking/:id/supplier-code
-//   PATCH /fabric-tracking/:id/description
-// ----------------------------------------------------------------------------
 
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -40,7 +15,6 @@ fabricTracking.use('*', supabaseAuth);
 const VALID_CATEGORIES = new Set(['B.M-FABR', 'S-FABR', 'S.M-FABR', 'LINING', 'WEBBING']);
 const VALID_TIER_FIELDS = new Set(['sofaPriceTier', 'bedframePriceTier']);
 const VALID_TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3', 'PRICE_4']);
-// PRICE_4 (Full Leather) is a sofa grade; no bedframe supplier prices it (2990-0024).
 const BEDFRAME_TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
 
 /* WHY A FABRIC WRITE PATH REFUSES A CODE AT ALL.
@@ -85,24 +59,11 @@ export function nonFabricCodeWord(code: string): string | null {
   return m?.[1] ? m[1].toUpperCase().replace(/\s+/g, ' ') : null;
 }
 
-// Map JS camelCase tier field → Postgres snake_case column.
 const TIER_FIELD_TO_COL: Record<string, string> = {
   sofaPriceTier: 'sofa_price_tier',
   bedframePriceTier: 'bedframe_price_tier',
 };
 
-/* Chairman 2026-06-01 — the POS SELLING fabric library (fabric_library +
-   fabric_colours) is a SERIES / COLOUR projection of this cost ledger:
-     • series  = the fabric_code prefix before the first '-'  (BF-01 → 'BF')
-     • colour  = the fabric_code itself, labelled with the colour name after the
-                 code in the description ("CG-002 Sand" → "Sand"), else the code.
-   So a Backend-added (or imported) fabric is immediately pickable on POS.
-
-   INSERT-only (ignoreDuplicates): RLS (migration 0125) lets the editor set
-   INSERT fabric_library/fabric_colours but not UPDATE/DELETE — so we never
-   clobber a Master-Admin selling-tier edit, and re-syncing an existing fabric
-   is a no-op instead of a 403/permission error. Selling tiers stay POS-only. */
-// seriesOf: the selling-library id of a fabric code — see lib/fabric-series.ts.
 const colourLabelOf = (code: string, description: string | null): string => {
   const desc = (description ?? '').trim();
   const sp = desc.indexOf(' ');
@@ -113,9 +74,6 @@ async function syncFabricToSellingLibrary(
   sb: any,
   fabricCode: string,
   description: string | null,
-  /* Multi-company (mig 0089): stamp the active company on the mirrored selling
-     rows. null/undefined (unresolved) inserts without the column — same no-op
-     rule as companyScope. */
   companyId: number | null,
 ): Promise<string | null> {
   const code = fabricCode.trim();
@@ -127,18 +85,10 @@ async function syncFabricToSellingLibrary(
     { onConflict: 'id', ignoreDuplicates: true },
   );
   if (serErr) return `fabric_library: ${serErr.message}`;
-  /* `ignoreDuplicates` is right — re-running an import must not stamp over a
-     series someone already curated. But 0089 records that fabric_library's PK is
-     the SERIES TEXT and is GLOBAL: it "can't gain company_id without a PK
-     redesign, so a 2990 import must use ids distinct from Houzs's". When the id
-     IS taken by another organisation, DO NOTHING means the caller's row never
-     lands, reads are company-scoped so it never appears, and NOTHING SAYS SO.
-     Naming it is the whole fix: the row genuinely cannot be written until the PK
-     is redesigned, so the honest outcome is to report, not to invent one. */
   if (companyId != null) {
     const { data: owner, error: ownerErr } = await sb.from('fabric_library')
       .select('company_id').eq('id', series).maybeSingle();
-    if (ownerErr) return `fabric_library: ${ownerErr.message}`;  // fail closed — a blind read here would re-home the row
+    if (ownerErr) return `fabric_library: ${ownerErr.message}`;
     const ownerCo = (owner as { company_id?: number | null } | null)?.company_id;
     if (ownerCo != null && ownerCo !== companyId) {
       return `fabric_library: series "${series}" already belongs to another organisation. Fabric series ids are global (the id IS the series), so this import needs a distinct series code.`;
@@ -149,12 +99,10 @@ async function syncFabricToSellingLibrary(
     { onConflict: 'fabric_id,colour_id', ignoreDuplicates: true },
   );
   if (colErr) return `fabric_colours: ${colErr.message}`;
-  /* Same shape as the series below: composite PK (fabric_id, colour_id), also
-     named in 0089 as un-convertible, also DO NOTHING, also silent. */
   if (companyId != null) {
     const { data: cOwner, error: cOwnerErr } = await sb.from('fabric_colours')
       .select('company_id').eq('fabric_id', series).eq('colour_id', code).maybeSingle();
-    if (cOwnerErr) return `fabric_colours: ${cOwnerErr.message}`;  // fail closed — see the series read above
+    if (cOwnerErr) return `fabric_colours: ${cOwnerErr.message}`;
     const cCo = (cOwner as { company_id?: number | null } | null)?.company_id;
     if (cCo != null && cCo !== companyId) {
       return `fabric_colours: colour "${code}" under series "${series}" already belongs to another organisation. This pair is a global key, so the import needs a distinct code.`;
@@ -163,8 +111,6 @@ async function syncFabricToSellingLibrary(
   return null;
 }
 
-/* PR #43 — Create new fabric. Commander 2026-05-26: Fabric Converter
-   was missing the "+ New Fabric" capability. */
 fabricTracking.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; }
@@ -190,8 +136,6 @@ fabricTracking.post('/', async (c) => {
     return c.json({ error: 'invalid_bedframe_price_tier', allowed: [...BEDFRAME_TIERS] }, 400);
   }
 
-  // id is text PK — use the fabric_code (uppercased) as the id by convention.
-  // Allow caller to override via explicit `id`.
   const id = String(body.id ?? fabricCode.toUpperCase().replace(/\s+/g, '_'));
 
   const row: Record<string, unknown> = {
@@ -202,10 +146,8 @@ fabricTracking.post('/', async (c) => {
     sofa_price_tier: (body.sofaPriceTier as string) ?? null,
     bedframe_price_tier: (body.bedframePriceTier as string) ?? null,
     supplier_code: (body.supplierCode as string) ?? null,
-    /* Migration 0063 — collection name. */
     series: (body.series as string) ?? null,
     price_sen: typeof body.priceSen === 'number' ? body.priceSen : 0,
-    /* Migration 0167 — ACTIVE toggle; new fabrics default true. */
     is_active: typeof body.isActive === 'boolean' ? body.isActive : true,
   };
 
@@ -213,36 +155,14 @@ fabricTracking.post('/', async (c) => {
   const { data, error } = await sb.from('fabric_trackings').insert({ ...row, company_id: activeCompanyId(c) }).select('*').single();
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_code' }, 409);
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
-  // Mirror into the customer-pickable selling library (series + colour) so the
-  // new fabric is immediately pickable on POS. The procurement row above is
-  // already saved; surface any library failure as a warning so the operator can
-  // retry without losing the fabric.
   const libraryWarning = await syncFabricToSellingLibrary(sb, fabricCode, (body.fabricDescription as string) ?? null, activeCompanyId(c) ?? null);
 
   return c.json({ fabric: data, fabricSeries: seriesOf(fabricCode), libraryWarning }, 201);
 });
 
-/* Commander 2026-05-26 — Bulk upsert from CSV import. One Postgres upsert
-   (INSERT ... ON CONFLICT (id) DO UPDATE) instead of N HTTP round-trips.
-
-   Per-column merge semantics: only columns explicitly present in each row
-   object are written. Missing columns keep their existing DB value on update,
-   or take the schema default on insert. This lets the CSV stay narrow when a
-   caller only wants to touch a few fields.
-
-   `id` is derived from `fabricCode` (uppercased, spaces → underscores) when
-   not provided — matches the single-row POST convention. */
 fabricTracking.post('/bulk-upsert', async (c) => {
   let body: { rows?: unknown };
   try { body = (await c.req.json()) as typeof body; }
@@ -280,9 +200,6 @@ fabricTracking.post('/bulk-upsert', async (c) => {
     const r = raw as Record<string, unknown>;
     const code = typeof r.fabricCode === 'string' ? r.fabricCode.trim() : '';
     if (!code) { errors.push({ index: i, reason: 'missing_fabric_code' }); return; }
-    /* Per-row, like every other rejection here: an import that carries one
-       product line still lands its real fabrics, and the count comes back so
-       the operator can see something was refused. */
     if (nonFabricCodeWord(code)) { errors.push({ index: i, reason: 'non_fabric_code' }); return; }
     const id = typeof r.id === 'string' && r.id.trim() ? r.id.trim() : code.toUpperCase().replace(/\s+/g, '_');
 
@@ -294,8 +211,6 @@ fabricTracking.post('/bulk-upsert', async (c) => {
         row[col] = (v === '' || v == null) ? null : String(v);
       }
     }
-    // The tier columns are a Postgres enum: one bad value fails the whole batch
-    // upsert, so refuse it here, per row, like every other rejection.
     for (const col of ['sofa_price_tier', 'bedframe_price_tier']) {
       const v = row[col];
       const allowed = col === 'bedframe_price_tier' ? BEDFRAME_TIERS : VALID_TIERS;
@@ -317,7 +232,6 @@ fabricTracking.post('/bulk-upsert', async (c) => {
   if (dbRows.length === 0) return c.json({ upserted: 0, errors }, errors.length ? 400 : 200);
 
   const sb = c.get('supabase');
-  // Multi-company (mig 0061): stamp the active company on each upserted row.
   const cid = activeCompanyId(c);
   const stampedRows = cid != null ? dbRows.map((r) => ({ ...r, company_id: cid })) : dbRows;
   /* THE FABRIC CODE IS NOW PER-COMPANY (mig 0342). fabric_trackings' identity is
@@ -339,12 +253,6 @@ fabricTracking.post('/bulk-upsert', async (c) => {
     return c.json({ error: 'bulk_upsert_failed', reason: error.message, errors }, 500);
   }
 
-  // Mirror the imported cost fabrics into the SELLING library (series + colour),
-  // batched + INSERT-only (RLS-safe, never clobbers a Master-Admin tier edit).
-  // Best-effort: the procurement upsert already succeeded, so a library hiccup
-  // must not fail the import.
-  // Multi-company (mig 0089): mirror rows carry the same active company as the
-  // procurement upsert above (cid from stampedRows).
   const mirrorCompanyCol = cid != null ? { company_id: cid } : {};
   const seriesRows = [...new Set(dbRows.map((r) => seriesOf(String(r.fabric_code))))]
     .map((s, i) => ({ ...mirrorCompanyCol, id: s, label: s, tier: 'standard', default_surcharge: 0, active: true, sort_order: (i + 1) * 10 }));
@@ -363,12 +271,9 @@ fabricTracking.post('/bulk-upsert', async (c) => {
   return c.json({ upserted: dbRows.length, errors });
 });
 
-/* PR #43 — Delete fabric. */
 fabricTracking.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');
-  // Multi-company: scope the delete; select reports whether a row in THIS
-  // company was actually removed (a blind id from another company is not found).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data, error } = await scopeToCompanyId(sb.from('fabric_trackings').delete().eq('id', id), co.companyId).select('id').maybeSingle();
@@ -413,22 +318,6 @@ fabricTracking.get('/', async (c) => {
   return c.json({ fabrics: data ?? [] });
 });
 
-/* GET /fabric-tracking/lite — the DISPLAY/PICK read.
- *
- * WHY THIS EXISTS (bug 2026-08-20). The full GET above returns procurement COST
- * and STOCK (price_sen, soh_sen, *_usage_sen, shortage_sen, reorder_point_sen,
- * supplier cost), so its guard correctly requires scm.procurement.products. But
- * SoLineCard (the fabric dropdown on EVERY sales-order line) and the PC-Order
- * detail need only the fabric NAME + PRICE TIERS to pick a fabric and price the
- * line — and their pages are gated on scm.sales.* / scm.consignment.*, NOT
- * products. So a salesperson/consignment user fired the full read and got a 403
- * (surfaced by the client-error telemetry: [rbac 403] GET /fabric-tracking),
- * leaving the fabric dropdown empty.
- *
- * This lite read returns ONLY the non-sensitive display + tier fields, so it is
- * safe to expose via openReadPaths on the guard (see scm/index.ts). Cost/stock
- * NEVER appear here, so opening it leaks nothing; the full read stays gated.
- * Still company-scoped, exactly like the full read. */
 fabricTracking.get('/lite', async (c) => {
   const category = c.req.query('category');
   const search = c.req.query('search');
@@ -458,10 +347,6 @@ fabricTracking.get('/lite', async (c) => {
   return c.json({ fabrics: data ?? [] });
 });
 
-/* Migration 0167 — ACTIVE toggle from the Fabric Converter table (owner spec
-   2026-06-12). Inactive fabrics are hidden from NEW-entry fabric pickers
-   (SO/CO variant selects, scan-SO catalog injection); existing documents keep
-   displaying the code, and the converter still lists the row. */
 fabricTracking.patch('/:id/active', async (c) => {
   const id = c.req.param('id');
   let body: { isActive?: unknown };
@@ -494,7 +379,6 @@ fabricTracking.patch('/:id/active', async (c) => {
   return c.json({ ok: true, isActive: body.isActive });
 });
 
-/* Migration 0063 — Inline-edit Series cell from the Fabric Converter table. */
 fabricTracking.patch('/:id/series', async (c) => {
   const id = c.req.param('id');
   let body: { series?: string | null };
@@ -526,9 +410,6 @@ fabricTracking.patch('/:id/series', async (c) => {
   return c.json({ ok: true, series: next });
 });
 
-// Set the supplier's own code for this fabric (what we print on POs sent to
-// the supplier). Single supplier per fabric — multi-supplier still goes
-// through supplier_material_bindings.
 fabricTracking.patch('/:id/supplier-code', async (c) => {
   const id = c.req.param('id');
   let body: { supplierCode?: string | null };
@@ -597,10 +478,6 @@ fabricTracking.patch('/:id/description', async (c) => {
   const trimmed = typeof body.description === 'string' ? body.description.trim() : null;
   const next = trimmed === '' ? null : trimmed;
 
-  /* fabric_code comes back so the mirror can be aimed at the right colour
-     without a second read — the row was just proven to be this company's. The
-     .select().maybeSingle() stays OUTSIDE scopeToCompanyId, the shape every
-     other handler in this file uses. */
   const { data, error } = await scopeToCompanyId(supabase
     .from('fabric_trackings')
     .update({ fabric_description: next })
@@ -628,11 +505,6 @@ fabricTracking.patch('/:id/description', async (c) => {
   return c.json({ ok: true, description: next, pickerLabel: code ? colourLabelOf(code, next) : null, ...(pickerWarning ? { pickerWarning } : {}) });
 });
 
-/* Exported so the failed-count path has a test: the router below mounts this,
-   and a test mounts it on a bare Hono with a fake supabase. trips.ts's
-   patchTripHandler et al. take `c: any`; this one takes the router's OWN
-   context type instead, because an extracted handler that widens to `any` pays
-   for its test with the type safety the inline handler had. */
 export const patchFabricTierHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const id = c.req.param('id');
   let body: { field?: string; tier?: string };
@@ -655,11 +527,6 @@ export const patchFabricTierHandler = async (c: Context<{ Bindings: Env; Variabl
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // Load the fabric code before update so we can count affected products
-  // tagged with this fabric_color. This gives the UI a "propagation hint"
-  // — N products now use the new tier when their price is read.
-  // Multi-company: scoped so a blind id from another company is not found and
-  // the tier write below can never re-price the other company's fabric.
   const { data: fabric } = await scopeToCompanyId(supabase
     .from('fabric_trackings')
     .select('fabric_code')
@@ -678,19 +545,6 @@ export const patchFabricTierHandler = async (c: Context<{ Bindings: Env; Variabl
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
 
-  // Count downstream products. Sofa tier change affects SOFA + ACCESSORY
-  // SKUs (HOOKKA convention); bedframe tier change only affects BEDFRAME.
-  //
-  // `count ?? 0` here was the same bug this branch fixed on the six list
-  // endpoints, and it was first filed as a different class on the grounds that
-  // it decides nothing. It decides nothing — but it is REPORTED, as
-  // `affectedProducts`, and the frontend prints it as a sentence ("N sofa
-  // products now reflect the new tier"). A count that could not be read is not
-  // zero, and zero here is the reading that makes the operator do nothing.
-  //
-  // It cannot 500: the tier UPDATE above has already committed, so failing the
-  // request would tell the operator their change did not land. The count is
-  // served as null — unknown, and the caller says so — while ok stays true.
   let affectedProducts: number | null = 0;
   if (fabricCode) {
     const targetCategories = body.field === 'bedframePriceTier'

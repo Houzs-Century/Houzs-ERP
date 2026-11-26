@@ -26,15 +26,10 @@ import { fairEventOf } from './fairPick';
 import type { FairPickValue } from './FairPicker';
 
 export type FairFallbackProps = {
-  /** Gate for the whole control beyond "no event picked" — desktop passes true,
-   *  mobile passes `!isEdit || isDraftSo` so a confirmed edit shows neither. */
   enabled: boolean;
-  /** The current pick: both controls hide once this carries a fair EVENT. */
   value: FairPickValue;
-  /** The date driving the fair list (null = today's window). */
   orderDate: string | null;
   onOrderDate: (d: string | null) => void;
-  /** Today in MYT — the list never offers a fair in the future. */
   maxDate: string;
   noFair: boolean;
   onNoFair: (checked: boolean) => void;

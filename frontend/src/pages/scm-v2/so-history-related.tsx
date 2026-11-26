@@ -1,12 +1,3 @@
-/* The SO History drawer's view of the documents raised from the order.
-
-   The SO's own trail (mfg_so_audit_log) never carried "PO created" or "DO
-   created" — those rows live in entity_audit_log against the child document —
-   so the drawer could not answer when the PO for this order was raised (ticket
-   DEV-16). This merges the children's rows into the SO trail, tags each one with
-   its document number linking to that document, and reads each row with its own
-   document's vocabulary. Shared by the V2 detail page and the V1 editor so the
-   two drawers cannot tell different stories. */
 
 import { useCallback, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -51,16 +42,10 @@ const relatedOf = (e: AuditLogEntry): RelatedFields | null => {
 
 type OwnAuditQuery = { data?: SoAuditEntry[]; isLoading: boolean; error: unknown };
 
-/* `panel` spreads onto AuditHistoryPanel; `error` stays out of it so every
-   mount still writes error= where auditHistoryPanelError.test.tsx can see it.
-   A failure on either read is the drawer's error: a trail missing its PO rows
-   is not a complete trail. */
 export function useSoHistoryWithRelated(docNo: string | null, own: OwnAuditQuery) {
   const q = useSalesOrderRelatedAuditLog(docNo);
 
   const entries = useMemo<SoHistoryEntry[]>(() => {
-    /* Prefixed ids: the two tables number their rows independently, and the
-       drawer keys its expand state on the id. */
     const related = (q.data ?? []).map((e) => ({ ...e, id: `${e.entity_type}:${e.id}` }));
     return [...(own.data ?? []), ...related].sort(
       (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),

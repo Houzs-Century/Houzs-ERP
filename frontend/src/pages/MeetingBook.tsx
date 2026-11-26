@@ -11,7 +11,6 @@ import { DAY_NAMES, fmtDay, fmtRange, ms } from "../lib/meetings";
  * lets them see or cancel it. Times are Malaysia time (UTC+8), as everywhere in Meetings.
  */
 
-// PUBLIC_CALL: how this ERP reaches the hub's guest routes (backend routes/meetings.ts publicMeetings).
 const apiBase = (): string => (import.meta.env.VITE_API_URL as string) || (import.meta.env.PROD ? "" : "https://autocount-sync-api.houzs-erp.workers.dev");
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -20,7 +19,6 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     body = (await res.json()) as T & { error?: string };
   } catch {
-    // Not JSON (a gateway page): a failure, never an empty result.
   }
   if (!res.ok || !body) throw new Error(body?.error ?? "Something went wrong. Please try again.");
   return body;
@@ -35,9 +33,7 @@ type Booking = { code: string; title?: string; people?: number | null; start: st
 const MY = 8 * 3600_000;
 const DAYMS = 86400_000;
 const OTHER = "__other";
-/** YYYY-MM-DD in Malaysia for a moment. */
 const myDay = (t: number) => new Date(t + MY).toISOString().slice(0, 10);
-/** Minutes since midnight, Malaysia time. */
 const myMin = (t: number) => Math.round(((t + MY) % DAYMS) / 60_000);
 const at = (day: string, min: number) => `${day}T${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}:00+08:00`;
 const hm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
@@ -51,7 +47,6 @@ const INPUT = "h-12 w-full min-w-0 rounded-xl border border-border bg-surface px
 export function MeetingBook() {
   const parts = window.location.pathname.split("/");
   const code = decodeURIComponent(parts[2] ?? "");
-  // Read once: booking writes ?b=<token> into the address, which must not refetch the page.
   const [token] = useState(() => new URLSearchParams(window.location.search).get("b"));
   const [link, setLink] = useState<LinkInfo | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -99,9 +94,7 @@ export function MeetingBook() {
   };
   useEffect(() => { if (link && chosen) loadDay(chosen); }, [link, chosen]); // eslint-disable-line react-hooks/exhaustive-deps -- loadDay reads only code
 
-  // The answer for the chosen day only; while another day loads, nothing stale is drawn.
   const dayNow = dayInfo?.day === chosen ? dayInfo : null;
-  // Each room has its own bookable window that day (its opening hours within the link's); the bars share one scale.
   const dayRoom = (rid: number) => dayNow?.rooms.find((r) => r.id === rid);
   const openWins = (dayNow?.rooms ?? []).filter((r) => !r.closed && r.from !== undefined && r.to !== undefined);
   const open = openWins.length ? Math.min(...openWins.map((r) => r.from ?? 0)) : link ? Math.max(link.from * 60, 8 * 60) : 0;
@@ -165,13 +158,11 @@ export function MeetingBook() {
     setRoomId(rid);
     if (closedOf(rid)) return;
     const [a0, b0] = winOf(rid);
-    // Keep the chosen time when it fits this room; otherwise start at its first free hour, so a tap is a usable choice.
     if (from !== null && to !== null && from >= a0 && to <= b0 && to - from <= maxOf(rid)) return;
     const t = firstFree(rid, Math.min(60, maxOf(rid)));
     if (t !== null) { setFrom(t); setTo(t + Math.min(60, maxOf(rid))); }
   };
 
-  // Drag along a room's bar to choose the time (15-minute steps, inside the room's hours, at most its longest booking).
   const drag = useRef<{ el: HTMLDivElement; start: number; rid: number } | null>(null);
   const minAt = (el: HTMLDivElement, x: number) => {
     const r = el.getBoundingClientRect();
@@ -287,7 +278,6 @@ export function MeetingBook() {
 
   if (!link) return shell(<p className="text-ink-muted">Loading...</p>);
 
-  // Whole hours under each bar, at most five of them, always including the opening and closing hour.
   const h0 = Math.floor(open / 60);
   const h1 = Math.ceil(close / 60);
   const stepH = Math.max(1, Math.ceil((h1 - h0) / 4));

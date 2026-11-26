@@ -18,7 +18,6 @@ import { areaTemplate, surchargesInAreas, townLabel, townsInTwoAreas } from './r
 import { BTN_QUIET, HINT, Pill } from './ui';
 
 type Kind = 'per order' | 'per trip';
-/* Not the taxonomy's hint (shared with the server), which knows town surcharges only. */
 const HINT_TEXT = 'Priced by the area a job goes to, read from its postcode zone or a town in its address: areas with prices of their own, then surcharges per order, per trip, or both.';
 const SEARCH_FROM = 8;
 const townsWord = (n: number) => `${n} ${n === 1 ? 'town' : 'towns'}`;
@@ -63,7 +62,6 @@ const Bands = ({ cardId, title, bands, kind, showJobs }: { cardId: string; title
   </div>
 );
 
-/** A second price for a town the bands already show: listed so none hides. */
 const SecondPrice = ({ cardId, rule }: { cardId: string; rule: RateRule }) => {
   const [editing, setEditing] = useState(false);
   const name = `${townLabel(rule.zone ?? '')} ${rule.ruleType === 'OUTSTATION' ? 'per order' : 'per trip'} (second)`;
@@ -92,7 +90,6 @@ export const OutstationPrices = ({ cardId, rules, areas, areaRules, unit, sectio
   const onTop = surchargesInAreas(areas, rules);
   const twice = townsInTwoAreas(areas);
   const rows = section.blocks.find((b): b is Zones => b.kind === 'zones')?.rows ?? [];
-  /* A town price names a zone or a town filed under one (Delivery Zones places). */
   const places = usePlaces();
   const suggestions = useMemo(
     () => [...new Set([...zones, ...(places.data?.places ?? []).map((p) => p.name)])].sort((a, b) => a.localeCompare(b)),

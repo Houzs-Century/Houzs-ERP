@@ -36,15 +36,10 @@ export function modelCodeForSku(baseModel: string | null, code: string): string 
 }
 
 export interface EnsureModelParams {
-  /** Active company. REQUIRED — it is the only scope boundary (service role). */
   companyId: number;
-  /** The SKU's own code. */
   code: string;
-  /** Model name to stamp on a NEWLY-created model (mirrors the create path). */
   name: string;
-  /** The SKU's category; the model carries the same category. */
   category: string;
-  /** The SKU's base_model, or null for a flat 1:1 product. */
   baseModel: string | null;
 }
 
@@ -73,14 +68,9 @@ export async function ensureModelForSku(
   if (!found.ok) return { ok: false, reason: found.reason };
   if (found.modelId) return { ok: true, modelId: found.modelId, created: false };
 
-  // id generated here (not left to gen_random_uuid) so the row is identifiable
-  // without an insert-returning read — the backfill script's pgrest shim does
-  // not hand back inserted rows.
   const id = (typeof crypto !== 'undefined' && crypto.randomUUID)
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  // Mirror product-models.ts POST / — company_id, model_code, name, category,
-  // active, allowed_options default {}; branding/description/photo_url null.
   const insert = {
     id,
     company_id:      companyId,
@@ -95,8 +85,6 @@ export async function ensureModelForSku(
   };
   const { error: insErr } = await sb.from('product_models').insert(insert);
   if (insErr) {
-    // 23505 = a concurrent create already made this model. Re-find and link to
-    // it: the model now exists, which is exactly this function's postcondition.
     if ((insErr as { code?: string }).code === '23505') {
       const race = await findModel(sb, companyId, modelCode, category);
       if (!race.ok) return { ok: false, reason: race.reason };
@@ -107,8 +95,6 @@ export async function ensureModelForSku(
   return { ok: true, modelId: id, created: true };
 }
 
-/** The model for (company, model_code, category), or null when none — company
- *  scoped, and it FAILS CLOSED so a read error can never read as "no model". */
 async function findModel(
   sb: SupabaseClient,
   companyId: number,

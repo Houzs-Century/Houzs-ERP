@@ -30,9 +30,6 @@ export async function runScheduledLeadTimeActivations(
       `SELECT id FROM assr_lead_time_profiles WHERE is_active = 1`
     ).first<{ id: number }>();
 
-    // Belt-and-braces: skip if the profile no longer exists (shouldn't
-    // happen — FK is ON DELETE CASCADE so a deleted profile takes its
-    // schedule row with it — but D1's enforcement isn't always strict).
     const stillExists = await env.DB.prepare(
       `SELECT 1 FROM assr_lead_time_profiles WHERE id = ?`
     )

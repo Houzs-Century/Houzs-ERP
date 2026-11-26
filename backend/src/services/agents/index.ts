@@ -1,13 +1,3 @@
-// ---------------------------------------------------------------------------
-// agents/index.ts — engine bootstrap. Importing this module (done once, from
-// routes/agent-console.ts, which index.ts mounts at worker init) registers
-// every agent engine with the scheduler and the config-proposal whitelist.
-//
-// Wiring layers stay separate on purpose (AGENTS-BLUEPRINT iron rule 2):
-// the engines are pure deterministic calculators; THIS file is where their
-// results meet the skeleton — scheduler registration, learning findings →
-// config_proposals, and the once-a-day AI focus paragraph over the brief.
-// ---------------------------------------------------------------------------
 import type { Env } from "../../types";
 import { registerAgent, type AgentRunContext } from "../agent-scheduler";
 import {
@@ -30,26 +20,16 @@ import {
 } from "./procurement-learning";
 import { runPmsAgent } from "./pms-agent";
 
-// Document Agent self-registers at module load (family DOCUMENT, 9:00 MYT).
 import "./document-agent";
 import "./of-agent";
 import "./si-agent";
 
-// ── Delivery Agent wiring ────────────────────────────────────────────────────
 
-// Whitelist the learner's only tunable: per-state transit working days.
 CONFIG_PROPOSAL_RULES.push(DELIVERY_TRANSIT_RULE);
 
-// Whitelist the Procurement learner's two tunables: how many days earlier we
-// must ask a given SUPPLIER to deliver, and how many more in a given MONTH.
-// Both are additive buffers ON TOP of the owner's manual per-(warehouse,
-// category) lead-time table, which no agent may write. Anything outside these
-// two patterns and their 0..30 bounds is rejected at approve time — the
-// whitelist is the fuse, not the learner's good manners.
 CONFIG_PROPOSAL_RULES.push(PROCUREMENT_SUPPLIER_BUFFER_RULE);
 CONFIG_PROPOSAL_RULES.push(PROCUREMENT_SEASON_BUFFER_RULE);
 
-/** Pre-compact the brief for the brain — counts and top rows, never tables. */
 function compactDeliveryBrief(b: DeliveryBriefData) {
   return {
     date: b.date,
@@ -94,10 +74,7 @@ async function writeDeliveryAiFocus(env: Env, focus: string): Promise<void> {
 registerAgent({
   family: "DELIVERY",
   task: "delivery-run",
-  // HOOKKA's delivery cadence: first sweep after 7:30 MYT, then event-driven.
   cadence: { firstRunHour: 7.5, minGapHours: 1, maxRunsPerDay: 4 },
-  // Extra sweeps only when the yard actually moved: >=3 dispatch/delivery
-  // events since the last run (HOOKKA threshold). Pure read.
   shouldRunExtra: async (db, sinceIso) => {
     const r = await db
       .prepare(
@@ -115,8 +92,6 @@ registerAgent({
   run: async (env, ctx) => {
     const r = await runDeliveryAgent(env);
 
-    // Learning findings → PENDING config proposals (dedupes per param key;
-    // approval — manual or AGENT_AUTO — goes through the whitelist gateway).
     let proposed = 0;
     for (const l of r.learning) {
       const created = await createConfigProposal(env.DB, {
@@ -128,8 +103,6 @@ registerAgent({
       if (created) proposed++;
     }
 
-    // AI focus — first run of the day only (ctx.llmKey is budget-gated and
-    // undefined otherwise). Best-effort: a brain failure changes nothing.
     if (ctx.llmKey) {
       const sink: AgentBrainUsageSink = { tokensIn: 0, tokensOut: 0 };
       const ownerInstructions = await activeInstructions(env.DB, "DELIVERY");
@@ -152,16 +125,7 @@ registerAgent({
   },
 });
 
-// ── Phase-2 engines: Collection / CS / Procurement / PMS ─────────────────────
-// Each engine ships a bounded, already-compact brief (top-N rows, not tables),
-// so the whole brief is handed to the shared brain (Delivery pre-compacts only
-// because its brief is larger). The AI-focus pass is best-effort and budget-
-// gated: no key / over budget / brain failure leaves ai_focus NULL and every
-// deterministic number still ships. The brief tables (migrations 0094-0097)
-// are all created_at-ordered.
 
-/** Write the brain paragraph onto the newest snapshot of a created_at-ordered
- *  brief table. Table name is a module constant (never user input). */
 async function writeLatestAiFocus(env: Env, table: string, focus: string): Promise<void> {
   await env.DB.prepare(
     `UPDATE ${table} SET ai_focus = ?
@@ -171,8 +135,6 @@ async function writeLatestAiFocus(env: Env, table: string, focus: string): Promi
     .run();
 }
 
-/** First-run-of-day AI focus over an engine's brief (shared by the four
- *  Phase-2 engines). Honours the owner-feedback notebook; never sinks the run. */
 async function maybeAiFocus(
   env: Env,
   ctx: AgentRunContext,
@@ -268,14 +230,6 @@ registerAgent({
   run: async (env, ctx) => {
     const r = await runProcurementAgent(env);
 
-    /* Lead-time learning findings → PENDING config proposals (same path as the
-       Delivery Agent's transit days: dedupes per param key, and approval —
-       manual or AGENT_AUTO — goes through the whitelist gateway above).
-
-       The agent proposes only the two axes it can measure, supplier punctuality
-       and season. The owner's own (warehouse, category) table is never touched:
-       these land as separate ADDITIVE buffers, so his number always survives and
-       any buffer can be zeroed without disturbing another. */
     let proposed = 0;
     for (const l of r.learning) {
       const created = await createConfigProposal(env.DB, {
@@ -295,17 +249,6 @@ registerAgent({
       "procurement_agent_briefs",
       r.brief,
     );
-    /* FULL AUTO (owner's Stage 2) — behind the gate that already exists, and
-       OFF until he turns it on. It removes the human from PROPOSAL → APPROVED
-       only: the PO still lands as a DRAFT someone must confirm, so the gate
-       that faces a supplier is untouched. He reviews draft POs instead of
-       proposals.
-
-       Runs AFTER the sweep above, so this beat's own proposals are eligible in
-       the same beat — matching the config path, which self-tunes immediately
-       after its run. Never throws: a failed auto-approve must not sink the
-       sweep that produced the proposals, and they survive as PENDING for a
-       human either way. */
     let autoNote = '';
     const procStage = await effectiveStage(env.DB, "PROCUREMENT");
     if (procStage >= 2) {
@@ -318,8 +261,6 @@ registerAgent({
       );
       if (auto.approved > 0) autoNote += ` · auto-approved ${auto.approved} reorder(s)`;
       if (auto.notes.length) autoNote += ` (${auto.notes.join('; ')})`;
-      /* Loud in the run summary, not just a log line: an auto-approve that
-         failed is the owner believing a PO exists when it does not. */
       if (auto.errors.length) autoNote += ` · ${auto.errors.length} auto-approve FAILED: ${auto.errors.join('; ')}`;
     }
 

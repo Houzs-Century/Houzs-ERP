@@ -30,9 +30,7 @@ export type AcLineGoneReason = 'deleted' | 'cancelled';
 export interface AcRetiredLine {
   DtlKey: number;
   ItemCode: string;
-  /** Omitted rather than nulled, so AcSyncService keeps the book's own text. */
   Desc2?: string | null;
-  /** Absent means RETIRE — the stricter answer. */
   Gone?: AcLineGoneReason;
 }
 

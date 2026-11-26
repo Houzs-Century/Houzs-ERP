@@ -1,6 +1,3 @@
-// A list that failed to load says so and offers a way out. DataTable used to show
-// "Failed to load" with the raw error text and nothing to press, so the only
-// recovery was a full page reload (Conts-ERP #594).
 import { useContext, useState } from "react";
 import { QueryClientContext } from "@tanstack/react-query";
 

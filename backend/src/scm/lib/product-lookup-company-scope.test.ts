@@ -7,21 +7,7 @@ import { loadProductAndModel, loadProductsAndModels } from './allowed-options-ch
 import { validateItemCodes } from './validate-item-codes';
 import { checkPwpEligibility, type PwpCodeRow } from './pwp-claim-single';
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   `mfg_products.code` IS NOT UNIQUE — every by-code read must pass the company.
-   ═══════════════════════════════════════════════════════════════════════════
 
-   The fixtures below are the REAL production shape (2026-08-01, workflow
-   "Diag PWP price gap" run 30687371204): HOUZS (company 1) manufactures a CODY
-   bedframe and 2990 (company 2) sells one, both rows ACTIVE under the same
-   code, and 17 codes collided this way. HOUZS's row carries the cost columns
-   and a NULL sell price; 2990's carries the selling + PWP price.
-
-   Reading them unscoped is not "usually fine" — it is a coin toss with two
-   distinct failure modes, and both are pinned below so a future refactor that
-   drops a company argument fails here instead of on a tablet. */
-
-// ── a Supabase-shaped mock: chainable, thenable, PGRST116 on a multi-row single
 type Row = Record<string, unknown> & { _table: string };
 const makeSb = (rows: Row[]) => ({
   from(table: string) {
@@ -36,9 +22,6 @@ const makeSb = (rows: Row[]) => ({
       order:  () => builder,
       eq: (col: string, v: unknown) => { eqs.push([col, v]); return builder; },
       in: (col: string, vs: unknown[]) => { ins.push([col, vs]); return builder; },
-      // supabase-js returns an ERROR (PGRST116), not the first row, when a
-      // `.maybeSingle()` matches more than one — the detail the old callers
-      // discarded into `data = null`.
       maybeSingle: async () => {
         const out = run();
         return out.length > 1
@@ -63,7 +46,6 @@ const S2990_CODY: Row = {
   sell_price_sen: 199000, pwp_price_sen: 49000, model_id: 'mdl-2990-cody', size_code: 'SS',
   base_model: 'cody', branding: null, default_free_gifts: [],
 };
-// A code only HOUZS has — 2990 must not be able to order it.
 const HOUZS_ONLY: Row = { ...HOUZS_CODY, code: 'CODYS-(K)' };
 const MODELS: Row[] = [
   { _table: 'product_models', id: 'mdl-houzs-cody', allowed_options: { sizes: ['K'] } },
@@ -89,8 +71,6 @@ describe('loadProductsByCodes — the batched pricing read', () => {
   it('UNSCOPED silently drops one of the two rows — the defect, and it warns', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const m = await loadProductsByCodes(sb(), ['CODY-(SS)'], undefined);
-    // Two rows in, one entry out: the Map keys by code, so a whole product is
-    // discarded and WHICH one survives is the database's choice, not ours.
     expect(m.size).toBe(1);
     expect(err).toHaveBeenCalledWith(expect.stringContaining('duplicate mfg_products codes'));
   });
@@ -110,7 +90,6 @@ describe('loadProductByCode — the single-row pricing read', () => {
   it('UNSCOPED returns NULL on a duplicated code — "unknown item code" for a SKU that exists twice', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(await loadProductByCode(sb(), 'CODY-(SS)', undefined)).toBeNull();
-    // The PGRST116 used to vanish. It must reach the log now.
     expect(err).toHaveBeenCalledWith(expect.stringContaining('loadProductByCode'), expect.anything());
   });
 });
@@ -137,13 +116,6 @@ describe('the reported failure, end to end', () => {
   });
 });
 
-/* ── sofa module price maps ─────────────────────────────────────────────────
-   `base_model` is a plain text grouping on the same per-company table, so it is
-   no more unique than `code`. These three loaders build a module→price map for a
-   whole Model; unscoped they merge BOTH companies' sofa SKUs, and because the
-   map is keyed by module suffix the other company's module silently REPLACES
-   this one's. The POS builds its map from the company-scoped catalogue, so the
-   drift gate would then compare two different maps. */
 const SOFA: Row[] = [
   { _table: 'mfg_products', company_id: 1, code: 'LOTTI-2A(LHF)', category: 'SOFA', base_model: 'lotti',
     sell_price_sen: 111100, base_price_sen: 50000, price1_sen: null, cost_price_sen: 0, seat_height_prices: null },
@@ -168,8 +140,6 @@ describe('sofa module loaders — base_model is not unique either', () => {
   it('UNSCOPED merges both companies — 3 rows for a 2-module Model', async () => {
     const both = await loadModelSofaModuleCostRows(sofaSb(), 'lotti', undefined);
     expect(both).toHaveLength(3);
-    // Two rows now claim the same module. Whichever the map builder reads last
-    // wins, and nothing says which — that is the bug, stated as a test.
     expect(both!.filter((r) => r.code === 'LOTTI-2A(LHF)')).toHaveLength(2);
   });
 
@@ -196,16 +166,10 @@ describe('validateItemCodes — must move in lock-step with the pricing read', (
   });
 
   it('EXPLICITLY unscoped admits it — which the now-scoped pricing read would then price at 0', async () => {
-    // `null` still degrades to no predicate; what changed (optional-param-noop
-    // sweep, 2026-08-13) is that it can no longer happen by SAYING NOTHING.
     expect(await validateItemCodes(sb(), ['CODYS-(K)'], null)).toEqual({ ok: true });
   });
 
   it('omitting the company is a COMPILE error, not a silent unscoped gate', () => {
-    // companyId is a required positional argument, and this is the assertion
-    // that fails without it. Never invoked: the point is that the call does not
-    // compile. Make the parameter optional again and the directive below goes
-    // unused, which `npm run typecheck` reports as TS2578.
     // @ts-expect-error
     const omitted = () => validateItemCodes(sb(), ['CODYS-(K)']);
     expect(omitted).toBeInstanceOf(Function);
@@ -218,11 +182,6 @@ describe('allowed-options loaders — a miss here means the gate stops checking'
     expect((await loadProductAndModel(sb(), 'CODY-(SS)', 1)).model?.id).toBe('mdl-houzs-cody');
   });
 
-  /* UNSCOPED still yields product=null on a duplicated code — but the PGRST116
-     now comes out as `lookupError` instead of being discarded. That is the
-     whole difference: the caller can tell "the catalog says nothing about this
-     line" apart from "we could not ask the catalog", and only the first of
-     those is allowed to end in a saved line. */
   it('UNSCOPED reports the PGRST116 instead of passing the gate as product=null', async () => {
     const { product, model, lookupError } = await loadProductAndModel(sb(), 'CODY-(SS)', undefined);
     expect(product).toBeNull();

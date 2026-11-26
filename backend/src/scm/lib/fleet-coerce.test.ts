@@ -1,7 +1,3 @@
-/* The distinction these tests exist for: "the caller sent nothing" and "the
-   caller sent rubbish" must NOT produce the same row. Every one of these
-   coercers is the only thing standing between a typo'd number and a silent
-   NULL on a compliance or mileage record. */
 import { describe, expect, test } from 'vitest';
 
 import {
@@ -10,8 +6,6 @@ import {
   breakdownFileKey, isBreakdownFileKeyOf,
 } from './fleet-coerce';
 
-/** Every `*OrNull` coercer shares the not-supplied rule. Asserted for all of
-    them together so a new one cannot quietly disagree. */
 const COERCERS = { dateOrNull, intOrNull, numOrNull, floatOrNull, tsOrNull, refsOrNull };
 
 describe('not supplied is not the same as invalid', () => {

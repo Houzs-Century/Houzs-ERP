@@ -31,7 +31,6 @@ describe('PI edit Save pressed again after a failure', () => {
     const update = vi.fn(async () => ({}));
     await expect(saveEditLines('pi-1', lines, [], { add, update, saved })).rejects.toThrow('network');
     expect(add).toHaveBeenCalledTimes(2);
-    /* The server now holds line a; the second press sees it as saved and unchanged. */
     await saveEditLines('pi-1', lines, [item('item-SKU-a', 'SKU-a')], { add, update, saved });
     expect(add.mock.calls.map((c) => c[0].itemCode)).toEqual(['SKU-a', 'SKU-b', 'SKU-b']);
     expect(update).not.toHaveBeenCalled();

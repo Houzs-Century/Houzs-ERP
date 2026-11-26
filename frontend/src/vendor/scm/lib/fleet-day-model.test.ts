@@ -25,7 +25,7 @@ describe('buildMapRoutes', () => {
       depot: { lat: 3.0, lng: 101.5 },
       stops: [
         stop({ id: 'a', stop_no: 1, geocoded: true, lat: 3.1, lng: 101.6, customer_name: 'Ali' }),
-        stop({ id: 'b', stop_no: 2, geocoded: false }), // ungeocoded — no pin
+        stop({ id: 'b', stop_no: 2, geocoded: false }),
         stop({ id: 'c', stop_no: 3, geocoded: true, lat: 3.2, lng: 101.7, customer_name: 'Bob' }),
       ],
     })], colors);

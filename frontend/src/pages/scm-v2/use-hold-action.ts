@@ -28,7 +28,6 @@
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useSetDocumentHold, type HoldDocType } from "../../vendor/scm/lib/document-hold-queries";
 
-/** How the document is named to the operator, and the field holding its number. */
 type HoldPrompt = { noun: string };
 
 const PROMPTS: Record<HoldDocType, HoldPrompt> = {

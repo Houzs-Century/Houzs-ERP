@@ -14,7 +14,6 @@ export function LeaveGuardBridge() {
   const { navigator } = useContext(UNSAFE_NavigationContext);
   const location = useLocation();
   const here = useRef({ pathname: location.pathname, search: location.search, index: historyIndex() });
-  // Layout effect: current before any page's own effect can navigate again.
   useLayoutEffect(() => {
     here.current = { pathname: location.pathname, search: location.search, index: historyIndex() };
   }, [location]);
@@ -51,9 +50,6 @@ export function LeaveGuardBridge() {
     nav.push = guarded(push);
     nav.replace = guarded(replace);
 
-    // Back / Forward (a phone's back gesture too): the browser has already moved
-    // by the time this fires. Capture runs before the router's own listener, so
-    // hide the move from it, step back to where we were, then ask.
     const onPop = (e: PopStateEvent) => {
       if (!leaveGuardActive()) return;
       const from = here.current.index;

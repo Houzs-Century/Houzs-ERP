@@ -70,14 +70,12 @@ export const normalizeSheetRows = (raw: unknown): SheetRow[] => {
     const counted = countedN != null && Number.isInteger(countedN) && countedN >= 0 ? countedN : null;
     const rack = typeof r.rack === 'string' && r.rack.trim() ? r.rack.trim() : null;
     const itemCode = typeof r.itemCode === 'string' && r.itemCode.trim() ? r.itemCode.trim() : null;
-    if (counted == null && rack == null) continue; // nothing written on this row
+    if (counted == null && rack == null) continue;
     out.push({
       no: Number.isInteger(noN) && noN > 0 ? noN : null,
       itemCode,
       counted,
       rack,
-      // A number the model could not read cleanly is flagged, and a count it
-      // returned as not-an-integer is no count at all.
       unclear: r.unclear === true || (countedN != null && counted == null),
     });
   }

@@ -57,7 +57,6 @@ export function RequestPaymentButton({ itemId, itemTitle, attachments, projectId
   projectId: number;
   eventLabel: string;
   className: string;
-  /** Nothing on the row to send yet — the page says so its own way. */
   onNoFiles: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -85,7 +84,6 @@ export function RequestPaymentButton({ itemId, itemTitle, attachments, projectId
 export function RowRequests({ requests, attachments, finance, meId }: {
   requests: PaymentRequest[];
   attachments: TaskAttachment[];
-  /** Finance sees and answers every request; a requester their own. */
   finance: boolean;
   meId: number | null;
 }) {
@@ -107,7 +105,6 @@ export function RowRequests({ requests, attachments, finance, meId }: {
             <span className="text-ink-secondary">{fmtSen(r.amount_sen)}</span>
             {answer && <span className="text-ink-muted">· {answer}</span>}
             {r.officialDoc && <OfficialDocChip state={r.officialDoc.state} note={r.officialDoc.note} />}
-            {/* Finance's remark on what to follow up — said where the BD works. */}
             {r.officialDoc?.note && <span className="text-ink-secondary">— {r.officialDoc.note}</span>}
             {owed && mayUpload && (
               <button

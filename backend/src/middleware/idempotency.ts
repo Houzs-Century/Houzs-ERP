@@ -48,8 +48,6 @@ export function isUniqueViolation(error: unknown): boolean {
 
 async function markPhaseOneWorkerLive(db: Env["DB"]): Promise<void> {
   try {
-    // First successful claim wins. Phase 2 uses this row's immutable
-    // updated_at as the start of its mixed-Worker soak window.
     await db
       .prepare(
         `INSERT INTO app_settings (key, value, updated_at)
@@ -62,8 +60,6 @@ async function markPhaseOneWorkerLive(db: Env["DB"]): Promise<void> {
       )
       .run();
   } catch (error) {
-    // The claim itself is already durable and must continue normally. A
-    // missing marker only keeps the destructive Phase-2 migration blocked.
     console.warn(
       `[idempotency] phase-one rollout marker failed: ${String((error as Error)?.message ?? error).slice(0, 120)}`,
     );
@@ -79,9 +75,6 @@ function tenantScope(c: AppContext): string {
   const companyId = Number(c.get("companyId"));
   if (Number.isInteger(companyId) && companyId > 0) return `company:${companyId}`;
 
-  // During a company-master cold start there may be no resolved companyId yet.
-  // Keep an explicit company pick or hostname in the namespace so a retry made
-  // through another company door cannot replay the first door's response.
   const requestedCompany = (
     c.req.header("X-Company-Id") ?? c.req.query("companyId") ?? ""
   )
@@ -100,10 +93,6 @@ export async function idempotencyRequestHash(request: Request): Promise<string> 
     throw new IdempotencyPayloadTooLargeError();
   }
 
-  // Web Crypto has no streaming digest. Read at most 1 MiB from a cloned body
-  // so an authenticated caller cannot make the global middleware buffer an R2
-  // upload before the route's own size checks. All current keyed callsites are
-  // JSON document/payment mutations and sit comfortably below this ceiling.
   const reader = request.clone().body?.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -129,8 +118,6 @@ export async function idempotencyRequestHash(request: Request): Promise<string> 
 
   const url = new URL(request.url);
   const contentType = request.headers.get("content-type") ?? "";
-  // Query parameters can change a mutation's meaning. Bind them to the hash,
-  // while keeping the indexed route scope bounded to METHOD + pathname.
   const prefix = new TextEncoder().encode(
     `${request.method}\n${url.pathname}${url.search}\n${contentType}\n`,
   );
@@ -154,21 +141,6 @@ const inFlight = (c: AppContext) => {
   );
 };
 
-/* The collision answer has to say WHICH collision it is, because the two have
-   opposite remedies and only the server can tell them apart.
- *
- * `completed_status` is the status the EARLIER request under this key already
- * answered with. It is present on every key_reused, and it is the whole point:
- * a client that sees this code knows the handler for THIS request never ran,
- * and knows nothing whatsoever about whether the earlier one wrote. A 201 here
- * means a document exists. Nothing downstream may read this code as "nothing
- * was saved" — the release path for a genuine no-write is
- * markIdempotencyNoWrite, which DELETES the claim, so a proven no-write never
- * reaches this response at all.
- *
- * The copy therefore sends the operator to CHECK, never to resubmit. It used
- * to end "Please submit again", which is the same wrong instruction in the
- * server's own voice. */
 const keyReuse = (c: AppContext, completedStatus: number) =>
   c.json(
     {
@@ -283,14 +255,6 @@ export const idempotency: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
       .first<IdempotencyRow>();
 
   const respondToExisting = (existing: IdempotencyRow): Response => {
-    /* STATUS FIRST, then the hash. The hash decides whether this request may be
-       REPLAYED; the status decides what the caller must be told, and it is the
-       stronger fact. Checked the other way round (which it was until
-       2026-08-18) a changed payload sent while the first request is still
-       RUNNING was answered "you reused the key", never `idempotency_in_flight`
-       — so in_flight was only ever reachable for the identical payload, i.e.
-       the one case that was already safe, and no caller could distinguish
-       "still running" from "already finished" at all. */
     if (existing.status_code == null) return inFlight(c);
     if (existing.request_hash !== requestHash) return keyReuse(c, existing.status_code);
     return new Response(
@@ -318,17 +282,11 @@ export const idempotency: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
     if (isUniqueViolation(error)) {
       try {
         const winner = await findExisting();
-        // Phase-1 rollout deliberately retains the legacy global (key, scope)
-        // primary key until every old Worker has drained. A collision owned by
-        // another principal/tenant is blocked, never replayed. The follow-up
-        // constraint migration will permit the same opaque key across owners.
         return winner ? respondToExisting(winner) : keyConflict(c);
       } catch (lookupError) {
         console.warn(
           `[idempotency] collision lookup failed: ${String((lookupError as Error)?.message ?? lookupError).slice(0, 120)}`,
         );
-        // Another request won the unique race, so its business handler may
-        // already be running or committed. Never claim that "nothing was sent".
         return outcomeUnknown(c);
       }
     }
@@ -343,9 +301,6 @@ export const idempotency: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
   try {
     await next();
   } catch (handlerError) {
-    // A thrown handler can have completed one or more non-transactional writes
-    // before failing. Retain the in-flight claim: allowing the same key to run
-    // again could duplicate money, stock or a document number.
     console.warn(
       `[idempotency] handler threw; claim retained as outcome-unknown: ${String((handlerError as Error)?.message ?? handlerError).slice(0, 120)}`,
     );
@@ -367,10 +322,6 @@ export const idempotency: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
         return;
       }
 
-      // Persist every terminal HTTP response, not only 2xx. Several legacy
-      // mutations are not transactional yet; a 4xx/5xx may follow a partial
-      // write. Only an explicit route-level no-write proof releases the claim;
-      // otherwise replaying the same response is safer than executing again.
       const body = await response.clone().text();
       await db
         .prepare(
@@ -383,8 +334,6 @@ export const idempotency: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
         .run();
     }
   } catch (error) {
-    // Do not fail open after the business handler ran. A retained in-flight
-    // claim is safer than allowing a retry to duplicate an unknown write.
     console.warn(
       `[idempotency] response capture failed; claim retained: ${String((error as Error)?.message ?? error).slice(0, 120)}`,
     );

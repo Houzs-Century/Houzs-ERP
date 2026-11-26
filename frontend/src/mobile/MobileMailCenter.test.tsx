@@ -16,9 +16,6 @@ vi.mock("../api/client", () => ({
   api: { get: apiGet, post: apiPost, patch: apiPatch, fetchBlobUrl: vi.fn() },
 }));
 
-// Keyed by the useQuery cache key so a test can seed the addresses / labels /
-// thread-detail reads independently. Anything unseeded answers [] — which is
-// what the pagination suite below expects.
 vi.mock("../hooks/useQuery", () => ({
   useQuery: (key: string) => ({
     data: queryData.has(key) ? queryData.get(key) : [],
@@ -132,19 +129,7 @@ describe("MobileMailCenter paginated search", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// The three defects below all shipped because nothing on this screen exercised
-// compose, reply, the From default or the auto-sent log — the suite above
-// covers pagination and search only. Desktop is the correct side in all three;
-// each assertion here is the desktop behaviour, taken from the SAME shared
-// module desktop uses.
-// ---------------------------------------------------------------------------
 
-// A mailbox list in the order the backend actually serves it:
-// GET /api/mail-center/addresses is ORDER BY address ASC, so the alphabetically
-// first entry is a department mailbox and the personal one is LAST. The whole
-// point of the fixture is that "first in the list" and "belongs to this user"
-// are different answers.
 const ALPHABETICAL_ADDRESSES = [
   { id: "a1", address: "finance@houzs.test", label: "Finance", active: true, assignedUserId: null },
   { id: "a2", address: "hr@houzs.test", label: "HR", active: true, assignedUserId: null },
@@ -298,8 +283,6 @@ describe("MobileMailCenter compose From default", () => {
   });
 
   it("gives an alias-only member a usable From option", async () => {
-    // No email_addresses row at all — the member's only sending identity is
-    // users.email_alias, which the backend's canSendFrom accepts.
     authUser.current = { id: 9, email: "kris@login.test", email_alias: "kris@houzscentury.com" };
     queryData.set("/api/mail-center/addresses", []);
 
@@ -362,49 +345,12 @@ describe("MobileMailCenter Auto-sent folder", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Four more phone-only gaps, same class as the three above: desktop IMPORTS a
-// shared rule and the phone re-implemented the screen without it. Every
-// assertion below is the desktop behaviour, read off the module desktop uses.
-//
-//   1. attachments  — Compose.tsx / Thread.tsx send `attachments`; the phone
-//                     sent no such key and had no picker. The phone camera is
-//                     the best attachment source in the business.
-//   2. Cc / Bcc     — Compose.tsx sends both; the phone had neither field.
-//   3. assign       — Thread.tsx writes assignedToUserId + assignedToName; the
-//                     phone carried both fields in its type and never wrote them.
-//   4. label filter — Inbox.tsx sets ?label=; the phone could APPLY a label and
-//                     then had no way to list the threads carrying it.
-// ---------------------------------------------------------------------------
 
-// COUNTING TICKS HERE IS A RACE, AND CI LOSES IT. This helper used to be one
-// `await new Promise(r => setTimeout(r, 0))`, and that blocked two frontend
-// deploys on 2026-08-20 (runs 32398840395 and 32400244624) on commits that
-// changed nothing under frontend/src — see docs/bugs.
-//
-// jsdom does not resolve a FileReader on the next macrotask. `_readFile` in
-// jsdom/lib/jsdom/living/file-api/FileReader-impl.js schedules setImmediate,
-// and fires `load` from a SECOND setImmediate scheduled inside the first. Node
-// runs due timers BEFORE the check phase, and an immediate scheduled from
-// within the check phase is deferred to the next turn — so `setTimeout(…, 0)`
-// (clamped to 1ms) resolves ahead of that second immediate whenever the turn
-// takes longer than the clamp. That is exactly what a loaded CI runner does,
-// which is why this failed under parallelism and passed on a quiet laptop.
-// Reproduced on this machine at roughly 3 failures in 14 isolated runs.
-//
-// So wait for the thing the read actually produces — the attachment chip for
-// an accepted file, the refusal sentence for a rejected one — instead of for a
-// number of ticks. `findBy*` retries until it is there and fails loudly if it
-// never arrives, which is the assertion we want anyway: Send must not be
-// clicked before the picked file has reached state.
 function choosePickFile(name: string, type: string) {
   const input = screen.getByLabelText("Attach images or PDF files");
   fireEvent.change(input, { target: { files: [new File(["hello"], name, { type })] } });
 }
 
-/** Pick a file and wait for it to be ATTACHED — the chip carries a Remove
- *  control named after the file, and it appears only once the FileReader has
- *  resolved and `onFiles` has landed the base64 in state. */
 async function pickFile(name: string, type: string) {
   choosePickFile(name, type);
   await screen.findByRole("button", { name: `Remove ${name}` });
@@ -488,14 +434,11 @@ describe("MobileMailCenter outbound attachments", () => {
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
 
-    // Verbatim from mail-attachments.ts — the same sentence the backend answers
-    // with, which is the point of importing the rule instead of re-writing it.
     const wanted =
       "is not an allowed type. Only images and PDF files can be attached.";
     expect(
       await screen.findByText((text) => text.includes("quotation.docx") && text.includes(wanted)),
     ).toBeTruthy();
-    // …and nothing was attached, so no Remove chip exists to send.
     expect(screen.queryByRole("button", { name: /^Remove / })).toBeNull();
   });
 });
@@ -693,9 +636,6 @@ describe("MobileMailCenter label filter", () => {
 
     const call = apiPost.mock.calls.find(([url]) => String(url) === "/api/mail-center/labels");
     expect(call).toBeTruthy();
-    // normalizeColor() on the backend maps anything outside its nine-entry
-    // allow-list to the brand brown, so a colour off that list comes BACK
-    // different from the one the picker showed while creating it.
     expect((call![1] as Record<string, unknown>).color).toBe(LABEL_PALETTE[0].value);
   });
 });

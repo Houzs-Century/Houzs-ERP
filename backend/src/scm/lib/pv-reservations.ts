@@ -24,7 +24,6 @@ import type { AllocationRow } from '../routes/payment-vouchers';
 export type PendingReservations = {
   byPi: Record<string, number>;
   byApInvoice: Record<string, number>;
-  /** Which vouchers hold each target, keyed by the PI / AP invoice id. */
   holders: Record<string, string[]>;
 };
 
@@ -105,7 +104,6 @@ export async function allocationHeadroomBreach(
   if (e1) return { error: 'load_failed', reason: e1 };
   const e2 = await load('ap_invoices', apiIds, res.value.byApInvoice);
   if (e2) return { error: 'load_failed', reason: e2 };
-  /* This voucher's own rows per target add up — two rows on one invoice are one claim. */
   const want = new Map<string, number>();
   for (const r of rows) {
     const t = r.pi_id ?? r.ap_invoice_id;
@@ -131,8 +129,6 @@ export async function allocationHeadroomBreach(
   return null;
 }
 
-/* GET /payment-vouchers/reservations/list?supplierId=&excludePvId= — the
-   picker's other half: what unposted vouchers already applied, per invoice. */
 export const pendingReservationsHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);

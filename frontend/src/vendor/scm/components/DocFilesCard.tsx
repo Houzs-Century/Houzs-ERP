@@ -24,14 +24,10 @@ import { openLoadedTab } from '../../../lib/openLoadedTab';
 export type DocFilesCardProps = {
   files: PvFile[];
   canWrite: boolean;
-  /** Evidence stays: remove hidden (the server refuses too). */
   locked: boolean;
-  /** Takes no more evidence: attach hidden as well. */
   closed: boolean;
-  /** Shown after the count while locked, e.g. " · locked with the checked voucher". */
   lockedNote: string;
   emptyNote: string;
-  /** The confirm dialog's body before a remove. */
   removeBody: string;
   attachAriaLabel: string;
   uploading: boolean;
@@ -54,8 +50,6 @@ export const DocFilesCard = ({
   const view = async (fileId: string, fileName: string) => {
     setViewingId(fileId);
     try {
-      /* Revoke AFTER the new tab has loaded the blob — immediate revocation
-         races the open and shows a blank tab. */
       await openLoadedTab(async () => (await openUrl(fileId)).url, 60_000);
     } catch (e) {
       void notify({ title: `Couldn't open ${fileName}`, body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });

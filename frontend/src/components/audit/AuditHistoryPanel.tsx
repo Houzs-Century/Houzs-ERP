@@ -1,14 +1,3 @@
-/* AuditHistoryPanel — the reusable "who changed what, when" drawer.
-
-   Stage 1 of the system-wide audit trail. This is the Sales Order History
-   drawer lifted out of SalesOrderDetail.tsx unchanged in appearance; the only
-   difference is that the entity's vocabulary (action + field labels, money
-   fields, status pill) now arrives as props instead of being hardcoded.
-
-   The panel is read-only by construction: it renders entries and offers no
-   edit or delete affordance, which is what the append-only requirement needs
-   from the view layer. Fetching stays with the caller so each module keeps its
-   own query key and permission gate. */
 
 import { memo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -27,9 +16,7 @@ import styles from './AuditHistoryPanel.module.css';
 
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-/* One value: pictures read "[image]", long text is cut, the full text is the tooltip. */
 const AuditValue = ({ field, val, label, dict, className }: { field: string; val: unknown; label: string | undefined; dict: AuditLabelDictionary; className?: string }) => {
-  // A record id reads as the record's name when the server could resolve it.
   const full = label ?? auditValueText(field, val, dict);
   const shown = auditValueShown(full);
   return <span className={className} title={shown === full ? undefined : full}>{shown}</span>;
@@ -64,10 +51,6 @@ const relTime = (iso: string): string => {
   return fmtDate(iso);
 };
 
-/* What the server actually said, for the failure line. authedFetch throws an
-   Error whose message carries the route's `reason`; anything else is shown as
-   its own string rather than swallowed, because an unrenderable error is still
-   better than a blank. */
 const reasonOf = (error: unknown): string => {
   if (error instanceof Error && error.message) return error.message;
   const s = typeof error === 'string' ? error : String(error ?? '');
@@ -75,34 +58,17 @@ const reasonOf = (error: unknown): string => {
 };
 
 export type AuditHistoryPanelProps = {
-  /* Identifies the record in the drawer title, e.g. the SO doc no. */
   recordLabel: string;
-  /* Entity name for the dialog's accessible label, e.g. "Sales order". */
   entityName: string;
   entries: AuditLogEntry[];
   isLoading?: boolean;
-  /* The read's failure, if it failed. REQUIRED to be passed explicitly by every
-     binding (they all pass `q.error`), because the alternative is the bug this
-     prop exists to end: react-query leaves `data` undefined on a failure, so a
-     `?? []` turns a server refusal into "No history yet." — and on an audit
-     trail, "nobody touched this document" is the worst wrong answer there is.
-     Found on staging 2026-09-13 against a 500 reading "permission denied for
-     table entity_audit_log". Optional in the TYPE only so the panel keeps
-     rendering for a caller that has no error to report; every caller in this
-     tree passes it. */
   error?: unknown;
   labels: AuditLabelDictionary;
-  /* Per-entry vocabulary for a drawer that mixes documents, e.g. the SO drawer
-     showing its POs' rows. Falls back to `labels`. */
   labelsFor?: (entry: AuditLogEntry) => AuditLabelDictionary;
   onClose: () => void;
-  /* Optional per-entry badge, e.g. the SO status pill on a status change.
-     Returning null renders nothing. */
   renderBadge?: (entry: AuditLogEntry, changes: AuditFieldChange[]) => ReactNode;
 };
 
-/* Memoized: once opened, expanding an entry changes internal state that would
-   otherwise re-render the whole host page. Callers should keep onClose stable. */
 export const AuditHistoryPanel = memo(({
   recordLabel,
   entityName,
@@ -116,15 +82,6 @@ export const AuditHistoryPanel = memo(({
 }: AuditHistoryPanelProps) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  /* Portal-anchored to <body> so the drawer's `position: fixed` latches to the
-     VIEWPORT. Rendered in place it did not: Layout wraps every page in
-     <PullToRefresh className="… animate-rise">, whose content div carries BOTH an
-     inline `transform: translateY(0px)` and the filled `rise` animation — and a
-     transform other than `none` makes an element the containing block for its
-     fixed descendants. The drawer therefore anchored to the page content box
-     instead of the screen: it parked over the sticky PageHeader, scrolled away
-     with the page, and its inset:0 backdrop dimmed only the content box. Same
-     hazard ModalOverlay's portal already documents. */
   return createPortal(
     <>
       <div className={styles.historyBackdrop} onClick={onClose} />
@@ -143,9 +100,6 @@ export const AuditHistoryPanel = memo(({
         </header>
         <div className={styles.historyPanelBody}>
           {error ? (
-            /* BEFORE isLoading on purpose: react-query keeps the last error
-               while it retries, so reading isLoading first would flicker a
-               permanent refusal between "Loading…" and "No history yet." */
             <p className={styles.historyError}>
               This change log could not be loaded, so what you see here is not
               proof that nothing was changed. Try again in a moment; if it keeps

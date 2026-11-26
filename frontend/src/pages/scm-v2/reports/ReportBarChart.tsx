@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// ReportBarChart — the reports' month chart (the owner's Claude Design, batch 6
-// §4.1), drawn by the in-house DashboardChart (hand-drawn SVG; the ERP carries
-// no chart library and its bundle gate would refuse one): a bar per figure per
-// month over twelve months (up to twenty-four for a longer range), the chosen
-// period shaded with its labels petrol, the bottom line in figures under each
-// month (a loss red). Pointing at a month opens a card beside its column —
-// the month, In the period / To <today>, a line per bar with its colour and
-// amount, the bottom line bold, "Click to open this month" — and a click opens
-// that month (the range becomes it).
-// ----------------------------------------------------------------------------
 
 import { useMemo, useRef } from 'react';
 import { fmtDate, fmtSenPlain } from '../../../vendor/shared/format';
@@ -27,9 +16,7 @@ export type ChartBarSeries = { key: string; label: string; color: string };
 export type ChartMonth = {
   month: string;
   values: Record<string, number | null>;
-  /** The bold line of the card, and what follows it (a margin). */
   bottom: Array<{ label: string; value: string; loss?: boolean }>;
-  /** The figure under the bars, RM thousand; null when the month has no figures. */
   under: { text: string; loss: boolean } | null;
 };
 
@@ -65,17 +52,13 @@ export function useChartPeriods(win: ChartWindow | null) {
 export function ReportBarChart({ title, series, months, win, loading, failed, note, onOpen, unit = 'sen', fmtValue = fmtSenPlain }: {
   title: string;
   series: ChartBarSeries[];
-  /** The window's months with their figures, oldest first. */
   months: ChartMonth[];
   win: ChartWindow | null;
   loading: boolean;
   failed: boolean;
   note: string;
-  /** Called after a month is opened (the Performance P&L also switches to Single). */
   onOpen?: (month: string) => void;
-  /** What the bars count — RM by default; a % (Merchant charges' fee %). */
   unit?: 'sen' | 'pct';
-  /** A bar's figure in the card beside a month. */
   fmtValue?: (v: number) => string;
 }) {
   const r = useReportRange();

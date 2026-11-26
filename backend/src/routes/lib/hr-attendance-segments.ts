@@ -9,7 +9,7 @@ export const MAX_PUNCH_PAIRS = 4;
 
 /** One clock-in or clock-out tap: its instant and the evidence of where it was. */
 export type PunchMark = {
-  at: string; // ISO instant
+  at: string;
   source: PunchSource | null;
   lat: number | null;
   lng: number | null;
@@ -33,11 +33,6 @@ export type ApplyResult =
   | { ok: true; segments: Segment[] }
   | { ok: false; reason: "already-in" | "no-open-punch" | "max-pairs" };
 
-/* What a punch does to the day's segments.
- *   CLOCK_IN : opens a NEW segment, so going back on duty after clocking out is
- *              its own clock 2/3/4. A second tap while already on the clock is a
- *              no-op; a day that already has MAX_PUNCH_PAIRS segments is refused.
- *   CLOCK_OUT: closes the open segment; nothing open is refused. */
 export function applyPunch(segments: ReadonlyArray<Segment>, action: "CLOCK_IN" | "CLOCK_OUT", mark: PunchMark): ApplyResult {
   const segs = segments.map((s) => ({ in: s.in, out: s.out }));
   if (action === "CLOCK_IN") {

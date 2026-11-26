@@ -22,34 +22,14 @@ import { AssistantPanel } from "./components/AssistantPanel";
 import { AssistantPanelProvider } from "./components/AssistantPanelContext";
 import { BreadcrumbsProvider } from "./hooks/useBreadcrumbs";
 import { PageSkeleton, RouteCrashBoundary } from "./components/RouteFallback";
-// NewVersionBanner is deliberately NOT mounted here — see main.tsx's RootApp.
-// App() is the DESKTOP shell; AuthGate renders MobileApp instead of it, so a
-// mount in this file reaches no mobile screen at all.
 import { IosInstallGuide } from "./components/IosInstallGuide";
 import { AndroidInstallGuide } from "./components/AndroidInstallGuide";
 import { LazySlot } from "./components/LazySlot";
 import { LineGridNav } from "./components/LineGridNav";
 
-/* LAZY, and it costs nothing: this is a modal nobody sees until after the
-   digest request answers, so it has no business in the chunk that has to arrive
-   before the first paint. Eager, it put initial JS at 168.0 KB against a 167.0 KB
-   ceiling and failed frontend-build.
-
-   A LazySlot, never a bare Suspense element — lazySlotAudit.test.ts gates the
-   class, and MobileCrashBoundary.test.tsx forbids a bare one in the mobile
-   shell by name (it reads the file as text, so even naming the tag here would
-   trip it). The resetKey is CONSTANT, for the reason AuthGate's mobile shell gives
-   for its own: there is no navigation above a global reminder to clear a crash
-   with, so keying on anything would be theatre. What the boundary buys here is
-   containment — a failed chunk takes the reminder, not the whole app. */
 const PendingTasksReminder = lazyPage(() =>
   import("./components/PendingTasksReminder").then((m) => ({ default: m.PendingTasksReminder })));
 
-// Route-level code splitting: every page becomes its own chunk, fetched on
-// first visit, so the initial bundle carries only the shell. The .then()
-// indirection adapts our named exports to React.lazy's default-export shape
-// without touching the page files. Multi-page modules (ServiceCases, Projects)
-// share one chunk.
 const ServiceCases = lazyPage(() => import("./pages/ServiceCases").then((m) => ({ default: m.ServiceCases })));
 const ServiceCaseDetail = lazyPage(() => import("./pages/ServiceCases").then((m) => ({ default: m.ServiceCaseDetail })));
 const MyCases = lazyPage(() => import("./pages/MyCases").then((m) => ({ default: m.MyCases })));
@@ -59,8 +39,6 @@ const ProjectDetail = lazyPage(() => import("./pages/Projects").then((m) => ({ d
 const FairReportFill = lazyPage(() => import("./pages/FairReportFill").then((m) => ({ default: m.FairReportFill })));
 const ScheduleReconcile = lazyPage(() => import("./pages/ScheduleReconcile").then((m) => ({ default: m.ScheduleReconcile })));
 const SetupInvoiceFill = lazyPage(() => import("./pages/SetupInvoiceFill").then((m) => ({ default: m.SetupInvoiceFill })));
-// Sales Entries — rep-entered sales log + Director approval queue.
-// Restored to the menu 2026-07-06 (stripped in the core-slim pass).
 const Sales = lazyPage(() => import("./pages/Sales").then((m) => ({ default: m.Sales })));
 const Profile = lazyPage(() => import("./pages/Profile").then((m) => ({ default: m.Profile })));
 const Notifications = lazyPage(() => import("./pages/Notifications").then((m) => ({ default: m.Notifications })));
@@ -81,21 +59,10 @@ const FleetHealth = lazyPage(() => import("./pages/fleet/FleetHealthDashboard").
 const LorryRecord = lazyPage(() => import("./pages/LorryRecord").then((m) => ({ default: m.LorryRecord })));
 const Agents = lazyPage(() => import("./pages/Agents").then((m) => ({ default: m.Agents })));
 const Assistant = lazyPage(() => import("./pages/Assistant").then((m) => ({ default: m.Assistant })));
-// Mail Center — in-ERP shared inbox (ported from Hookka). Inbox + thread detail;
-// Compose is a modal opened from the inbox (no standalone route).
 const MailInbox = lazyPage(() => import("./pages/MailCenter/Inbox").then((m) => ({ default: m.MailInbox })));
 const MailThread = lazyPage(() => import("./pages/MailCenter/Thread").then((m) => ({ default: m.MailThread })));
-// Ported 2990's SCM (furniture supply chain) — owner-gated under /scm/*.
-// These are the VENDORED (wholesale-copied) 2990 pages, now the canonical /scm/*
-// surface. The native pages/scm/* set was retired in the cutover.
 const ScmSuppliersV2 = lazyPage(() => import("./pages/scm-v2/SuppliersV2Route"));
-// Each list/detail page is a NAMED export wrapped at the route in <Scm2990Shell>
-// (the Notify/Confirm/dialog-service providers).
 const Scm2990ShellChunk = lazyPage(() => import("./pages/scm-v2/Scm2990Shell"));
-/* Starts the page chunk in the SAME tick as the shell chunk. While the lazy
-   shell suspends React never renders its children, so a bare
-   <Scm2990ShellChunk><Page/></Scm2990ShellChunk> fetched the page only after
-   the shell arrived: two chunk waves in series on every cold /scm/* load. */
 function Scm2990Shell({ children }: { children: ReactNode }) {
   preloadElementChunks(children);
   return <Scm2990ShellChunk>{children}</Scm2990ShellChunk>;
@@ -107,7 +74,6 @@ const ScmPurchaseOrdersV2 = lazyPage(() => import("./pages/scm-v2/PurchaseOrders
 const ScmPurchaseOrderNewV2 = lazyPage(() => import("./pages/scm-v2/PurchaseOrderNew").then((m) => ({ default: m.PurchaseOrderNew })));
 const ScmPurchaseOrderFromSoV2 = lazyPage(() => import("./pages/scm-v2/PurchaseOrderFromSo").then((m) => ({ default: m.PurchaseOrderFromSo })));
 const ScmPurchaseOrderDetailV2 = lazyPage(() => import("./pages/scm-v2/PurchaseOrderDetailV2").then((m) => ({ default: m.PurchaseOrderDetailV2 })));
-// TEMP — vendored 2990's MRP + read/list pages (wave 2), parallel to native.
 const ScmMrpV2 = lazyPage(() => import("./pages/scm-v2/Mrp").then((m) => ({ default: m.Mrp })));
 const ScmAccountingV2 = lazyPage(() => import("./pages/scm-v2/Accounting").then((m) => ({ default: m.Accounting })));
 const ScmDailyBank = lazyPage(() => import("./pages/scm-v2/DailyBank").then((m) => ({ default: m.DailyBank })));
@@ -142,11 +108,9 @@ const ScmOtherDebtorsV2 = lazyPage(() => import("./pages/scm-v2/OtherDebtors").t
 const ScmReceiptsV2 = lazyPage(() => import("./pages/scm-v2/Receipts").then((m) => ({ default: m.Receipts })));
 const ScmApInvoicesV2 = lazyPage(() => import("./pages/scm-v2/ApInvoices").then((m) => ({ default: m.ApInvoices })));
 const ScmDuplicateSupplierBills = lazyPage(() => import("./pages/scm-v2/DuplicateSupplierBills").then((m) => ({ default: m.DuplicateSupplierBills })));
-/* A bill and a note as their own pages (the Finance redesign, batch 4 step 6). */
 const ScmApBillPage = lazyPage(() => import("./pages/scm-v2/ApBillPage").then((m) => ({ default: m.ApBillPage })));
 const ScmNotePage = lazyPage(() => import("./pages/scm-v2/NotePage").then((m) => ({ default: m.NotePage })));
 const ScmArInvoicesV2 = lazyPage(() => import("./pages/scm-v2/ArInvoices").then((m) => ({ default: m.ArInvoices })));
-/* Money in's invoice documents, each a page of its own (owner's Claude Design, batch 5 §8). */
 const ScmDepositInvoiceDocV2 = lazyPage(() => import("./pages/scm-v2/money-in/DepositInvoiceDoc").then((m) => ({ default: m.DepositInvoiceDoc })));
 const ScmDebtorBillDocV2 = lazyPage(() => import("./pages/scm-v2/money-in/DebtorBillDoc").then((m) => ({ default: m.DebtorBillDoc })));
 const ScmSalesInvoiceDocV2 = lazyPage(() => import("./pages/scm-v2/money-in/SalesInvoiceDoc").then((m) => ({ default: m.SalesInvoiceDoc })));
@@ -160,7 +124,6 @@ const ScmOfficialDocsV2 = lazyPage(() => import("./pages/scm-v2/OfficialDocs").t
 const ScmSupplierMaintenanceV2 = lazyPage(() => import("./pages/scm-v2/SupplierMaintenance").then((m) => ({ default: m.SupplierMaintenance })));
 const ScmPaymentListingV2 = lazyPage(() => import("./pages/scm-v2/PaymentListing").then((m) => ({ default: m.PaymentListing })));
 const ScmCreditNotesV2 = lazyPage(() => import("./pages/scm-v2/CreditNotes").then((m) => ({ default: m.CreditNotes })));
-/* Money in › Credit / debit notes — its own list since the owner's Claude Design (batch 5 step 7); Money out keeps CreditNotes. */
 const ScmMoneyInNotesV2 = lazyPage(() => import("./pages/scm-v2/money-in/MoneyInNotes").then((m) => ({ default: m.MoneyInNotes })));
 const ScmForecastPnlV2 = lazyPage(() => import("./pages/scm-v2/ForecastPnl").then((m) => ({ default: m.ForecastPnl })));
 const ScmFinanceDashboardV2 = lazyPage(() => import("./pages/scm-v2/FinanceDashboard").then((m) => ({ default: m.FinanceDashboard })));
@@ -176,29 +139,23 @@ const ScmStockTakesV2 = lazyPage(() => import("./pages/scm-v2/StockTakesListV2")
 const ScmStockTakeNewV2 = lazyPage(() => import("./pages/scm-v2/StockTakeNew").then((m) => ({ default: m.StockTakeNew })));
 const ScmStockTakeDetailV2 = lazyPage(() => import("./pages/scm-v2/StockTakeDetail").then((m) => ({ default: m.StockTakeDetail })));
 const ScmStockTakeApprovalsV2 = lazyPage(() => import("./pages/scm-v2/StockTakeApprovals").then((m) => ({ default: m.StockTakeApprovals })));
-// HR / Commission — the payroll surface over /api/scm/hr.
 const ScmHrCommission = lazyPage(() => import("./pages/scm-v2/HrCommission").then((m) => ({ default: m.HrCommission })));
 const ScmHrSettings = lazyPage(() => import("./pages/scm-v2/HrSettings").then((m) => ({ default: m.HrSettings })));
 // HR / Employees & Attendance (HC-0125), over /api/hr.
 const HrEmployees = lazyPage(() => import("./pages/HrEmployees").then((m) => ({ default: m.HrEmployees })));
-// TEMP — vendored 2990's PR / Inventory / Stock Card / Supplier Detail / Drivers
-// pages (this wave), parallel to the native /scm/* routes below.
 const ScmPurchaseReturnsV2 = lazyPage(() => import("./pages/scm-v2/PurchaseReturnsListV2").then((m) => ({ default: m.PurchaseReturnsListV2 })));
 const ScmPurchaseReturnNewV2 = lazyPage(() => import("./pages/scm-v2/PurchaseReturnNew").then((m) => ({ default: m.PurchaseReturnNew })));
 const ScmPurchaseReturnDetailV2 = lazyPage(() => import("./pages/scm-v2/PurchaseReturnDetailV2").then((m) => ({ default: m.PurchaseReturnDetailV2 })));
 const ScmInventoryV2 = lazyPage(() => import("./pages/scm-v2/Inventory").then((m) => ({ default: m.Inventory })));
 const ScmStockCardV2 = lazyPage(() => import("./pages/scm-v2/StockCard").then((m) => ({ default: m.StockCard })));
 const ScmSupplierDetailV2 = lazyPage(() => import("./pages/scm-v2/SupplierDetail").then((m) => ({ default: m.SupplierDetail })));
-// Delivery Planning + TMS (Stage 3 — ported 2026-06-28 from 2990).
 const ScmDeliveryPlanningV2 = lazyPage(() => import("./pages/scm-v2/DeliveryPlanning").then((m) => ({ default: m.DeliveryPlanning })));
 const ScmDeliveryPlanningDriverV2 = lazyPage(() => import("./pages/scm-v2/DeliveryPlanningDriver").then((m) => ({ default: m.DeliveryPlanningDriver })));
 const ScmDpOrdersV2 = lazyPage(() => import("./pages/scm-v2/DpOrders").then((m) => ({ default: m.DpOrders })));
 const ScmTrips = lazyPage(() => import("./pages/scm-v2/Trips").then((m) => ({ default: m.Trips })));
 const ScmDeliveryPlanningRegionsV2 = lazyPage(() => import("./pages/scm-v2/DeliveryPlanningRegions").then((m) => ({ default: m.DeliveryPlanningRegions })));
 const ScmDeliveryResidenceRulesV2 = lazyPage(() => import("./pages/scm-v2/DeliveryResidenceRules").then((m) => ({ default: m.DeliveryResidenceRules })));
-// Fleet Module A1 — postcode->zone map admin + auto-propose delivery-date + lock.
 const ScmDeliveryZonesV2 = lazyPage(() => import("./pages/scm-v2/DeliveryZones").then((m) => ({ default: m.DeliveryZones })));
-// Fleet Module C — delivery rate-card config + cost calculator + 3PL reconciliation.
 const ScmDeliveryRateCardsV2 = lazyPage(() => import("./pages/scm-v2/DeliveryRateCards").then((m) => ({ default: m.DeliveryRateCards })));
 const ScmAutoScheduleV2 = lazyPage(() => import("./pages/scm-v2/AutoSchedule").then((m) => ({ default: m.AutoSchedule })));
 const ScmDriverLeaveV2 = lazyPage(() => import("./pages/scm-v2/DriverLeave").then((m) => ({ default: m.DriverLeave })));
@@ -206,16 +163,9 @@ const ScmThreePLCompaniesV2 = lazyPage(() => import("./pages/scm-v2/ThreePLCompa
 const ScmSavedLocationsV2 = lazyPage(() => import("./pages/scm-v2/SavedLocations").then((m) => ({ default: m.SavedLocations })));
 const ScmFleetV2 = lazyPage(() => import("./pages/scm-v2/Fleet").then((m) => ({ default: m.Fleet })));
 const ScmDeliveryMaintenanceV2 = lazyPage(() => import("./pages/scm-v2/DeliveryMaintenance").then((m) => ({ default: m.DeliveryMaintenance })));
-// Fleet Module A4 — day-view map + printable driver run-sheet (read/render over trips).
 const ScmFleetDayV2 = lazyPage(() => import("./pages/scm-v2/FleetDay").then((m) => ({ default: m.FleetDay })));
 const ScmFleetRunSheetV2 = lazyPage(() => import("./pages/scm-v2/FleetRunSheet").then((m) => ({ default: m.FleetRunSheet })));
-// Sales Order READ side (vendored 2990 list + detail + maintenance). New-SO
-// configurator + SoFromProducts come in a later wave. NOTE: 2990 uses :docNo
-// (not :id) for SO detail, and the literal /maintenance route MUST precede
-// /:docNo so 'maintenance' isn't read as a doc number.
-// Overview — Workspace home (P1 task-first dashboard).
 const Overview = lazyPage(() => import("./pages/Overview").then((m) => ({ default: m.Overview })));
-// Supply Chain Hub — section landing page (flattens the 3-level SCM nesting).
 const ScmHub = lazyPage(() => import("./pages/ScmHub").then((m) => ({ default: m.ScmHub })));
 const ScmSubgroupHub = lazyPage(() => import("./pages/ScmSubgroupHub").then((m) => ({ default: m.ScmSubgroupHub })));
 const FinanceTodoPage = lazyPage(() => import("./pages/scm-v2/finance/FinanceTodo").then((m) => ({ default: m.FinanceTodoPage })));
@@ -278,11 +228,6 @@ const ScmPurchaseConsignmentReturnNewV2 = lazyPage(() => import("./pages/scm-v2/
 const ScmPurchaseConsignmentReturnFromReceiveV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentReturnFromReceive").then((m) => ({ default: m.PurchaseConsignmentReturnFromReceive })));
 const ScmPurchaseConsignmentReturnDetailV2 = lazyPage(() => import("./pages/scm-v2/PurchaseConsignmentReturnDetail").then((m) => ({ default: m.PurchaseConsignmentReturnDetail })));
 
-/**
- * Wraps a route element in a permission check. Failures render the
- * <Forbidden> page inline (URL preserved) so the user understands why
- * they were blocked — see frontend/src/pages/Forbidden.tsx.
- */
 /* Field crew get no Assistant at all (owner 2026-07-18: operation EXCEPT
    driver / helper / storekeeper). The route does not MOUNT for them — per the
    house rule that a gated feature is absent, not merely hidden. The backend 403s
@@ -323,20 +268,7 @@ function Guard({
 }: {
   perm?: string;
   anyPerm?: string[];
-  /** ADDITIVE page-access OR-gate. When present, the route also passes if
-   *  ANY listed page-access key resolves to !== 'none'. Combined with `perm`
-   *  / `anyPerm` via OR — used by the SCM routes so a per-position SCM grant
-   *  unlocks its area WITHOUT removing the existing `scm.access` / `*` path. */
   anyAccess?: string[];
-  /** ADDITIVE code-keyed admittance: a Sales Director (auth/salesAccess.
-   *  isSalesDirectorUser) passes even without the flat permission — their
-   *  POSITION carries no permission-matrix backfill, so a code-keyed door is the
-   *  only one they have. Mirrors PageGuard's allowSalesDirector, which is where
-   *  the live users are (/team). /announcements was the last <Guard> caller and
-   *  dropped its gate entirely on 2026-07-21 (readable by every active user), so
-   *  this prop is currently unused HERE; kept because it is the established
-   *  spelling of "admit the Sales Director too" and the next route that needs it
-   *  must not invent a second one. */
   allowSalesDirector?: boolean;
   /** ADDITIVE: a Sales-department user (auth/salesAccess.isSalesStaff) passes —
    *  the same spelling as ScmGuard's and PageGuard's allowSales. Set on
@@ -347,9 +279,6 @@ function Guard({
 }) {
   const { can, pageAccess, user } = useAuth();
   if (allowSales && isSalesStaff(user)) return <>{children}</>;
-  // OR across all provided gates — pass if ANY is satisfied. (Previously each
-  // gate could only DENY; with anyAccess the gates are alternatives, so a
-  // grant on any one is sufficient.)
   const permOk = perm ? can(perm) : false;
   const anyPermOk = anyPerm ? anyPerm.some((p) => can(p)) : false;
   const anyAccessOk = anyAccess
@@ -362,26 +291,6 @@ function Guard({
   return <Forbidden page={label} />;
 }
 
-/**
- * SCM route guard — `scm.access` / `*` keep full access (unchanged); a
- * position granted the mapped SCM page-access area ALSO passes (additive).
- * `area` is one of the scm.<area> page keys. Thin wrapper over <Guard> so the
- * ~75 /scm/* routes stay a one-line change each.
- *
- * `allowSales` (owner rule 2026-07) — mirrors PageGuard's allowSales: a
- * Sales-department user (auth/salesAccess.isSalesStaff) is let through even
- * without the matrix page-access. Set on the Sales-Orders-area routes
- * (list + create + SO detail) AND on the Delivery-Order / Sales-Invoice READ
- * routes (list + detail only, NOT their create routes): the backend row-scopes
- * every read to own + downline (#400/#410, lib/salesScope) and strips cost/margin
- * from non-finance callers, so a salesperson sees the DO/SI generated from their
- * OWN Sales Orders — and nothing else. Safe: opens NO office/finance data.
- */
-/**
- * /scm/finance — Finance's To do for whoever works the books (the owner's Claude
- * Design redesign, 2026-11-02); everyone else the Finance group can show (an
- * Outstanding-only grant) keeps the index of its pages they had here before.
- */
 function FinanceHome() {
   const { can, pageAccess } = useAuth();
   const works = can("scm.access") || pageAccess("scm.finance.accounting") !== "none";
@@ -404,11 +313,6 @@ function ScmGuard({
    * the /scm HUB so the landing grid opens for directors, matching the sub-pages
    * that already carry allowSales; each card still enforces its own area key. */
   allowDirector?: boolean;
-  /* allowCapability (2026-08-25) — admit a holder of this position capability
-   * even without the area grant, mirroring the backend area guard's writeBypass.
-   * Set on /scm/do-load so a storekeeper holding scm.do.load opens the scan-
-   * confirm page though scm.sales.delivery is none; the page's one action still
-   * hits the capability-gated status endpoint. */
   allowCapability?: string;
   /** A Sales Director only (owner 2026-11-24: Procurement Overview); the backend guard's readBypass mirrors it. */
   allowSalesDirector?: boolean;
@@ -435,16 +339,6 @@ function ScmGuard({
   );
 }
 
-/**
- * Delivery Returns route guard — Sales-access model. Denies BEFORE mount for
- * ANY Sales-department user — INCLUDING the Sales Director (owner rule, 2026-07:
- * Delivery Returns is hidden from all Sales staff, director too; every OTHER
- * sales-restricted item stays director-visible) — so the page component never
- * mounts and none of its data hooks fire (OFF, not hidden). Everyone else falls
- * through to the normal scm.sales.returns area guard. Also wraps the
- * delivery-return report route (the off-not-hide fix). Backend remains the
- * source of truth; this is nav-consistent defence-in-depth for a typed URL.
- */
 function DeliveryReturnsGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (isSalesStaff(user)) return <Forbidden page="scm.sales.returns" />;
@@ -479,10 +373,6 @@ function DeliveryReturnsGuard({ children }: { children: React.ReactNode }) {
  */
 function SoMaintenanceGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
-  // A signed-in user whose capability set never arrived is a BROKEN DEPLOY, not
-  // an unprivileged user. Both deny — failing closed is mandatory — but they
-  // must not say the same thing: "you don't have permission" sends the operator
-  // to an administrator, who will find nothing wrong with their role.
   if (capabilitiesUnresolved(user)) {
     return (
       <Forbidden
@@ -495,7 +385,6 @@ function SoMaintenanceGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-/** IT pages (System Health, AI usage): the server's `it.pages.view` answer. */
 function ItPagesGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (capabilitiesUnresolved(user)) {
@@ -510,14 +399,6 @@ function ItPagesGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-/**
- * Fair Report route guard — management + the Sales Director only, mirroring the
- * backend fairReportAccess cohort (auth/salesAccess.canViewFairReport =
- * management OR Sales Director). Ordinary sales / office are Forbidden BEFORE the
- * page mounts, so none of the report's data hooks fire (off, not hidden). The
- * PER-STAGE split (a Sales Director sees the SO tab only) is enforced inside the
- * page via fairAllowedStages, and the backend still 403s every refused stage.
- */
 function FairReportGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (!canViewFairReport(user)) return <Forbidden page="reports.fair" />;
@@ -554,14 +435,8 @@ export default function App() {
   );
 }
 
-/* The route table, built once at module level rather than inside App(): the
-   same elements serve <Routes> on every render AND preloadRouteChunks() below,
-   which matches the landing URL before App has rendered (main.tsx calls it
-   while /api/auth/me is still in flight). Nothing here reads App state; every
-   guard reads auth through its own hook when it renders. */
 const APP_ROUTES = (
   <>
-        {/* Landing → Overview workspace home (P1). */}
         <Route path="/" element={<Overview />} />
         <Route
           path="/assr"
@@ -668,17 +543,8 @@ const APP_ROUTES = (
             </PageGuard>
           }
         />
-        {/* Agent console — owner/IT only (wildcard). Runtime governance for the
-            agent fleet: pause/kill, autonomy gates, proposals + findings, the
-            learned-tuning approvals, and the per-agent teaching notebook. */}
-        {/* Houzs POS Admin (layouts E1-E9): owner / admin, the same key the
-            /api/pos-admin routes read. */}
         <Route path="/pos-admin" element={<Guard anyPerm={["*", "pos.manage"]}><PosAdmin /></Guard>} />
         <Route path="/agents" element={<Guard anyPerm={["*"]}><Agents /></Guard>} />
-        {/* No permission gate: the Assistant is open to every authenticated staff
-            member, and what each may SEE is scoped server-side per position
-            (services/assistant-scope.ts). Gating the door again here would only
-            hide the feature from the people the scoping already protects. */}
         <Route path="/assistant" element={<AssistantGuard><Assistant /></AssistantGuard>} />
         <Route
           path="/system-health"
@@ -704,11 +570,6 @@ const APP_ROUTES = (
             </ItPagesGuard>
           }
         />
-        {/* AutoCount Sync — the read of scm.autocount_outbox. Gated on the same
-            two keys the endpoint accepts, so the nav row, this door and the
-            server all agree; the server is still the boundary. */}
-        {/* AI Connector: every staff member (connect / request access); the
-            admin parts are decided server-side (routes/mcpAdmin.ts). */}
         <Route path="/ai-connector" element={<AiConnector />} />
         <Route
           path="/autocount-sync"
@@ -718,12 +579,6 @@ const APP_ROUTES = (
             </Guard>
           }
         />
-        {/* Venture Portal Feed — the live sales-order feed to the portal that
-            pays Revenue Department commission, and its settings. anyPerm
-            mirrors the two keys the endpoint's READ half accepts; changing
-            anything needs scm.venture_portal.manage, which the server checks
-            per request and the page reflects in `canManage`. This door only
-            decides whether the page opens. */}
         <Route
           path="/venture-portal-feed"
           element={
@@ -732,10 +587,6 @@ const APP_ROUTES = (
             </Guard>
           }
         />
-        {/* Go-live Change Log — who changed which document since the system was
-            opened to staff. anyPerm mirrors the two keys GET /api/scm/change-log
-            accepts; the server is still the boundary, this only decides whether
-            the door opens. */}
         <Route
           path="/change-log"
           element={
@@ -767,25 +618,13 @@ const APP_ROUTES = (
             keys off `canWrite` = announcements.write / Sales Director, which the
             backend re-checks. ── */}
         <Route path="/announcements" element={<Announcements />} />
-        {/* IT Support — report a problem to IT and follow it. Not guarded, like
-            Announcements: every signed-in user has it, and /api/it-support
-            answers each caller with their OWN requests only. */}
         <Route path="/it-support" element={<ItSupport />} />
-        {/* Meetings: every signed-in user; the server checks Manage meeting rooms for room changes. */}
         <Route path="/meetings" element={<Meetings />} />
-        {/* Fleet Health — Fleet Maintenance & Compliance Phase 1 dashboard.
-            Gated on the flat fleet.read permission; fleet.write covers the
-            mutations (backend re-checks). Desktop ops screen. */}
         <Route path="/fleet-health" element={<Guard perm="fleet.read"><FleetHealth /></Guard>} />
         {/* One lorry's FULL record. The Fleet Health drawer is the quick look —
             "can I use this today" — and everything else lives here (owner
             2026-08-02: "要不然界面会显得非常乱"). Same fleet.read gate. */}
         <Route path="/fleet-health/:lorryId" element={<Guard perm="fleet.read"><LorryRecord /></Guard>} />
-        {/* ── Mail Center — shared inbox. Permission-gated on mail_center.read
-            (the per-user mailbox scope is enforced server-side; reads/replies
-            aren't gated by a permission key, only by mailbox ownership). The
-            literal /mail-center route precedes /mail-center/:id. Compose is a
-            modal opened from the inbox, not its own route. ── */}
         <Route
           path="/mail-center"
           element={
@@ -802,8 +641,6 @@ const APP_ROUTES = (
             </Guard>
           }
         />
-        {/* ── Supply Chain (vendored 2990's SCM) — scm.access-gated /scm/*;
-            Owner / IT Admin pass via their "*" wildcard (can() short-circuits "*"). ── */}
         <Route
           path="/scm/suppliers"
           element={
@@ -812,20 +649,12 @@ const APP_ROUTES = (
             </ScmGuard>
           }
         />
-        {/* Vendored 2990's Purchase Order pages. /new + /from-so precede /:id so
-            the literal segments match before the param route. Each page is wrapped
-            in <Scm2990Shell> for the Notify/Confirm/dialog-service providers. */}
         <Route path="/scm/logistic-overview" element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmLogisticOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/procurement-overview" element={<ScmGuard area="scm.procurement.po" allowSalesDirector><Scm2990Shell><ScmProcurementOverview embedded={false} /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrdersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/new" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/from-so" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-orders/:id" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPurchaseOrderDetailV2 /></Scm2990Shell></ScmGuard>} />
-        {/* PO amendment / revision queue + job card (Houzs, mig 0192). Same
-            Procurement-PO area guard as the Purchase Orders list; the finer
-            scm.po_amendment.* gates layer on inside the pages + backend. The
-            literal /po-amendments segments precede the PO /:id route above only
-            in the sidebar sense — routes are matched exactly, so order is safe. */}
         <Route path="/scm/po-amendments" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPoAmendmentsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/po-amendments/:id" element={<ScmGuard area="scm.procurement.po"><Scm2990Shell><ScmPoAmendmentDetailV2 /></Scm2990Shell></ScmGuard>} />
         {/* Cancellation requests (owner 2026-09-08) — one inbox for both documents; a
@@ -838,8 +667,6 @@ const APP_ROUTES = (
             list — deciding which exhibition a sale belongs to is a sales-order
             decision, and the row's own write goes through the SO routes. */}
         <Route path="/scm/fair-pending" element={<ScmGuard area="scm" allowDirector><Scm2990Shell><ScmFairPending /></Scm2990Shell></ScmGuard>} />
-        {/* Vendored 2990's MRP + read/list pages. Each wrapped in <Scm2990Shell>.
-            product-models list precedes /:id so the literal segment matches first. */}
         <Route path="/scm/mrp" element={<ScmGuard area="scm.procurement.mrp"><Scm2990Shell><ScmMrpV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/accounting" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmAccountingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/daily-bank" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDailyBank /></Scm2990Shell></ScmGuard>} />
@@ -849,12 +676,7 @@ const APP_ROUTES = (
         <Route path="/scm/unmatched-payments" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmUnmatchedPayments /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/settlement-setup" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSettlementSetup /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/outstanding" element={<ScmGuard area="scm.finance.outstanding"><Scm2990Shell><ScmOutstandingV2 /></Scm2990Shell></ScmGuard>} />
-        {/* Delivered-but-not-billed, aged. Same area key as Outstanding — it is the
-            money answer to the question that page's DO tab asks with a status flag. */}
         <Route path="/scm/unbilled-deliveries" element={<ScmGuard area="scm.finance.outstanding"><Scm2990Shell><ScmUnbilledDeliveriesV2 /></Scm2990Shell></ScmGuard>} />
-        {/* Currencies master (Phase 1-A FX) — owner-maintained currency + rate
-            table feeding the GRN / PI / PV foreign-currency posting. Gated on the
-            flat scm.currency.manage permission (Owner / IT Admin cover it via *). */}
         <Route path="/scm/currencies" element={<Guard anyPerm={["*", "scm.currency.manage"]}><Scm2990Shell><ScmCurrenciesV2 /></Scm2990Shell></Guard>} />
         <Route path="/scm/fabric-tracking" element={<ScmGuard area="scm.procurement.products"><Scm2990Shell><ScmFabricTrackingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/loading-list" element={<ScmGuard area="scm.warehouse.inventory"><Scm2990Shell><ScmLoadingList /></Scm2990Shell></ScmGuard>} />
@@ -864,9 +686,6 @@ const APP_ROUTES = (
         <Route path="/scm/categories" element={<ScmGuard area="scm.procurement.products"><Scm2990Shell><ScmCategoriesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/product-models" element={<ScmGuard area="scm.procurement.products"><Scm2990Shell><ScmProductModelsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/product-models/:id" element={<ScmGuard area="scm.procurement.products"><Scm2990Shell><ScmProductModelDetailV2 /></Scm2990Shell></ScmGuard>} />
-        {/* TEMP — vendored 2990's GRN + Purchase Invoice pages (wave 3), parallel
-            to the native /scm/* below. Each wrapped in <Scm2990Shell>. Literal
-            segments (/new, /from-po, /from-grn) precede /:id so they match first. */}
         <Route path="/scm/grns" element={<ScmGuard area="scm.procurement.grn"><Scm2990Shell><ScmGoodsReceivedV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/grns/new" element={<ScmGuard area="scm.procurement.grn"><Scm2990Shell><ScmGrnNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/grns/from-po" element={<ScmGuard area="scm.procurement.grn"><Scm2990Shell><ScmGrnFromPoV2 /></Scm2990Shell></ScmGuard>} />
@@ -875,8 +694,6 @@ const APP_ROUTES = (
         <Route path="/scm/purchase-invoices/new" element={<ScmGuard area="scm.procurement.pi"><Scm2990Shell><ScmPurchaseInvoiceNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-invoices/from-grn" element={<ScmGuard area="scm.procurement.pi"><Scm2990Shell><ScmPurchaseInvoiceFromGrnV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-invoices/:id" element={<ScmGuard area="scm.procurement.pi"><Scm2990Shell><ScmPurchaseInvoiceDetailV2 /></Scm2990Shell></ScmGuard>} />
-        {/* Payment Vouchers — standalone AP cash-out doc (port of 2990 0189/0202,
-            Phase 1-B MYR). Gated on the finance area; /new precedes /:id. */}
         <Route path="/scm/payment-vouchers" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVouchersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/new" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/scan" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherScanV2 /></Scm2990Shell></ScmGuard>} />
@@ -884,7 +701,6 @@ const APP_ROUTES = (
         <Route path="/scm/opening-balance" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOpeningBalanceV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/other-debtors" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOtherDebtorsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/receipts" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmReceiptsV2 /></Scm2990Shell></ScmGuard>} />
-        {/* Official receipts folded into Receipts (Claude Design, batch 5 §1): bookmarks and To do links land on its kind. */}
         <Route path="/scm/official-receipts" element={<FoldRedirect to="/scm/receipts" add={{ kind: "official" }} />} />
         <Route path="/scm/receipts/official/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmOfficialReceiptDocV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/receipts/debtor/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDebtorReceiptDocV2 /></Scm2990Shell></ScmGuard>} />
@@ -920,20 +736,11 @@ const APP_ROUTES = (
         <Route path="/scm/supplier-notes" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmCreditNotesV2 key="AP" side="AP" /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/credit-notes/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmNotePage key="AR" side="AR" /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/supplier-notes/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmNotePage key="AP" side="AP" /></Scm2990Shell></ScmGuard>} />
-        {/* Deposit invoices folded into Invoices (Claude Design, batch 5 §1); the switch moved to Setup › Deposit invoices. */}
         <Route path="/scm/deposit-invoices" element={<FoldRedirect to="/scm/ar-invoices" add={{ kind: "deposit" }} />} />
         {/* The Forecast P&L (owner 2026-09-21): targets on the P&L's own tree; nothing posts. */}
         <Route path="/scm/forecast" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmForecastPnlV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/finance-dashboard" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmFinanceDashboardV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/payment-vouchers/:id" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmPaymentVoucherDetailV2 /></Scm2990Shell></ScmGuard>} />
-        {/* TEMP — vendored 2990's stock-movement pages (wave 4: Adjustments /
-            Transfers / Takes), parallel to the native /scm/* below. Each wrapped
-            in <Scm2990Shell>. Literal /new precedes /:id so it matches first. */}
-        {/* Adjustment writes hit POST /inventory/adjustments, now gated on
-            scm.warehouse.adjustments server-side by its own area-guard sub-mount
-            (scm/index.ts) — split off inventory-view because adjusting changes
-            valuation. Guard the route on that same key so a position with
-            inventory-view but no adjustments grant reaches Inventory, not this. */}
         <Route path="/scm/stock-adjustments" element={<ScmGuard area="scm.warehouse.adjustments"><Scm2990Shell><ScmStockAdjustmentsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/stock-adjustments/new" element={<ScmGuard area="scm.warehouse.adjustments"><Scm2990Shell><ScmStockAdjustmentNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/stock-adjustments/:id" element={<ScmGuard area="scm.warehouse.adjustments"><Scm2990Shell><ScmStockAdjustmentDetailV2 /></Scm2990Shell></ScmGuard>} />
@@ -945,23 +752,9 @@ const APP_ROUTES = (
         <Route path="/scm/stock-takes/new" element={<ScmGuard area="scm.warehouse.stock_take"><Scm2990Shell><ScmStockTakeNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/stock-takes/:id" element={<ScmGuard area="scm.warehouse.stock_take"><Scm2990Shell><ScmStockTakeDetailV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/stock-take-approvals" element={<Guard anyPerm={["*", "scm.stock_take.supervise"]}><Scm2990Shell><ScmStockTakeApprovalsV2 /></Scm2990Shell></Guard>} />
-        {/* HR / Commission. Flat <Guard>, NOT <ScmGuard>: HR has no L2 page-access
-            area, and the report returns every colleague's pay — it must not ride
-            the broad scm.access umbrella. Same two keys the backend checks.
-            Settings takes scm.hr.manage alone: without it every control on the
-            page 403s, so a read-only holder gets the report instead.
-
-            scm.hr.close / scm.hr.reopen are NOT route keys. They gate the two
-            payout-approval buttons inside the Commission page and are checked
-            there; a holder of either still needs scm.hr.read to get in, because
-            the API will not show them the period to approve. */}
         <Route path="/scm/hr/commission" element={<Guard anyPerm={["*", "scm.hr.read", "scm.hr.manage"]}><Scm2990Shell><ScmHrCommission /></Scm2990Shell></Guard>} />
         <Route path="/scm/hr/settings" element={<Guard anyPerm={["*", "scm.hr.manage"]}><Scm2990Shell><ScmHrSettings /></Scm2990Shell></Guard>} />
         <Route path="/hr/employees" element={<Guard anyPerm={["*", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"]}><HrEmployees /></Guard>} />
-        {/* TEMP — vendored 2990's PR / Inventory / Stock Card / Supplier Detail /
-            Drivers pages (this wave), parallel to the native /scm/* below. Each
-            wrapped in <Scm2990Shell>. Literal segments (/new, /stock-card)
-            precede the /:id routes so they match first. */}
         <Route path="/scm/purchase-returns" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-returns/new" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-returns/:id" element={<ScmGuard area="scm.procurement.pr"><Scm2990Shell><ScmPurchaseReturnDetailV2 /></Scm2990Shell></ScmGuard>} />
@@ -974,7 +767,6 @@ const APP_ROUTES = (
             Route deliberately NOT mounted — "off, not hide": no nav entry, no
             route, no prefetch, so nothing mounts and no query fires. Do not
             re-add this route. */}
-        {/* Delivery Planning + TMS Stage 3 — all under the existing scm.transportation.drivers area. */}
         <Route path="/scm/delivery-planning"         element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-planning-driver"  element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDeliveryPlanningDriverV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/dp-orders"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmDpOrdersV2 /></Scm2990Shell></ScmGuard>} />
@@ -993,13 +785,7 @@ const APP_ROUTES = (
         <Route path="/scm/lorry-live-map"            element={<Navigate to="/scm/delivery-maintenance?tab=live-map" replace />} />
         <Route path="/scm/fleet-day"                 element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetDayV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/fleet-run-sheet"           element={<ScmGuard area="scm.transportation.drivers"><Scm2990Shell><ScmFleetRunSheetV2 /></Scm2990Shell></ScmGuard>} />
-        {/* Supply Chain Hub — section landing page (main app layout, NOT the 2990 shell). */}
         <Route path="/scm" element={<ScmGuard area="scm" allowDirector><ScmHub /></ScmGuard>} />
-        {/* Nick 2026-07-09 — Level 2 sub-group hubs (mirror /projects?view=hub).
-            Each renders NAV_TABS children of the corresponding scm sub-group as
-            a card grid. Same ScmGuard as ScmHub — a role with any SCM access
-            passes; per-card visibility inside the hub is filtered against
-            NAV_TABS' own permission fields. */}
         <Route path="/scm/sales-order"    element={<ScmGuard area="scm"><ScmSubgroupHub groupId="scm-sales"          description="Pick a section — sales orders, delivery orders, invoices or returns." /></ScmGuard>} />
         <Route path="/scm/consignment"    element={<ScmGuard area="scm"><ScmSubgroupHub groupId="scm-consignment"    description="Consignment flow — orders, notes, returns and their purchase-side counterparts." /></ScmGuard>} />
         <Route path="/scm/procurement"    element={<ScmGuard area="scm"><ScmSubgroupHub groupId="scm-procurement"    description="Procurement flow — products, suppliers, MRP, POs, receipts, invoices and returns." /></ScmGuard>} />
@@ -1008,9 +794,6 @@ const APP_ROUTES = (
         <Route path="/scm/finance"        element={<FinanceHome />} />
         <Route path="/scm/finance/rules" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><FinanceTodoRulesPage /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/finance/deposit-invoices" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><FinanceDepositInvoiceSetup /></Scm2990Shell></ScmGuard>} />
-        {/* Sales Orders READ side (vendored). The literal /maintenance route
-            MUST precede /:docNo so 'maintenance' isn't caught as a doc number.
-            2990 uses :docNo (not :id) for the SO detail. */}
         <Route path="/scm/sales-orders" element={<ScmGuard area="scm.sales.orders" allowSales><Scm2990Shell><ScmSalesOrdersV2 /></Scm2990Shell></ScmGuard>} />
         {/* SO amendment / revision queue (Phase 1-C). Sales-Orders-area surface —
             same ScmGuard + allowSales as the Sales Orders list, so a salesperson
@@ -1018,36 +801,22 @@ const APP_ROUTES = (
             list/detail to their own+downline SOs. Directors / office / `*` and any
             amendment-perm holder pass via the area key. */}
         <Route path="/scm/amendments" element={<ScmGuard area="scm.sales.orders" allowSales><Scm2990Shell><ScmAmendmentsV2 /></Scm2990Shell></ScmGuard>} />
-        {/* Amendment job card — before/after diff detail for one revision. Same
-            guard as the queue; reached by double-clicking a queue row. */}
         <Route path="/scm/amendments/:id" element={<ScmGuard area="scm.sales.orders" allowSales><Scm2990Shell><ScmAmendmentDetailV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-orders/maintenance" element={<SoMaintenanceGuard><Scm2990Shell><ScmSalesOrderMaintenanceV2 /></Scm2990Shell></SoMaintenanceGuard>} />
-        {/* Literal /new + /generate MUST precede /:docNo so they match first.
-            All Sales-Orders-area routes carry allowSales so a rep reaches their
-            own SO list / create / detail without the matrix page-access. */}
         <Route path="/scm/sales-orders/new" element={<ScmGuard area="scm.sales.orders" allowSales><Scm2990Shell><ScmSalesOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-orders/new/guided" element={<ScmGuard area="scm.sales.orders" allowSales><Scm2990Shell><ScmSalesOrderNewGuidedV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-orders/new/from-products" element={<ScmGuard area="scm.sales.orders" allowSales><Scm2990Shell><ScmSalesOrderNewFromProductsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-orders/generate" element={<ScmGuard area="scm.sales.orders" allowSales><Scm2990Shell><ScmSoFromProductsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-orders/:docNo" element={<ScmGuard area="scm.sales.orders" allowSales><Scm2990Shell><ScmSalesOrderDetailV2 /></Scm2990Shell></ScmGuard>} />
-        {/* SCM Reports v2 — AutoCount-style detail listings. Each wrapped in <Scm2990Shell>. */}
         <Route path="/scm/reports/sales-order-detail-listing" element={<ScmGuard area="scm.sales.orders"><Scm2990Shell><ScmSoDetailListingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/reports/delivery-order-detail-listing" element={<ScmGuard area="scm.sales.delivery"><Scm2990Shell><ScmDoDetailListingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/reports/sales-invoice-detail-listing" element={<ScmGuard area="scm.sales.invoices"><Scm2990Shell><ScmSiDetailListingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/reports/delivery-return-detail-listing" element={<DeliveryReturnsGuard><Scm2990Shell><ScmDrDetailListingV2 /></Scm2990Shell></DeliveryReturnsGuard>} />
-        {/* Fair Report — exhibition-performance report (SO / DO / Invoice stages).
-            Top-level /reports/* (not nested under /scm) so it reads as a clean
-            management report, not a deep SCM leaf. Management + Sales Director
-            only (FairReportGuard mirrors the backend fairReportAccess cohort). */}
         <Route path="/reports/fair-report" element={<FairReportGuard><Scm2990Shell><FairReportV2 /></Scm2990Shell></FairReportGuard>} />
-        {/* allowSales — a salesperson READS the DO list/detail generated from
-            their own SOs (backend row-scopes own+downline, strips cost/margin).
-            Create routes below deliberately OMIT allowSales (read-only). */}
         <Route path="/scm/delivery-orders" element={<ScmGuard area="scm.sales.delivery" allowSales><Scm2990Shell><ScmDeliveryOrdersV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-orders/new" element={<ScmGuard area="scm.sales.delivery"><Scm2990Shell><ScmDeliveryOrderNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-orders/from-so" element={<ScmGuard area="scm.sales.delivery"><Scm2990Shell><ScmDeliveryOrderFromSoV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/delivery-orders/:id" element={<ScmGuard area="scm.sales.delivery" allowSales><Scm2990Shell><ScmDeliveryOrderDetailV2 /></Scm2990Shell></ScmGuard>} />
-        {/* The DO print's "SCAN · MARK LOADED" QR lands here (warehouse loading confirmation). */}
         <Route path="/scm/do-load" element={<ScmGuard area="scm.sales.delivery" allowSales allowCapability="scm.do.load"><Scm2990Shell><ScmDoLoadScan /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices" element={<ScmGuard area="scm.sales.invoices" allowSales><Scm2990Shell><ScmSalesInvoicesV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/sales-invoices/new" element={<ScmGuard area="scm.sales.invoices"><Scm2990Shell><ScmSalesInvoiceNewV2 /></Scm2990Shell></ScmGuard>} />
@@ -1064,9 +833,6 @@ const APP_ROUTES = (
         <Route path="/scm/consignment-notes/new" element={<ScmGuard area="scm.consignment.notes"><Scm2990Shell><ScmConsignmentNoteNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/consignment-notes/from-order" element={<ScmGuard area="scm.consignment.notes"><Scm2990Shell><ScmConsignmentNoteFromOrderV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/consignment-notes/:id" element={<ScmGuard area="scm.consignment.notes"><Scm2990Shell><ScmConsignmentNoteDetailV2 /></Scm2990Shell></ScmGuard>} />
-        {/* Consignment Returns (DR-clone) + Purchase Consignment Orders (PO-clone),
-            vendored 2990 pages wrapped in <Scm2990Shell>. Literal segments
-            (/new, /from-note) precede /:id so they match first. */}
         <Route path="/scm/consignment-returns" element={<ScmGuard area="scm.consignment.returns"><Scm2990Shell><ScmConsignmentReturnsV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/consignment-returns/new" element={<ScmGuard area="scm.consignment.returns"><Scm2990Shell><ScmConsignmentReturnNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/consignment-returns/from-note" element={<ScmGuard area="scm.consignment.returns"><Scm2990Shell><ScmConsignmentReturnFromNoteV2 /></Scm2990Shell></ScmGuard>} />
@@ -1082,13 +848,7 @@ const APP_ROUTES = (
         <Route path="/scm/purchase-consignment-returns/new" element={<ScmGuard area="scm.consignment.po_returns"><Scm2990Shell><ScmPurchaseConsignmentReturnNewV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-consignment-returns/from-receive" element={<ScmGuard area="scm.consignment.po_returns"><Scm2990Shell><ScmPurchaseConsignmentReturnFromReceiveV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/purchase-consignment-returns/:id" element={<ScmGuard area="scm.consignment.po_returns"><Scm2990Shell><ScmPurchaseConsignmentReturnDetailV2 /></Scm2990Shell></ScmGuard>} />
-        {/* Maintenance — no standalone vendored page; the vendored Products page
-            hosts the Maintenance tab. The "Maintenance" nav item resolves here. */}
         <Route path="/scm/maintenance" element={<ScmGuard area="scm.procurement.products"><Scm2990Shell><ScmProductsV2 /></Scm2990Shell></ScmGuard>} />
-        {/* Inbox — the mobile bottom-nav Inbox tab + the desktop bell's
-            "view all" land here. Reuses the shared NotificationsProvider
-            feed. Gated on projects.read (same gate as the bell + the mobile
-            menu's Inbox card). */}
         <Route
           path="/notifications"
           element={
@@ -1097,7 +857,6 @@ const APP_ROUTES = (
             </Guard>
           }
         />
-        {/* Legacy /roles → Team page's Roles tab */}
         <Route
           path="/roles"
           element={<Navigate to="/team?tab=roles" replace />}
@@ -1133,6 +892,5 @@ export function preloadRouteChunks(pathname: string): void {
       preloadElementChunks(match.route.element);
     }
   } catch {
-    // Never let a head start break the boot.
   }
 }

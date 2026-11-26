@@ -1,17 +1,4 @@
-// ----------------------------------------------------------------------------
-// po-list-read — what the Purchase Order LIST matches, in one place.
-//
-// The list (GET /mfg-purchase-orders?page=) and the two exports
-// (GET /mfg-purchase-orders/export/headers, /export/lines) must match the SAME
-// purchase orders for the same tab, search and sort. When the filter lived only
-// inside the list handler, the only export there was could not reach it, and
 // exported one screen page instead (docs/bugs — "the Purchase Order Export held
-// one page"). Every reader now builds its query through these functions, so a
-// new filter added here reaches all three at once.
-//
-// Lives here, not in routes/mfg-purchase-orders.ts, because that router is over
-// its file-size ceiling.
-// ----------------------------------------------------------------------------
 
 import { PO_STATUS_BUCKETS } from './po-status-buckets';
 import { HELD_OR_TERM, HOLD_COLUMNS } from './document-hold';
@@ -24,17 +11,9 @@ export const PO_HEADER_COLS =
   'id, po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, currency, ' +
   'subtotal_sen, tax_sen, total_sen, notes, submitted_at, received_at, ' +
   'cancelled_at, created_at, created_by, updated_at, ' +
-  /* SO-amendment / revision workflow (2026-07-03) — bumped in place when a
-     supplier-confirmed amendment revises this PO; prior versions snapshot to
-     po_revisions. The PO Detail header shows a "Revised · rev N" badge when > 1. */
   'revision, ' +
-  /* PR #77 — default ship-to warehouse for every line on this PO */
   'purchase_location_id, ' +
-  /* Migration 0180 — supplier-revised delivery dates (header). The EFFECTIVE
-     delivery date readers use = MAX over non-null of [expected_at, _2, _3, _4]
-     (effectiveDelivery). expected_at keeps meaning the original earliest date. */
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, ' +
-  /* Mig 0324 — the HOLD MARKER, rendered BESIDE the status pill. */
   HOLD_COLUMNS;
 
 /* PR — Commander 2026-05-27: PO list rows surface a per-row items summary
@@ -60,20 +39,13 @@ export type PoListFilters = {
   creditorNames: string[] | null;
   creditorCodes: string[] | null;
   currencies: string[] | null;
-  /** Doc Date funnel: exact `po_date` values (YYYY-MM-DD). */
   docDates: string[] | null;
-  /** POs with a line bought for an SO whose reference matches `q`
-      (lib/so-ref-search.ts); a PO carries no ref of its own. */
   soRefPoIds: string[];
-  /** POs with a line whose item code matches `q` (lib/po-item-code-search.ts). */
   itemCodePoIds: string[];
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
 
-/* Multi-value funnel params ride as a JSON array in ONE query param, not a
-   comma-joined string: a creditor name may itself contain a comma. A malformed
-   or empty value reads as "no filter" (null), never a crash. */
 function jsonArrayParam(v: string | undefined): string[] | null {
   if (v === undefined || v === '') return null;
   try {
@@ -86,8 +58,6 @@ function jsonArrayParam(v: string | undefined): string[] | null {
   }
 }
 
-/* A non-date value would make Postgres reject the whole list read (400), so it
-   is dropped; nothing left reads as no filter. */
 function isoDates(v: string[] | null): string[] | null {
   const out = (v ?? []).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
   return out.length ? out : null;
@@ -124,7 +94,6 @@ export function poListSelect(f: PoListFilters): string {
   return `${PO_HEADER_COLS}, ${supplierEmbed}, items:purchase_order_items(item_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
 }
 
-/* Indexed by a caller's string, so an unknown key is `undefined` — say so. */
 const BUCKETS: Readonly<Record<string, string[] | undefined>> = PO_STATUS_BUCKETS;
 
 const SORT_COLS = new Set(['po_date', 'po_number', 'status', 'total_sen']);
@@ -134,10 +103,6 @@ export function poListSort(sort: string | null): { col: string; asc: boolean } {
   return { col: rawCol !== undefined && SORT_COLS.has(rawCol) ? rawCol : 'po_date', asc: rawDir === 'asc' };
 }
 
-/* The PostgREST builder surface these functions use. The functions take and
-   return the caller's own builder type and assert this shape INSIDE: matching
-   the real supabase-js builder against it at the call site makes tsc give up
-   with TS2589 (the same trap lib/po-line-order.ts records). */
 type Filterable = {
   order(col: string, opts: { ascending: boolean }): Filterable;
   in(col: string, vals: string[]): Filterable;
@@ -162,11 +127,6 @@ export function orderPoList<Q>(q: Q, sort: string | null): Q {
  *  (tests/purchaseDocVocab.test.ts). */
 export function filterPoList<Q>(q: Q, f: PoListFilters, c: CompanyScopeCtx, validStatuses: ReadonlySet<string>): Q {
   let out = q as unknown as Filterable;
-  /* Resolve the incoming `status`: a known bucket key → all its raw statuses;
-     'all'/empty → no filter; otherwise a raw DB status (validStatuses guard).
-     The `on_hold` tab reads the MARKER (mig 0324). A held order appears under
-     BOTH its real status and On Hold — the point of a marker — so the counts
-     do not sum to `all`, exactly as `outstanding` already does not. */
   if (f.status && f.status !== 'all') {
     if (f.status === 'on_hold') out = out.or(HELD_OR_TERM);
     else if (BUCKETS[f.status]) out = out.in('status', BUCKETS[f.status]!);
@@ -182,11 +142,7 @@ export function filterPoList<Q>(q: Q, f: PoListFilters, c: CompanyScopeCtx, vali
   if (f.creditorCodes && f.creditorCodes.length > 0) out = out.in('supplier.code', f.creditorCodes);
   if (f.currencies && f.currencies.length > 0) out = out.in('currency', f.currencies);
   if (f.docDates && f.docDates.length > 0) out = out.in('po_date', f.docDates);
-  out = scopeToCompany(out, c); // multi-company: isolate to the active company
-  /* free-text search over the base-table text columns, plus the POs resolved
-     beforehand by SO reference and by line item code. Supplier name / code are
-     embedded resources, not base purchase_orders columns, so they can't be
-     ilike'd here. */
+  out = scopeToCompany(out, c);
   if (f.q) {
     const s = escapeForOr(f.q);
     if (s) out = out.or([`po_number.ilike.%${s}%`, `notes.ilike.%${s}%`, ...inArm('id', [...f.soRefPoIds, ...f.itemCodePoIds])].join(','));
@@ -216,8 +172,6 @@ type GrnReader = {
 type PoItemRow = { id: string; purchase_order_id: string | null };
 type GrnItemRow = { purchase_order_item_id: string | null; grn_id: string };
 type GrnStatusRow = { id: string; grn_number: string | null; status: string | null; received_at: string | null };
-/* The `.from(t).select(c).in(col, vals).order(col, opts).range(from, to)` shape
-   the extra line-link reads use — the GrnReader above carries an extra `.neq`. */
 type PlainInReader<Row> = {
   from(table: string): {
     select(cols: string): {
@@ -230,14 +184,6 @@ type PlainInReader<Row> = {
   };
 };
 
-/* Merge a PO's GRNs from BOTH linkage sources — the header FK (a GRN raised
-   against the PO) and the grn_items line link (a GRN that RECEIVED one of the
-   PO's lines, even when its header names another PO, as a supplier multi-receive
-   through grns POST /from-po-items does). The union is monotonic: it only ever
-   ADDS a GRN or a childId, so a PO the header pass already locked stays locked
-   and a GRN already shown stays shown. Header rows are pre-filtered
-   non-cancelled; line rows carry status so a cancelled receipt is dropped here.
-   Pure so it is unit-testable without a DB. */
 export type PoGrnRef = { id: string; grnNumber: string; receivedAt: string | null };
 
 export function mergePoGrnLinks(
@@ -288,7 +234,6 @@ export async function stampPoListGrns<R extends { id: string }>(
   }
   const poIds = rows.map((r) => r.id);
 
-  // Header FK: the non-cancelled GRNs raised against each PO.
   const { data: headerRows, error: hErr } = await chunkIn<GrnRow>(poIds, (batch, from, to) =>
     (sb as GrnReader)
       .from('grns')
@@ -298,9 +243,6 @@ export async function stampPoListGrns<R extends { id: string }>(
       .order('grn_number', { ascending: true })
       .order('id', { ascending: true })
       .range(from, to));
-  /* A failed read is REPORTED, never served as "no GRNs": has_children is the
-     downstream lock, and reading it as false would offer Edit / Cancel on a
-     received order. */
   if (hErr) return { error: hErr.message, rows: [] };
   const headerLinks = headerRows
     .filter((g) => g.purchase_order_id)
@@ -308,7 +250,6 @@ export async function stampPoListGrns<R extends { id: string }>(
 
   let lineLinks: Array<{ poId: string; grnId: string; grnNumber: string | null; receivedAt: string | null; cancelled: boolean }> = [];
   if (includeLineLinked) {
-    // Every line of these POs → which PO it belongs to.
     const { data: itemRows, error: iErr } = await chunkIn<PoItemRow>(poIds, (batch, from, to) =>
       (sb as PlainInReader<PoItemRow>)
         .from('purchase_order_items')
@@ -321,7 +262,6 @@ export async function stampPoListGrns<R extends { id: string }>(
     for (const it of itemRows) if (it.purchase_order_id) itemToPo.set(it.id, it.purchase_order_id);
     const itemIds = [...itemToPo.keys()];
 
-    // Which GRN received each of those lines.
     const { data: grnItemRows, error: giErr } = itemIds.length
       ? await chunkIn<GrnItemRow>(itemIds, (batch, from, to) =>
           (sb as PlainInReader<GrnItemRow>)
@@ -333,8 +273,6 @@ export async function stampPoListGrns<R extends { id: string }>(
       : { data: [] as GrnItemRow[], error: null };
     if (giErr) return { error: giErr.message, rows: [] };
 
-    /* Number + status for the line-linked GRNs the header pass did NOT already
-       resolve (those it did are known non-cancelled with a number in hand). */
     const headerIds = new Set(headerRows.map((g) => g.id));
     const lineGrnIds = [...new Set(grnItemRows.map((r) => r.grn_id).filter((x): x is string => !!x))]
       .filter((gid) => !headerIds.has(gid));
@@ -361,8 +299,6 @@ export async function stampPoListGrns<R extends { id: string }>(
   }
 
   const { childIds, grnsByPo } = mergePoGrnLinks(headerLinks, lineLinks);
-  /* Stable display order: the header read is grn_number-ordered, but the union
-     can append a line-linked GRN out of order, so re-sort each PO's list. */
   for (const arr of grnsByPo.values()) arr.sort((a, b) => a.grnNumber.localeCompare(b.grnNumber));
   return {
     error: null,

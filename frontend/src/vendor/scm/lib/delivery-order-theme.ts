@@ -35,9 +35,7 @@ export const pt = (points: number): number => points * PT;
 export const charSpace = (sizePt: number, em: number): number => pt(sizePt) * em;
 
 export const DO_THEME = {
-  /** The only ink. Every text, rule and QR module is this. */
   ink: [0, 0, 0] as Rgb,
-  /** Rules are ink too: a hairline in a tint would dither into a dotted line. */
   line: [0, 0, 0] as Rgb,
 } as const;
 
@@ -49,30 +47,17 @@ export const DO_THEME = {
  */
 export const DO_SIZE = {
   min: 9,
-  /** The document title, right column of the letterhead. */
   title: 18,
-  /** The DO number under the title. */
   docNo: 13,
-  /** Company name, left column of the letterhead. */
   company: 15,
-  /** Registration number, address, customer-service line, "Issued" date. */
   meta: 10,
-  /** DELIVER TO / DELIVERY DETAILS captions and the QR caption. */
   caption: 10,
-  /** Customer name in the info panel. */
   customer: 13,
-  /** Address, phone, note, detail rows, table body. */
   body: 10.5,
-  /** Table column headers. */
   tableHead: 9.5,
-  /** TOTAL row — body size, bold. One step up wrapped a 7-digit m³ total in
-   *  its 11% column. */
   tableFoot: 10.5,
-  /** Signature block titles. */
   sigTitle: 11,
-  /** Name / Date fields under a signature. */
   sigField: 10,
-  /** Footer line and page number. */
   footer: 9,
 } as const;
 

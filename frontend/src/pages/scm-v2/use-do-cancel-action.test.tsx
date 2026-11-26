@@ -42,8 +42,6 @@ describe('useDoCancelAction', () => {
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ tone: 'error', body: 'DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit' }));
   });
 
-  /* The DO status handler keeps the cancel when returning the stock partly
-     fails and says so in `movementErrors` — "its stock is back" would be false. */
   it('says so when the cancel ran but the stock did not all come back', async () => {
     mutateAsync.mockResolvedValueOnce({ deliveryOrder: {}, movementErrors: ['DO reversal threw: timeout'] });
     const { result } = renderHook(() => useDoCancelAction());
@@ -61,7 +59,6 @@ describe('useDoCancelAction', () => {
     expect(p.validate('x'.repeat(MIN_DO_CANCEL_REASON))).toBeNull();
     expect(p.body).toContain('no approval is needed');
     expect(p.body).toContain('cannot be reactivated');
-    /* The floor is the server's (readReason, 5 chars) — one rule, one number. */
     expect(MIN_DO_CANCEL_REASON).toBe(5);
   });
 

@@ -1,11 +1,3 @@
-// SoSharedWith — the "Shared with" field on the SO detail screen, desktop and
-// mobile. Viewers see the names; a user holding scm.so.attribute_other (the
-// same gate the /so-handover/share endpoint enforces) can add or withdraw
-// people on THIS order only.
-//
-// `frame` is how each surface keeps its own field chrome: desktop wraps the
-// body in its `Field`, mobile in its `RoField`. Which names, who may edit, and
-// what the server said stay here, so the two surfaces cannot drift.
 import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { useAuth as useHouzsAuth } from "../../../auth/AuthContext";

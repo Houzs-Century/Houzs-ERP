@@ -1,9 +1,3 @@
-/* A GRN line's rack in the Goods Receipt list's side panel (Sim, 2026-10-20:
-   "can this page show the rack, any shortcut to add it instead of open full
-   page & edit"). A pick saves at once through the same hook and endpoint as the
-   phone (useSetGrnLineRack -> PATCH /grns/:id/items/:itemId/rack); who may
-   change it and the rack list come from the shared vendor/scm/lib/grn-line-rack.
-   A line already split over several racks is shown, and changed on the full page. */
 import { useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
 import { canOperateGoodsReceipts } from "../../auth/salesAccess";

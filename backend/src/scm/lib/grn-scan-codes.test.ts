@@ -48,7 +48,6 @@ describe('buildTeachOptions', () => {
 });
 
 describe('a taught code on the next delivery order', () => {
-  // What saveScanCodes stores and loadScanCodes hands back as bindings.
   const taught: SupplierSkuBinding[] = [
     { supplierSku: 'T1MAMWA0MK', acItemCode: null, itemCode: 'AKEMI BULWARK MATT (K)' },
     { supplierSku: 'T1MPSIA0MQ', acItemCode: null, itemCode: 'HAPPI SLEEP SOLITUDE MATT (Q)' },

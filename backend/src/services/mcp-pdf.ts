@@ -1,29 +1,3 @@
-// ----------------------------------------------------------------------------
-// mcp-pdf — the AI Connector's get_pdf for Sales Orders and Purchase Orders:
-// the finished PDF file, drawn on the Worker by the SAME generator the ERP page
-// runs in the browser (src/lib/shared-pdf.ts), not a second layout.
-//
-// Everything is read AS THE PERSON through the reader routes/mcp.ts hands in —
-// the in-process GET with their own token, then the connector's credential and
-// money strip — so the document is made from exactly the data that person's ERP
-// login can see, and nothing is written except the R2 export object the caller
-// stores. The data assembly is the browser's own (print-bundle.ts), so the
-// payments-read-must-succeed rule and the warehouse lookup are the same too.
-//
-// What the Worker cannot do the way the browser does, and what it does instead
-// (each one is a smaller file or a plainer picture, never a wrong figure):
-//   · photos / logos: no canvas, so JPEG and PNG are embedded as they are and
-//     WebP / GIF are left out (lib/pdf-image.ts). A WebP `.thumb` falls back to
-//     the original key first.
-//   · sofa compartment artwork on the PO: needs a canvas to crop, so every
-//     module draws its schematic.
-//   · the Chinese font: the same Noto Sans SC subsets, fetched from the site
-//     (/fonts/*.ttf, public and immutable) and checked against the same cmap.
-//
-// ONE RENDER AT A TIME PER ISOLATE. The layout reads its letterhead from a
-// module-level host (pdf-host.ts), so two concurrent renders for two companies
-// must not interleave; `exclusive` queues them.
-// ----------------------------------------------------------------------------
 
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -63,11 +37,8 @@ export class PdfReadError extends Error {
 }
 
 export type PdfReader = {
-  /** GET an /api path as the person, parsed and stripped like every connector read. Throws PdfReadError. */
   json<T>(apiPath: string): Promise<T>;
-  /** GET an /api path as the person, raw (photos, logos). Never throws on an HTTP status. */
   bytes(apiPath: string): Promise<{ status: number; contentType: string; companyCode: string | null; body: Uint8Array }>;
-  /** A public file of the ERP site (the /fonts/*.ttf subsets). Throws when it cannot be fetched. */
   asset(path: string): Promise<Uint8Array>;
 };
 
@@ -78,8 +49,6 @@ const str = (v: unknown): string => (v == null ? "" : String(v).trim());
 
 let tail: Promise<void> = Promise.resolve();
 
-/** Run one render with `host` registered, after any render already in progress. A failed
- *  render still releases its turn (finally); its error goes to its own caller. */
 async function exclusive<T>(host: PdfHost, fn: () => Promise<T>): Promise<T> {
   const before = tail;
   let release: () => void = () => undefined;
@@ -96,18 +65,15 @@ async function exclusive<T>(host: PdfHost, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** An image route's bytes as a letterhead logo; null (text-only letterhead) on any failure, as in the browser. */
 async function readLogo(r: PdfReader, apiPath: string, key: string, company: string | null): Promise<PdfLogo | null> {
   const res = await r.bytes(apiPath);
   if (res.status !== 200) return null;
-  // The browser refuses bytes served for another company (lib/branding.ts); so does this.
   if (company && res.companyCode && res.companyCode.toUpperCase() !== company.toUpperCase()) return null;
   const img = pdfImageFromBytes(res.body);
   if (!img) return null;
   return { key, company: company ?? undefined, dataUrl: img.dataUrl, format: img.format, width: img.w, height: img.h };
 }
 
-/** The document company's letterhead + logo + font reader, as the person sees their branding. */
 async function serverHost(r: PdfReader): Promise<PdfHost> {
   const got = await r.json<{ branding?: Record<string, unknown>; companyCode?: string }>("/api/branding");
   const b = got.branding ?? {};
@@ -134,7 +100,6 @@ async function serverHost(r: PdfReader): Promise<PdfHost> {
   };
 }
 
-/** One line photo by its full key. A `.thumb` jsPDF cannot embed (WebP) is refused so the original is tried next. */
 async function linePhoto(r: PdfReader, apiPath: string, fullKey: string): Promise<Blob> {
   const res = await r.bytes(apiPath);
   if (res.status !== 200) throw new Error(`photo ${res.status}`);
@@ -165,7 +130,6 @@ export async function salesOrderPdf(r: PdfReader, docNo: string): Promise<Server
     photoImage,
     letterheadReady: async () => undefined,
     brandLogo: (key) => readLogo(r, `/api/projects/brands/logo?key=${enc(key)}`, key, null),
-    // Fail-soft as in the browser: headings fall back to the Title Case code.
     productCategories: () =>
       getJson<{ categories?: ProductCategory[] }>("/mfg-products/categories").then(
         (res) => res.categories ?? [],

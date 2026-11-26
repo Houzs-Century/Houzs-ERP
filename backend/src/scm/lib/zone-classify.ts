@@ -1,20 +1,3 @@
-// ---------------------------------------------------------------------------
-// zone-classify.ts — DETERMINISTIC Malaysian postcode -> delivery AREA ZONE.
-// PURE, unit-tested. Fleet Module A1.
-//
-// The owner clusters same-region deliveries into 14 AREA ZONES. Which zone an
-// order belongs to is derived from its Malaysian POSTCODE (deterministic — the
-// first two digits pin the state/locality), NOT from the owner's hand-coloured
-// sheet, which was proven noisy. A postcode maps to a zone through a company-
-// editable map (scm.delivery_zone_postcodes, migration 0205); this module is the
-// PURE derivation over that map, plus the DEFAULT Malaysian map the seed script
-// installs (backend/scripts/seed-delivery-zones.mjs).
-//
-// Nothing here touches the DB or geocodes — the caller loads the map rows and
-// passes them in, so the whole rule set is deterministic and testable. When an
-// order has no parseable postcode the caller degrades to a geocode fallback
-// (geocode.ts) or leaves the order UNZONED for the dispatcher, never guessing.
-// ---------------------------------------------------------------------------
 
 /** The 14 area zones the owner clusters deliveries into, and East Malaysia
  *  (owner 2026-11-11: the 3PL rate cards use these zones, 做) — priced on the
@@ -23,15 +6,10 @@
  *  more), but a write is validated against this canonical set so a typo can't
  *  create a phantom zone. */
 export const ZONES = [
-  // Klang Valley (mix freely on one trip)
   'KL', 'PJ', 'KLANG', 'KAJANG', 'RAWANG', 'PUCHONG',
-  // Southern corridor
   'NS', 'MELAKA', 'JOHOR',
-  // Northern
   'PENANG', 'KEDAH', 'PERAK',
-  // Outer
   'PAHANG', 'EAST',
-  // East Malaysia (3PL only)
   'SABAH', 'SARAWAK', 'LABUAN',
 ] as const;
 
@@ -74,35 +52,30 @@ export interface ZonePrefixRule {
  *  the default (Puchong postcodes sit inside the 47 = PJ range); the owner splits
  *  it out in the editor when they want Puchong as its own trip cluster. */
 export const DEFAULT_ZONE_PREFIX_MAP: readonly ZonePrefixRule[] = [
-  // Northern
-  { zone: 'KEDAH', prefixStart: 1, prefixEnd: 2 },   // 01xxx–02xxx Perlis
-  { zone: 'KEDAH', prefixStart: 5, prefixEnd: 9 },   // 05xxx–09xxx Kedah
-  { zone: 'PENANG', prefixStart: 10, prefixEnd: 14 }, // 10xxx–14xxx Pulau Pinang
-  { zone: 'PERAK', prefixStart: 30, prefixEnd: 36 },  // 30xxx–36xxx Perak
-  // East coast
-  { zone: 'EAST', prefixStart: 15, prefixEnd: 24 },   // 15–18 Kelantan, 20–24 Terengganu
-  { zone: 'PAHANG', prefixStart: 25, prefixEnd: 28 }, // 25xxx–28xxx Pahang
-  { zone: 'PAHANG', prefixStart: 39, prefixEnd: 39 }, // 39xxx Cameron Highlands
-  { zone: 'PAHANG', prefixStart: 49, prefixEnd: 49 }, // 49xxx Genting
-  { zone: 'PAHANG', prefixStart: 69, prefixEnd: 69 }, // 69xxx Genting/Bentong fringe
-  // Klang Valley
-  { zone: 'PJ', prefixStart: 40, prefixEnd: 40 },     // 40xxx Shah Alam (Petaling district)
-  { zone: 'KLANG', prefixStart: 41, prefixEnd: 42 },  // 41–42 Klang
-  { zone: 'KAJANG', prefixStart: 43, prefixEnd: 43 }, // 43xxx Kajang/Semenyih
-  { zone: 'KLANG', prefixStart: 45, prefixEnd: 45 },  // 45xxx Kuala Selangor
-  { zone: 'KAJANG', prefixStart: 64, prefixEnd: 64 }, // 64xxx KLIA
-  { zone: 'PJ', prefixStart: 46, prefixEnd: 47 },     // 46–47 PJ / Subang / (Puchong lives here until split out)
-  { zone: 'RAWANG', prefixStart: 48, prefixEnd: 48 }, // 48xxx Rawang
-  { zone: 'KL', prefixStart: 50, prefixEnd: 60 },     // 50–60 Kuala Lumpur
-  { zone: 'KL', prefixStart: 68, prefixEnd: 68 },     // 68xxx Ampang / Batu Caves
-  // Southern
-  { zone: 'NS', prefixStart: 70, prefixEnd: 73 },     // 70–73 Negeri Sembilan / Seremban
-  { zone: 'MELAKA', prefixStart: 75, prefixEnd: 78 }, // 75–78 Melaka
-  { zone: 'JOHOR', prefixStart: 79, prefixEnd: 86 },  // 79–86 Johor
-  // East Malaysia (3PL only)
-  { zone: 'LABUAN', prefixStart: 87, prefixEnd: 87 }, // 87xxx Labuan
-  { zone: 'SABAH', prefixStart: 88, prefixEnd: 91 },  // 88–91 Sabah
-  { zone: 'SARAWAK', prefixStart: 93, prefixEnd: 98 }, // 93–98 Sarawak
+  { zone: 'KEDAH', prefixStart: 1, prefixEnd: 2 },
+  { zone: 'KEDAH', prefixStart: 5, prefixEnd: 9 },
+  { zone: 'PENANG', prefixStart: 10, prefixEnd: 14 },
+  { zone: 'PERAK', prefixStart: 30, prefixEnd: 36 },
+  { zone: 'EAST', prefixStart: 15, prefixEnd: 24 },
+  { zone: 'PAHANG', prefixStart: 25, prefixEnd: 28 },
+  { zone: 'PAHANG', prefixStart: 39, prefixEnd: 39 },
+  { zone: 'PAHANG', prefixStart: 49, prefixEnd: 49 },
+  { zone: 'PAHANG', prefixStart: 69, prefixEnd: 69 },
+  { zone: 'PJ', prefixStart: 40, prefixEnd: 40 },
+  { zone: 'KLANG', prefixStart: 41, prefixEnd: 42 },
+  { zone: 'KAJANG', prefixStart: 43, prefixEnd: 43 },
+  { zone: 'KLANG', prefixStart: 45, prefixEnd: 45 },
+  { zone: 'KAJANG', prefixStart: 64, prefixEnd: 64 },
+  { zone: 'PJ', prefixStart: 46, prefixEnd: 47 },
+  { zone: 'RAWANG', prefixStart: 48, prefixEnd: 48 },
+  { zone: 'KL', prefixStart: 50, prefixEnd: 60 },
+  { zone: 'KL', prefixStart: 68, prefixEnd: 68 },
+  { zone: 'NS', prefixStart: 70, prefixEnd: 73 },
+  { zone: 'MELAKA', prefixStart: 75, prefixEnd: 78 },
+  { zone: 'JOHOR', prefixStart: 79, prefixEnd: 86 },
+  { zone: 'LABUAN', prefixStart: 87, prefixEnd: 87 },
+  { zone: 'SABAH', prefixStart: 88, prefixEnd: 91 },
+  { zone: 'SARAWAK', prefixStart: 93, prefixEnd: 98 },
 ];
 
 /** Pull a 5-digit Malaysian postcode out of a free-text value or address. PURE.
@@ -110,8 +83,6 @@ export const DEFAULT_ZONE_PREFIX_MAP: readonly ZonePrefixRule[] = [
  *  postcode with surrounding text ("43000 Kajang, Selangor"), or null. */
 export function parsePostcode(raw: string | null | undefined): string | null {
   const s = String(raw ?? '');
-  // A Malaysian postcode is exactly 5 digits. Match a 5-digit run not glued to
-  // more digits (so a phone number or a long id is not mistaken for one).
   const m = /(?<!\d)(\d{5})(?!\d)/.exec(s);
   return m ? m[1] : null;
 }
@@ -160,10 +131,7 @@ export interface ZonedAddress {
 
 export interface ZoneResult {
   zone: string | null;
-  /** How the zone was derived. 'none' => the dispatcher must place it (or the
-   *  caller may geocode-fallback). */
   method: 'postcode' | 'none';
-  /** The 5-digit postcode that was used (for display / debugging). */
   postcode: string | null;
 }
 

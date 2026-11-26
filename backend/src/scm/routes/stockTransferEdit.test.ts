@@ -1,15 +1,3 @@
-// The Stock Transfer detail page was read-only by design (no draft stage,
-// stock already posted on create). The owner asked first for a notes-only
-// Edit, then for item/qty/SKU to be editable too, with a hard stop against
-// pushing a warehouse's stock negative. This drives the REAL PATCH /:id
-// through the fake PostgREST client and asserts:
-//   - header + line notes save without touching qty/item (notes-only path)
-//   - a full item/qty/SKU replace (`items`) re-applies movements and the
-//     line rows actually change
-//   - a replace that would take the source warehouse negative 409s BEFORE
-//     any write (reversal, line delete/insert) happens
-//   - items can only be edited while POSTED
-//   - a transfer belonging to another company 404s instead of leaking a write
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -43,8 +31,6 @@ function makeSb() {
       stock_transfer_lines: [
         { id: 'li-1', stock_transfer_id: 'st-1', item_code: 'SKU-1', product_name: 'Sofa', variant_key: '', qty: 2, notes: 'old line note', created_at: '2026-09-01T00:00:00Z' },
       ],
-      // Open lots left at the SOURCE warehouse after the original OUT already
-      // took 2 units of SKU-1 (say 8 were on hand, 2 shipped, 6 remain open).
       v_inventory_lots_open: [
         { warehouse_id: 'wh-1', item_code: 'SKU-1', variant_key: '', qty_remaining: 6, company_id: 1 },
       ],
@@ -137,8 +123,6 @@ describe('PATCH stock-transfers/:id — item/qty/SKU replace', () => {
 
   it('409s a qty that would push the source warehouse negative, and writes nothing', async () => {
     sb = makeSb();
-    // Old line already has 2; current open is 6 → available after reversal is 8.
-    // Ask for 9 → must refuse.
     const res = await patch('st-1', {
       items: [{ itemCode: 'SKU-1', variantKey: '', qty: 9 }],
     });
@@ -147,7 +131,6 @@ describe('PATCH stock-transfers/:id — item/qty/SKU replace', () => {
       error: 'insufficient_stock',
       shortages: [{ itemCode: 'SKU-1', variantKey: '', requested: 9, available: 8 }],
     });
-    // Untouched: still the original line.
     const ls = lines('st-1');
     expect(ls).toHaveLength(1);
     expect(ls[0]!.qty).toBe(2);
@@ -178,11 +161,6 @@ describe('PATCH stock-transfers/:id — item/qty/SKU replace', () => {
     expect(lines('st-1')[0]!.qty).toBe(2);
   });
 
-  // Same (item_code, variant_key, qty) as before — only notes/display name
-  // differ. Must NOT go through reverse+delete+insert+reapply (that would
-  // needlessly touch inventory_movements for a line that never moved
-  // differently, and would mint a NEW line id, silently orphaning anything
-  // keyed on the old one). Asserted by the line id staying put.
   it('a same-bucket items edit (notes only) updates in place — no reverse/reapply, id unchanged', async () => {
     sb = makeSb();
     const res = await patch('st-1', {
@@ -198,9 +176,6 @@ describe('PATCH stock-transfers/:id — item/qty/SKU replace', () => {
 
   it('a same-bucket edit skips the stock check entirely — even a qty that LOOKS short is fine because nothing is moving', async () => {
     sb = makeSb();
-    // Drain the open lots to 0 — a real qty change of 2 would now 409, but
-    // asking for the SAME qty (2) must still succeed: nothing is reversed or
-    // re-applied, so there is nothing to check availability for.
     sb.tables.v_inventory_lots_open = [];
     const res = await patch('st-1', {
       items: [{ itemCode: 'SKU-1', variantKey: '', qty: 2, notes: 'still fine' }],
@@ -210,8 +185,6 @@ describe('PATCH stock-transfers/:id — item/qty/SKU replace', () => {
   });
 });
 
-// DEV-15: the detail page's Edit can now add and remove lines, so the replace
-// must accept a line list whose length differs from what was saved.
 describe('PATCH stock-transfers/:id — adding / removing lines', () => {
   it('adds a line to a saved transfer', async () => {
     sb = makeSb();
@@ -242,7 +215,6 @@ describe('PATCH stock-transfers/:id — adding / removing lines', () => {
 
   it('409s an added line on the same bucket when the combined qty exceeds what is available', async () => {
     sb = makeSb();
-    // Existing SKU-1 line keeps 2; a second SKU-1 line of 7 makes 9 > 8 available.
     const res = await patch('st-1', {
       items: [
         { itemCode: 'SKU-1', variantKey: '', qty: 2 },

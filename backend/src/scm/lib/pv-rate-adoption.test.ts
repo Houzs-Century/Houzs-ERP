@@ -1,11 +1,3 @@
-// The rate-adoption DECISION TABLE (pv-rate-adoption.ts), exhaustively.
-//
-// The decision is pure on purpose so every row of the table is asserted here with
-// no database: "the payment defines the FX rate" is a money-path rule, and the one
-// thing that must never be in doubt is WHEN it fires and when it keeps its hands
-// off. The route-level behaviour it drives (the invoice write, the recost, the
-// audit row, and the fact that a recost failure cannot fail a payment) is covered
-// by tests/pvRateFromPayment.test.ts.
 
 import { describe, expect, test } from 'vitest';
 import { planPvRateAdoption, isRateRetainedFromPv, roundRate6, type PiRateFacts } from './pv-rate-adoption';
@@ -14,7 +6,7 @@ const RMB_PI: PiRateFacts = {
   piId: 'pi-1',
   docNo: '2990-PI-2607-004',
   currency: 'RMB',
-  exchangeRate: 1, // the R2 hole: a foreign invoice at rate 1 was never rated
+  exchangeRate: 1,
   grnId: 'grn-1',
 };
 
@@ -68,8 +60,6 @@ describe('row 7 — a foreign invoice with a DIFFERENT deliberate rate is LEFT A
   });
 
   test('a partial payment at a second rate is reported, never resolved', () => {
-    // Half the invoice paid in January at 0.62, the rest now at 0.6099. Neither
-    // is "the" rate for the whole invoice — that is the owner's call, not ours.
     expect(plan({ appliedSen: 1_081_250, pvExchangeRate: 0.6099, pi: { ...RMB_PI, exchangeRate: 0.62 } }))
       .toEqual({ action: 'report_mismatch', piRate: 0.62, pvRate: 0.6099 });
   });
@@ -110,8 +100,6 @@ describe('row 1 — nothing applied means no evidence of payment', () => {
   });
 
   test('a fully-clamped allocation (the invoice was already paid) adopts nothing', () => {
-    // settlePiPaidSen returns appliedSen 0 when the clamp refuses the whole
-    // request. No money reached the invoice, so the payment says nothing about it.
     expect(plan({ appliedSen: 0 })).toEqual({ action: 'skip', reason: 'nothing_applied' });
   });
 });
@@ -178,7 +166,7 @@ describe('roundRate6 — the numeric(14,6) contract', () => {
     [0.6198384999, 0.619838],
     ['0.619838', 0.619838],
     [1, 1],
-    [null, 1],   // safeRate: a missing rate can never zero out the money
+    [null, 1],
     [0, 1],
     [-3, 1],
     ['abc', 1],

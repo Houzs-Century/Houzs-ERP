@@ -16,7 +16,6 @@ describe('placePopover', () => {
   });
 
   it('never starts left of the window margin: the case the sidebar hid', () => {
-    /* A trigger near the left edge whose right-aligned box would start at -200. */
     expect(placePopover(trigger(100, 260), 560, 420, 600, 900).left).toBe(POPOVER_MARGIN);
   });
 

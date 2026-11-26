@@ -18,15 +18,12 @@ export type SlipAliasField = 'customerName' | 'phone' | 'itemCode';
 export type FieldAlias = { field: SlipAliasField; raw: string; value: string };
 
 const KIND = 'so';
-/* ponytail: newest 500 per company; a bigger table needs a lookup by raw. */
 const LOAD_LIMIT = 500;
-/* The prompt is paid for on every scan: hint the newest few, apply all LOAD_LIMIT. */
 const HINT_LIMIT = 50;
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
 /** The match key: case and runs of space never matter. */
 export const aliasKey = (s: string): string => s.trim().replace(/\s+/g, ' ').toUpperCase();
-/** A phone compared as its national digits, so a format change is not a correction. */
 const phoneKey = (s: string): string => s.replace(/\D/g, '').replace(/^60/, '').replace(/^0/, '');
 
 type Slip = Record<string, unknown>;
@@ -45,13 +42,10 @@ export function slipAliasPairs(extracted: Slip, corrected: Slip): FieldAlias[] {
   const opPhone = str((corrected.phones as unknown[] | undefined)?.[0]);
   if (aiPhone && opPhone && phoneKey(aiPhone) !== phoneKey(opPhone)) out.push({ field: 'phone', raw: aiPhone, value: opPhone });
 
-  /* corrected.lines are in SO order and each spreads its slip line, so the slip
-     text pairs them with the model's lines. */
   const keysOf = (ls: Line[]) => ls.map((l) => { const t = str(l.rawText); return t ? aliasKey(t) : null; });
   const aiLines = linesOf(extracted);
   const aiKeys = keysOf(aiLines);
   const opKeys = keysOf(linesOf(corrected));
-  /* Two lines with the same slip text cannot be told apart, so they teach nothing. */
   const once = (k: string | null, all: Array<string | null>) => k !== null && all.filter((x) => x === k).length === 1;
   const aiByText = new Map(aiLines.flatMap((l, i) => (once(aiKeys[i], aiKeys) ? [[aiKeys[i] as string, l] as const] : [])));
   for (const [i, l] of linesOf(corrected).entries()) {
@@ -135,7 +129,6 @@ export async function readSlipWithAliases<T extends { parsed: Slip | null }>(
     try {
       aliases = await loadSlipAliases(svc, companyId);
     } catch (e) {
-      /* The scan still runs on the model alone; the miss is logged, not hidden. */
       console.warn('[scan-field-aliases] load threw (scan runs without aliases):', (e as Error).message);
     }
   }

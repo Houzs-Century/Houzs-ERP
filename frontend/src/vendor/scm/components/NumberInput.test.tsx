@@ -1,6 +1,3 @@
-// NumberInput keeps the displayed text apart from the numeric value, so a typed
-// leading zero never sticks ("0100") and, only where the field is 'signed', a
-// lone "-" is not wiped. Everywhere else a minus is refused. These pin both.
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';

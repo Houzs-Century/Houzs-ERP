@@ -1,6 +1,3 @@
-// The editing pieces a rate card's tabs share: the tab panel frame, a price
-// changed or removed in place, a missing price added from its dashed tile, and
-// the full add form for the rules that need a position, a bracket or a town.
 import { useState, type ReactNode } from 'react';
 import { Check, Plus, Trash2, X } from 'lucide-react';
 import { fmtSen } from '@2990s/shared';
@@ -27,10 +24,7 @@ export const panelId = (s: RateSection) => `rate-panel-${s.toLowerCase()}`;
 export const AMOUNT_ERROR = 'Enter an amount in RM, 0 or more.';
 const ERR_TEXT = 'text-[11.5px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]';
 const SMALL_BTN = 'grid h-8 w-8 flex-none place-items-center rounded-lg text-ink-muted hover:bg-surface-2 disabled:opacity-50';
-/* Its own class list rather than INPUT + overrides: cn() only joins, so INPUT's
-   w-full would win over a width added after it. */
 const AMOUNT_INPUT = 'min-h-[34px] w-full min-w-[110px] max-w-[150px] rounded-lg border border-border bg-surface px-2 text-right text-[13px] tabular-nums text-ink';
-/* In a table cell the box keeps one width, so the column widens once, evenly. */
 const CELL_INPUT = 'min-h-[34px] w-[120px] rounded-lg border border-border bg-surface px-2 text-right text-[13px] tabular-nums text-ink';
 
 /** One tab's content: title, a quiet note, a hint, actions on the right. */
@@ -64,7 +58,7 @@ export const PriceEditor = ({ cardId, rule, name, onDone, compact = false }: {
     const amountSen = rmToSen(draft);
     if (draft.trim() === '' || amountSen == null) { setErr(AMOUNT_ERROR); return; }
     if (amountSen === rule.amountSen) { onDone(); return; }
-    update.mutate({ id: rule.id, amountSen }, { onSuccess: onDone }); // the hook's own onError (writeFailed) shows a refusal
+    update.mutate({ id: rule.id, amountSen }, { onSuccess: onDone });
   };
   return (
     <span className={cn('flex flex-col gap-1', compact && 'items-end')}>
@@ -98,8 +92,6 @@ export const PriceButton = ({ cardId, rule, name }: { cardId: string; rule: Rate
   );
 };
 
-/** A charge on each DO being changed: its name, its % of the goods value, its
- *  amount per DO — save, cancel, remove. */
 const DoChargeEditor = ({ cardId, rule, name, onDone }: { cardId: string; rule: RateRule; name: string; onDone: () => void }) => {
   const update = useUpdateRateRule(cardId);
   const del = useDeleteRateRule(cardId);
@@ -109,7 +101,7 @@ const DoChargeEditor = ({ cardId, rule, name, onDone }: { cardId: string; rule: 
   const save = () => {
     const read = readDoCharge(boxes);
     if (!read.ok) { setErr(read.error); return; }
-    update.mutate({ id: rule.id, ...read.rule }, { onSuccess: onDone }); // the hook's own onError (writeFailed) shows a refusal
+    update.mutate({ id: rule.id, ...read.rule }, { onSuccess: onDone });
   };
   const box = (k: keyof typeof boxes, label: string, mode: 'text' | 'decimal', placeholder: string) => (
     <input className={CELL_INPUT} inputMode={mode} aria-label={`${label} for ${name}`} placeholder={placeholder}
@@ -158,7 +150,6 @@ export const AddPriceCell = ({ cardId, rule, label, scope }: {
   const [draft, setDraft] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const name = scope ? `${label} for ${scope}` : label;
-  /* "Add 3rd set and after price for Kuching zone 3"; "Add Dispose price". */
   const what = `${label} price${scope ? ` for ${scope}` : ''}`;
   if (draft === null) {
     return (
@@ -220,8 +211,6 @@ export const AppliesToEditor = ({ cardId, rule }: { cardId: string; rule: RateRu
   const change = (next: BillableJobType[]) => {
     const before = jobs;
     setJobs(next);
-    /* Back to the default is stored as no setting, so the card reads as it did. */
-    /* The hook's own onError (writeFailed) shows a refusal; the ticks go back. */
     update.mutate({ id: rule.id, appliesTo: isDefaultJobs(next) ? null : next }, { onError: () => setJobs(before) });
   };
   return <AppliesToControl value={jobs} onChange={change} disabled={update.isPending} />;
@@ -230,7 +219,6 @@ export const AppliesToEditor = ({ cardId, rule }: { cardId: string; rule: RateRu
 type AddForm = {
   ruleType: RateRuleType; tierPosition: string; bracketMin: string; bracketMax: string; zone: string; amountRM: string;
   appliesTo: BillableJobType[];
-  /* A charge on each DO: its name and its % of the goods value. */
   name: string; pct: string;
 };
 
@@ -285,7 +273,6 @@ export const AddRule = ({ cardId, category, zones, initialType, onDone }: {
       body.zone = form.zone.trim();
       if (!isDefaultJobs(form.appliesTo)) body.appliesTo = form.appliesTo;
     }
-    /* A town is added one after another, so the box clears for the next. */
     create.mutate(body, {
       onSuccess: () => setForm((s) => ({ ...s, amountRM: '', zone: needsZone ? '' : s.zone })),
       onError: writeFailedAs('The rule was not added'),

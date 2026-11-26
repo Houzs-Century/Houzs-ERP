@@ -24,8 +24,6 @@ import { fakeSb } from '../lib/fake-postgrest';
 import { SEEDED_ITEM_GROUPS } from '../lib/fake-item-groups';
 import type { Env, Variables } from '../env';
 
-// supabaseAuth in production only attaches the scm service-role client; stub it so
-// the test's own middleware sets the context the handlers and canWriteScmConfig read.
 vi.mock('../middleware/auth', () => ({ supabaseAuth: async (_c: unknown, next: () => Promise<void>) => next() }));
 
 const { mrpSupplierLeadTimes } = await import('./mrp-supplier-lead-times');
@@ -35,11 +33,8 @@ const SUPPLIER = '11111111-1111-4111-8111-111111111111';
 const CALLER = { id: 'staff-uuid', email: 'x@houzs.test', app_metadata: {}, user_metadata: {}, aud: 'authenticated', created_at: '' } as unknown as User;
 
 type Who = { perms: string[] };
-// An SCM user who can reach the module but is NOT a config writer.
 const SALES: Who = { perms: ['scm.access', 'scm.so.view_all'] };
-// Flat-key config writer (Owner grants scm.config.write to a role).
 const CONFIG_WRITER: Who = { perms: ['scm.access', 'scm.config.write'] };
-// Owner / IT Admin — the `*` wildcard.
 const OWNER: Who = { perms: ['*'] };
 
 let sb: ReturnType<typeof fakeSb>;
@@ -79,7 +74,6 @@ describe('PUT /mrp-supplier-lead-times — config-write gated', () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string; reason: string };
     expect(body).toMatchObject({ error: 'forbidden', reason: 'missing_scm_config_write' });
-    // SCM humanApiError convention: refusal strings stay short (<200 chars).
     expect(body.reason.length).toBeLessThan(200);
     expect(tables.mrp_supplier_category_lead_times).toHaveLength(0);
   });
@@ -128,6 +122,6 @@ describe('GET /mrp-supplier-lead-times — stays open (the supplier-page read)',
     expect(res.status).toBe(200);
     const body = (await res.json()) as { leadTimes: Record<string, number | null> };
     expect(body.leadTimes.sofa).toBe(3);
-    expect(body.leadTimes.bedframe).toBeUndefined(); // not set = absent, never 0
+    expect(body.leadTimes.bedframe).toBeUndefined();
   });
 });

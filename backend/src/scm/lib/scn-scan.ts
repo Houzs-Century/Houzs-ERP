@@ -40,7 +40,6 @@ export function spreadToTotal(amounts: number[], totalSen: number | null): numbe
   return out;
 }
 
-/** A description's words, folded to A–Z / 0–9, three characters or more. */
 const words = (s: string): Set<string> =>
   new Set(s.toUpperCase().replace(/[^A-Z0-9]+/g, ' ').split(' ').filter((w) => w.length >= 3));
 
@@ -61,13 +60,11 @@ export type PurchaseDoc = {
   kind: 'PI' | 'API';
   id: string;
   number: string;
-  /** The supplier's invoice number the document was keyed with. */
   invoiceRef: string | null;
   invoiceDate: string | null;
   totalSen: number;
   paidSen: number;
   status: string;
-  /** Its items' words (code, name, description) — what a line is matched on. */
   itemTexts: string[];
 };
 

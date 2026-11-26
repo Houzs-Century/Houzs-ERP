@@ -20,10 +20,8 @@ export function ReceiptsCheck({ month, check, loading, error, issuing, onIssue, 
   check: Check | undefined;
   loading: boolean;
   error: string | null;
-  /** The payment whose receipt is being issued. */
   issuing: string | null;
   onIssue: (p: Check['missing'][number]) => void;
-  /** The receipt's id by its number — null when it is not on the list. */
   openOf: (orNumber: string) => string | null;
   onOpen: (id: string) => void;
 }) {

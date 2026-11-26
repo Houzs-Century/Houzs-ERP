@@ -41,8 +41,6 @@ const makeSb = (rows: Row[], failTable?: string) => ({
   },
 });
 
-// The stored SO lines carry their money/spec fields so the price-only carve-out
-// has something to compare a requested change against.
 const rows = (): Row[] => [
   { _table: 'mfg_sales_order_items', id: 'li-bed', doc_no: 'HC-SO-1', item_code: 'CODY-(K)', item_group: 'bedframe', qty: 1, unit_price_sen: 25000, variants: null, remark: null, discount_sen: 0 },
   { _table: 'mfg_sales_order_items', id: 'li-dispose', doc_no: 'HC-SO-1', item_code: 'DISPOSE', item_group: 'service', qty: 1, unit_price_sen: 10000, variants: null, remark: null, discount_sen: 0 },

@@ -50,9 +50,6 @@ export function coverageStateOf(q: {
   return "ready";
 }
 
-/* Deliberately the SAME weight and shape as StockTag, so a cell does not jump
-   when the answer lands — but plainly indeterminate, and it says which half is
-   still coming rather than "loading" on its own. */
 export function PendingTag() {
   return (
     <span
@@ -64,8 +61,6 @@ export function PendingTag() {
   );
 }
 
-/* A failed read is NOT an empty result. It gets its own words so nobody reads
-   a broken connection as "this line has no order". */
 export function UnavailableTag() {
   return (
     <span

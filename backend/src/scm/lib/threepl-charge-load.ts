@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// threepl-charge-load — the reads the 3PL invoices tab prices a delivery order
-// with: every carrier's active rate card, and each DO's facts (its order's
-// sets / items and delivery zone). Shared by the list (threepl-do-charges.ts)
-// and the read of an AP invoice's bill (threepl-from-ap.ts), so the Rate card
-// amount a bill is tallied against is the one the list then shows.
-// ----------------------------------------------------------------------------
 import { scopeToCompanyId } from './companyScope';
 import { DEFAULT_ZONE_PREFIX_MAP, zoneForAddress, type ZonePrefixRule } from './zone-classify';
 import type { SetLine } from './set-count';
@@ -16,8 +9,6 @@ import { loadPlacesFor } from '../routes/delivery-places';
 import { MAP_COLS, toPrefixMap, type MapRow } from '../routes/delivery-zones';
 
 type Row = Record<string, unknown>;
-// The 3PL tables are not in the generated Supabase types; same narrow bridge as
-// delivery-rate-cards.ts rc().
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = (sb: unknown): any => sb;
 const str = (v: unknown) => (v == null || v === '' ? null : String(v));
@@ -25,7 +16,6 @@ const str = (v: unknown) => (v == null || v === '' ? null : String(v));
 export type CarrierCards = {
   carrierName: Map<string, string>;
   specByCarrier: Map<string, { name: string; spec: RateCardSpec }>;
-  /** The paying company's zone map (Delivery Zones): an order's zone by its postcode. */
   zoneMap: ZonePrefixRule[];
 };
 
@@ -34,7 +24,6 @@ export async function loadCarrierCards(sb: unknown, companyId: number): Promise<
   const [{ data: carriers, error: e1 }, { data: cardRows, error: e2 }, { data: mapRows, error: eMap }, places] = await Promise.all([
     scopeToCompanyId(db(sb).from('threepl_companies').select('id, name'), companyId),
     scopeToCompanyId(db(sb).from('delivery_rate_cards').select('*'), companyId).eq('is_active', true),
-    /* The company's zone map and places (Delivery Zones): a town on a card counts only inside its zone. */
     scopeToCompanyId(db(sb).from('delivery_zone_postcodes').select(MAP_COLS), companyId).order('id'),
     loadPlacesFor(sb, companyId),
   ]);
@@ -45,7 +34,6 @@ export async function loadCarrierCards(sb: unknown, companyId: number): Promise<
   const [{ data: ruleRows, error: e3 }, { data: areaRows, error: e4 }] = cards.length
     ? await Promise.all([
       scopeToCompanyId(db(sb).from('delivery_rate_rules').select('*'), companyId).in('card_id', cards.map((x) => x.id)),
-      /* Each card's priced areas (mig 20261111T1000). */
       scopeToCompanyId(db(sb).from('delivery_rate_areas').select('*'), companyId).in('card_id', cards.map((x) => x.id)),
     ])
     : [{ data: [] as Row[], error: null }, { data: [] as Row[], error: null }];

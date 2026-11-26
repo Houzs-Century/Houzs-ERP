@@ -10,7 +10,6 @@
 const MINOR_WORDS = new Set([
   "a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or", "per", "the", "to", "vs", "via", "x",
 ]);
-/** Units read wrong capitalised ("Rent / Sqm"). */
 const UNITS = new Set(["sqm", "sqft", "kg", "g", "cm", "mm", "km", "pcs", "hrs", "mins"]);
 
 export function headerLabel(label: string): string {

@@ -15,18 +15,13 @@
  * the page open and say which rows and why.
  */
 export type PaymentCommitTally = {
-  /** rows this Save booked */
   committed: number;
-  /** rows that were sent and refused */
   failed: number;
-  /** rows that could not even be sent, each already phrased for a human */
   blocked: string[];
 };
 
 export type PaymentSaveOutcome = {
-  /** true = do NOT navigate away; there is unbooked money on this screen. */
   stay: boolean;
-  /** null when there is nothing to say. */
   message: string | null;
 };
 
@@ -42,8 +37,6 @@ export function paymentSaveOutcome(tally: PaymentCommitTally): PaymentSaveOutcom
     parts.push(`${failed} could not be saved — try again`);
   }
   if (blocked.length > 0) {
-    /* Named, not counted. "1 row is incomplete" sends the operator hunting; the
-       row's own reason is what he can act on. */
     parts.push(`still incomplete: ${blocked.join('; ')}`);
   }
   return { stay: true, message: `The order was saved. ${parts.join('. ')}.` };

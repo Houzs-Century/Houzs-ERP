@@ -1,23 +1,3 @@
-// Default Free Gift — placed-SO edit reconciler (migration 0170, D9).
-//
-// When a line is added / removed / edited / swapped on an EXISTING Sales Order,
-// the SO's accessory free-gift lines must auto-reconcile to match its CURRENT
-// triggers:
-//   - remove a trigger (e.g. a mattress) → its free gift auto-deletes;
-//   - add a trigger → the gift auto-inserts;
-//   - a free-gift line with no real trigger is deleted (honest-pricing);
-//   - gift lines stay at unit_price_sen = 0.
-//
-// Both POS and Backend edits funnel through the same /mfg-sales-orders edit
-// endpoints, so reconciling here fixes both surfaces. The trigger set is built
-// by the SAME pure function the SO-create validator uses (buildFreeGiftTriggers),
-// so an edit can never grant/revoke a gift the create path would have rejected.
-//
-// DEFENSIVE: a reconcile bug must NEVER break an edit. The whole trigger/diff/
-// apply pass is wrapped in try/catch; on any error we log and STILL recompute
-// the header totals, leaving the edit itself intact. Idempotent: when nothing
-// changed (diffFreeGiftLines returns empty) we write nothing but the normal
-// recomputeTotals.
 
 import {
   computeDesiredFreeGifts,
@@ -28,10 +8,6 @@ import {
 } from '../shared';
 import { loadProductsByCodes, loadModelDefaultGifts } from './mfg-pricing-recompute';
 import { activeCompanyId, scopeToCompanyId } from './companyScope';
-// recomputeTotals is the route's authoritative header roll-up. The route<->lib
-// reference is a function-level cycle (route imports this file, this file
-// imports recomputeTotals) — safe with esbuild because neither is called at
-// module-eval time. Same pattern the route already uses with delivery-orders-mfg.
 import { recomputeTotals } from '../routes/mfg-sales-orders';
 import { recordSoAudit, type FieldChange } from './so-audit';
 import { restampHeaderBranding } from './derive-line-branding';
@@ -57,7 +33,6 @@ interface SoItemRow {
  */
 export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any): Promise<void> {
   try {
-    // 1. Load the SO's non-cancelled lines.
     const { data: itemsRaw } = await sb
       .from('mfg_sales_order_items')
       .select('id, item_code, item_group, qty, variants, unit_price_sen, line_no')
@@ -65,20 +40,11 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
       .eq('cancelled', false);
     const items = ((itemsRaw ?? []) as SoItemRow[]);
 
-    // 2. Resolve each line's product (category / model_id) in ONE in() query,
-    //    and load the per-Model default-gift map (keyed by product_models.id).
-    //    Both batched — never per-line (CF Workers subrequest cap).
     const [productByCode, modelGiftsById] = await Promise.all([
-      // Company-scoped: a plain `code` matches both companies' SKU masters, and
-      // a gift resolved off the wrong row's model_id is the wrong gift.
       loadProductsByCodes(sb, items.map((it) => it.item_code), activeCompanyId(c)),
       loadModelDefaultGifts(sb),
     ]);
 
-    // 3. Build TriggerLine[] from the lines. A gift line (variants.freeGift) is
-    //    flagged isFreeGift so the builder skips it as a trigger (one-way). The
-    //    line id is the stable trigger key. Gifts resolve from the line's Model
-    //    (model_id) — IDENTICAL shape to the create path so the two can't drift.
     const triggerLines: TriggerLine[] = items.map((it) => {
       const variants = it.variants ?? null;
       const product = productByCode.get((it.item_code ?? '').trim()) ?? null;
@@ -102,10 +68,8 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
     });
     const triggers = buildFreeGiftTriggers(triggerLines);
 
-    // 4. The gift lines the SO SHOULD contain.
     const desired = computeDesiredFreeGifts(triggers);
 
-    // 5. The gift lines the SO DOES contain.
     const existing: ExistingGiftLine[] = [];
     for (const it of items) {
       const fg = it.variants?.freeGift;
@@ -121,8 +85,6 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
       });
     }
 
-    // 6. Diff (bucketed by giftProductId + campaignName; idempotent no-op when
-    //    the bucket totals already match).
     const { toInsert, toDeleteIds: wanted } = diffFreeGiftLines(desired, existing);
     /* A gift line a live Delivery Order / Sales Invoice already carries is FROZEN
        (owner 2026-09-15, shared/so-line-freeze.ts): the gift went out with the
@@ -134,11 +96,8 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
       toDeleteIds = freezeRead.ok ? wanted.filter((id) => !soLineFrozen(freezeRead.freeze, id)) : [];
     }
 
-    // 7. Delete gift lines the triggers no longer grant.
     if (toDeleteIds.length > 0) {
       await sb.from('mfg_sales_order_items').delete().in('id', toDeleteIds);
-      /* History audit (owner requirement: AUTOMATED line changes must show on
-         the SO timeline). One summary row naming the removed gift codes. */
       const removedCodes = items
         .filter((it) => toDeleteIds.includes(it.id))
         .map((it) => it.item_code)
@@ -156,8 +115,6 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
       });
     }
 
-    // 8. Insert the missing gift lines. giftProductId is an mfg_products.id; load
-    //    the accessory rows by id in ONE in() query for code / name / cost.
     if (toInsert.length > 0) {
       const giftIds = Array.from(new Set(toInsert.map((g) => g.giftProductId).filter(Boolean)));
       const { data: accRaw } = giftIds.length > 0
@@ -173,8 +130,6 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
         }>).map((a) => [a.id, a]),
       );
 
-      // Header snapshot fields, mirroring the add-line insert (debtor/agent/
-      // venue/branding ride along from the SO header).
       const { data: hdr } = await sb
         .from('mfg_sales_orders')
         .select('debtor_code, debtor_name, agent, venue, branding, company_id, sales_location, customer_state')
@@ -197,8 +152,6 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
         ? null
         : resolveSoWarehouseId(header, await loadSoWarehouseMasters(sb, (q) => scopeToCompanyId(q, giftCompanyId)));
 
-      // Continue the doc's line numbering (max + 1, incrementing) when the doc
-      // is already numbered; pre-0165 docs (max NULL) keep gift lines un-numbered.
       const maxLineNo = items.reduce<number | null>((mx, it) => {
         const n = it.line_no;
         if (typeof n === 'number') return mx === null ? n : Math.max(mx, n);
@@ -210,11 +163,10 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
       for (const g of toInsert) {
         if (!g.giftProductId) continue;
         const acc = accById.get(g.giftProductId);
-        if (!acc) continue;                                    // gift product gone → skip (honest: no phantom line)
+        if (!acc) continue;
         const cost = Number(acc.cost_price_sen ?? acc.base_price_sen ?? 0) || 0;
         const qty = Math.max(1, Number(g.qty ?? 1));
         rows.push({
-          // Multi-company (mig 0061): the free-gift line inherits the SO's company.
           ...(header.company_id != null ? { company_id: header.company_id } : {}),
           doc_no:            docNo,
           ...(nextLineNo !== null ? { line_no: nextLineNo } : {}),
@@ -236,15 +188,14 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
           variants:          { freeGift: { giftProductId: g.giftProductId, campaignName: g.campaignName ?? null } },
           unit_cost_sen:   cost,
           line_cost_sen:   qty * cost,
-          line_margin_sen: -(qty * cost),                    // free line: revenue 0 − cost
-          warehouse_id:      giftWarehouseId,                  // follows the SO — see above
+          line_margin_sen: -(qty * cost),
+          warehouse_id:      giftWarehouseId,
           cancelled:         false,
         });
         if (nextLineNo !== null) nextLineNo += 1;
       }
       if (rows.length > 0) {
         await sb.from('mfg_sales_order_items').insert(rows);
-        /* History audit — one summary row naming the auto-added gift codes. */
         await recordSoAudit(sb, {
           docNo,
           action: 'ADD_LINE',
@@ -261,16 +212,10 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
     }
   } catch (e) {
     if (sb?.__atomicCommand === true) throw e;
-    // Legacy non-transactional callers keep best-effort behaviour. Atomic
-    // commands rethrow above so the enclosing command rolls back.
     // eslint-disable-next-line no-console
     console.error('[free-gift-reconcile] failed for', docNo, e);
   }
 
-  // 9 + 10. ALWAYS recompute the header totals (the route's authoritative
-  // roll-up) — even if the reconcile pass above threw. This REPLACES the final
-  // recomputeTotals each edit endpoint used to call directly.
   await recomputeTotals(sb, docNo, c);
-  // Every line add / edit / delete ends here, so the header brand follows the lines (BUG-115).
   await restampHeaderBranding(sb, docNo, c);
 }

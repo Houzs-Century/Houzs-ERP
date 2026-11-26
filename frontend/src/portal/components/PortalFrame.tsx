@@ -3,17 +3,6 @@ import { Link } from "react-router-dom";
 import { Mail, MapPin, ShieldCheck } from "lucide-react";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 
-// Customer-facing portal shell. Designed to feel like a considered,
-// well-made document rather than a generic SaaS layout — this is a
-// furniture retailer, not a tech product, so the tone is warm,
-// traditional, solid. Responsive with deliberate differences between
-// phone and desktop:
-//
-//   Mobile (≤640px): compact header (logo only), generous tap targets
-//     in the footer, stacked 1-col layout, visible section dividers.
-//   Tablet+ (640px+): header carries a small tagline flourish.
-//   Desktop (1024px+): 3-col footer with breathing room, inline
-//     bottom strip.
 
 const LOGO_WORDMARK = "/logo-wordmark.png";
 
@@ -22,11 +11,6 @@ export function PortalFrame({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen flex-col bg-bg">
-      {/* ═══ Top bar ═══════════════════════════════════════
-          Compact on mobile (logo only), a small brand flourish
-          appears on sm+ so the header doesn't feel empty on
-          larger screens. The gradient hairline below catches
-          the warm accent tone without adding visual weight. */}
       <header className="sticky top-0 z-30 border-b border-border bg-surface/95 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4">
           <Link
@@ -42,34 +26,19 @@ export function PortalFrame({ children }: { children: ReactNode }) {
             />
           </Link>
 
-          {/* Desktop tagline with decorative hairline */}
           <div className="hidden items-center gap-3 text-[10px] font-semibold uppercase tracking-[3pt] text-accent sm:flex">
             <span className="h-px w-8 bg-accent/40" />
             Service Case Tracking
           </div>
         </div>
-        {/* Warm hairline accent underneath */}
         <div className="h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent" />
       </header>
 
-      {/* ═══ Main content ═══════════════════════════════════
-          `print-area` is the app's print opt-in (index.css): the global
-          `body * { visibility: hidden }` means an un-tagged page prints a
-          BLANK sheet, which is exactly what the supplier case's Print button
-          did. Tagging the frame's main covers every portal page at once —
-          the header / footer chrome stays off the paper, which is what you
-          want there anyway. */}
       <main className="print-area mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 sm:py-10">
         {children}
       </main>
 
-      {/* ═══ Footer ═════════════════════════════════════════
-          Three loosely-defined columns on desktop, stacked on
-          mobile with a visible divider between each section.
-          Email is a real mailto: anchor so
-          mobile users can tap straight through. */}
       <footer className="border-t border-border bg-surface">
-        {/* Decorative opener — tiny "mark" glyph centered above the content */}
         <div className="flex items-center justify-center pt-7">
           <div className="flex items-center gap-3 text-accent/60">
             <span className="h-px w-8 bg-current" />
@@ -82,7 +51,6 @@ export function PortalFrame({ children }: { children: ReactNode }) {
 
         <div className="mx-auto max-w-5xl px-4 pb-8 pt-6 sm:px-6 sm:pb-10">
           <div className="grid gap-6 divide-y divide-border sm:grid-cols-2 sm:gap-8 sm:divide-y-0 lg:grid-cols-3">
-            {/* ── Company identity ───────────────────────── */}
             <section className="pt-0">
               <div className="mb-3 text-[10px] font-semibold uppercase tracking-[2pt] text-ink-muted">
                 Company
@@ -103,14 +71,11 @@ export function PortalFrame({ children }: { children: ReactNode }) {
               </div>
             </section>
 
-            {/* ── Contact ────────────────────────────────── */}
             <section className="pt-6 sm:pt-0">
               <div className="mb-3 text-[10px] font-semibold uppercase tracking-[2pt] text-ink-muted">
                 Get in touch
               </div>
               <ul className="space-y-2.5 text-[12.5px] text-ink-secondary">
-                {/* Phone removed (Nick 2026-07-06) — email is the service
-                    desk's contact channel. */}
                 <li>
                   <a
                     href="mailto:operation_service@houzscentury.com"
@@ -130,7 +95,6 @@ export function PortalFrame({ children }: { children: ReactNode }) {
               </div>
             </section>
 
-            {/* ── Privacy & data ─────────────────────────── */}
             <section className="pt-6 sm:col-span-2 sm:pt-6 lg:col-span-1 lg:pt-0">
               <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[2pt] text-ink-muted">
                 <ShieldCheck size={11} className="text-accent" aria-hidden />
@@ -154,7 +118,6 @@ export function PortalFrame({ children }: { children: ReactNode }) {
             </section>
           </div>
 
-          {/* Bottom strip — inline on sm+, stacked on xs */}
           <div className="mt-8 flex flex-col items-center justify-between gap-3 border-t border-border pt-5 text-[10.5px] text-ink-muted sm:flex-row sm:gap-4">
             <div className="order-2 sm:order-1">
               &copy; {year} Houzs Century Sdn. Bhd. All rights reserved.

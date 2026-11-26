@@ -1,32 +1,12 @@
-// ----------------------------------------------------------------------------
-// pi-settlement — move a purchase invoice's paid_sen, with the upper bound
-// clamped so two payment vouchers cannot settle the same invoice past its total.
-//
-// THE DEFECT (see src/db/migrations-pg/0147_scm_settle_pi_paid_centi.sql for
-// the long version). Posting a SUPPLIER_PAYMENT voucher read the PI, computed
-// `outstanding = total - paid`, capped its allocation at that, and then wrote.
-// Two vouchers settling the SAME invoice concurrently each read the same
-// `outstanding` and each applied their full share against it — a cap that was
-// true when read and false when written. The invoice ends up paid twice over.
-//
-// It is not a lost update: the optimistic gate on paid_sen ensured BOTH
-// increments landed. The stale value was the CAP, not the addend, so no amount
-// of retrying fixes it. Only the database evaluating the cap at write time does
-// — which is what settle_pi_paid_sen does, and what HOOKKA's
-// BUG-2026-05-21-001 fix did in the other direction.
-// ----------------------------------------------------------------------------
 
 import { isMissingRpc } from './rpc-missing';
 
 export type PiSettleReason = 'no_delta' | 'not_found' | 'not_live' | 'update_failed' | 'contention';
 
 export type PiSettleComputation = {
-  /** The PI is not a live liability (DRAFT/CANCELLED) — nothing moves. */
   skipped: boolean;
   newPaidSen: number;
-  /** What actually moved. Signed, and never larger in magnitude than the delta. */
   appliedSen: number;
-  /** requested − applied. Non-zero means the clamp bit and money was refused. */
   clampedSen: number;
   newStatus: string;
 };
@@ -73,15 +53,9 @@ export function computePiSettlement(input: {
 
 export type PiSettleResult = {
   ok: boolean;
-  /** What was actually applied. The caller MUST record this, not what it asked
-   *  for — a later cancel reverses exactly this figure. */
   appliedSen: number;
-  /** Non-zero when the database refused part of the request. Surfaced by the
-   *  caller, never swallowed: it means somebody tried to over-pay an invoice. */
   clampedSen: number;
   reason?: PiSettleReason | string;
-  /** True when the legacy (non-atomic) path ran because the RPC is not applied
-   *  to this database yet. */
   legacy?: boolean;
 };
 
@@ -112,7 +86,6 @@ export async function settlePiPaidSen(sb: any, piId: string, delta: number): Pro
   });
 
   if (!error) {
-    // RETURNS TABLE(...) → PostgREST hands back an array of one row.
     const row = (Array.isArray(data) ? data[0] : data) as
       { applied_sen?: number; new_paid_sen?: number; new_status?: string; reason?: string } | undefined;
     const applied = Number(row?.applied_sen ?? 0);
@@ -125,10 +98,6 @@ export async function settlePiPaidSen(sb: any, piId: string, delta: number): Pro
   }
 
   if (!isMissingRpc(error)) {
-    /* A real DB error — the function ran and rolled back, or never started.
-       Do NOT fall through to the non-atomic path against a database that just
-       rejected the atomic one. The caller records applied 0, so the ledger
-       says what actually happened: nothing. */
     /* eslint-disable-next-line no-console */
     console.error('[pv-settle-pi] atomic settle RPC failed — PI left unsettled:', piId, 'delta', delta, error.message);
     return { ok: false, appliedSen: 0, clampedSen: 0, reason: error.message };
@@ -137,18 +106,10 @@ export async function settlePiPaidSen(sb: any, piId: string, delta: number): Pro
   return settlePiPaidSenLegacy(sb, piId, delta);
 }
 
-/**
- * LEGACY optimistic-concurrency path, used only when scm.settle_pi_paid_sen
- * has not been applied yet. Gate the UPDATE on the paid_sen just read and
- * retry on a 0-row (concurrent) result.
- */
 async function settlePiPaidSenLegacy(sb: any, piId: string, delta: number): Promise<PiSettleResult> {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const { data: cur, error: readErr } = await sb.from('purchase_invoices')
       .select('paid_sen, total_sen, status').eq('id', piId).maybeSingle();
-    /* A failed READ is not "the invoice isn't there". Returning ok on a blip
-       would have the caller record applied 0 and move on quietly, when in fact
-       we never found out. */
     if (readErr) {
       /* eslint-disable-next-line no-console */
       console.error('[pv-settle-pi] PI read failed — left unsettled:', piId, 'delta', delta, readErr.message);
@@ -172,16 +133,9 @@ async function settlePiPaidSenLegacy(sb: any, piId: string, delta: number): Prom
       paid_sen: calc.newPaidSen, status: calc.newStatus, updated_at: new Date().toISOString(),
     })
       .eq('id', piId)
-      .eq('paid_sen', c0.paid_sen) // only if nobody else moved it since the read
+      .eq('paid_sen', c0.paid_sen)
       .select('id');
 
-    /* Still best-effort — a settle hiccup must never un-post an already-posted
-       PV. What matters is that it is not SILENT. The caller writes
-       pv_allocations.applied_sen immediately after this returns, so a failure
-       here leaves the ledger asserting money was applied to a PI whose
-       paid_sen never moved, and a later cancel reverses an amount that was
-       never there. Nothing downstream can detect that, so this line is the only
-       way anyone learns of it. */
     if (error) {
       /* eslint-disable-next-line no-console */
       console.error('[pv-settle-pi] paid_sen update failed — PI left unsettled:', piId, 'delta', delta, error.message);
@@ -190,12 +144,8 @@ async function settlePiPaidSenLegacy(sb: any, piId: string, delta: number): Prom
     if (data && data.length > 0) {
       return { ok: true, appliedSen: calc.appliedSen, clampedSen: calc.clampedSen, legacy: true };
     }
-    // 0 rows back = somebody else moved paid_sen since the read; re-read and retry.
   }
 
-  /* Six losses in a row against the same invoice. Reporting applied 0 is the
-     honest answer — we do not know that anything landed, and the caller must
-     not record a settlement it cannot prove. */
   /* eslint-disable-next-line no-console */
   console.error('[pv-settle-pi] gave up after 6 concurrent-update retries — PI left unsettled:', piId, 'delta', delta);
   return { ok: false, appliedSen: 0, clampedSen: 0, reason: 'contention', legacy: true };

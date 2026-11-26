@@ -1,13 +1,3 @@
-/* THE PER-COMPANY SEND, keyed by the ORDER's company, not the sender's.
- *
- * The bug this guards: delivery-messages resolved the Connect company profile
- * (signature / bank / disposal) by activeCompanyId(c) — the SENDING USER's
- * company — and sent no company_code at all. 2990 shares HOUZS's WhatsApp
- * number, so a 2990 order sent by HOUZS staff told the customer to pay HOUZS's
- * bank account. The fix groups a send by (phone, company) and resolves BOTH the
- * profile and company_code from the ORDER's company. This test drives the whole
- * sender with the sender in HOUZS (company 1) and a 2990 order in the batch, and
- * asserts the 2990 message carries 2990's bank block and company_code '2990'. */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 import { fakeSb } from '../lib/fake-postgrest';
@@ -27,7 +17,6 @@ const ENV = {
   CONNECT_WEBHOOK_KEY: 'k',
 };
 
-/** The subset of the Hono context the sender reads; cast to its param type. */
 function ctx(sb: ReturnType<typeof fakeSb>, activeCompanyId: number, houzsUser?: { id: number; email?: string }) {
   const store: Record<string, unknown> = {
     supabase: sb,
@@ -40,7 +29,6 @@ function ctx(sb: ReturnType<typeof fakeSb>, activeCompanyId: number, houzsUser?:
   return { get: (k: string) => store[k], env: ENV } as unknown as Parameters<typeof sendDeliveryMessageForDocs>[0];
 }
 
-/** Both companies' orders under ONE customer phone. */
 function tables() {
   return {
     mfg_sales_orders: [
@@ -59,7 +47,6 @@ function tables() {
 describe('sendDeliveryMessageForDocs — company routing', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  /** Capture every contact POSTed to Connect. */
   function stubFetch(): Array<{ attributes: Record<string, string> }> {
     const posted: Array<{ attributes: Record<string, string> }> = [];
     vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
@@ -71,32 +58,24 @@ describe('sendDeliveryMessageForDocs — company routing', () => {
 
   it('resolves company_code + profile from the ORDER company — a 2990 order sent by HOUZS staff gets 2990s account', async () => {
     const posted = stubFetch();
-    // Sender active company = 1 (HOUZS) — the bug keyed on this.
     const res = await sendDeliveryMessageForDocs(ctx(fakeSb(tables()), 1), ['HC-SO-001', '2990-SO-001'], 'delivery', {});
 
-    // One message per company, never one bundle under the sender's company.
     expect(res.sent).toHaveLength(2);
     expect(res.skipped).toHaveLength(0);
     expect(posted).toHaveLength(2);
 
-    // Index by the code the ERP sent — a lookup keyed on company data, not a
-    // per-company branch (the company-divergence audit flags `=== 'HOUZS'`).
     const byCode = new Map(posted.map((p) => [p.attributes.company_code, p]));
     const houzs = byCode.get('HOUZS');
     const h2990 = byCode.get('2990');
     expect(houzs).toBeDefined();
     expect(h2990).toBeDefined();
 
-    // The 2990 message carries 2990's code, signature and bank — NOT the
-    // sender's (company 1) HOUZS account. This is the whole fix.
     expect(h2990!.attributes.company_code).toBe('2990');
     expect(h2990!.attributes.company_signature).toBe("2990's Home");
     expect(h2990!.attributes.bank_block).toBe('2990 bank\nAcc: 222');
     expect(h2990!.attributes.bank_block).not.toContain('HC bank');
-    // and it bundles only the 2990 order.
     expect(h2990!.attributes.refs_all).toBe('2990-SO-001');
 
-    // The HOUZS message stays HOUZS.
     expect(houzs!.attributes.company_code).toBe('HOUZS');
     expect(houzs!.attributes.bank_block).toBe('HC bank\nAcc: 111');
     expect(houzs!.attributes.refs_all).toBe('HC-SO-001');
@@ -119,9 +98,6 @@ describe('sendDeliveryMessageForDocs — company routing', () => {
     expect(posted[1]!.attributes).not.toHaveProperty('sent_by_email');
   });
 
-  // houzs-connect #211: Connect MERGES contact attributes, so a service_job left
-  // on a contact by an earlier Service Arrangement (ASSR) would mis-route a plain
-  // SO postpone/reminder to the service template. Every SO send blanks it.
   it('blanks service_job on an SO send so a stale Service Arrangement value cannot mis-route it', async () => {
     const posted = stubFetch();
     await sendDeliveryMessageForDocs(ctx(fakeSb(tables()), 1), ['HC-SO-001'], 'reminder_1', {});
@@ -129,9 +105,6 @@ describe('sendDeliveryMessageForDocs — company routing', () => {
   });
 });
 
-/* The send log is what the board's Message column reads. supabase-js returns a
-   failed insert as `error` and never throws, so the try/catch around it caught
-   nothing and a sent message showed as unsent with no trace. */
 describe('sendDeliveryMessageForDocs — a send whose log row did not land', () => {
   afterEach(() => vi.unstubAllGlobals());
 

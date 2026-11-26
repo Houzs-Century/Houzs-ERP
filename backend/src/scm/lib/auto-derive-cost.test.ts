@@ -8,11 +8,6 @@ import {
 } from './auto-derive-cost';
 import type { SupplierBindingCost } from './derive-product-cost-from-suppliers';
 
-// ── autoDeriveEnabled — the inert-by-default, SINGLE GLOBAL flag ───────────
-/** scm.app_config's primary key is (key) alone, so this flag is one row for the
- *  whole database. The fake answers with `row` for the key regardless of company
- *  (the reader no longer filters by company_id), which is what makes the "one ON
- *  row arms both companies" test below meaningful. */
 function fakeConfigSb(row: { value: unknown } | null, error = false) {
   const chain: any = { // eslint-disable-line @typescript-eslint/no-explicit-any
     eq: () => chain,
@@ -57,7 +52,6 @@ describe('autoDeriveEnabled — OFF unless explicitly on', () => {
   });
 });
 
-// ── recomputeDerivedProductCost — the orchestrator over an injected IO ───────
 function fakeIo(opts: {
   category?: string | null;
   productMissing?: boolean;
@@ -136,7 +130,7 @@ describe('recomputeDerivedProductCost', () => {
     const patch = writes[0].patch as { seat_height_prices?: { height: string; tier?: string; priceSen?: number }[] };
     const cell = (h: string) => patch.seat_height_prices?.find((x) => x.height === h && x.tier === 'PRICE_2')?.priceSen;
     expect(cell('24')).toBe(300000);
-    expect(cell('28')).toBe(90000); // whole set from 'hi', not per-cell max
+    expect(cell('28')).toBe(90000);
   });
 });
 
@@ -172,7 +166,6 @@ describe('recomputeDerivedProductCost — as-of history timeline (stage 3b)', ()
   });
 });
 
-// ── recordSupplierPriceHistorySafe — the supplier source timeline (stage 3b-supplier) ──
 function histSb(latest: unknown) {
   const inserts: Record<string, unknown>[] = [];
   const lte: Array<[string, unknown]> = [];
@@ -210,8 +203,6 @@ describe('recordSupplierPriceHistorySafe — dedup', () => {
     expect(inserts[0]).toMatchObject({ unit_price_sen: 9500 });
   });
 
-  // BUG-32: dedup against the row live on the snapshot's date, not a price
-  // scheduled for later, and a snapshot is already on the flat binding.
   it('compares against the as-of row and records the snapshot as applied', async () => {
     const { sb, inserts, lte } = histSb(null);
     await recordSupplierPriceHistorySafe(sb, args(9000));
@@ -220,14 +211,6 @@ describe('recordSupplierPriceHistorySafe — dedup', () => {
   });
 });
 
-// ── mergeRetailOntoDerivedSeatGrid — the cost/retail boundary ────────────────
-/* seat_height_prices is one jsonb array with two owners per (height, tier):
-   priceSen = COST (derived here), sellingPriceSen = RETAIL (2990's POS SKU
-   Master only). writeProductCost used to assign the derived array outright,
-   which deleted every retail price it did not happen to restate — 193 of them
-   across 82 company-2 SKUs between 2026-09-16 and 09-20. These assertions are
-   the same rule the company-2 database trigger enforces (migration
-   20260920T1300), so app and database cannot drift apart silently. */
 describe('mergeRetailOntoDerivedSeatGrid', () => {
   const stored = [
     { height: '24', tier: 'PRICE_2', priceSen: 51975, sellingPriceSen: 99000 },
@@ -262,7 +245,6 @@ describe('mergeRetailOntoDerivedSeatGrid', () => {
       { height: '24', tier: 'PRICE_2', priceSen: 77777 },
     ]);
     expect(out.find((r) => r.height === '24')?.priceSen).toBe(77777);
-    // a dropped cost slot stays dropped; only its retail comes back
     expect(out.find((r) => r.height === '30')).toBeUndefined();
   });
 
@@ -275,10 +257,8 @@ describe('mergeRetailOntoDerivedSeatGrid', () => {
 
   it('keeps an explicit null as cleared, and does not resurrect it as a slot', () => {
     const cleared = [{ height: '24', tier: 'PRICE_1', sellingPriceSen: null }];
-    // present in the derived grid: the stored null carries across
     expect(mergeRetailOntoDerivedSeatGrid(cleared, [{ height: '24', tier: 'PRICE_1', priceSen: 5 }]))
       .toEqual([{ height: '24', tier: 'PRICE_1', priceSen: 5, sellingPriceSen: null }]);
-    // absent from it: nothing worth putting back
     expect(mergeRetailOntoDerivedSeatGrid(cleared, [])).toEqual([]);
   });
 

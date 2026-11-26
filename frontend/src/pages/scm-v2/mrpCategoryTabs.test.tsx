@@ -1,16 +1,3 @@
-/* The MRP page renders a tab for every category its catalogue holds.
- *
- * THE DROP THIS REPRODUCES. `mfg_product_category` has nine members; the page
- * had four tabs. A sales-order line on a DINING / BEDLINES / DIFFUSER / CARPET
- * product was planned by computeMrp, given a real quantity, and rendered on NO
- * tab — the server dropped it at `?category=<tab>` and the page filtered it out
- * again at `s.category === <tab>`. Nothing warned, because on this screen a
- * missing row and a covered row look identical.
- *
- * Asserted through the RENDERED page rather than the helper alone, because the
- * helper being right is not the claim — the claim is that the operator can
- * reach the row. Same module-seam mock harness as mrpUndated.test.tsx.
- */
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -22,9 +9,6 @@ const EMPTY_TOTALS = {
   sofaSetCount: 0, sofaSetShortageCount: 0,
 };
 
-/* The nine members of mfg_product_category, as the server reports them for a
-   company whose catalogue holds all of them — sorted, exactly as mrp.ts emits
-   `[...categorySet].sort()`. */
 const CATALOGUE = [
   'ACCESSORY', 'BEDFRAME', 'BEDLINES', 'CARPET', 'DIFFUSER',
   'DINING', 'MATTRESS', 'SERVICE', 'SOFA',
@@ -46,8 +30,6 @@ const diningSku = (): MrpResponse['skus'] => [{
 }];
 
 let mrpData: MrpResponse;
-/** What the page last ASKED the server for — a tab that displays one category
- *  while requesting another is this bug with extra steps. */
 let lastCategory: string | null | undefined;
 
 vi.mock('../../vendor/scm/lib/mrp-queries', async (importOriginal) => ({
@@ -91,9 +73,6 @@ describe('MRP — a tab for every category the catalogue holds', () => {
     const tab = screen.getByRole('tab', { name: 'Others' });
     fireEvent.click(tab);
 
-    /* Others asks for NO category filter: it stands for a set, and sending the
-       engine a category no product carries would answer with nothing. It sorts
-       the rows out itself, by exclusion. */
     expect(lastCategory).toBeNull();
     expect(screen.getByText('AN-TABLE TOP')).toBeTruthy();
   });
@@ -109,9 +88,6 @@ describe('MRP — a tab for every category the catalogue holds', () => {
     const names = screen.getAllByRole('tab').map((t) => t.textContent);
     expect(names).toEqual(['Sofa', 'Bedframe', 'Mattress', 'Accessories', 'Others']);
     expect(names).not.toContain('Service');
-    /* Named individually, these four would be four tabs. That is the shape the
-       owner rejected, and the shape that would grow again the next time he
-       registers a category at runtime. */
     for (const gone of ['Bedlines', 'Carpet', 'Diffuser', 'Dining']) {
       expect(names).not.toContain(gone);
     }

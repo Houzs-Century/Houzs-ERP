@@ -31,7 +31,6 @@ describe('isLastMileRow — the picked day owns the board', () => {
   test('no trip, another day, or a timestamped same-day value', () => {
     expect(isLastMileRow(row({ trip_date: null }), DAY)).toBe(false);
     expect(isLastMileRow(row({ trip_date: '2026-08-11' }), DAY)).toBe(false);
-    /* A stray timestamp still matches its calendar day. */
     expect(isLastMileRow(row({ trip_date: `${DAY}T00:00:00Z` }), DAY)).toBe(true);
   });
 
@@ -115,12 +114,12 @@ describe('proposeCrewDocNos — crew is proposed only for the day\'s already-seq
 
   test('THE pin: only TIME_ARRANGED rows of the picked day make the candidate list', () => {
     const docs = proposeCrewDocNos([
-      withDoc('SO-RUN-1'),                                                      // on a run today -> in
-      withDoc('SO-RUN-2'),                                                      // on a run today -> in
-      withDoc('SO-DONE', { delivery_state: 'DELIVERED', arrangement_stage: null }), // delivered -> no crew needed
-      withDoc('SO-TOMORROW', { trip_date: '2026-08-11' }),                      // another day's run -> not this day's
-      withDoc('SO-NO-RUN', { trip_date: null, arrangement_stage: 'PENDING_TIME' }), // not sequenced yet -> Time page's business
-      withDoc('SO-ASSR', { row_type: 'assr' }),                                 // non-SO -> never
+      withDoc('SO-RUN-1'),
+      withDoc('SO-RUN-2'),
+      withDoc('SO-DONE', { delivery_state: 'DELIVERED', arrangement_stage: null }),
+      withDoc('SO-TOMORROW', { trip_date: '2026-08-11' }),
+      withDoc('SO-NO-RUN', { trip_date: null, arrangement_stage: 'PENDING_TIME' }),
+      withDoc('SO-ASSR', { row_type: 'assr' }),
     ], DAY);
     expect(docs).toEqual(['SO-RUN-1', 'SO-RUN-2']);
   });
@@ -143,14 +142,13 @@ describe('matchCrewSuggestions — crew labels only the day\'s already-sequenced
       ['SO-1', 'trip-A'], ['SO-2', 'trip-A'], ['SO-3', 'trip-B'],
     ]);
     const out = matchCrewSuggestions([
-      engineRun(['SO-1', 'SO-2']),                                     // -> trip-A
-      engineRun(['SO-3'], { lorryId: 'lorry-b', driverId: 'drv-2', driverName: 'Chan' }), // -> trip-B
-      engineRun(['SO-NOT-ON-A-RUN'], { driverId: 'drv-9' }),           // -> nowhere
+      engineRun(['SO-1', 'SO-2']),
+      engineRun(['SO-3'], { lorryId: 'lorry-b', driverId: 'drv-2', driverName: 'Chan' }),
+      engineRun(['SO-NOT-ON-A-RUN'], { driverId: 'drv-9' }),
     ], tripIdByDocNo);
     expect([...out.keys()].sort()).toEqual(['trip-A', 'trip-B']);
     expect(out.get('trip-A')).toMatchObject({ lorryId: 'lorry-a', driverId: 'drv-1' });
     expect(out.get('trip-B')).toMatchObject({ lorryId: 'lorry-b', driverId: 'drv-2' });
-    /* No suggestion is ever minted for a run that does not exist. */
     expect(out.size).toBe(2);
   });
 
@@ -205,7 +203,6 @@ describe('isAssignedNoTripRow — a lorry assigned before a run is opened', () =
 
   test('a DELIVERED one STAYS — the feed flips an SO to DELIVERED off a LOADED DO, and a lorry\'s loaded drops must not vanish mid-run', () => {
     expect(isAssignedNoTripRow(due({ delivery_state: 'DELIVERED', crew: crewPlate('VRH9058') }), DAY)).toBe(true);
-    // still bounded to the picked day — a past-day delivered drop does not pile up
     expect(isAssignedNoTripRow(due({ delivery_state: 'DELIVERED', effective_delivery_date: '2026-08-09', crew: crewPlate('VRH9058') }), DAY)).toBe(false);
   });
 });
@@ -275,7 +272,6 @@ describe('isEastMalaysiaOrSingaporeStop — kept off Last Mile (owner 2026-10-25
 
   test('peninsular Malaysia and Southern-Malaysia stops stay ON the board', () => {
     expect(isEastMalaysiaOrSingaporeStop({ region: 'KL', state: 'Selangor', country: 'Malaysia' })).toBe(false);
-    // Johor is Southern too, but it is NOT Singapore — must not be dropped.
     expect(isEastMalaysiaOrSingaporeStop({ region: 'Southern', state: 'Johor', country: 'Malaysia' })).toBe(false);
   });
 

@@ -1,17 +1,6 @@
-// ---------------------------------------------------------------------------
-// Mail Center — a typed recipient FIELD → a clean list of addresses.
-//
-// Shared by desktop Compose.tsx and the phone's MobileMailCenter.tsx so To, Cc
-// and Bcc are parsed and validated identically on both. The backend normalises
-// again in `recipientList()` (backend/src/services/email.ts) — this is for the
-// inline validation the operator sees, NOT a trust boundary.
-// ---------------------------------------------------------------------------
 
-// Conservative single-@ shape check — mirrors the backend's EMAIL_RE.
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/* Comma or semicolon separated, trimmed, de-duplicated case-insensitively —
-   the same split the backend performs. */
 export function parseRecipients(raw: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -26,7 +15,6 @@ export function parseRecipients(raw: string): string[] {
   return out;
 }
 
-// The field with `picked` appended, skipping anyone already on it.
 export function addRecipients(raw: string, picked: string[]): string {
   const have = new Set(parseRecipients(raw).map((a) => a.toLowerCase()));
   const extra = picked.filter((a) => {
@@ -40,9 +28,6 @@ export function addRecipients(raw: string, picked: string[]): string {
   return [kept, ...extra].filter(Boolean).join(", ");
 }
 
-// The first entry in the field that is not a valid address, or null. Returning
-// the ADDRESS rather than a boolean is deliberate: "a valid recipient is
-// required" over a five-address field names nothing the operator can fix.
 export function firstInvalid(raw: string): string | null {
   return parseRecipients(raw).find((a) => !EMAIL_RE.test(a)) ?? null;
 }

@@ -1,10 +1,3 @@
-/* One home for how an email's HTML is put into an iframe, shared by the desktop
-   conversation reader, the desktop outbox preview and the phone reader. Links
-   must open in a new tab: the app sends X-Frame-Options DENY, so a link that
-   navigates the frame itself shows "refused to connect", and with no popup
-   permission at all (sandbox="") a click does nothing. A `target=_blank` link
-   carries no opener by default (HTML spec, implied rel=noopener). Scripts stay
-   off on every frame: no sandbox here grants allow-scripts. */
 
 /** Popups may open (the new-tab links) and leave the sandbox, so the opened page works normally. */
 export const EMAIL_FRAME_SANDBOX = "allow-popups allow-popups-to-escape-sandbox";

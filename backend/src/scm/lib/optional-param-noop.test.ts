@@ -25,8 +25,6 @@ import { describe, expect, it } from 'vitest';
 import { findServiceLineCodes } from './service-line-guard';
 import { resolveCandidateDoIds } from './do-line-remaining';
 
-/** A chainable, awaitable PostgREST stand-in that RECORDS whether the caller
- *  narrowed by company — the thing an omitted argument silently skips. */
 function fakeSb(rowsByTable: Record<string, Array<Record<string, unknown>>>, seen: { companyId?: unknown }) {
   class Q {
     rows: Array<Record<string, unknown>>;
@@ -49,9 +47,6 @@ function fakeSb(rowsByTable: Record<string, Array<Record<string, unknown>>>, see
 }
 
 describe('findServiceLineCodes — the company is what decides, so it cannot be omitted', () => {
-  /* `mfg_products.code` is unique per COMPANY, not globally (17 codes collided
-     on production 2026-08-01). HOUZS files LIFT-CHARGE as a SERVICE; 2990 sells
-     a physical item under the same code. */
   const catalog = {
     mfg_products: [
       { code: 'LIFT-CHARGE', category: 'SERVICE', company_id: 1 },
@@ -60,11 +55,6 @@ describe('findServiceLineCodes — the company is what decides, so it cannot be 
   };
   const line = [{ itemCode: 'LIFT-CHARGE', itemGroup: 'bedframe' }];
 
-  /* findServiceLineCodes returns a DISCRIMINATED RESULT, not a bare array:
-     `{ ok: true; codes }` or `{ ok: false; reason }`, so a failed catalog read
-     can no longer arrive as "no offenders found". That is the structural remedy
-     docs/bug-classes.md class B recommends everywhere — the failure becomes a
-     state the caller must branch on rather than one `?? []` can absorb. */
   it('company 1 sees a SERVICE line and refuses the return', async () => {
     const seen: { companyId?: unknown } = {};
     expect(await findServiceLineCodes(fakeSb(catalog, seen), line, 1)).toEqual({ ok: true, codes: ['LIFT-CHARGE'] });
@@ -78,8 +68,6 @@ describe('findServiceLineCodes — the company is what decides, so it cannot be 
   });
 
   it('so an omitted company is a COMPILE error, not a coin toss', () => {
-    // Never invoked — the point is that it does not compile. Make companyId
-    // optional again and the directive below goes unused (TS2578).
     // @ts-expect-error
     const omitted = () => findServiceLineCodes(fakeSb(catalog, {}), line);
     expect(omitted).toBeInstanceOf(Function);
@@ -88,9 +76,6 @@ describe('findServiceLineCodes — the company is what decides, so it cannot be 
 
 describe('resolveCandidateDoIds — a leak guard a caller can omit is only a default', () => {
   it('omitting the company is a COMPILE error', () => {
-    // Without an explicit company this picker enumerates EVERY company's
-    // delivery orders and cascades that id set into the header + line reads.
-    // Never invoked; the assertion is that the call does not compile.
     // @ts-expect-error
     const omitted = () => resolveCandidateDoIds({} as never, undefined);
     expect(omitted).toBeInstanceOf(Function);

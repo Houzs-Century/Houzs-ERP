@@ -1,6 +1,3 @@
-// The pieces Money in's lists are built from (the owner's Claude Design,
-// batch 5): a figure card, chips, segments, a status tag and a document
-// number link. Presentation only — each page brings its own data and rules.
 
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -103,7 +100,6 @@ export function MonthNav({ month, thisMonth, onChange, shift }: {
   month: string;
   thisMonth: string;
   onChange: (month: string) => void;
-  /** "YYYY-MM" moved by n months. */
   shift: (month: string, by: number) => string;
 }) {
   return (
@@ -169,7 +165,6 @@ export const tidyMenu = (items: MenuItem[]): MenuItem[] =>
 export function BatchBar({ count, sum, hidden, notes = [], onClear, children }: {
   count: number;
   sum: string;
-  /** Ticked rows the filters hide — left out of every batch action. */
   hidden: number;
   notes?: string[];
   onClear: () => void;

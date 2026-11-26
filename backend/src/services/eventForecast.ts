@@ -52,21 +52,17 @@ export type LineSource = 'actual' | 'forecast' | 'last_event';
 export type LayeredLine = {
   amount: number;
   source: LineSource;
-  /** The typed forecast, shown even when an actual has replaced it. */
   forecast: number | null;
-  /** The last event's actual for this line, when there is one. */
   last_event: number | null;
 };
 export type Split = { actual: number; forecast: number; last_event: number };
 export type LayeredTotal = { amount: number; estimated: boolean };
 
 export type ForecastLayers = {
-  /** True while the Last event layer is in use (the event has not ended). */
   uses_last_event: boolean;
   lines: Record<ForecastLine, LayeredLine>;
   totals: { cogs_total: LayeredTotal; gross_profit: LayeredTotal; total_cost: LayeredTotal; net_profit: LayeredTotal };
   split: { sales: Split; cost: Split; net: Split };
-  /** Any shown line is not actual. */
   estimated: boolean;
 };
 
@@ -124,7 +120,6 @@ const COST_LINES: readonly ForecastLine[] = [
 /** The lines priced as a share of sales. */
 export const SALES_DRIVEN_LINES: readonly ForecastLine[] = ['transport_fee', 'commission', 'merchandise'];
 
-/** The brand's rate-card % for a sales-driven line, kept on the P&L row even before any real sale. */
 const rateOf = (col: PnlColumn, k: ForecastLine): number | null =>
   k === 'transport_fee' ? col.transportFee.pct : k === 'commission' ? col.commission.pct : k === 'merchandise' ? col.merchandise.pct : null;
 
@@ -155,14 +150,11 @@ export function layerPnl(input: {
          maintenance). */
       lines[k] = { amount: round2((sales.amount * rate) / 100), source: sales.source === 'forecast' ? 'forecast' : 'last_event', forecast, last_event: lastEvent };
     } else if (lastEvent != null && sales && lastSales > 0 && SALES_DRIVEN_LINES.includes(k)) {
-      /* No % set for the brand: the shown Sales at the last event's ratio. */
       lines[k] = { amount: round2((sales.amount * lastEvent) / lastSales), source: sales.source === 'forecast' ? 'forecast' : 'last_event', forecast, last_event: lastEvent };
     } else if (lastEvent != null) lines[k] = { amount: lastEvent, source: 'last_event', forecast, last_event: lastEvent };
     else lines[k] = { amount: round2(a.amount), source: 'actual', forecast, last_event: lastEvent };
   }
 
-  /* Figures outside the forecast lines are actual-only: the legacy COGS — Other
-     line and the orders' service revenue. */
   const cogsOther = round2(input.col.cogs.other);
   const serviceRevenue = round2(input.col.serviceRevenue);
   const sumOf = (keys: readonly ForecastLine[]) => keys.reduce((s, k) => s + lines[k].amount, 0);
@@ -199,7 +191,6 @@ export function layerPnl(input: {
 
 const zero = (): Split => ({ actual: 0, forecast: 0, last_event: 0 });
 
-/* ── Which event is "the last event" ─────────────────────────────────────── */
 
 export type BaselineCandidate = {
   id: number;

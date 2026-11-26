@@ -1,6 +1,3 @@
-// PurchaseInvoiceDetailV2 — Theme C redesign of the Purchase Invoice detail
-// page. Procurement-side twin of SalesInvoiceDetailV2: money-forward,
-// Outstanding-as-hero, but flipped — this is what WE owe to the supplier.
 
 import { lazy, useMemo, useState, type ReactNode } from "react";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
@@ -63,7 +60,6 @@ import { PoPriceReference } from "../../vendor/scm/components/PoPriceReference";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 import { FlowDocFilesCard } from "../../vendor/scm/components/FlowDocFilesCard";
-// ─── Types ──────────────────────────────────────────────────────────────────
 
 type PiStatus =
   | "DRAFT"
@@ -107,15 +103,8 @@ type PiHeader = HoldFields & {
 type PiItem = {
   id: string;
   item_code?: string | null;
-  /* Supplier's own code — PI has no column of its own; the detail GET carries it
-     down from the source GRN line (grn_item_id → grn_items.supplier_sku). */
   supplier_sku?: string | null;
-  /** What the PURCHASE ORDER says this line costs, resolved by the backend
-      through grn_item -> purchase_order_item. null when the line has no
-      purchase order behind it (a PI-native service line, a receipt with no
-      PO, or an unbound SKU ordered at 0 and keyed in here). */
   po_unit_price_sen?: number | null;
-  /* #26 — the line's own purchase order, resolved through its receipt line. */
   source_po_id?: string | null;
   source_po_number?: string | null;
   description?: string | null;
@@ -126,18 +115,15 @@ type PiItem = {
   qty?: number;
   unit_price_sen?: number;
   line_total_sen?: number;
-  /* Landed-cost allocation (Phase 1-A) — freight (MYR sen) allocated to this line. */
   allocated_charge_sen?: number | null;
   /* The line's own remark (purchase_invoice_items.notes) — carried from the GRN
      line at conversion. Owner 2026-09-12: the remark travels with the line. */
   notes?: string | null;
 };
 
-/* Landed-cost allocation (Phase 1-A) — human labels for the freight basis. */
 const ALLOC_LABEL: Record<string, string> = { QTY: 'By quantity', VALUE: 'By value', CBM: 'By volume (CBM)' };
 
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
 
@@ -158,15 +144,10 @@ const sourceOf = (h: PiHeader): string =>
 const outstandingOf = (h: PiHeader): number =>
   Math.max(0, (h.total_sen ?? 0) - (h.paid_sen ?? 0));
 
-// PI effective lifecycle.
 type Effective = "draft" | "posted" | "partial" | "paid" | "overdue" | "cancelled" | "on_hold";
 const effectiveOf = (h: PiHeader): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
-  /* BEFORE the money checks (mig 0320). They read paid_sen, so a partly-paid
-     invoice that was then put ON HOLD would have shown "Partially paid" and the
-     hold would have been invisible on the one screen a person opens to decide
-     whether to pay the rest. */
   if (s === "ON_HOLD") return "on_hold";
   if (s === "PAID" || outstandingOf(h) === 0) return "paid";
   if (s === "PARTIALLY_PAID" || (h.paid_sen ?? 0) > 0) return "partial";
@@ -207,7 +188,6 @@ const initialsOf = (name: string | null | undefined): string => {
   );
 };
 
-// ─── Field cell + aside primitives (identical shape to sales-side V2) ─────
 
 function Field({
   label,
@@ -282,7 +262,6 @@ function ActivityRow({ title, meta, dot, isLast }: { title: string; meta: string
   );
 }
 
-// ─── Owed hero (dark aside slab) ──────────────────────────────────────────
 
 function OwedHeroCard({ header }: { header: PiHeader }) {
   const eff = effectiveOf(header);
@@ -291,7 +270,6 @@ function OwedHeroCard({ header }: { header: PiHeader }) {
   const paid = header.paid_sen ?? 0;
   const outstanding = outstandingOf(header);
   const isPaid = outstanding === 0;
-  // Multi-currency (Phase 1-A) — MYR-equivalent for a foreign PI (no-op for MYR).
   const isForeign = String(header.currency ?? "MYR").toUpperCase() !== "MYR";
   const rate = resolveFxRate(header.exchange_rate);
   return (
@@ -347,32 +325,15 @@ function HeroLine({ k, v, tone = "muted", strong }: { k: string; v: string; tone
   );
 }
 
-// ─── Legacy inline editor (lazy) ───────────────────────────────────────────
-// V2 is READ-ONLY by design. The variant-capable draft editor (one PoLineCard
-// per line — GRN-sourced lines keep code + variants read-only, free-entry lines
-// get full Create-style editing) lives in the legacy ./PurchaseInvoiceDetail
-// page — we forward to it whenever ?edit=1 lands on this route so the Edit
-// button actually opens editable fields. Mirrors how GoodsReceivedDetailV2 /
-// SalesOrderDetailV2 forward ?edit=1 to their legacy editor. Lazy-loaded so the
-// editor bundle only ships when someone actually clicks Edit.
 const PurchaseInvoiceDetailInlineEditor = lazy(() =>
   import("./PurchaseInvoiceDetail").then((m) => ({ default: m.PurchaseInvoiceDetail })),
 );
 
-// ─── Main page ─────────────────────────────────────────────────────────────
 
-/* Thin router — the only hooks it calls are useSearchParams and useLocation
-   (both unconditional, at the top), so Rules of Hooks
-   are respected when the ?edit=1 flip swaps between the read-only body and the
-   lazy inline editor (the two children have different hook counts). */
 export function PurchaseInvoiceDetailV2() {
   const [params] = useSearchParams();
   const location = useLocation();
   if (params.get("edit") === "1") {
-    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
-       so a failed editor chunk shows the panel in place of the editor and
-       clears when the operator moves to another document, instead of leaning
-       on a boundary in a file this one cannot see. */
     return (
       <LazySlot
         resetKey={`pi-editor:${location.pathname}`}
@@ -426,12 +387,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
     { label: purchaseInvoice?.invoice_number ?? id ?? "Purchase Invoice" },
   ]);
 
-  /* Supplier SKU — a PI line inherits the supplier's own code from its source
-     GRN line (backend hops grn_item_id → grn_items.supplier_sku). Lines with no
-     snapshot (older GRNs, or PI-native service lines) fall back to the live
-     supplier↔material binding — the same two-step the GRN/PO detail use. The
-     binding fetch is skipped when every line already carries a snapshot;
-     useSupplierDetail(null) is disabled. */
   const needsSkuLookup = useMemo(
     () => items.some((l) => !(l.supplier_sku ?? "").trim()),
     [items]
@@ -450,9 +405,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
 
   const outstanding = purchaseInvoice ? outstandingOf(purchaseInvoice) : 0;
 
-  /* History drawer. The button used to navigate to `?tab=history`, a param
-     nothing in this file reads, so it changed the URL and nothing else — while
-     the backend had been recording this invoice's every change all along. */
   const [historyOpen, setHistoryOpen] = useState(false);
   const overdueDays = purchaseInvoice ? daysPast(purchaseInvoice.due_date) : -1;
   const isOverdue = overdueDays > 0 && outstanding > 0;
@@ -470,9 +422,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
      inside the editor, under a different name per document, so it read as
      missing (docs/bugs/0853). */
   const goAddLine = () => id && navigate(addLineHref(`/scm/purchase-invoices/${id}`));
-  // Render + download the PI PDF via the shared jspdf generator (client-side),
-  // mirroring the V1 PurchaseInvoiceDetail handler. The old `?print=1`
-  // navigation was dead — nothing consumed that param — so the button did nothing.
   const deliverPrintPdf = (action: PdfAction) => {
     if (!purchaseInvoice) return;
     return import("../../vendor/scm/lib/purchase-invoice-pdf")
@@ -547,9 +496,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       },
     },
     {
-      /* Our code and the supplier's code side by side — the pair the purchaser
-         reconciles against the supplier's bill. Snapshot (from the source GRN
-         line) first, else the live binding, else —. */
       key: "supplierSku",
       label: "Supplier SKU",
       width: "132px",
@@ -570,9 +516,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       },
     },
     {
-      /* #26 — the purchase order THIS line came from, clickable. Per line, not
-         the header's: one receipt / invoice can span several orders. A line with
-         no PO behind it shows a dash (vendor/scm/lib/line-po-link.ts). */
       key: "sourcePo",
       label: "PO",
       width: "128px",
@@ -658,9 +601,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
           <FocAmount
             line={l}
             amount={fmtMoney(l.line_total_sen ?? 0, purchaseInvoice?.currency)}
-            /* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen).
-               Dropped on a free line: a freebie that carries allocated freight
-               still cost nothing to buy, which is what the badge claims. */
             sub={freight > 0
               ? <span className="font-money text-[10.5px] text-accent-ink">+freight {fmtMoney(freight, "MYR")}</span>
               : undefined}
@@ -719,7 +659,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5">
               <Badge tone={badgeTone} variant="solid" size="xs">{stageLabel}</Badge>
-              {/* mig 0324 — BESIDE the status, never instead of it. */}
               <HoldChip onHold={purchaseInvoice.on_hold} reason={purchaseInvoice.hold_reason} />
             </span>
             {isOverdue && (
@@ -749,7 +688,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
                 </h1>
                 <span className="inline-flex items-center gap-1.5">
                   <Badge tone={badgeTone} size="sm">{stageLabel}</Badge>
-                  {/* mig 0324 — BESIDE the status, never instead of it. */}
                   <HoldChip onHold={purchaseInvoice.on_hold} reason={purchaseInvoice.hold_reason} />
                 </span>
                 {isOverdue && (
@@ -902,8 +840,6 @@ function PurchaseInvoiceDetailV2ReadOnly() {
                   />
                 )}
                 <Field label="Currency" value={purchaseInvoice.currency} />
-                {/* Multi-currency / landed cost (Phase 1-A) — shown only for a
-                    foreign PI; an MYR invoice is byte-for-byte the old layout. */}
                 {String(purchaseInvoice.currency ?? "MYR").toUpperCase() !== "MYR" && (
                   <Field label={`Exchange rate (MYR / 1 ${purchaseInvoice.currency})`} value={String(resolveFxRate(purchaseInvoice.exchange_rate))} mono />
                 )}

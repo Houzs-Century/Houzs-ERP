@@ -27,7 +27,6 @@ function rows(): Row[] {
   return out;
 }
 
-/** The nine head counts the grouped read replaced, run against the same rows. */
 async function nineCounts(table: Row[]): Promise<Record<string, number>> {
   const sb = fakeSb({ delivery_orders: table });
   const head = () => sb.from('delivery_orders').select('*', { count: 'exact', head: true }).eq('company_id', OWN_COMPANY);
@@ -39,7 +38,6 @@ async function nineCounts(table: Row[]): Promise<Record<string, number>> {
   return out;
 }
 
-/** The aggregate as PostgREST answers `status, on_hold, cnt:id.count()`: one row per group. */
 function grouped(table: Row[]) {
   const g = new Map<string, { status: string | null; on_hold: boolean | null; cnt: number }>();
   for (const r of table.filter(inScope)) {

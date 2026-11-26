@@ -1,41 +1,3 @@
-// ----------------------------------------------------------------------------
-// autocount-outbox-archive — RETIRING A FINISHED DOCUMENT from the AutoCount
-// Sync page, without deleting a row and without touching a reason.
-//
-// WHY THIS EXISTS. `scm.autocount_outbox` is append-only and one document
-// accumulates a row per operation forever, so a document whose work is over
-// stays on the page for the life of the system. On 2026-09-08 the entire queue
-// for Houzs Century was THREE documents and THIRTY-TWO rows — all three old
-// write-back test documents, all three in the account book, the banner reading
-// "Everything is in AutoCount. Nothing is waiting and nothing was refused." A
-// screen whose job is to show what needs attention had nothing on it but noise,
-// and the owner asked twice for it to be cleared.
-//
-// THE TWO OBVIOUS ANSWERS ARE BOTH WRONG, and this module is the third:
-//
-//   DELETE is forbidden by the table itself — 0277's COMMENT ON TABLE reads
-//   "Never delete rows: this is the audit trail of what the ERP told
-//   AutoCount" — and by the owner's standing rule for the whole ERP, never
-//   delete, only cancel.
-//
-//   A SECOND NOTE ON `last_error` is worse than doing nothing. `isRequeuedNote`
-//   is a PREFIX test, on purpose, so a row whose own message merely quotes the
-//   marker is still an open refusal. Prepending anything to a re-queued row's
-//   note therefore stops it reading as `requeued` and pushes it BACK onto Not
-//   accepted. An earlier investigation reached exactly that conclusion and
-//   stopped there; the reasoning was right and the conclusion was not what was
-//   asked for.
-//
-// SO: A COLUMN OF ITS OWN. `archived_at` says nothing about whether AutoCount
-// took the document — it says a person has finished with the row. `status` and
-// `last_error` are never written, so `acOutboxState`, `isRequeuedNote`,
-// `classifyAcSkip` and `acNeedsAttention` all reach the same verdict on an
-// archived row as on a live one, and the row can be brought back by clearing
-// one column.
-//
-// PURE, like autocount-outbox-status beside it: no client, no env, no imports
-// beyond the shared vocabulary. The route does the reading and the writing.
-// ----------------------------------------------------------------------------
 
 import { acNeedsAttention } from './autocount-outbox-status';
 
@@ -95,9 +57,7 @@ export const acArchiveAccepted = (code: AcArchiveOutcome): boolean => code === '
 /** The verdict, plus the numbers the sentence on screen is allowed to quote. */
 export interface AcArchiveVerdict {
   code: AcArchiveOutcome;
-  /** How many rows a successful archive would write. Zero on every refusal. */
   rows: number;
-  /** How many rows are the REASON for a refusal, so the page can say "1 of 9". */
   blocked: number;
 }
 
@@ -126,8 +86,6 @@ export function acArchiveVerdict(rows: readonly AcArchiveRow[]): AcArchiveVerdic
   const open = rows.filter((r) => acNeedsAttention(r.status, r.last_error));
   if (open.length > 0) return { code: 'needs-attention', rows: 0, blocked: open.length };
 
-  /* Only the rows that are not already retired are written, so a document sent
-     again after it was cleared is cleared again rather than reported done. */
   const live = rows.filter((r) => r.archived_at === null);
   if (live.length === 0) return { code: 'already-archived', rows: 0, blocked: 0 };
 

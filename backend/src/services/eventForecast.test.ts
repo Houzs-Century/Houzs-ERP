@@ -13,13 +13,11 @@ const RATE: CostRate = { transport_pct: 5, merchandise_pct: 2, commission_normal
 const col = (lines: PnlLine[], lumpSales: number | null, rate: CostRate | null = RATE, books: string[] = []) =>
   eventPnl({ lines, booksRows: new Set(books), lumpSales, so: null, rate }).by_sales;
 
-/* The last event: RM 100,000 sales, typed COGS, rental and setup, the rate card. */
 const LAST = col([
   { kind: 'cost', category: 'cogs_matt_sofa', amount: 30000 },
   { kind: 'cost', category: 'rental', amount: 12000 },
   { kind: 'cost', category: 'setup', amount: 3000 },
 ], 100000);
-/* A future event: nothing in yet. */
 const EMPTY = col([], null);
 
 describe('pickLastEvent — the most recent EARLIER event, same company, organiser and venue', () => {
@@ -97,7 +95,6 @@ describe('layerPnl — precedence per line: Actual, then Forecast, then Last eve
     expect(l.lines.sales).toMatchObject({ amount: 100000, source: 'last_event' });
     expect(l.lines.rental).toMatchObject({ amount: 12000, source: 'last_event' });
     expect(l.lines.commission).toMatchObject({ amount: 10000, source: 'last_event' });
-    /* The last event had no bedframe COGS: it lends nothing for it. */
     expect(l.lines.cogs_bedframe).toMatchObject({ amount: 0, source: 'actual', last_event: null });
     expect(l.estimated).toBe(true);
   });
@@ -111,7 +108,6 @@ describe('layerPnl — precedence per line: Actual, then Forecast, then Last eve
   });
 
   it('Transport Fee, Commission and Merchandise follow the shown Sales at the last event ratio; COGS stays the last event amount', () => {
-    /* Last event: 100,000 sales, 30,000 matt/sofa COGS, commission 10%, merchandise 2%, transport 5%. */
     const typed = layerPnl({ col: EMPTY, booksRows: new Set(), forecast: { sales: 200000 }, lastEvent: lastValues, useLastEvent: true });
     expect(typed.lines.commission).toMatchObject({ amount: 20000, source: 'forecast' });
     expect(typed.lines.merchandise).toMatchObject({ amount: 4000, source: 'forecast' });
@@ -120,26 +116,21 @@ describe('layerPnl — precedence per line: Actual, then Forecast, then Last eve
     expect(typed.lines.cogs_matt_sofa).toMatchObject({ amount: 30000, source: 'last_event' });
     expect(typed.lines.rental).toMatchObject({ amount: 12000, source: 'last_event' });
     expect(typed.lines.setup).toMatchObject({ amount: 3000, source: 'last_event' });
-    /* A typed line still beats the ratio. */
     const own = layerPnl({ col: EMPTY, booksRows: new Set(), forecast: { sales: 200000, commission: 1234 }, lastEvent: lastValues, useLastEvent: true });
     expect(own.lines.commission).toMatchObject({ amount: 1234, source: 'forecast' });
   });
 
   it('no last event: a forecast Sales is priced by the brand rate card (owner 2026-11-20)', () => {
-    /* RATE: transport 5%, merchandise 2%, commission 10%. */
     const l = layerPnl({ col: EMPTY, booksRows: new Set(), forecast: { sales: 100000 }, lastEvent: null, useLastEvent: true });
     expect(l.lines.commission).toMatchObject({ amount: 10000, source: 'forecast' });
     expect(l.lines.merchandise).toMatchObject({ amount: 2000, source: 'forecast' });
     expect(l.lines.transport_fee).toMatchObject({ amount: 5000, source: 'forecast' });
-    /* Fixed costs are not priced from sales. */
     expect(l.lines.setup).toMatchObject({ amount: 0, source: 'actual' });
-    /* No rate card: nothing to price by. */
     const none = layerPnl({ col: col([], null, null), booksRows: new Set(), forecast: { sales: 100000 }, lastEvent: null, useLastEvent: true });
     expect(none.lines.commission).toMatchObject({ amount: 0, source: 'actual' });
   });
 
   it('the Project Maintenance % wins over the last event ratio; with no % the ratio is used', () => {
-    /* A last event that paid 20% commission; the brand's rate card says 10%. */
     const last20 = { ...lastEventValues(LAST, new Set()), commission: 20000 };
     const l = layerPnl({ col: EMPTY, booksRows: new Set(), forecast: { sales: 50000 }, lastEvent: last20, useLastEvent: true });
     expect(l.lines.commission).toMatchObject({ amount: 5000, source: 'forecast' });
@@ -177,11 +168,8 @@ describe('layerPnl — totals are added up from the shown lines and say when the
   it('COGS Total, GP, Total Cost and Net Profit; the split by layer adds back to each total', () => {
     const own = col([{ kind: 'cost', category: 'cogs_bedframe', amount: 4000 }], null, null);
     const l = layerPnl({ col: own, booksRows: new Set(), forecast: { sales: 90000, rental: 10000 }, lastEvent: lastEventValues(LAST, new Set()), useLastEvent: true });
-    /* matt/sofa 30,000 (last) + bedframe 4,000 (actual) */
     expect(l.totals.cogs_total).toEqual({ amount: 34000, estimated: true });
     expect(l.totals.gross_profit).toEqual({ amount: 56000, estimated: true });
-    /* 34,000 + rental 10,000 (forecast) + setup 3,000 (last) + transport 4,500 + commission 9,000
-       + merchandise 1,800 (the 90,000 forecast at the last event's 5% / 10% / 2%) */
     expect(l.totals.total_cost).toEqual({ amount: 62300, estimated: true });
     expect(l.totals.net_profit).toEqual({ amount: 27700, estimated: true });
     expect(l.split.sales).toEqual({ actual: 0, forecast: 90000, last_event: 0 });

@@ -8,7 +8,6 @@ import { listScanFilesHandler, scanFileContentHandler } from './scan-files';
 type Row = Record<string, unknown>;
 type HandlerCtx = Parameters<typeof listScanFilesHandler>[1];
 
-/* PostgREST stand-in: select/eq/is/in/order/limit/update/insert/maybeSingle. */
 function fakeDb(tables: Record<string, Row[]>) {
   class Q {
     private preds: Array<(r: Row) => boolean> = [];

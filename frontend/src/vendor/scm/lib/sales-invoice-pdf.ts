@@ -1,17 +1,3 @@
-// Sales Invoice PDF — issued to the customer.
-//
-// 2026-06-19 — unified "Hookka-tidy" layout shared with SO/PO/DO: real
-// letterhead header, the drawInfoColumns info block (BILL TO label-gutter +
-// INVOICE DETAILS colon-aligned), and the consistent footer (doc no · portal ·
-// page n of m). A4 portrait, pure B&W. Totals + signatures unchanged.
-//
-// BILL TO prints the customer's ADDRESS + Tel/Email, and INVOICE DETAILS prints
-// the customer's own 'Customer PO' reference. All of it was already captured by
-// the route and simply never drawn — the invoice, the one document that leaves
-// the building, went out with no address on it. Layout is untouched:
-// drawInfoColumns skips blank rows, so a record with no address prints exactly
-// as before. The SI carries ONE flat address, not the SO's
-// ship_to/bill_to/install_to trio — see the SiHeader note.
 import { formatPhone } from '@2990s/shared/phone';
 import { siCreditNotesSen, siDepositAppliedSen } from './si-outstanding';
 import { PAYMENT_METHOD_DEFAULT_LABELS } from './payment-methods';
@@ -32,54 +18,25 @@ export type SiHeader = {
   invoice_date: string; due_date: string | null; currency: string;
   subtotal_sen: number; discount_sen: number; tax_sen: number;
   total_sen: number; paid_sen: number; notes: string | null;
-  /* The slice of the source Sales Order's deposit that settles this invoice,
-     served on both the list row and the detail header. Optional because a
-     caller may hand this function a header from before that field existed;
-     absent reads as 0, which prints the LARGER outstanding — the only
-     direction a customer's copy may be wrong in. */
   so_deposit_applied_sen?: number | null;
-  /** The customers' credit notes knocked off it (backend si-credit-notes.ts) — printed as their own line. */
   credit_notes_sen?: number | null;
-  /* Every sum received towards this invoice — the order's rows and its own —
-     stamped by GET /sales-invoices/:id (backend lib/si-receipts). Absent or
-     null prints one line per document instead of one per payment. */
   receipts?: SiReceipts | null;
-  /* The route has always CAPTURED these (sales-invoices.ts HEADER + the from-DO
-     convert copies them off the DO header) — they were simply never printed, so
-     the invoice went to the customer with no address on it. Optional because the
-     detail-page item/header shapes are passed through `as never` by the callers
-     and older rows may carry nulls; drawInfoColumns skips a blank row, so a
-     record with no address prints exactly as it does today.
-
-     NOTE the SI carries ONE flat address (address1/2 · city · state · postcode ·
-     phone), NOT the SO's ship_to/bill_to/install_to trio — those columns do not
-     exist on sales_invoices. So this is the billing address as captured; the
-     delivery address for the same goods lives on the DO, which prints its own. */
   address1?: string | null; address2?: string | null;
   city?: string | null; state?: string | null; postcode?: string | null;
   phone?: string | null; email?: string | null;
-  /* The CUSTOMER's own reference — distinct from `so_doc_no`, which is OUR SO
-     number. Printed as 'Customer PO', matching the SO PDF's label. */
   po_doc_no?: string | null; customer_so_no?: string | null;
-  /* Header delivery date — carried off the DO on convert. Printed in INVOICE
-     DETAILS; per-line dates live on the form/detail, but a per-line PDF column
-     would overflow the A4 item table, so the header date is what the customer's
-     copy shows. Optional + drawInfoColumns skips it if null. */
   customer_delivery_date?: string | null;
 };
 /** One sum received, as the printed "Payments received" list reads it. */
 export type SiReceipt = { paid_at: string | null; method: string | null; amount_sen: number };
 export type SiReceipts = { order: SiReceipt[]; invoice: SiReceipt[] };
 
-/* The method as the customer reads it: the system's own label; money brought
-   over from AutoCount carries none, so it is just a payment. */
 const receiptMethod = (m: string | null): string => {
   if (!m || m === 'imported') return 'Payment';
   if (m === 'converted') return 'Moved from another order';
   return (PAYMENT_METHOD_DEFAULT_LABELS as Readonly<Record<string, string | undefined>>)[m] ?? m;
 };
 const sumOf = (rows: readonly SiReceipt[]): number => rows.reduce((s, r) => s + Number(r.amount_sen), 0);
-/* The rows, when they ARE the figure — every one money in, adding up to it. */
 const itemised = (rows: readonly SiReceipt[] | undefined, figure: number): readonly SiReceipt[] | null =>
   rows && rows.length > 0 && rows.every((r) => Number(r.amount_sen) > 0) && sumOf(rows) === figure ? rows : null;
 
@@ -111,20 +68,12 @@ export function paymentsReceivedLines(header: SiHeader): Array<{ label: string; 
 export type SiItem = {
   item_code: string; description: string | null;
   qty: number; unit_price_sen: number;
-  // Older items table rows in 2990s may omit these — keep optional so the
-  // detail-page items shape is assignable without forcing a schema-wide
-  // type widening.
   discount_sen?: number; tax_sen?: number;
   line_total_sen: number;
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
 };
 
-/* Draw ONE sales invoice's content into `doc` (letterhead → info block → items →
-   totals → signature → footer). Does NOT create the jsPDF or save — the caller
-   finalizes ONCE, so several SIs can share one doc (batch "Export PDF"). The
-   footer loop starts at this SI's first page so a combined doc numbers each
-   invoice's own pages without re-stamping earlier ones. */
 export async function renderSalesInvoiceInto(
   doc: import('jspdf').jsPDF,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -132,9 +81,6 @@ export async function renderSalesInvoiceInto(
   header: SiHeader,
   items: SiItem[],
 ): Promise<void> {
-  /* Before ANY drawing: a customer / supplier name, address or remark that
-     carries CJK needs the font embedded up front, or helvetica silently paints
-     the whole field as mojibake. No-op for a pure-WinAnsi document. */
   await ensurePdfCjkFont(doc, [header, items]);
 
   const startPage = doc.getNumberOfPages();
@@ -149,8 +95,6 @@ export async function renderSalesInvoiceInto(
     ],
   });
 
-  /* Same composition as the DO's DELIVER TO block (delivery-order-pdf.ts) so the
-     two customer-facing documents render one address the same way. */
   const addressValue = [
     header.address1,
     header.address2,
@@ -163,9 +107,6 @@ export async function renderSalesInvoiceInto(
     .filter(Boolean)
     .join(', ');
   const statusText = statusLabel('si', header.status);
-  /* An invoice with no address is not a document that stands alone — it cannot
-     be posted, filed or matched to a customer record on its own. Row order +
-     labels mirror the SO/DO BILL TO block via the shared billToBlock. */
   y = drawInfoColumns(doc, y,
     billToBlock({
       name: header.debtor_name,
@@ -179,9 +120,6 @@ export async function renderSalesInvoiceInto(
       title: 'INVOICE DETAILS',
       rows: [
         ['Invoice No', header.invoice_number],
-        /* 'SO Ref' is OUR sales order; 'Customer PO' is the number the customer
-           files this invoice under — the one their AP clerk searches for. Both
-           are captured; print both. Same label + fallback order as the SO PDF. */
         ['SO Ref', header.so_doc_no],
         ['Customer PO', header.po_doc_no ?? header.customer_so_no],
         ['Date', fmtDocDate(header.invoice_date)],
@@ -223,7 +161,6 @@ export async function renderSalesInvoiceInto(
   });
   const lastY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
 
-  // Totals + payment
   const totalsX = pageW - margin - 70;
   const drawRow = (label: string, val: string, ty: number, bold = false) => {
     doc.setFont('helvetica', bold ? 'bold' : 'normal');
@@ -240,14 +177,6 @@ export async function renderSalesInvoiceInto(
   drawRow('GRAND TOTAL', fmtRm(header.total_sen, header.currency), ty + 2, true);
   ty += 6;
   doc.setFontSize(9);
-  /* THIS IS THE CUSTOMER'S COPY, so it is the one place the old bug was worst:
-     until 2026-08-23 it printed the full invoice total as Outstanding on an
-     invoice whose order had already collected a deposit, and handed that to the
-     person who paid it (vendor/scm/lib/si-outstanding.ts). Money taken on the
-     order prints as its OWN lines naming the order — a customer reading a
-     smaller number with no explanation has the same question the office had.
-     Since 2026-10-06 every sum is listed by day and method under "Payments
-     received" (paymentsReceivedLines), never called "Deposit". */
   const siDeposit = siDepositAppliedSen(header);
   const received = paymentsReceivedLines(header);
   if (received.length > 0) {
@@ -262,12 +191,8 @@ export async function renderSalesInvoiceInto(
       ty += 4.5 * Math.max(1, label.length);
     }
     doc.setFontSize(9);
-    ty += 1.5;   /* air between the list and the line it adds up to */
+    ty += 1.5;
   }
-  /* Unfloored, exactly as before: an over-payment must print negative so the
-     customer sees the credit rather than a silent "0". The deposit cannot make
-     this MORE negative — the allocation never exceeds what the invoice still
-     owed, so `paid + deposit <= total` whenever `paid <= total`. */
   /* A credit note knocked off it (owner 2026-11-03) is no payment: its own line, then off the balance. */
   const credited = siCreditNotesSen(header);
   if (credited > 0) { drawRow('Credit notes', `-${fmtRm(credited, header.currency)}`, ty + 4); ty += 5.5; }
@@ -296,7 +221,6 @@ export async function renderSalesInvoiceInto(
   }
 }
 
-/* Single SI → its own file (unchanged behaviour). */
 export async function generateSalesInvoicePdf(
   header: SiHeader,
   items: SiItem[],
@@ -319,10 +243,6 @@ export async function salesInvoicePdfBlob(header: SiHeader, items: SiItem[]): Pr
   return doc.output('blob');
 }
 
-/* Several SIs → ONE combined file, each invoice starting on a new page. For the
-   batch "Export PDF" action (download a customer all their invoices in one
-   attachment). Each invoice numbers its own pages via renderSalesInvoiceInto's
-   startPage-based footer loop. */
 export async function generateCombinedSalesInvoicePdf(
   docs: Array<{ header: SiHeader; items: SiItem[] }>,
   opts?: { fileName?: string; action?: PdfAction },

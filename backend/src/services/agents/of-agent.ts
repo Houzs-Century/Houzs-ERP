@@ -1,19 +1,3 @@
-// ---------------------------------------------------------------------------
-// of-agent.ts — the Order Fulfilment Agent (HZS-OF-001) engine.
-//
-// docs/agents/operating-spec.md §3. The readiness CORE (order-fulfilment.ts,
-// #729) computes a per-SO readiness score + blocker list; this makes it RUN: a
-// patrol over the fulfilment pipeline that writes one OPEN finding per blocked
-// order, naming the precise blocker, its owner and the next action.
-//
-// READ-ONLY over business documents — like the Document agent, the ONLY thing it
-// writes is its own two public-schema tables (of_agent_findings / _briefs,
-// mig 0130). So a bug here produces a wrong ADVISORY finding, never a wrong
-// order: the blast radius is the console, not the ledger.
-//
-// DB handle = env.DB (the d1-compat shim over postgres.js), which reads scm.*
-// with schema-qualified SQL, exactly as document-agent.ts does.
-// ---------------------------------------------------------------------------
 
 import { registerAgent } from '../agent-scheduler';
 import type { Env } from '../../types';
@@ -26,14 +10,10 @@ import { assessFulfilment, type FulfilmentInput } from './order-fulfilment';
 
 export const OF_AGENT_SETTING_KEY = 'agents.of';
 
-// The orders being fulfilled — not drafts, not terminal states. An SO leaving
-// this set (delivered / invoiced / cancelled) auto-resolves its finding.
 const PIPELINE = "('CONFIRMED','IN_PRODUCTION','READY_TO_SHIP')";
 
 interface SoRow {
   doc_no: string; status: string;
-  /** Migration 0324 — the hold MARKER. A held order keeps its real status, so
-   *  the PIPELINE status filter below can no longer exclude one by itself. */
   on_hold?: boolean | null;
   debtor_name?: string | null; email?: string | null; address1?: string | null;
   postcode?: string | null; customer_delivery_date?: string | null;
@@ -41,7 +21,6 @@ interface SoRow {
 }
 interface ItemRow {
   doc_no: string; item_group: string; item_code: string;
-  /** mfg_products.category, resolved by the scalar subquery below. */
   category?: string | null;
   stock_status: string; cancelled?: boolean | null;
 }
@@ -63,8 +42,6 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
 
   const soRes = await db
     .prepare(
-      /* paid_sen from the SO list's view (the payments ledger): the stored mfg_sales_orders.paid_sen is 0 on every
-         order created in the ERP and frozen at import on migrated ones, so the release check misread what was paid. */
       `SELECT doc_no, status, on_hold, debtor_name, email, address1, postcode,
               customer_delivery_date, local_total_sen, paid_total_sen AS paid_sen
          FROM scm.mfg_sales_orders_with_payment_totals WHERE status IN ${PIPELINE} LIMIT 1000`,
@@ -72,12 +49,6 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
     .all<SoRow>();
   const sos = soRes.results ?? [];
 
-  // All items for pipeline SOs in one join — no per-order query, no dynamic IN.
-  // The catalog category rides as a SCALAR SUBQUERY, not a join: mfg_products is
-  // per-company and `code` collides across companies, so joining it would fan a
-  // line out into two rows and double-count the readiness tally. LIMIT 1 cannot
-  // fan out, and the only consumer is isServiceLine's "is this SERVICE?" test —
-  // a code that is SERVICE in one company is SERVICE in the other.
   const itemRes = await db
     .prepare(
       `SELECT i.doc_no, i.item_group, i.item_code, i.stock_status, i.cancelled,
@@ -119,7 +90,7 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
       hasDeliveryDate: has(so.customer_delivery_date),
     };
     const r = assessFulfilment(input);
-    if (r.ready) continue; // only blocked orders become findings
+    if (r.ready) continue;
     const blockCount = r.blockers.filter((b) => b.severity === 'BLOCK').length;
     const top = r.blockers[0] ?? null;
     desired.set(so.doc_no, {
@@ -164,10 +135,6 @@ export async function patrolOrderFulfilment(env: Env): Promise<OfPatrolResult> {
         .run();
     }
   }
-  // Auto-resolve: an order that is no longer blocked (or left the pipeline) loses
-  // its finding. Safe to mass-resolve here — this is a single-detector patrol, so
-  // "absent from desired" is a real recovery, not a failed query (a thrown query
-  // aborts the whole run before this point).
   for (const [doc, id] of open) {
     if (desired.has(doc)) continue;
     await db
@@ -224,9 +191,6 @@ registerAgent({
   cadence: { firstRunHour: 8, minGapHours: 6, maxRunsPerDay: 2 },
   run: async (env, ctx) => {
     const r = await patrolOrderFulfilment(env);
-    /* AI focus — first run of the day only (ctx.llmKey is budget-gated and
-       undefined otherwise). Best-effort: a brain failure leaves ai_focus NULL and
-       every deterministic finding still ships. */
     if (ctx.llmKey) {
       const sink: AgentBrainUsageSink = { tokensIn: 0, tokensOut: 0 };
       const ownerInstructions = await activeInstructions(env.DB, 'OF');

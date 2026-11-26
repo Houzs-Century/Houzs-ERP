@@ -21,7 +21,6 @@ import { describeVouchers } from './payment-vouchers-describe';
 
 export const HEADER =
   'id, pv_number, voucher_date, payee_name, supplier_id, credit_account_code, currency, exchange_rate, purpose, notes, total_sen, status, posted_at, created_at, created_by, updated_at, company_id, submitted_at, submitted_by, checked_at, checked_by, approved_at, approved_by, refund_source_type, refund_source_doc_no, customer_id, debtor_code, bill_ref, bill_date, official_doc, official_doc_note, official_doc_at, official_doc_by, bank_charge_sen, pay_to_bank_name, pay_to_account_no, pay_to_account_name';
-/* The supplier with its bank: a voucher made before its own bank fields reads the supplier's. */
 export const SUPPLIER_EMBED = 'supplier:suppliers(id, code, name, bank_name, bank_account_no, bank_account_name)';
 
 const LIST_CAP = 500;
@@ -37,9 +36,6 @@ export const moneyQuery = (q: string): number | null => {
   return Math.round(Number(t) * 100);
 };
 
-/** A read over `values` 100 at a time: the URL stays short, and each caller
-    bounds what one batch can return (newest SEARCH_CAP, or a handful per key)
-    so no batch reaches PostgREST's row cap. */
 async function inBatches(values: string[], read: (batch: string[]) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<{ ok: true; rows: Rows } | Fail> {
   const rows: Rows = [];
   for (let i = 0; i < values.length; i += 100) {
@@ -50,13 +46,10 @@ async function inBatches(values: string[], read: (batch: string[]) => PromiseLik
   return { ok: true, rows };
 }
 
-/** The ids of every voucher the words find, newest first is the caller's job. */
 async function searchVoucherIds(sb: any, c: CompanyScopeCtx, term: string): Promise<{ ok: true; ids: string[] } | Fail> {
-  /* ilike's own wildcards are the user's literal characters here. */
   const like = `%${term.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
   const pv = () => scopeToCompany(sb.from('payment_vouchers').select('id'), c);
   const sen = moneyQuery(term);
-  /* One column a read: an .or() string would carry the words unescaped. */
   type Read = PromiseLike<{ data: unknown; error: { message: string } | null }>;
   const scoped = (table: string, cols: string) => scopeToCompany(sb.from(table).select(cols), c);
   const reads: Array<[string, Read]> = [
@@ -108,7 +101,6 @@ async function searchVoucherIds(sb: any, c: CompanyScopeCtx, term: string): Prom
   return { ok: true, ids: [...ids] };
 }
 
-/** How many vouchers sit at each stage — the chips' counts — over the whole company. */
 async function stageCounts(sb: any, c: CompanyScopeCtx): Promise<{ ok: true; counts: Record<string, number> } | Fail> {
   const head = () => scopeToCompany(sb.from('payment_vouchers').select('id', { count: 'exact', head: true }), c);
   const [all, draft, prepared, checked, approved, cancelled] = await Promise.all([
@@ -120,12 +112,10 @@ async function stageCounts(sb: any, c: CompanyScopeCtx): Promise<{ ok: true; cou
     head().eq('status', 'CANCELLED'),
   ]);
   for (const r of [all, draft, prepared, checked, approved, cancelled]) if (r.error) return { ok: false, reason: `counts: ${r.error.message}` };
-  /* An advance is open while what was paid ahead exceeds what bills used. */
   const adv = await paginateAll<Record<string, unknown>>((f, t) => scopeToCompany(sb.from('acc_supplier_advances').select('pv_id, amount_sen, applied_sen'), c).order('pv_id').range(f, t));
   if (adv.error) return { ok: false, reason: `advances: ${adv.error.message}` };
   const open = new Set<string>();
   for (const a of adv.data ?? []) if (Number(a.amount_sen) - Number(a.applied_sen) > 0) open.add(String(a.pv_id));
-  /* The company's advances are few; paged all the same, because a silent cut is how a count lies. */
   return {
     ok: true,
     counts: {
@@ -139,7 +129,6 @@ async function stageCounts(sb: any, c: CompanyScopeCtx): Promise<{ ok: true; cou
 export async function journalNumbers(sb: any, c: CompanyScopeCtx, pvNumbers: string[]): Promise<{ ok: true; byPv: Map<string, string> } | Fail> {
   const byPv = new Map<string, string>();
   if (pvNumbers.length === 0) return { ok: true, byPv };
-  /* A voucher has one journal, two when its approval was reversed and re-posted. */
   const r = await inBatches(pvNumbers, (batch) => scopeToCompany(sb.from('journal_entries')
     .select('je_no, source_doc_no, reversed'), c).eq('source_type', 'PV').in('source_doc_no', batch));
   if (!r.ok) return { ok: false, reason: `journals: ${r.reason}` };
@@ -157,7 +146,6 @@ export const listPaymentVouchersHandler = async (c: any): Promise<Response> => {
   type Row = Record<string, unknown> & { id: string; pv_number: string; voucher_date?: string | null };
   let rows: Row[];
   if (term) {
-    /* The search reads its rows in URL-sized batches, newest first, at most 200. */
     const found = await searchVoucherIds(sb, c, term);
     if (!found.ok) return c.json({ error: 'load_failed', reason: found.reason }, 500);
     const read = await inBatches(found.ids, (batch) => scopeToCompany(sb.from('payment_vouchers')
@@ -168,11 +156,9 @@ export const listPaymentVouchersHandler = async (c: any): Promise<Response> => {
     let q = sb.from('payment_vouchers')
       .select(`${HEADER}, ${SUPPLIER_EMBED}`)
       .order('voucher_date', { ascending: false })
-      // Bound the result so PostgREST's default 1000-row cap can't silently
-      // truncate the list — matches the PI/SI/DO list convention.
       .limit(LIST_CAP);
     const status = c.req.query('status'); if (status) q = q.eq('status', status);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
+    q = scopeToCompany(q, c);
     const { data, error } = await q;
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     rows = (data ?? []) as Row[];

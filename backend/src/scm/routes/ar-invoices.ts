@@ -44,10 +44,6 @@ type Row = Record<string, any>;
 export type ArKind = 'SI' | 'ODB';
 const KINDS = new Set(['ALL', 'SI', 'ODB']);
 
-/* The sales invoices the Finance side sees beside the bills: the LIVE ones.
-   A DRAFT has posted no revenue and a CANCELLED one is dead — the purchase
-   invoice mirror on the AP list draws the same line (POSTED / PARTIALLY_PAID /
-   PAID / ON_HOLD, never DRAFT or CANCELLED). */
 export const SI_MIRROR_STATUSES = ['SENT', 'PARTIALLY_PAID', 'PAID', 'OVERDUE'] as const;
 
 const SI_COLS = 'id, invoice_number, so_doc_no, debtor_code, debtor_name, invoice_date, due_date, currency, total_sen, local_total_sen, paid_sen, status, notes';
@@ -56,29 +52,21 @@ const BILL_COLS = 'id, bill_number, debtor_id, bill_date, total_sen, received_se
 /** One row of the list — a sales invoice (mirror) or a debtor bill; `kind` says which. */
 export type ArListRow = {
   kind: ArKind;
-  /** A debtor bill raised as a debit note (2026-10-28) reads 'DN'; every other row 'INV'. */
   docKind: 'INV' | 'DN';
   id: string;
   invoiceNumber: string;
-  /** The party as the filter groups it: `C:<debtor code>` for a customer, `D:<debtor id>` for an other debtor. */
   partyKey: string;
   partyCode: string | null;
   partyName: string | null;
-  /** The other debtor's registry id (a bill); null on a sales invoice. */
   debtorId: string | null;
-  /** The sales order behind a sales invoice; a bill has none. */
   ref: string | null;
   description: string | null;
   invoiceDate: string | null;
   dueDate: string | null;
   currency: string;
   totalSen: number;
-  /** Everything settling the document: an invoice's own receipts PLUS the order's deposit applied; a bill's money received. */
   paidSen: number;
-  /** The slice of the order's deposit applied to a sales invoice (0 on a bill) — the "dep" marker the SI list draws. */
   depositAppliedSen: number;
-  /** What customers' credit notes knocked off a sales invoice (0 on a bill, whose
-      other-debtor credit notes already sit in its received) — si-credit-notes.ts. */
   creditNotesSen: number;
   outstandingSen: number;
   status: string;
@@ -87,11 +75,8 @@ export type ArListRow = {
 function shapeSi(r: Row): ArListRow {
   const total = Number(r.total_sen ?? r.local_total_sen ?? 0);
   const own = Number(r.paid_sen ?? 0);
-  /* null = the server could not resolve the order; it reads as 0, the LARGER
-     outstanding — the one direction this may be wrong in (si-order-deposit.ts). */
   const depositRaw = Number(r.so_deposit_applied_sen ?? 0);
   const deposit = Number.isFinite(depositRaw) && depositRaw > 0 ? depositRaw : 0;
-  /* Kept apart from paid (the overpayment rule reads paid_sen alone); unread, 0 — the larger outstanding. */
   const credit = creditNotesOf(r);
   const code = r.debtor_code ? String(r.debtor_code) : null;
   const name = r.debtor_name ? String(r.debtor_name) : null;
@@ -123,7 +108,6 @@ function shapeBill(r: Row, debtorName: string | null, debtorCode: string | null)
   const received = Number(r.received_sen ?? 0);
   return {
     kind: 'ODB',
-    /* 'DN' for a debit note to the debtor (2026-10-28) — a bill all the same. */
     docKind: r.doc_kind === 'DN' ? 'DN' : 'INV',
     id: String(r.id),
     invoiceNumber: String(r.bill_number ?? ''),
@@ -145,15 +129,12 @@ function shapeBill(r: Row, debtorName: string | null, debtorCode: string | null)
   };
 }
 
-/* ── GET / — both kinds, one list ─────────────────────────────────────────── */
 export const listArInvoicesHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const kind = String(c.req.query('kind') ?? 'ALL').toUpperCase();
   if (!KINDS.has(kind)) return c.json({ error: 'bad_kind', message: 'kind is ALL, SI or ODB.' }, 400);
   const sb = c.get('supabase');
-  /* docKind=DN: the other debtors' debit notes alone (the CN / DN page's tab) — a
-     sales invoice is never one; docKind=INV: the bills without them. */
   const docKind = String(c.req.query('docKind') ?? '').trim().toUpperCase();
 
   const rows: ArListRow[] = [];
@@ -163,9 +144,6 @@ export const listArInvoicesHandler = async (c: any): Promise<Response> => {
     const { data, error } = await q.order('bill_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     const bills = (data ?? []) as Row[];
-    /* The debtor's name and account code off the registry — read whole, never
-       assumed: a bill whose debtor cannot be read prints "(debtor)", not the
-       wrong name. */
     const who = new Map<string, { name: string; code: string | null }>();
     const ids = [...new Set(bills.map((b) => String(b.debtor_id ?? '')).filter(Boolean))];
     if (ids.length > 0) {
@@ -179,15 +157,10 @@ export const listArInvoicesHandler = async (c: any): Promise<Response> => {
     }
   }
   if ((kind === 'ALL' || kind === 'SI') && docKind !== 'DN') {
-    /* The operational invoices, read-only here: the Sales side raises and
-       edits them; this list only SHOWS them beside the bills so Finance sees
-       every ringgit owed to the company in one place. */
     const { data, error } = await scopeToCompany(
       sb.from('sales_invoices').select(SI_COLS).in('status', [...SI_MIRROR_STATUSES]), c,
     ).order('invoice_date', { ascending: false }).limit(500);
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-    /* The order's deposit, the SI list's own stamp — the outstanding here IS
-       that list's figure. */
     await stampOrderDeposit(sb, data, co.companyId);
     for (const r of (data ?? []) as Row[]) rows.push(shapeSi(r));
   }
@@ -195,7 +168,6 @@ export const listArInvoicesHandler = async (c: any): Promise<Response> => {
   return c.json({ rows });
 };
 
-/* ── GET /bills/:billId — a debtor bill with its lines and its debtor ─────── */
 export const arBillDetailHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
   const { data, error } = await scopeToCompany(sb.from('acc_debtor_bills').select(BILL_COLS).eq('id', c.req.param('billId')), c).maybeSingle();
@@ -205,9 +177,6 @@ export const arBillDetailHandler = async (c: any): Promise<Response> => {
   const [lines, debtor, receiptAllocs, noteAllocs] = await Promise.all([
     scopeToCompany(sb.from('acc_debtor_bill_lines').select('id, bill_id, line_no, description, credit_account_code, amount_sen, project_id').eq('bill_id', bill.id), c).order('line_no'),
     scopeToCompany(sb.from('acc_debtors').select(`id, name, phone, notes, is_active, ${DEBTOR_PARTY_COLS}`).eq('id', bill.debtor_id), c).maybeSingle(),
-    /* What came in on it and what credited it (the owner's Claude Design, batch 5
-       §8.3 c8): the debtor receipts that knock it off, and the other-debtor
-       credit notes allocated to it. */
     scopeToCompany(sb.from('acc_debtor_receipt_allocations').select('receipt_id, amount_sen').eq('bill_id', bill.id), c),
     scopeToCompany(sb.from('acc_credit_note_allocations').select('note_id, amount_sen, applied_sen').eq('debtor_bill_id', bill.id), c),
   ]);
@@ -271,7 +240,6 @@ export const arSalesInvoiceCreditNotesHandler = async (c: any): Promise<Response
   if (named.error) return c.json({ error: 'load_failed', reason: named.error.message }, 500);
   const taken = ((allocs.data ?? []) as Row[]).filter((a) => Number(a.applied_sen ?? 0) > 0);
   const namedIds = ((named.data ?? []) as Row[]).map((n) => String(n.id));
-  /* A note that names this invoice is its close-out only when a deposit invoice says so. */
   const closes = new Map<string, string>();
   if (namedIds.length > 0) {
     const { data: dis, error: diErr } = await scopeToCompany(sb.from('acc_deposit_invoices').select('di_number, credit_note_id').in('credit_note_id', namedIds), c);
@@ -295,7 +263,6 @@ export const arSalesInvoiceCreditNotesHandler = async (c: any): Promise<Response
   return c.json({ creditNotes });
 };
 
-/* ── Router ───────────────────────────────────────────────────────────────── */
 
 export const arInvoices = new Hono();
 /* The SCM bridge is PER ROUTER (scm/index.ts mounts no global one): it stashes

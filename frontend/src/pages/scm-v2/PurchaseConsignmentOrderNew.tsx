@@ -1,21 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseConsignmentOrderNew — full-page Create at /scm/purchase-consignment-orders/new.
-//
-// Faithful clone of PurchaseOrderNew.tsx. It reuses the SAME shared components
-// UNCHANGED — MoneyInput, ActionResultDialog, the supplier picker + supplier /
-// product / fabric / maintenance / warehouse data hooks — and the SAME per-line
-// card editor (item code · supplier SKU · description · per-category variant
-// editor · pricing). Only the create mutation is repointed at
-// `/purchase-consignment-orders` (useCreatePurchaseConsignmentOrder) and the
-// page title / back link / post-save navigate point at /purchase-consignment.
-//
-// Dropped from the PO clone (per scope): the "From Sales Order" picker / MRP
-// shortage flow / from-SO prefill + the one-supplier-per-PO From-SO guard. The
-// full line / variant / colour / pricing + supplier entry are kept intact.
-//
-// The backend route `/purchase-consignment-orders` mirrors `/mfg-purchase-orders`
-// 1:1; numbering is PCO-…
-// ----------------------------------------------------------------------------
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
@@ -82,8 +64,6 @@ type DraftLine = {
   category?: string;
   variants: Record<string, unknown>;
   priceTouched?: boolean;
-  /** Per-line remark — purchase_consignment_order_items.notes; the PO twin is
-      DraftLine.notes on PO New. Prints as "Remark:" on the PDF. */
   notes?: string;
 };
 
@@ -100,20 +80,14 @@ const newLine = (): DraftLine => ({
 export const PurchaseConsignmentOrderNew = () => {
   const navigate = useNavigate();
   const create   = useCreatePurchaseConsignmentOrder();
-  /* One key for the one order this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the order detail on success, so the MOUNT is
-     exactly one order: stable across re-renders and across a re-press after a
-     stalled submit, fresh on remount. */
   const idemKey  = useIdempotencyKey();
 
-  // ── Header state ────────────────────────────────────────────────────
   const [supplierId, setSupplierId]   = useState<string>('');
   const [poDate, setPoDate]           = useState<string>(() => todayMyt());
   const [expectedAt, setExpectedAt]   = useState<string>('');
   const [purchaseLocationId, setPurchaseLocationId] = useState<string>('');
   const [notes, setNotes]             = useState<string>('');
 
-  // ── Items state ─────────────────────────────────────────────────────
   const [lines, setLines] = useState<DraftLine[]>([newLine()]);
 
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
@@ -153,8 +127,6 @@ export const PurchaseConsignmentOrderNew = () => {
         variants,
         deliveryDate: sourceRequest.expected_delivery_date ?? undefined,
         warehouseId: sourceRequest.delivery_location_id ?? undefined,
-        /* An agreed price is the requester's figure, kept over the binding's
-           default (priceTouched), exactly as a hand-typed price would be. */
         ...(l.unit_price_sen != null && l.unit_price_sen > 0 ? { unitPriceSen: l.unit_price_sen, priceTouched: true } : {}),
       };
     });
@@ -196,7 +168,6 @@ export const PurchaseConsignmentOrderNew = () => {
     setCopySeeded(true);
   }, [copyFrom, copySeeded, copySource.data]);
 
-  // ── Data ────────────────────────────────────────────────────────────
   const suppliers       = useSuppliers({ status: 'ACTIVE' });
   const supplierDetail  = useSupplierDetail(supplierId || null);
   const warehouses      = useWarehouses();
@@ -204,8 +175,6 @@ export const PurchaseConsignmentOrderNew = () => {
   const bindings        = useMemo(() => supplierDetail.data?.bindings ?? [], [supplierDetail.data?.bindings]);
   const currency        = supplier?.currency ?? 'MYR';
 
-  // Item-first picking — item input is enabled even when supplier is unset; the
-  // datalist falls back to the full mfg_products list when no supplier is picked.
   const allSkus = useMfgProducts();
   const pickable = useMemo(() => pickableBindings(bindings, allSkus.data ?? []), [bindings, allSkus.data]);
   const supplierMaintQ = useMaintenanceConfig(
@@ -215,7 +184,6 @@ export const PurchaseConsignmentOrderNew = () => {
   const masterMaintQ = useMaintenanceConfig('master');
   const maint =
     supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
-  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
   const pickerMaint = useMemo(
     () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
     [maint, masterMaintQ.data?.data],
@@ -254,8 +222,6 @@ export const PurchaseConsignmentOrderNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
   }, [pendingItemPick, supplierId, itemSuppliersQuery.isLoading, itemSuppliersQuery.data]);
 
-  // Once a supplier resolves, backfill any line whose itemCode matches a
-  // binding but lacks a bindingId.
   useEffect(() => {
     if (!supplierId || bindings.length === 0) return;
     setLines((prev) => prev.map((l) => {
@@ -276,7 +242,6 @@ export const PurchaseConsignmentOrderNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
   }, [supplierId, bindings]);
 
-  // Header Purchase Location / Expected Delivery fan out to all lines.
   useEffect(() => {
     if (!purchaseLocationId) return;
     setLines((prev) => prev.map((l) => ({ ...l, warehouseId: purchaseLocationId })));
@@ -325,7 +290,6 @@ export const PurchaseConsignmentOrderNew = () => {
     return breakdown.unitPriceSen;
   };
 
-  // ── Helpers ─────────────────────────────────────────────────────────
   const setLine  = (rid: string, patch: Partial<DraftLine>) =>
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const addLine  = () => setLines((prev) => [...prev, { ...newLine(), warehouseId: purchaseLocationId || undefined, deliveryDate: expectedAt || undefined }]);
@@ -456,7 +420,6 @@ export const PurchaseConsignmentOrderNew = () => {
         }
       />
 
-      {/* Header card — 2-column grid */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Header</h2>
@@ -574,7 +537,6 @@ export const PurchaseConsignmentOrderNew = () => {
         </div>
       </section>
 
-      {/* Item-first lookup hint */}
       {pendingItemPick && !supplierId && !itemSuppliersQuery.isLoading && (() => {
         const matches = itemSuppliersQuery.data?.bindings ?? [];
         if (matches.length === 0) {
@@ -633,7 +595,6 @@ export const PurchaseConsignmentOrderNew = () => {
         );
       })()}
 
-      {/* Items card */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>
@@ -710,7 +671,6 @@ export const PurchaseConsignmentOrderNew = () => {
                   </div>
                 </div>
 
-                {/* Identity row — Internal code + Supplier SKU side by side */}
                 <div className={styles.formGrid2}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Item Code (Internal)</span>
@@ -787,7 +747,6 @@ export const PurchaseConsignmentOrderNew = () => {
                   </label>
                 </div>
 
-                {/* Description — full width */}
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Description</span>
                   <input
@@ -799,7 +758,6 @@ export const PurchaseConsignmentOrderNew = () => {
                   />
                 </label>
 
-                {/* Remarks — full width, same box PcLineCard renders on Edit. */}
                 <label className={styles.field}>
                   <span className={styles.fieldLabel}>Remarks</span>
                   <input
@@ -811,7 +769,6 @@ export const PurchaseConsignmentOrderNew = () => {
                   />
                 </label>
 
-                {/* Per-category variant editor */}
                 {showVariants && (
                   <div style={{
                     background: 'var(--c-cream)',
@@ -842,7 +799,6 @@ export const PurchaseConsignmentOrderNew = () => {
                   </div>
                 )}
 
-                {/* Pricing row — Qty · Unit Price · Discount · Delivery · Ship-to */}
                 <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))' }}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Qty</span>
@@ -908,7 +864,6 @@ export const PurchaseConsignmentOrderNew = () => {
         </div>
       </section>
 
-      {/* Totals card aligned right — lg:pr-32 clears the fixed FAB cluster. */}
       <div className="lg:pr-32" style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <section className={styles.card} style={{ maxWidth: 360, width: '100%' }}>
           <div className={styles.cardBody}>

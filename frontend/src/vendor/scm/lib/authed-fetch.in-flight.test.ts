@@ -2,9 +2,6 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { AUTH_TOKEN_KEY } from "../../../lib/authToken";
 import { authedFetch, fetchRidingInFlight } from "./authed-fetch";
 
-/* Ported from Conts (click sweep F11/F12): a double-click on Create Sales Order or a payment's Save saved once, but the
-   second press got 409 idempotency_in_flight and the screen said "Save failed". The same key replays the first
-   request's answer once it has one, so the second press must wait for it. */
 const inFlight = () => new Response(JSON.stringify({ error: "idempotency_in_flight", message: "This request is already being processed." }), { status: 409 });
 const created = () => new Response(JSON.stringify({ docNo: "HC-SO-2611-916" }), { status: 201, headers: { "Idempotent-Replay": "true" } });
 
