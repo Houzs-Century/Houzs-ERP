@@ -127,7 +127,7 @@
     },
     {
       "check": "D1",
-      "key": "CASH,INSTALLMENT,MERCHANT,ONLINE|backend/src/scm/lib/fair-report.ts backend/src/scm/shared/payment-methods.ts frontend/src/lib/paymentRetryHandoff.ts frontend/src/mobile/RecordedPayments.tsx frontend/src/vendor/scm/lib/payment-methods.ts",
+      "key": "CASH,INSTALLMENT,MERCHANT,ONLINE|backend/src/scm/lib/fair-report.ts backend/src/scm/shared/payment-methods.ts shared/src/vendor/scm/lib/payment-methods.ts",
       "why": "THE PAYMENT METHODS. backend/src/scm/shared/payment-methods.ts is the canonical home and IS mirrored to the frontend, but fair-report.ts and paymentRetryHandoff.ts re-type the same four values (TENDER_LABELS, PAYMENT_METHOD_CORE_VALUES, PAY_METHODS). Those two are the copies worth removing; doing it touches the fair P&L, which is why it is recorded here first."
     },
     {
@@ -252,7 +252,7 @@
     },
     {
       "check": "D1",
-      "key": "CASH,INSTALLMENT,MERCHANT,TRANSFER|backend/src/scm/routes/mfg-sales-orders.ts backend/src/scm/shared/payment-methods.ts frontend/src/vendor/scm/lib/payment-methods.ts",
+      "key": "CASH,INSTALLMENT,MERCHANT,TRANSFER|backend/src/scm/routes/mfg-sales-orders.ts backend/src/scm/shared/payment-methods.ts shared/src/vendor/scm/lib/payment-methods.ts",
       "why": "THE PAYMENT-METHOD CODES with TRANSFER instead of ONLINE — the write-side vocabulary the SO route validates against, versus the read-side labels. Three homes (VALID_METHODS, PAYMENT_METHOD_CODES); the ONLINE/TRANSFER split is real and is why the two sets do not fold together."
     },
     {
