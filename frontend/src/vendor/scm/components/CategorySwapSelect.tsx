@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../lib/authed-fetch';
 import { categorySwapAllowed } from '../../shared/category-swap';
-import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel } from '../../shared/product-categories';
+import { mfgCategoryLabel, useProductCategories } from '../lib/product-categories-store';
 import { useConfirm } from './ConfirmDialog';
 
 export function CategorySwapSelect({ kind, id, category }: {
@@ -16,6 +16,7 @@ export function CategorySwapSelect({ kind, id, category }: {
   category: string;
 }) {
   const qc = useQueryClient();
+  const { all, active } = useProductCategories();
   const askConfirm = useConfirm();
   const [error, setError] = useState<string | null>(null);
   // The edit dialogs hold a snapshot of the row, so the saved value is kept here.
@@ -34,7 +35,7 @@ export function CategorySwapSelect({ kind, id, category }: {
     onError: (e) => setError(e instanceof Error ? e.message : 'The category was not changed.'),
   });
   const choose = async (next: string) => {
-    if (!categorySwapAllowed(current, next)) return;
+    if (!categorySwapAllowed(all, current, next)) return;
     const ok = await askConfirm({
       title: `Move to ${mfgCategoryLabel(next)}?`,
       body: `${kind === 'model' ? 'This model and all its SKUs move' : 'This SKU moves'} from ${mfgCategoryLabel(current)} to ${mfgCategoryLabel(next)} now. `
@@ -52,8 +53,8 @@ export function CategorySwapSelect({ kind, id, category }: {
         disabled={save.isPending}
         onChange={(e) => void choose(e.target.value)}
       >
-        {!MFG_PRODUCT_CATEGORIES.some((c) => c === current) && <option value={current}>{mfgCategoryLabel(current) || '(none)'}</option>}
-        {MFG_PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{mfgCategoryLabel(c)}</option>)}
+        {!active.some((c) => c.code === current) && <option value={current}>{mfgCategoryLabel(current) || '(none)'}</option>}
+        {active.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
       </select>
       {error && <span role="alert" style={{ color: 'var(--color-err, #b3261e)', fontSize: 'var(--fs-12)' }}>{error}</span>}
     </label>

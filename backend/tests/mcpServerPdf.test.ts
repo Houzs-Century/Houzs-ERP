@@ -1,4 +1,3 @@
-// @vitest-project light
 // The AI Connector's server-drawn PDFs (src/services/mcp-pdf.ts): a real Sales Order
 // and Purchase Order rendered on the Worker path by the browser's own generator,
 // with the real Noto Sans SC subsets from frontend/public/fonts. Light project:
@@ -31,6 +30,7 @@ function fixtureReader(over: { json?: Record<string, unknown | Fail>; branding?:
     "/api/scm/mfg-sales-orders/HC-SO-099001": SO,
     "/api/scm/mfg-sales-orders/HC-SO-099001/payments": PAYMENTS,
     "/api/scm/fabric-tracking": FABRICS,
+    "/api/scm/mfg-products/categories": { categories: [{ code: "SOFA", name: "Sofa", isActive: true }, { code: "MATTRESS", name: "Mattress", isActive: true }] },
     [`/api/scm/mfg-purchase-orders/${PO_ID}`]: PO,
     "/api/scm/inventory/warehouses?includeInactive=true": { warehouses: [{ id: "wh-1", code: "WH-KL", location: "Lot 5, Jalan Gudang, 47100 Puchong" }] },
     "/api/scm/suppliers/sup-1": { supplier: { id: "sup-1", code: "S-CN01", name: "佛山市家具有限公司", fax: "+86 757 1234 0000", payment_terms: "NET 30" }, bindings: [] },

@@ -43,7 +43,7 @@ describe("pos-admin-rules", () => {
 });
 
 describe("add by category", () => {
-  test("counts each product once, in enum order, no-category last", () => {
+  test("counts each product once, A-Z, no-category last", () => {
     const counts = countByCategory([
       { category: "SOFA", sell_price_sen: 100, pos_active: true },
       { category: "ACCESSORY", sell_price_sen: 100, pos_active: null },
@@ -51,16 +51,16 @@ describe("add by category", () => {
       { category: "ACCESSORY", sell_price_sen: 100, pos_active: false },
       { category: null, sell_price_sen: 100, pos_active: null },
     ]);
-    expect(counts.map((c) => c.category)).toEqual(["SOFA", "ACCESSORY", ""]);
-    expect(counts[1]).toEqual({ category: "ACCESSORY", to_add: 1, active: 0, off: 1, no_price: 1 });
-    expect(counts[0]).toEqual({ category: "SOFA", to_add: 0, active: 1, off: 0, no_price: 0 });
+    expect(counts.map((c) => c.category)).toEqual(["ACCESSORY", "SOFA", ""]);
+    expect(counts[0]).toEqual({ category: "ACCESSORY", to_add: 1, active: 0, off: 1, no_price: 1 });
+    expect(counts[1]).toEqual({ category: "SOFA", to_add: 0, active: 1, off: 0, no_price: 0 });
   });
   test("a selling price is a positive number, as a number or as text", () => {
     expect(hasSellingPrice({ sell_price_sen: "1500" })).toBe(true);
     expect(hasSellingPrice({ sell_price_sen: 0 })).toBe(false);
     expect(hasSellingPrice({ sell_price_sen: null })).toBe(false);
   });
-  test("only real categories are picked, once each", () => {
+  test("only code-shaped categories are picked, once each", () => {
     expect(pickedCategories(["ACCESSORY", "accessory", "ACCESSORY", "DIFFUSER", 3])).toEqual(["ACCESSORY", "DIFFUSER"]);
     expect(pickedCategories("ACCESSORY")).toEqual([]);
     expect(pickedCategories(undefined)).toEqual([]);

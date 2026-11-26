@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMfgProducts, matchesProductQuery, type MfgCategory, type MfgProductRow } from "../vendor/scm/lib/mfg-products-queries";
+import { useProductCategories } from "../vendor/scm/lib/product-categories-store";
 import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from "../vendor/scm/lib/sofa-piece-lines";
 import { pickDefaultVariants } from "../vendor/shared/model-default-variants";
 import { isServiceCategory } from "../vendor/shared/service-sku";
@@ -32,13 +33,6 @@ const RENDER_CAP = 60;
    shows every SKU with no category filter. */
 export type SkuPickerCat = "" | "sofa" | "bedframe";
 
-const CAT_CHIPS: Array<{ value: MfgCategory | ""; label: string }> = [
-  { value: "", label: "All" },
-  { value: "BEDFRAME", label: "Bedframe" },
-  { value: "SOFA", label: "Sofa" },
-  { value: "MATTRESS", label: "Mattress" },
-  { value: "ACCESSORY", label: "Accessory" },
-];
 
 /** What a picked SKU hands back to the line: the canonical catalog code, the
  *  lowercase item_group the backend variant rule reads, the display name, and
@@ -76,6 +70,10 @@ export function MobileSkuPicker({
   onPickMany?: (skus: PickedSku[]) => void;
   onClose: () => void;
 }) {
+  const CAT_CHIPS: Array<{ value: MfgCategory | ""; label: string }> = [
+    { value: "", label: "All" },
+    ...useProductCategories().active.filter((c) => c.code !== "SERVICE").map((c) => ({ value: c.code, label: c.name })),
+  ];
   const multi = typeof onPickMany === "function";
   const seedCat: MfgCategory | "" =
     initialCat === "sofa" ? "SOFA" : initialCat === "bedframe" ? "BEDFRAME" : "";

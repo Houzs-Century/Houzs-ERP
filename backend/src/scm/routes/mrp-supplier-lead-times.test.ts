@@ -21,6 +21,7 @@ import { Hono } from 'hono';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 
 import { fakeSb } from '../lib/fake-postgrest';
+import { SEEDED_ITEM_GROUPS } from '../lib/fake-item-groups';
 import type { Env, Variables } from '../env';
 
 // supabaseAuth in production only attaches the scm service-role client; stub it so
@@ -68,7 +69,7 @@ const DEL_BODY = { supplierId: SUPPLIER, category: 'sofa' };
 const seededRow = () => ({ company_id: CO, supplier_id: SUPPLIER, category: 'sofa', lead_days: 3 });
 
 beforeEach(() => {
-  tables = { mrp_supplier_category_lead_times: [] };
+  tables = { mrp_supplier_category_lead_times: [], acc_item_groups: SEEDED_ITEM_GROUPS() };
   sb = fakeSb(tables);
 });
 

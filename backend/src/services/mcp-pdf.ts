@@ -45,6 +45,7 @@ import {
   type PdfHost,
   type PdfLogo,
   type PoPdfSources,
+  type ProductCategory,
   type ScmJsonGetter,
   type SoPdfSources,
 } from "../lib/shared-pdf";
@@ -164,6 +165,15 @@ export async function salesOrderPdf(r: PdfReader, docNo: string): Promise<Server
     photoImage,
     letterheadReady: async () => undefined,
     brandLogo: (key) => readLogo(r, `/api/projects/brands/logo?key=${enc(key)}`, key, null),
+    // Fail-soft as in the browser: headings fall back to the Title Case code.
+    productCategories: () =>
+      getJson<{ categories?: ProductCategory[] }>("/mfg-products/categories").then(
+        (res) => res.categories ?? [],
+        (e: unknown) => {
+          console.warn("[mcp-pdf] product categories not readable; headings read the code:", e instanceof Error ? e.message : String(e));
+          return [];
+        },
+      ),
   };
   const header = bundle.header as unknown as SoArgs[3];
   return exclusive(host, async () => {

@@ -27,7 +27,8 @@ import { describe, expect, test } from 'vitest';
 import poRoutesSrc from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import poRevisionSrc from '../src/scm/lib/po-revision.ts?raw';
 import soRevisionSrc from '../src/scm/lib/so-revision.ts?raw';
-import poPdfSrc from '../../frontend/src/vendor/scm/lib/purchase-order-pdf.ts?raw';
+// The PO layout lives in purchase-order-pdf-render.ts (shared with the AI Connector's get_pdf).
+import poPdfSrc from '../../frontend/src/vendor/scm/lib/purchase-order-pdf-render.ts?raw';
 import poConvertLineSrc from '../src/scm/lib/po-convert-line.ts?raw';
 
 /** Comments quote the shapes this file forbids, so they are stripped. */

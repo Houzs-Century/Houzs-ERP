@@ -31,7 +31,7 @@ import { docPageLabel,
 import type { PdfLogo } from './pdf-host';
 import { billToBlock } from './pdf-party-blocks';
 import { orderAddressLines } from './order-address';
-import { mfgCategoryLabel } from '../../shared/product-categories';
+import { mfgCategoryLabel, type ProductCategory } from '../../shared/product-categories';
 import { composeSoLineDescription } from './so-line-description';
 import { stripBookText } from './book-text';
 import {
@@ -64,6 +64,8 @@ export type SoPdfSources = {
   letterheadReady(): Promise<void>;
   /** The resolved brand's logo; null = fall back to the company logo. */
   brandLogo(key: string): Promise<PdfLogo | null>;
+  /** The product category registry (section headings print its names); [] = headings read the Title Case code. */
+  productCategories(): Promise<readonly ProductCategory[]>;
 };
 
 // ----------------------------------------------------------------------------
@@ -419,6 +421,8 @@ export async function drawSalesOrderInto(
   /* Fabric Tracking lookup (fail-soft, before any drawing): internal fabric
      code → fabric_description so the customer reads "EZ-001 — <description>"
      instead of a bare internal code. */
+  // Section headings print the category name; fail-soft in the sources, an empty list prints the Title Case code.
+  const categories = await sources.productCategories();
   const fabricDescMap = await sources.fabricDescriptionMap(collectFabricCodes(items));
   /* Internal fabric code → supplier EXTERNAL colour code (Fabric Tracking), so
      the SO shows both like the supplier docs: "EZ-001 (KN390-1) — <desc>"
@@ -660,7 +664,7 @@ export async function drawSalesOrderInto(
         /* The category's NAME, not its code: `fabric_accessory` printed as
            FABRIC_ACCESSORY on HC-SO-2609-071 while every screen says Sofa
            Accessory (owner 2026-09-15). An unknown group still prints as stored. */
-        content: mfgCategoryLabel(grp).toUpperCase(), colSpan: 7,
+        content: mfgCategoryLabel(categories, grp).toUpperCase(), colSpan: 7,
         styles: { fontStyle: 'bold', textColor: 40, halign: 'left', lineWidth: { top: 0.4 } as never },
       }]);
       lastGroup = grp;

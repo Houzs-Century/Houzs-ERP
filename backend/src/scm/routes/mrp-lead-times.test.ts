@@ -19,6 +19,7 @@ import { Hono } from 'hono';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 
 import { fakeSb } from '../lib/fake-postgrest';
+import { SEEDED_ITEM_GROUPS } from '../lib/fake-item-groups';
 import type { Env, Variables } from '../env';
 
 // supabaseAuth in production only attaches the scm service-role client; stub it so
@@ -62,7 +63,7 @@ const get = (who: Who) => app(who).request('/mrp-lead-times', undefined, ENV);
 const VALID = { warehouseId: null, category: 'sofa', leadDays: 7 };
 
 beforeEach(() => {
-  tables = { mrp_category_lead_times: [], acc_item_groups: [] };
+  tables = { mrp_category_lead_times: [], acc_item_groups: SEEDED_ITEM_GROUPS() };
   sb = fakeSb(tables);
 });
 
@@ -106,7 +107,7 @@ describe('GET /mrp-lead-times — stays open (the MRP order-by-date read)', () =
   /* 2990-0063: every product category gets a row, a new one included, with no
      code change; Service stays out (no PO) and Others comes last. */
   it('lists every product category, a newly registered one included', async () => {
-    tables.acc_item_groups = [{ code: 'OUTDOOR', name: 'Outdoor', is_active: true }, { code: 'CARPET', name: 'Rugs', is_active: true }];
+    tables.acc_item_groups = [...SEEDED_ITEM_GROUPS().filter((r) => r.code !== 'CARPET'), { code: 'OUTDOOR', name: 'Outdoor', is_active: true }, { code: 'CARPET', name: 'Rugs', is_active: true }];
     const body = (await (await get(SALES)).json()) as { categories: Array<{ key: string; label: string }> };
     const keys = body.categories.map((c) => c.key);
     expect(keys).toEqual(expect.arrayContaining(['sofa', 'dining', 'fabric_accessory', 'carpet', 'outdoor']));
@@ -118,7 +119,7 @@ describe('GET /mrp-lead-times — stays open (the MRP order-by-date read)', () =
 
 describe('PUT /mrp-lead-times — only a listed category is stored', () => {
   it('stores a newly registered category', async () => {
-    tables.acc_item_groups = [{ code: 'OUTDOOR', name: 'Outdoor', is_active: true }];
+    tables.acc_item_groups.push({ code: 'OUTDOOR', name: 'Outdoor', is_active: true });
     expect((await put(CONFIG_WRITER, { ...VALID, category: 'outdoor' })).status).toBe(200);
     expect(tables.mrp_category_lead_times).toHaveLength(1);
   });

@@ -1,4 +1,3 @@
-// @vitest-project light
 // The Worker bundles part of the frontend: the document layout code behind the
 // AI Connector's get_pdf (src/lib/shared-pdf.ts). Two things must hold, and
 // nothing else would notice them breaking:

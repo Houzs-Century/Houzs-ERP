@@ -9,6 +9,7 @@ import {
   getBrandLogoCache,
 } from '../../../lib/branding';
 import { PDF_COMPRESS } from './pdf-options';
+import { ensureProductCategories } from './product-categories-store';
 import { drawSalesOrderInto, type SoPdfSources } from './sales-order-pdf-render';
 
 // ----------------------------------------------------------------------------
@@ -50,6 +51,11 @@ const browserSources: SoPdfSources = {
     await ensureBrandLogoLoaded(key);
     return getBrandLogoCache(key);
   },
+  productCategories: () =>
+    ensureProductCategories().catch((e: unknown) => {
+      console.warn('product categories not loaded; headings read the code', e);
+      return [];
+    }),
 };
 
 /* Draw ONE sales order into `doc` with the browser's lookups. Same signature as

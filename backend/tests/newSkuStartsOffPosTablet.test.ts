@@ -11,6 +11,7 @@
 // skuCategoryChangeAndImport.test.ts.
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
+import { SEEDED_ITEM_GROUPS } from '../src/scm/lib/fake-item-groups';
 import { newSkuPosActive } from '../src/scm/lib/new-sku-pos-active';
 import { batchImportMfgProductsHandler, createMfgProductHandler } from '../src/scm/routes/mfg-products';
 import { generateModelSkusHandler } from '../src/scm/routes/product-models';
@@ -46,6 +47,7 @@ class FakeQuery {
 
 function harness(companyId: number, seed: { mfg_products?: Row[]; product_models?: Row[] } = {}) {
   const tables: Record<string, Row[]> = {
+    acc_item_groups: SEEDED_ITEM_GROUPS(),
     mfg_products: seed.mfg_products ?? [],
     product_models: seed.product_models ?? [],
   };
@@ -76,10 +78,10 @@ describe('newSkuPosActive', () => {
     for (const cat of ['SOFA', 'BEDFRAME', 'MATTRESS']) expect(newSkuPosActive(2, cat)).toBe(true);
   });
 
-  test('every other company keeps the default, and an unknown category is left alone', () => {
+  test('every other company keeps the default, and a blank category is left alone', () => {
     expect(newSkuPosActive(1, 'ACCESSORY')).toBe(true);
     expect(newSkuPosActive(2, null)).toBe(true);
-    expect(newSkuPosActive(2, 'CHAIR')).toBe(true);
+    expect(newSkuPosActive(2, '')).toBe(true);
   });
 });
 

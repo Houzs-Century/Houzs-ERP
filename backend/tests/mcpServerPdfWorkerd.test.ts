@@ -1,4 +1,3 @@
-// @vitest-project workers
 // The server-drawn SO / PO PDFs inside workerd itself, not Node: jsPDF, the
 // autotable plugin, Intl number formatting and the shared layout all have to
 // work in the runtime production uses. The fixtures carry no Chinese, so no font

@@ -23,3 +23,4 @@ export { salesOrderPrintBundle, purchaseOrderPrintBundle, type PrintBundle } fro
 export { drawSalesOrderInto, type SoPdfSources } from "../../../frontend/src/vendor/scm/lib/sales-order-pdf-render";
 export { drawPurchaseOrderInto, finalizePoPdf, type PoPdfSources } from "../../../frontend/src/vendor/scm/lib/purchase-order-pdf-render";
 export { poDisplayNumber } from "../../../frontend/src/vendor/scm/lib/po-status";
+export type { ProductCategory } from "../../../frontend/src/vendor/shared/product-categories";
