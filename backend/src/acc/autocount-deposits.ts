@@ -57,6 +57,7 @@ import { CREDIT_NOTE_HEADER, cancelCreditNote, insertCreditNote, postCreditNote 
 import { companyCodeById } from '../scm/lib/doc-no';
 import { docPrefixForCode } from '../scm/lib/companyScope';
 import { AUTOCOUNT_DEPOSIT_REF } from './autocount-deposit-note';
+import { fmtSen } from '../scm/shared/format';
 
 export { AUTOCOUNT_DEPOSIT_REF, isAutoCountDepositNote } from './autocount-deposit-note';
 
@@ -174,7 +175,7 @@ export async function applyAutoCountDepositToInvoice(
   if (p.amountSen !== null) {
     const ceiling = importedSen(payments, null);
     if (!Number.isInteger(p.amountSen) || p.amountSen <= 0 || p.amountSen > ceiling) {
-      return { ok: false, reason: `${p.soDocNo}: ${p.amountSen} sen is not within its AutoCount money (${ceiling} sen)` };
+      return { ok: false, reason: `${p.soDocNo}: ${fmtSen(p.amountSen)} is not within its AutoCount money (${fmtSen(ceiling)})` };
     }
     amountSen = p.amountSen;
   }
