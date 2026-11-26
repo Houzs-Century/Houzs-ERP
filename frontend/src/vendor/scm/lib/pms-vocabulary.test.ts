@@ -56,7 +56,17 @@ describe("the reviewable-title rule", () => {
   test("it stays case- and spacing-tolerant, the way titles are typed", () => {
     expect(isReviewableTitle("3d  design")).toBe(true);
     expect(isReviewableTitle("  Exchange List  ")).toBe(true);
-    expect(isReviewableTitle("STOCK IN TRANSFER RECORD")).toBe(true);
+    expect(isReviewableTitle("STOCK OUT TRANSFER RECORD")).toBe(true);
+  });
+
+  test("Stock IN Transfer Record is NOT reviewable — approval removed (owner 2026-11-24)", () => {
+    // The stock-in goods-return doc is now a plain upload (auto-ticked on upload),
+    // not an approve/reject document. Stock OUT keeps its review loop. If these
+    // two ever drift, the backend copy in checklistAutoTick.ts must follow.
+    expect(isReviewableTitle("Stock In Transfer Record")).toBe(false);
+    expect(isReviewableTitle("STOCK IN TRANSFER RECORD")).toBe(false);
+    expect(isReviewableTitle("stock in transfer record FINAL")).toBe(false);
+    expect(isReviewableTitle("Stock Out Transfer Record")).toBe(true);
   });
 
   test("an ordinary checklist row is still NOT reviewable", () => {

@@ -1503,8 +1503,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     //     first existing. So at the end of each event the purchaser (Sim/Farra)
     //     sees both; they click N/A when none is needed, or upload/complete the
     //     task. Until one of those, the item stays 'pending' and keeps showing
-    //     here. (Uploading a reviewable doc auto-submits it, so NOT_IN_REVIEW
-    //     then drops it to the approver — it leaves the purchaser lane either way.)
+    //     here. Stock In Transfer Record stopped being a reviewable document
+    //     (owner 2026-11-24), so uploading it no longer auto-submits — it stays
+    //     in this purchaser lane until they complete it or mark N/A, exactly like
+    //     Exchange List. (Exchange List and Stock OUT, when reviewable, still
+    //     auto-submit on upload; NOT_IN_REVIEW then drops them to the approver.)
     //   - Every other PURCHASER task surfaces on its own due date.
     pendingOr.push(
       `EXISTS (SELECT 1 FROM project_checklist pc
@@ -1854,12 +1857,15 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                 AND substr(COALESCE(pc4.due_date, p.start_date), 1, 10) <= '${dueToday}')`;
   const directorDutySegs: string[] = [];
   if (f.pending_director?.stock) {
+    // Stock IN approval was removed (owner 2026-11-24): routes/projects.ts no
+    // longer passes "Stock In Transfer Record" in stock_titles, so the only
+    // stock duty that can reach here is Stock Out. Kept as a loop in case other
+    // reviewable stock docs are added later.
     const dutyTitles = f.pending_director.stock_titles?.length
       ? f.pending_director.stock_titles
       : ["Stock Out Transfer Record"];
     for (const t of dutyTitles) {
-      const label = t === "Stock In Transfer Record" ? "Approve Stock In Transfer" : "Approve Stock Out Transfer";
-      directorDutySegs.push(`CASE WHEN ${stockDutyLit(t)} THEN '|${label}' ELSE '' END`);
+      directorDutySegs.push(`CASE WHEN ${stockDutyLit(t)} THEN '|Approve Stock Out Transfer' ELSE '' END`);
     }
   }
   if (f.pending_director?.sales_pic)
