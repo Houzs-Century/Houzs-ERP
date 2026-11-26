@@ -9,6 +9,7 @@ import { APPROVED_LEAVE_STATUSES } from "../../scm/shared/hr-attendance";
 import { asDate } from "./hr-attendance-view";
 import { ASSR_LEG_BY_STOP, assrBoardLocation } from "../../scm/lib/assr-board-scope";
 import { doRunDate, isOwnLorryDoRun } from "../../scm/lib/own-lorry-do-run";
+import { regionOfDo } from "../../scm/lib/logistics-cost";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_employees, hr_payslips, hr_public_holidays, hr_trip_missed_days, hr_trip_rate_versions, hr_trip_rows, hr_working_hours } from "../../db/schema";
 import {
@@ -238,6 +239,13 @@ const STOP_KIND: Partial<Record<string, TripJobType>> = {
 };
 const CASE_LEG_KIND: Partial<Record<string, TripJobType>> = { customer_pickup: "ASSR_PICKUP", delivery: "ASSR_SERVICE", inspection: "ASSR_INSPECTION" };
 
+/* A delivery to Singapore (its state, or a 6-digit postcode) is a Transfer item,
+   not a commissioned delivery: the lorry carries it to the border/transporter, so
+   it pays the flat Transfer rate and never enters the commission base (owner
+   2026-11-26). Reuses the Logistics report's region rule so SG has one home. */
+const isSingaporeDestination = (state: string | null, postcode: string | null): boolean =>
+  regionOfDo({ state, postcode, city: null, address: null }).code === "SG";
+
 export type PlanningStop = {
   stop_id: string;
   do_id: string | null;
@@ -316,7 +324,9 @@ export function planningRowOf(s: PlanningStop, who: (id: string | null) => Seat)
   const caseLoc = isCase ? assrBoardLocation(s.case_addr3, s.case_addr4, s.case_so_state, s.case_so_postcode, { postcode: s.case_own_postcode, state: s.case_own_state }) : null;
   /* A delivery with no SO carries its own amount on the DP job (owner 2026-11-20). */
   const amount = s.local_total_sen ?? (isCase ? 0 : s.dp_sales_sen ?? s.revenue_sen);
-  const jobType = (isCase ? CASE_LEG_KIND[ASSR_LEG_BY_STOP[s.stop_type] ?? ""] : undefined) ?? STOP_KIND[s.stop_type] ?? "NONE";
+  const jobType0 = (isCase ? CASE_LEG_KIND[ASSR_LEG_BY_STOP[s.stop_type] ?? ""] : undefined) ?? STOP_KIND[s.stop_type] ?? "NONE";
+  /* A delivery to Singapore is a Transfer item (RM15, no commission), never a commissioned delivery. */
+  const jobType = jobType0 === "DELIVERY_ORDER" && isSingaporeDestination(s.do_state || s.dp_state, s.do_postcode || s.dp_postcode) ? "TRANSFER" : jobType0;
   return {
     source: "PLANNING",
     source_ref: s.stop_id,
@@ -397,6 +407,8 @@ export function deliveryOrderRows(
       if (date < first || date > last) return [];
       const [d1, d2, h1, h2] = [who(d.d1, d.d1_name), who(d.d2, d.d2_name), who(d.h1, d.h1_name), who(d.h2, d.h2_name)];
       const plate = (d.lorry_plate || d.crew_plate || "").trim();
+      /* A Singapore delivery is a Transfer item (RM15, no commission), not a commissioned delivery. */
+      const jobType: TripJobType = isSingaporeDestination(d.do_state, d.do_postcode) ? "TRANSFER" : "DELIVERY_ORDER";
       return [{
         source: "PLANNING",
         source_ref: `do:${d.do_id}`,
@@ -404,8 +416,8 @@ export function deliveryOrderRows(
         doc_no: d.so_doc_no ?? d.do_number ?? d.debtor_name ?? "",
         transfer_to: d.do_number ?? "",
         ref_no: d.do_number ?? "",
-        kind: kindOfJobType("DELIVERY_ORDER"),
-        job_type: "DELIVERY_ORDER",
+        kind: kindOfJobType(jobType),
+        job_type: jobType,
         event_type: null,
         local_total_sen: Math.max(0, Math.round(Number(d.local_total_sen ?? 0)) || 0),
         state: d.do_state ?? "",
