@@ -27,7 +27,7 @@ export const itrackSignature = (password: string, time: number) => md5(md5(passw
 
 type RawTrack = {
   imei?: unknown; latitude?: unknown; longitude?: unknown; speed?: unknown;
-  course?: unknown; accstatus?: unknown; gpstime?: unknown; datastatus?: unknown;
+  course?: unknown; accstatus?: unknown; gpstime?: unknown; datastatus?: unknown; mileage?: unknown;
 };
 
 const num = (v: unknown): number | null => {
@@ -57,6 +57,7 @@ export function parseTrack(
     if (Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
     const plate = normalizePlate(plateByImei.get(imei) ?? null);
     if (!plate) { noPlate.push(imei); continue; }
+    const odo = num(d.mileage);
     fixes.push({
       deviceId: `itrack:${imei}`,
       plate,
@@ -67,6 +68,7 @@ export function parseTrack(
       ignition: d.accstatus === 1 ? true : d.accstatus === 0 ? false : null,
       street: null,
       recordedAt: new Date(ts * 1000).toISOString(),
+      odometerM: odo != null && odo >= 0 ? Math.round(odo) : null,
     });
   }
   return { fixes, noPlate };

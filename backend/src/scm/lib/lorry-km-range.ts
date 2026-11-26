@@ -1,7 +1,7 @@
 
 import { paginateAll } from './paginate-all';
 import { mapBounded } from './concurrency';
-import { kmFromFixes, myDayWindow, oneTracker, type Fix } from './lorry-km';
+import { kmFromFixes, myDayWindow, odometerKm, oneTracker, type Fix } from './lorry-km';
 
 /** One read per day, so the range bounds the subrequests one dashboard load spends. */
 export const KM_MAX_DAYS = 62;
@@ -22,7 +22,8 @@ export function daysInRange(from: string, to: string): string[] {
   return out;
 }
 
-export type DayKm = { error: string | null; truncated: boolean; km: Map<string, number> };
+/** odoKm: odometer km per lorry, only for lorries with two or more odometer readings that day. */
+export type DayKm = { error: string | null; truncated: boolean; km: Map<string, number>; odoKm: Map<string, number> };
 
 export async function kmForDay(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scm-scoped supabase-js client
@@ -30,22 +31,27 @@ export async function kmForDay(
   day: string,
 ): Promise<DayKm> {
   const win = myDayWindow(day);
-  if (!win) return { error: null, truncated: false, km: new Map() };
+  if (!win) return { error: null, truncated: false, km: new Map(), odoKm: new Map() };
   // company-scope: UNIFIED FLEET — one shared fleet across all companies (lorries.ts:132), like /lorries/km-cost.
-  const { data, error, truncated } = await paginateAll<Fix & { lorry_id: string; device_id: string | null }>((lo, hi) =>
+  const { data, error, truncated } = await paginateAll<Fix & { lorry_id: string; device_id: string | null; odometer_m: number | null }>((lo, hi) =>
     sb.from('lorry_positions')
-      .select('lorry_id, device_id, lat, lng, recorded_at')
+      .select('lorry_id, device_id, lat, lng, recorded_at, odometer_m')
       .gte('recorded_at', win.from).lt('recorded_at', win.to)
       .order('recorded_at').order('id')
       .range(lo, hi));
-  if (error) return { error: error.message, truncated: false, km: new Map() };
-  const byLorry = new Map<string, Array<Fix & { device_id: string | null }>>();
+  if (error) return { error: error.message, truncated: false, km: new Map(), odoKm: new Map() };
+  const byLorry = new Map<string, Array<Fix & { device_id: string | null; odometer_m: number | null }>>();
   for (const f of data ?? []) {
     const list = byLorry.get(f.lorry_id) ?? [];
     list.push(f);
     byLorry.set(f.lorry_id, list);
   }
-  return { error: null, truncated, km: new Map([...byLorry].map(([lid, list]) => [lid, kmFromFixes(oneTracker(list))])) };
+  const odoKm = new Map<string, number>();
+  for (const [lid, list] of byLorry) {
+    const o = odometerKm(list);
+    if (o != null) odoKm.set(lid, o);
+  }
+  return { error: null, truncated, km: new Map([...byLorry].map(([lid, list]) => [lid, kmFromFixes(oneTracker(list))])), odoKm };
 }
 
 export async function kmByLorryForRange(

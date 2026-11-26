@@ -14,6 +14,7 @@ export type VelocityFix = {
   ignition: boolean | null;
   street: string | null;
   recordedAt: string;
+  odometerM: number | null;
 };
 
 type RawDevice = {
@@ -47,6 +48,7 @@ export function parseDevices(body: { devices?: RawDevice[] } | null | undefined)
       ignition: d.ignition === 'Y' ? true : d.ignition === 'N' ? false : null,
       street: [d.street, d.town].filter((s) => typeof s === 'string' && s).join(', ') || null,
       recordedAt: new Date(ts * 1000).toISOString(),
+      odometerM: null,
     });
   }
   return out;
@@ -91,11 +93,11 @@ export async function storeFixes(env: Env, fixes: VelocityFix[]): Promise<{ devi
     const r = await env.DB
       .prepare(
         `INSERT INTO scm.lorry_positions
-           (company_id, lorry_id, device_id, lat, lng, speed_kmh, heading, ignition, street, recorded_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (company_id, lorry_id, device_id, lat, lng, speed_kmh, heading, ignition, street, recorded_at, odometer_m)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (lorry_id, recorded_at) DO NOTHING`,
       )
-      .bind(lorry.company_id, lorry.id, f.deviceId, f.lat, f.lng, f.speedKmh, f.heading, f.ignition, f.street, f.recordedAt)
+      .bind(lorry.company_id, lorry.id, f.deviceId, f.lat, f.lng, f.speedKmh, f.heading, f.ignition, f.street, f.recordedAt, f.odometerM)
       .run();
     stored += r.meta?.changes ?? 0;
   }

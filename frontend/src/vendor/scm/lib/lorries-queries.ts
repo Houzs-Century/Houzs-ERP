@@ -337,8 +337,8 @@ export function useLorryTrack(lorryId: string, date: string) {
   });
 }
 
-/** Km per lorry per Malaysia day (GET /lorries/km-daily); null = no fixes that day. */
-export type LorryKmDaily = { days: string[]; lorries: Array<{ id: string; plate: string; km: Array<number | null> }> };
+/** Km per lorry per Malaysia day (GET /lorries/km-daily); null = no fixes that day. odoKm: by the iTrack odometer, null = no readings. */
+export type LorryKmDaily = { days: string[]; lorries: Array<{ id: string; plate: string; km: Array<number | null>; odoKm: Array<number | null> }> };
 
 export function useLorryKmDaily(from: string, to: string) {
   return useQuery({
