@@ -1962,18 +1962,31 @@ export async function setChecklistStatus(
     .first<{ project_id: number; title: string; status: string }>();
   if (!item) return false;
 
-  if (status === "done" || status === "na") {
+  if (status === "done") {
     await env.DB.prepare(
       `UPDATE project_checklist
-          SET status = ?,
-              completed_by = CASE WHEN ? = 'done' THEN ? ELSE NULL END,
-              completed_at = CASE WHEN ? = 'done' THEN datetime('now') ELSE NULL END,
+          SET status = 'done',
+              completed_by = ?,
+              completed_at = datetime('now'),
               review_status = NULL,
               rejection_reason = NULL,
               updated_at = datetime('now')
         WHERE id = ?`
     )
-      .bind(status, status, userId, status, itemId)
+      .bind(userId, itemId)
+      .run();
+  } else if (status === "na") {
+    await env.DB.prepare(
+      `UPDATE project_checklist
+          SET status = 'na',
+              completed_by = NULL,
+              completed_at = NULL,
+              review_status = NULL,
+              rejection_reason = NULL,
+              updated_at = datetime('now')
+        WHERE id = ?`
+    )
+      .bind(itemId)
       .run();
   } else {
     await env.DB.prepare(
