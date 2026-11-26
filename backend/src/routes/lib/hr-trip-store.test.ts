@@ -22,6 +22,7 @@ const base: PlanningStop = {
   dp_state: null,
   dp_postcode: null,
   dp_no: null,
+  dp_supplier_name: null,
   project_id: null,
   event_slug: null,
   event_name: null,
@@ -80,6 +81,13 @@ describe("planningRowOf", () => {
     expect(planningRowOf({ ...base, stop_type: "SETUP", dp_state: "Melaka", project_id: "88", event_slug: "solo" }, who)).toMatchObject({ job_type: "SETUP", kind: "FAIR", event_type: "ROADSHOW", venue_key: "P88", state: "Melaka" });
     expect(planningRowOf({ ...base, stop_type: "DISMANTLE", project_id: "89", event_slug: "exhibition" }, who).event_type).toBe("EXHIBITION");
     expect(planningRowOf({ ...base, stop_type: "LORRY_SERVICE" }, who)).toMatchObject({ job_type: "LORRY_SERVICE", kind: "NONE" });
+  });
+
+  test("a Supplier pickup from Hookka is Supplier (Hookka); another supplier stays Supplier", () => {
+    const hookka = planningRowOf({ ...base, stop_type: "SUPPLIER_PICKUP", dp_no: "DP-H", dp_supplier_name: "HOOKKA INDUSTRIES SDN. BHD." }, who);
+    expect(hookka).toMatchObject({ job_type: "SUPPLIER_HOOKKA", kind: "SUPPLIER", doc_no: "DP-H" });
+    expect(planningRowOf({ ...base, stop_type: "SUPPLIER_PICKUP", dp_supplier_name: "DORSETTLOFT SDN. BHD." }, who).job_type).toBe("SUPPLIER");
+    expect(planningRowOf({ ...base, stop_type: "SUPPLIER_PICKUP", dp_supplier_name: null }, who).job_type).toBe("SUPPLIER");
   });
 });
 
