@@ -20,7 +20,7 @@ describe('CategorySwapSelect', () => {
   it('offers every category, labelled, for any category — a sofa too', () => {
     wrap(<CategorySwapSelect kind="model" id="m1" category="SOFA" />);
     const opts = screen.getAllByRole('option').map((o) => o.textContent);
-    expect(opts).toEqual(['Sofa', 'Bedframe', 'Accessory', 'Sofa Accessory', 'Mattress', 'Bedlines', 'Dining', 'Diffuser', 'Carpet', 'Service']);
+    expect(opts).toEqual(['Accessory', 'Bedframe', 'Bedlines', 'Carpet', 'Diffuser', 'Dining', 'Mattress', 'Service', 'Sofa', 'Sofa Accessory']);
   });
 
   it('asks first, says open orders keep the old category, and PATCHes the model on Move', async () => {

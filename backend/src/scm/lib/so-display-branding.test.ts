@@ -75,7 +75,8 @@ describe('deriveBranding', () => {
      the no-items case all returned ''. */
   test('PROPERTY: no category the system can produce ever renders blank', () => {
     const categories: Array<string | null | undefined> = [
-      ...CATEGORY_SOURCES.productEnum,
+      ...CATEGORY_SOURCES.categoryNouns,
+      'FABRIC_ACCESSORY', 'NEW_GROUP', /* registry codes with no noun of their own */
       ...CATEGORY_SOURCES.normBuckets,
       /* item_group is free TEXT, so the raw shapes really do arrive here. */
       'BEDFRAME - DIVAN', 'sofa set', ' Mattress  ', 'ACCESSORIES', 'DELIVERY SERVICE',

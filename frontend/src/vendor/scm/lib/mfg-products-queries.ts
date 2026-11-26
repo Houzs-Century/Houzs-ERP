@@ -20,7 +20,7 @@ import type {
   MfgPricedOption,
   MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
-import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel, type MfgProductCategory } from '../../shared/product-categories';
+import { mfgCategoryLabel, type MfgProductCategory } from './product-categories-store';
 import { fmtSen } from '../../shared/format';
 
 /* HOUZS VENDOR — Products wave. The Maintenance editor reads/writes priced
@@ -139,9 +139,8 @@ export function useMaintenanceConfig(
    'sofa' in it on purpose: 41 readers test a group with includes('sofa'), and a pillow
    would become a SOFA main product to all of them. tasks/PLAN-sofa-accessories-category.md */
 export type MfgCategory = MfgProductCategory;
-/* The category list and the one label per category live in
-   vendor/shared/product-categories.ts (mirror of the backend's). */
-export { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel };
+/* The categories come from the server (product-categories-store.ts); no list here. */
+export { mfgCategoryLabel };
 
 /** MfgProductRow — the PO New form only reads id/code/name/category off each
     SKU. The ProductModels wave reads a few more SKU columns (size_code for the

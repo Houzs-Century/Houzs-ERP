@@ -21,7 +21,8 @@ const CO_HOUZS = 'HOUZS';
 /* Every shape a category can arrive in, crossed with every shape a brand can.
    Built once and reused so a case added here is added to every property. */
 const CATEGORIES: Array<string | null | undefined> = [
-  ...CATEGORY_SOURCES.productEnum,
+  ...CATEGORY_SOURCES.categoryNouns,
+      'FABRIC_ACCESSORY', 'NEW_GROUP', /* registry codes with no noun of their own */
   ...CATEGORY_SOURCES.normBuckets,
   /* mfg_sales_order_items.item_group is free TEXT, so these really do arrive. */
   'BEDFRAME - DIVAN', 'sofa set', ' Mattress  ', 'ACCESSORIES', 'DELIVERY SERVICE',
@@ -223,12 +224,8 @@ describe('brandingCategoryNoun — the superset, refereed against normCategory',
   });
 
   test('the derived category list still matches the source it was read from', () => {
-    /* If someone adds a member to mfg_product_category and not here, THIS is
-       the assertion that should be updated in the same commit — and the
-       property test above then covers the new value automatically. */
-    expect([...CATEGORY_SOURCES.productEnum]).toEqual([
-      'SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE',
-      'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET', 'FABRIC_ACCESSORY',
+    expect(CATEGORY_SOURCES.categoryNouns).toEqual([
+      'BEDFRAME', 'SOFA', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'BEDLINES', 'DIFFUSER', 'DINING', 'CARPET',
     ]);
     expect([...CATEGORY_SOURCES.normBuckets]).toEqual([
       'SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS',

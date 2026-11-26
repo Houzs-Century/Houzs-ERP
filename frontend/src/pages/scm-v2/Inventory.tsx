@@ -33,7 +33,7 @@ import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/u
 import { adjustmentReasonLabel, fmtSen, fmtDate, fmtDateTime, fmtQty, formatVariantKey } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { mfgCategoryLabel, MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES, type MfgProductCategory } from '../../vendor/shared/product-categories';
+import { mfgCategoryLabel, useProductCategories, type MfgProductCategory } from '../../vendor/scm/lib/product-categories-store';
 import {
   useWarehouses,
   useInventoryProductTotals,
@@ -98,11 +98,6 @@ const BANNER_ERR =
 type Tab = 'balances' | 'batches' | 'reservations' | 'warehouses' | 'analytics';
 type Category = 'all' | MfgProductCategory;
 
-// Every product category gets a chip, so Dining / Carpet / ... stock is findable (HC-0258).
-const CATEGORIES: { value: Category; label: string }[] = [
-  { value: 'all', label: 'All' },
-  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: MFG_CATEGORY_LABELS[c] })),
-];
 
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
@@ -143,6 +138,11 @@ export const Inventory = () => {
   const warehouseId = warehouseIds.length === 1 ? warehouseIds[0]! : null;
   const setWarehouseId = (id: string | null) => setWarehouseIds(id ? [id] : []);
   const [category, setCategory] = useState<Category>('all');
+  // Every registry category gets a chip, so Dining / Carpet / ... stock is findable (HC-0258).
+  const CATEGORIES: { value: Category; label: string }[] = [
+    { value: 'all', label: 'All' },
+    ...useProductCategories().active.map((c) => ({ value: c.code, label: c.name })),
+  ];
   const [search, setSearch] = useState('');
 
   const warehouses = useWarehouses();

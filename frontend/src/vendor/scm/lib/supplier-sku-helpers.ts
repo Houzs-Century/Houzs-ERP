@@ -23,7 +23,7 @@
 // ----------------------------------------------------------------------------
 
 import type { MfgProductRow } from './mfg-products-queries';
-import { isSingleSkuCategory } from '../../shared/product-categories';
+import { isSingleSkuCategory } from './product-categories-store';
 
 /**
  * Derive the per-SKU suffix appended after the Model-level supplier code.
