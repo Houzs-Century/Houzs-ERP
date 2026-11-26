@@ -292,7 +292,9 @@ export function FleetHealth() {
             <button type="button" onClick={() => dash.reload()} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 text-[14px] font-semibold text-white">Try again</button>
           </div>
         ) : (
-        <div className={cn(CARD, "overflow-hidden")}>
+        <div className={cn(CARD, "overflow-hidden [&>div>div:first-child]:px-4")}>
+          {/* The grid's toolbar (row count, Export, Wrap, Columns) is its first child and has no
+              padding of its own; inside this card it would touch the card's edges. */}
           <DataTable<VehicleRow>
             tableId="fleet-health-board"
             exportName="fleet-health"
