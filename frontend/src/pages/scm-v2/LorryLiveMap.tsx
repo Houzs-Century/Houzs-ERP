@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { fmtSen } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import { useMemo } from 'react';
+import { LorryKmDaily } from './LorryKmDaily';
 import { LiveTripMap, type LiveMarker, type LiveTrail } from '../../vendor/scm/components/LiveTripMap';
 import { useLorryRoadTracks } from '../../vendor/scm/lib/lorry-road-track';
 import { todayMY } from '../../vendor/shared/format';
@@ -35,7 +36,7 @@ function KmCostCells({ kc }: { kc: LorryKmCost | undefined }) {
 
 /** `embedded`: shown inside Coverage & Fleet or Fleet Health (owner 2026-11-08), which carry their own header. */
 export function LorryLiveMap({ embedded }: { embedded: boolean }) {
-  const q = useLorryPositions();
+  const q = useLorryPositions(true);
   const positions = q.data ?? [];
   const kmCost = new Map((useLorryKmCost().data ?? []).map((k) => [k.lorry_id, k]));
   const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
@@ -129,6 +130,7 @@ export function LorryLiveMap({ embedded }: { embedded: boolean }) {
             </div>
           </>
         )}
+        <LorryKmDaily />
       </div>
     </div>
   );

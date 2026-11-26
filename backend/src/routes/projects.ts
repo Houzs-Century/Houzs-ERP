@@ -77,6 +77,7 @@ import { activeCompanyId, activeCompanySql, requireActiveCompanyId } from "../sc
 import { refuseForeignAttachmentKey, refuseForeignChild, refuseForeignProject } from "./lib/project-company-gate";
 import { calendarCrewScope } from "./lib/calendar-visibility";
 import { masterPostcodeError } from "../scm/shared/master-postcode-rule";
+import { readMarkStamp } from "./notifications";
 
 type HandlerCtx = Context<{ Bindings: Env }, "/brands/:id/logo">;
 const app = new Hono<{ Bindings: Env }>();
@@ -2339,11 +2340,11 @@ app.post("/:id/read", requirePageAccess("projects.list"), async (c) => {
   if (!user?.id) return c.json({ ok: true });
   await c.env.DB.prepare(
     `INSERT INTO project_reads (user_id, project_id, last_read_at)
-     VALUES (?, ?, datetime('now'))
+     VALUES (?, ?, ?)
      ON CONFLICT(user_id, project_id)
-     DO UPDATE SET last_read_at = datetime('now')`
+     DO UPDATE SET last_read_at = excluded.last_read_at`
   )
-    .bind(user.id, id)
+    .bind(user.id, id, readMarkStamp(Date.now()))
     .run();
   return c.json({ ok: true });
 });

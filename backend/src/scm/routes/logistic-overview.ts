@@ -222,6 +222,7 @@ async function buildLogisticOverview(c: Context<{ Bindings: Env; Variables: Vari
 
   return { ok: true, body: {
     today, thisMonday,
+    runsToday: period.runsToday,
     period,
     doNotClosed, doNoCost, soNoProcessing,
     weeks,

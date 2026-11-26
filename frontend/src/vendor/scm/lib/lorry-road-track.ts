@@ -2,6 +2,7 @@
 // joins the tracker's 5-min fixes by road where Google can, straight where it cannot.
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { todayMY } from '../../shared/format';
 
 export type MapPoint = { lat: number; lng: number };
 export type LorryRoadTrack = { date: string; path: MapPoint[]; chunks: number; roadChunks: number };
@@ -10,7 +11,7 @@ const POLL_MS = 5 * 60_000;
 const road = (lorryId: string, date: string) => ({
   queryKey: ['lorries', 'track-road', lorryId, date],
   queryFn: () => authedFetch<LorryRoadTrack>(`/lorries/${encodeURIComponent(lorryId)}/track/road?date=${date}`),
-  refetchInterval: POLL_MS,
+  refetchInterval: date === todayMY() ? POLL_MS : (false as const),
 });
 
 export function useLorryRoadTrack(lorryId: string, date: string) {
