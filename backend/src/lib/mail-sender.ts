@@ -1,9 +1,8 @@
 import type { Env } from "../types";
 import { getBrandingForCompany } from "../services/branding";
 
-// The From header for a Mail Center send: `"Staff Name (Company)" <address>`, so
-// the recipient sees who wrote it and which company it is from. Quoted because
-// a bare "(Company)" is an RFC 5322 comment that strict clients drop.
+/** The From header for a Mail Center send: `"Staff Name (Company)" <address>`.
+ *  Quoted because a bare "(Company)" is an RFC 5322 comment strict clients drop. */
 export function formatSenderFrom(staffName: string, companyName: string, address: string): string {
   const name = staffName.trim();
   const display = name ? `${name} (${companyName})` : companyName;
