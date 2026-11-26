@@ -55,6 +55,28 @@ export function isDefectReviewerPosition(
   return (user.position_name ?? "").trim().toLowerCase() === "storekeeper supervisor";
 }
 
+// Owner 2026-11-26: Farra (Service Exec) FINALISES the whole defect list — she
+// triages fresh defects in EVERY state (Done Clean / Exchange / Service), on top
+// of Nancy (region states) and Shukor (the rest), while keeping the purchaser
+// actions her role already grants. Identified by her ACCOUNT ID, not role or
+// position: her role "Purchaser" is shared with Sim and her position "Operation
+// Executive" with Nancy, so a role/position rule would sweep the wrong people in.
+// An id (not her email) so no staff PII is committed. Production (HOUZS ERP SG)
+// users.id for Farra Ellya = 83. MIRROR this list in
+// frontend/src/pages/projects/defectReviewer.ts (ALL_STATE_DEFECT_REVIEWER_IDS).
+const ALL_STATE_DEFECT_REVIEWER_IDS = new Set<number>([83]);
+
+/** True when this user reviews fresh defects in EVERY state (not region-split) —
+ *  the "finalises the list" reviewer. By exact account id; unknown/missing →
+ *  false. ADDED to the reviewer gate (routes/projects.ts) and EXCLUDED from the
+ *  region-routing restriction there, and mirrored by canReviewDefect on the
+ *  frontend so the Done Clean / Exchange / Service buttons show for her. */
+export function isAllStateDefectReviewer(
+  user: { id?: number | null } | null | undefined,
+): boolean {
+  return user?.id != null && ALL_STATE_DEFECT_REVIEWER_IDS.has(user.id);
+}
+
 /** Is this project's state reviewed by the region warehouse (Ops Exec)? */
 export function isDefectRegionState(state: string | null | undefined): boolean {
   const s = (state ?? "").trim().toLowerCase();

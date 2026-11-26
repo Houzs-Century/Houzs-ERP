@@ -188,7 +188,10 @@ export type BillTotals = {
    (Sales Director, yzhe212@gmail.com) and every Sales Attending of THIS
    project. Owner 2026-11-09: open to every Sales Director (position) and every
    Sales Person (role), so the floor can post without being named one by one.
-   The admin tier stays named (Owner position + two emails) and the per-event
+   Owner 2026-11-26: add Loo Wen Wei (wenwei4046@gmail.com) by name and open to
+   the Finance Manager (position) — so finance can post/void and Mr Loo is in
+   without widening the gate to every Super Admin.
+   The admin tier stays named (Owner position + three emails) and the per-event
    attendee path still works. Mirrored in frontend/src/auth/salesAccess.ts
    canSaveSalesReport, which only decides whether the chat shows the Save
    button; this is the authority. Reading the saved report needs only the Sales
@@ -196,6 +199,7 @@ export type BillTotals = {
 const SAVE_EMAILS = new Set([
   "weisiang329@gmail.com",
   "ummuaimanlm@gmail.com",
+  "wenwei4046@gmail.com",
 ]);
 
 export function canSaveSalesReport(
@@ -219,6 +223,8 @@ export function canSaveSalesReport(
   // others — and "Sales Person" is the role name every sales-floor seat holds.
   if (position === "sales director" || role === "sales director") return true;
   if (role === "sales person") return true;
+  // Finance Manager (owner 2026-11-26) — finance posts/voids the chat report.
+  if (position === "finance manager") return true;
   if (attendeeEmails && email && attendeeEmails.has(email)) return true;
   return false;
 }
