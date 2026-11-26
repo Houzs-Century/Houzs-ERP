@@ -180,6 +180,19 @@ describe("overnight", () => {
   });
 });
 
+describe("Supplier (Hookka)", () => {
+  test("a Supplier (Hookka) pickup pays the driver the RM30 default; the helper earns no job allowance", () => {
+    const r = run([row({ jobType: "SUPPLIER_HOOKKA", eventType: null })]);
+    expect(r.pay.get(1)!.jobAllowanceSen).toBe(3000);
+    expect(r.pay.get(2)!.jobAllowanceSen).toBe(0);
+  });
+
+  test("with no Supplier (Hookka) rate of its own it falls back to the generic Supplier rate", () => {
+    const rates: TripRates = { ...DEFAULT_TRIP_RATES, jobAllowances: DEFAULT_TRIP_RATES.jobAllowances.filter((a) => a.jobType !== "SUPPLIER_HOOKKA") };
+    expect(run([row({ jobType: "SUPPLIER_HOOKKA", eventType: null })], rates).pay.get(1)!.jobAllowanceSen).toBe(1500);
+  });
+});
+
 describe("rates", () => {
   test("old versions still compute the same totals as the old rules", () => {
     const stored = { fairSen: 12000, fairNightSen: 21000, driverOutstationSen: { JP: 9000 }, overnightSen: 6000, commission3Bps: 45 };

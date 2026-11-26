@@ -6,7 +6,10 @@ import type { Env, Variables } from '../env';
 import { activeCompanyId } from '../lib/companyScope';
 import { normalizePlate } from '../lib/plate-normalize';
 import { carrierLinkForInsert, resolveCarrierLink } from '../lib/threepl-link';
-import { costSen, kmFromFixes, myDayWindow, type Fix } from '../lib/lorry-km';
+import { costSen, kmFromFixes, myDayWindow, oneTracker, type Fix } from '../lib/lorry-km';
+import { loadDrops } from '../lib/lorry-drops';
+import { daysInRange, kmForDay, KM_MAX_DAYS } from '../lib/lorry-km-range';
+import { mapBounded } from '../lib/concurrency';
 import { paginateAll } from '../lib/paginate-all';
 import { roadTrack, type ChunkCache, type Point } from '../lib/gps-road-track';
 
@@ -346,30 +349,48 @@ lorries.get('/km-cost', async (c) => {
   const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
   if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
-  const { from, to } = day;
   const sb = c.get('supabase');
-  const { data, error } = await paginateAll<Fix & { lorry_id: string }>((f, t) => sb.from('lorry_positions')
-    .select('lorry_id, lat, lng, recorded_at')
-    .gte('recorded_at', from).lt('recorded_at', to)
-    .order('recorded_at').order('id')
-    .range(f, t));
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const byLorry = new Map<string, Fix[]>();
-  for (const r of data ?? []) {
-    const list = byLorry.get(r.lorry_id) ?? [];
-    list.push(r);
-    byLorry.set(r.lorry_id, list);
-  }
-  if (!byLorry.size) return c.json({ date, lorries: [] });
+  const d = await kmForDay(sb, date);
+  if (d.error) return c.json({ error: 'load_failed', reason: d.error }, 500);
+  if (d.truncated) return c.json({ error: 'too_many_fixes', reason: `Too many GPS fixes on ${date} to read in full.` }, 500);
+  if (!d.km.size) return c.json({ date, lorries: [] });
   const { data: rows, error: lErr } = await sb.from('lorries')
-    .select('id, plate, cost_per_km_sen').in('id', [...byLorry.keys()]);
+    .select('id, plate, cost_per_km_sen').in('id', [...d.km.keys()]);
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
   const out = rows.map((l) => {
-    const km = kmFromFixes(byLorry.get(l.id as string) ?? []);
+    const km = d.km.get(l.id as string) ?? 0;
     const rate = (l.cost_per_km_sen ?? null) as number | null;
     return { lorry_id: l.id as string, plate: l.plate as string, km, cost_per_km_sen: rate, cost_sen: costSen(km, rate) };
   }).sort((a, b) => a.plate.localeCompare(b.plate));
   return c.json({ date, lorries: out });
+});
+
+lorries.get('/km-daily', async (c) => {
+  // company-scope: UNIFIED FLEET — one shared fleet across all companies (lorries.ts:132), same as /km-cost.
+  const from = c.req.query('from') ?? '';
+  const to = c.req.query('to') ?? '';
+  const days = ISO_DATE.test(from) && ISO_DATE.test(to) ? daysInRange(from, to) : [];
+  if (!days.length || days.some((d) => !myDayWindow(d))) return c.json({ error: 'invalid_range', reason: 'from and to must be real YYYY-MM-DD dates, from <= to' }, 400);
+  if (days.length > KM_MAX_DAYS) return c.json({ error: 'range_too_long', reason: `at most ${KM_MAX_DAYS} days` }, 400);
+  const sb = c.get('supabase');
+  const perDay = await mapBounded(days, 4, (day) => kmForDay(sb, day));
+  for (let i = 0; i < perDay.length; i++) {
+    const d = perDay[i]!;
+    if (d.error) return c.json({ error: 'load_failed', reason: d.error }, 500);
+    if (d.truncated) return c.json({ error: 'too_many_fixes', reason: `Too many GPS fixes on ${days[i]} to read in full.` }, 500);
+  }
+  const ids = [...new Set(perDay.flatMap((d) => [...d.km.keys()]))];
+  if (!ids.length) return c.json({ days, lorries: [] });
+  const { data: rows, error } = await sb.from('lorries').select('id, plate').in('id', ids);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const out = rows.map((l) => ({
+    id: l.id as string,
+    plate: l.plate as string,
+    km: perDay.map((d) => d.km.get(l.id as string) ?? null),
+    odoKm: perDay.map((d) => d.odoKm.get(l.id as string) ?? null),
+  }))
+    .sort((a, b) => a.plate.localeCompare(b.plate));
+  return c.json({ days, lorries: out });
 });
 
 lorries.get('/:id/track', async (c) => {
@@ -377,15 +398,16 @@ lorries.get('/:id/track', async (c) => {
   const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
   if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
-  const { data, error } = await paginateAll<Fix & { speed_kmh: number | null; street: string | null }>((f, t) => c.get('supabase').from('lorry_positions')
-    .select('lat, lng, recorded_at, speed_kmh, street')
+  const { data, error } = await paginateAll<Fix & { device_id: string | null; speed_kmh: number | null; street: string | null }>((f, t) => c.get('supabase').from('lorry_positions')
+    .select('device_id, lat, lng, recorded_at, speed_kmh, street')
     .eq('lorry_id', c.req.param('id'))
     .gte('recorded_at', day.from).lt('recorded_at', day.to)
     .order('recorded_at').order('id')
     .range(f, t));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const fixes = data ?? [];
-  return c.json({ date, km: kmFromFixes(fixes), fixes });
+  const fixes = oneTracker(data ?? []).map(({ device_id: _d, ...f }) => f);
+  const { drops, error: dErr } = await loadDrops(c.get('supabase'), c, c.req.param('id'), date);
+  return c.json({ date, km: kmFromFixes(fixes), fixes, drops, dropsError: dErr });
 });
 
 // The same day's fixes drawn along the roads (owner 2026-11-10), for the live map and
@@ -418,14 +440,14 @@ lorries.get('/:id/track/road', async (c) => {
   const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
   if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
-  const { data, error } = await paginateAll<Fix>((f, t) => c.get('supabase').from('lorry_positions')
-    .select('lat, lng, recorded_at')
+  const { data, error } = await paginateAll<Fix & { device_id: string | null }>((f, t) => c.get('supabase').from('lorry_positions')
+    .select('device_id, lat, lng, recorded_at')
     .eq('lorry_id', c.req.param('id'))
     .gte('recorded_at', day.from).lt('recorded_at', day.to)
     .order('recorded_at').order('id')
     .range(f, t));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const track = await roadTrack(c.env, data ?? [], edgeChunkCache(new URL(c.req.url).origin));
+  const track = await roadTrack(c.env, oneTracker(data ?? []), edgeChunkCache(new URL(c.req.url).origin));
   return c.json({ date, ...track });
 });
 

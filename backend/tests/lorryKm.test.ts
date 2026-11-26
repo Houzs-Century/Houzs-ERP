@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { costSen, kmFromFixes, myDayWindow } from '../src/scm/lib/lorry-km';
+import { costSen, kmFromFixes, myDayWindow, odometerKm, oneTracker } from '../src/scm/lib/lorry-km';
 
 // 0.01 deg latitude ~ 1.112 km.
 const fix = (lat: number, min: number) => ({ lat, lng: 101.6, recorded_at: new Date(Date.UTC(2026, 9, 15, 2, min)).toISOString() });
@@ -33,5 +33,37 @@ describe('myDayWindow', () => {
   it('null for a date that does not exist', () => {
     expect(myDayWindow('2026-13-45')).toBeNull();
     expect(myDayWindow('2026-02-30')).toBeNull();
+  });
+});
+
+describe('oneTracker', () => {
+  const f = (device_id: string | null, min: number) => ({ device_id, recorded_at: new Date(Date.UTC(2026, 9, 15, 2, min)).toISOString() });
+  it('keeps the device with the most fixes', () => {
+    const out = oneTracker([f('a', 0), f('itrack:1', 1), f('a', 5), f('itrack:1', 6), f('a', 10)]);
+    expect(out.map((x) => x.device_id)).toEqual(['a', 'a', 'a']);
+  });
+  it('breaks a tie by the device with the latest fix', () => {
+    const out = oneTracker([f('a', 0), f('b', 1), f('a', 2), f('b', 7)]);
+    expect(out.every((x) => x.device_id === 'b')).toBe(true);
+  });
+  it('treats null as its own device and returns a single-device list untouched', () => {
+    expect(oneTracker([f(null, 0), f(null, 5), f('a', 6)]).every((x) => x.device_id === null)).toBe(true);
+    const one = [f('a', 0), f('a', 5)];
+    expect(oneTracker(one)).toBe(one);
+  });
+});
+
+describe('odometerKm', () => {
+  const o = (odometer_m: number | null, min: number, device_id: string | null = 'itrack:1') =>
+    ({ device_id, odometer_m, recorded_at: new Date(Date.UTC(2026, 9, 15, 2, min)).toISOString() });
+  it('sums forward steps of one device, in km', () => {
+    expect(odometerKm([o(1_000, 0), o(5_000, 5), o(9_500, 10)])).toBe(8.5);
+  });
+  it('skips a reset (step back) and an impossible jump, keeps the rest', () => {
+    expect(odometerKm([o(10_000, 0), o(2_000, 5), o(6_000, 10), o(900_000, 15), o(904_000, 20)])).toBe(8);
+  });
+  it('ignores fixes with no reading and other devices; null under two readings', () => {
+    expect(odometerKm([o(1_000, 0), o(null, 5, 'velo'), o(null, 6, 'velo'), o(null, 7, 'velo'), o(3_000, 10)])).toBe(2);
+    expect(odometerKm([o(1_000, 0), o(null, 5)])).toBeNull();
   });
 });

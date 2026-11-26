@@ -6,6 +6,7 @@ import type { Env } from "../types";
 import type { AuthUser } from "../services/auth";
 import { hasPermission } from "../services/permissions";
 import { recipientList, sendEmail } from "../services/email";
+import { senderFrom } from "../lib/mail-sender";
 import { getBranding, getBrandingForCompany } from "../services/branding";
 import { toStoredMailAttachments, validateMailAttachments } from "../lib/mail-attachments";
 import { withThreadAttachments } from "../lib/mail-thread-attachments";
@@ -1697,6 +1698,8 @@ app.post("/threads/:id/reply", async (c) => {
   const htmlBody = html || `<p>${escapeHtml(text).replace(/\n/g, "<br/>")}</p>`;
   const headers = threadingHeaders(await threadMessageIds(c.env.DB, id));
 
+  const userId = c.get("userId") ?? null;
+  const fromName = await senderName(c.env.DB, userId);
   const result = await sendEmail(c.env, {
     to,
     cc: ccList.join(", ") || null,
@@ -1705,7 +1708,7 @@ app.post("/threads/:id/reply", async (c) => {
     html: htmlBody,
     text: text || undefined,
     purpose: "generic",
-    from: fromAddress || undefined,
+    from: await senderFrom(c.env, fromName, companyCodeForRecipient([fromAddress]), fromAddress),
     replyTo: fromAddress || undefined,
     companyCode: companyCodeForRecipient([fromAddress]),
     headers,
@@ -1721,8 +1724,6 @@ app.post("/threads/:id/reply", async (c) => {
     );
   }
 
-  const userId = c.get("userId") ?? null;
-  const fromName = await senderName(c.env.DB, userId);
 
   const now = new Date().toISOString();
   const snippet = (text || stripHtml(htmlBody)).slice(0, 240);
@@ -1815,6 +1816,8 @@ app.post("/compose", async (c) => {
 
   const htmlBody = `<p>${escapeHtml(text).replace(/\n/g, "<br/>")}</p>`;
 
+  const userId = c.get("userId") ?? null;
+  const fromName = await senderName(c.env.DB, userId);
   const result = await sendEmail(c.env, {
     to,
     cc: ccList.join(", ") || null,
@@ -1823,7 +1826,7 @@ app.post("/compose", async (c) => {
     html: htmlBody,
     text,
     purpose: "generic",
-    from: fromAddress || undefined,
+    from: await senderFrom(c.env, fromName, companyCodeForRecipient([fromAddress]), fromAddress),
     replyTo: fromAddress || undefined,
     companyCode: companyCodeForRecipient([fromAddress]),
     attachments: attachments.map((a) => ({
@@ -1838,8 +1841,6 @@ app.post("/compose", async (c) => {
     );
   }
 
-  const userId = c.get("userId") ?? null;
-  const fromName = await senderName(c.env.DB, userId);
 
   const now = new Date().toISOString();
   const snippet = text.slice(0, 200);

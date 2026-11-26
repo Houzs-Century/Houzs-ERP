@@ -212,7 +212,7 @@ export function LorryRecord() {
 
       {tab === "overview" && (
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.5fr_1fr]">
-          <Section title="Where it is today"><LorryTodayRoute lorryId={v.id} /></Section>
+          <Section title="Where it is and where it went"><LorryTodayRoute lorryId={v.id} /></Section>
           <Section title="Needs attention">
             {attention.length === 0 ? <p className={EMPTY}>Nothing needs attention.</p> : (
               <ul className="-mx-1 flex flex-col">

@@ -74,7 +74,7 @@ export function Overview() {
     [pFrom, pTo],
     { enabled: pageAccess("scm.procurement.po") !== "none" },
   );
-  const logi = useQuery<NonNullable<WatchInputs["logistic"]> & { runsToday: number; weeks: { doCount: number; current: boolean }[]; cachedAt?: string }>("/api/scm/logistic-overview",
+  const logi = useQuery<NonNullable<WatchInputs["logistic"]> & { runsToday: number | null; weeks: { doCount: number; current: boolean }[]; cachedAt?: string }>("/api/scm/logistic-overview",
     () => api.get("/api/scm/logistic-overview"),
     [],
     { enabled: pageAccess("scm.transportation.drivers") !== "none" },
@@ -132,7 +132,7 @@ export function Overview() {
     { label: "Project sales", value: pnl.loading ? "…" : pt ? formatCurrency(pt.sales) : "—", sub: pt ? `${pt.projects} projects · GP ${pct(pt.gp, pt.sales)}${pt.fromSalesOrders ? ` · ${pt.fromSalesOrders} from Sales Orders` : ""}` : pnl.error ? "Couldn't load" : "Project finance viewers only" },
     { label: "PO not received", value: proc.loading ? "…" : po ? fmtSen(po.sen) : "—", sub: po ? `${po.lines} open lines · ${po.late} late` : proc.error ? "Couldn't load" : "Procurement only" },
     { label: "Open Cases", value: assr.loading ? "…" : num(assrUnknown, assr.data?.active_count), sub: assrUnknown ? "Couldn't load" : `${slaRisk} SLA risks` },
-    { label: "Runs today", value: logi.loading ? "…" : logi.data ? String(logi.data.runsToday) : "—", sub: thisWeek ? `${thisWeek.doCount} DO issued this week` : logi.error ? "Couldn't load" : "Logistics only" },
+    { label: "Runs today", value: logi.loading ? "…" : logi.data?.runsToday != null ? String(logi.data.runsToday) : "—", sub: thisWeek ? `${thisWeek.doCount} DO issued this week` : logi.error ? "Couldn't load" : "Logistics only" },
     { label: "Active Projects", value: projects.loading ? "…" : num(projectsUnknown, projects.data?.live_count), sub: projectsUnknown ? "Couldn't load" : `${projects.data?.upcoming_30d ?? 0} due this month` },
   ];
 

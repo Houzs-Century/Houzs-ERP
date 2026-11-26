@@ -292,7 +292,7 @@ export function FleetDay() {
     if (!run) return null;
     return { routeId: focusedPlate, refs: run.docs.map((d) => d.soDocNo) };
   }, [focusedPlate, runByPlate]);
-  const vehicles = useVehiclePositions(trips, mapOpen);
+  const vehicles = useVehiclePositions(trips, mapOpen, date === todayMY());
   const toggleFocus = (routeId: string) => {
     setMapZone((z) => ({ key: null, n: z.n }));
     setParam('lorry', focusedPlate === routeId ? null : routeId);
