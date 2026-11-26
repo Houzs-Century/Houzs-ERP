@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// EVERY drill-down that fetches a SECOND query must hand its state to the cells.
-//
-// The behaviour is pinned in coverage-state.test.tsx. This pins the WIRING,
-// because the failure that reached the owner was not a wrong verdict — it was
-// four callers fetching coverage and telling the cells nothing, so "not yet"
-// rendered as STOCK. `coverage` being a REQUIRED prop already stops a caller
-// omitting it; what a type cannot catch is a caller that HAS a second query and
-// passes the constant "ready" anyway. That is what this file checks.
-// ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,7 +5,6 @@ import { join } from 'node:path';
 const DIR = 'src/pages/scm-v2';
 const files = readdirSync(DIR).filter((f) => f.endsWith('.tsx') && !f.includes('.test.'));
 
-/** A surface that runs one of these fetches its assignment columns separately. */
 const SECOND_QUERY = /usePoSoCoverage\(|useSoLineCoverage\(/;
 
 describe('a second query is always declared to the cells that depend on it', () => {

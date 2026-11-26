@@ -26,7 +26,6 @@ function setViewport(width: number) {
 
 beforeEach(() => {
   localStorage.clear();
-  /* jsdom has no CSS.escape; every browser does. */
   if (!(globalThis as { CSS?: { escape?: unknown } }).CSS?.escape) {
     (globalThis as { CSS?: unknown }).CSS = { escape: (v: string) => v };
   }
@@ -39,9 +38,6 @@ afterEach(() => {
   if (originalInnerWidth) Object.defineProperty(window, "innerWidth", originalInnerWidth);
 });
 
-/* A list that failed to load showed "Failed to load" and the raw error with
-   nothing to press (Conts-ERP #594): it now offers Retry, on the desktop table
-   and the phone card view alike. */
 describe("DataTable load error", () => {
   for (const [label, width] of [["desktop", 1280], ["phone", 375]] as const) {
     it(`offers a Retry that refetches the list (${label})`, async () => {
@@ -61,9 +57,6 @@ describe("DataTable load error", () => {
   }
 });
 
-/* Back to the Suppliers list scrolls to the supplier you opened. The app scrolls
-   inside its <main> panel, not the window, so a row not drawn yet must be
-   brought near through that panel (Conts-ERP #406). */
 describe("DataTable scroll to a row that is not drawn yet", () => {
   it("scrolls the panel the table sits in, not the window", () => {
     setViewport(1280);
@@ -86,10 +79,6 @@ describe("DataTable scroll to a row that is not drawn yet", () => {
   });
 });
 
-/* Newer Chrome returns a Promise from scrollIntoView. The effect returned that
-   call's result, so React kept the Promise as the cleanup and called it when
-   the list re-ran the scroll or closed: "destroy is not a function", and the
-   page after the Suppliers list showed "Something went wrong loading this page". */
 class Catch extends Component<{ children: ReactNode }, { crashed: boolean }> {
   state = { crashed: false };
   static getDerivedStateFromError() { return { crashed: true }; }

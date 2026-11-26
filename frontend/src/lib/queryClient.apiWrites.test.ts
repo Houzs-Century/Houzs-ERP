@@ -1,5 +1,3 @@
-// A write through api.post/patch/put/del marks the hooks/useQuery reads stale and drops the read cache, including
-// reads of another resource (port of Conts D22). Timer and on-mount writes that change nothing on screen do not.
 import { describe, expect, test } from "vitest";
 import { queryClient } from "./queryClient";
 import { getCached, invalidateForMutation, setCached } from "../api/cache";

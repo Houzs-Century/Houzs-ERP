@@ -1,6 +1,3 @@
-// Setup › To do rules (the owner's Claude Design redesign, batch 2): switching
-// a rule off sends the whole list of rules off; a new rule from a template is
-// added with its number and group; a routine's amount is saved in sen.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -37,7 +34,6 @@ const renderPage = () => render(
 beforeEach(() => { mockedFetch.mockReset(); mockedFetch.mockResolvedValue(SETTINGS); });
 
 const bodyOf = (path: string) => {
-  /* The write, not the read of the same path. */
   const call = mockedFetch.mock.calls.find(([p, init]) => p === path && init?.body !== undefined);
   return call ? JSON.parse(String(call[1]?.body)) as unknown : undefined;
 };

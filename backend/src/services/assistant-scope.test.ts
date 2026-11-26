@@ -6,10 +6,10 @@ import { canTeachAgents, canUseAssistant } from './assistant-scope';
 // pin v1 (= canUseAssistant) so a future narrowing is a deliberate, visible change.
 
 const wildcard = { permissions: ['*'] };
-const opsManager = { permissions: [], position_name: 'Operation Manager' }; // known ops position
-const driver = { permissions: [], position_name: 'Driver' }; // denied (field crew)
-const salesExec = { permissions: [], position_name: 'Sales Executive' }; // denied (sales)
-const unknownTitle = { permissions: [], position_name: 'Vibes Officer' }; // fail closed
+const opsManager = { permissions: [], position_name: 'Operation Manager' };
+const driver = { permissions: [], position_name: 'Driver' };
+const salesExec = { permissions: [], position_name: 'Sales Executive' };
+const unknownTitle = { permissions: [], position_name: 'Vibes Officer' };
 const noPosition = { permissions: [], position_name: '' };
 
 describe('canTeachAgents (v1 = every Assistant user)', () => {
@@ -22,7 +22,7 @@ describe('canTeachAgents (v1 = every Assistant user)', () => {
   it('does not let field crew, Sales, or an unrecognised position teach', () => {
     expect(canTeachAgents(driver)).toBe(false);
     expect(canTeachAgents(salesExec)).toBe(false);
-    expect(canTeachAgents(unknownTitle)).toBe(false); // fail closed on unknown
+    expect(canTeachAgents(unknownTitle)).toBe(false);
   });
 
   it('tracks canUseAssistant exactly (the seam is a pure alias in v1)', () => {

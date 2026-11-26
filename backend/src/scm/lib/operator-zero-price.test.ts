@@ -18,24 +18,22 @@
 import { describe, expect, test } from 'vitest';
 import { recomputeFromSnapshot, type TrustSelling } from './mfg-pricing-recompute';
 
-/** A plain catalogue line: product priced RM 2,990. `trustOperatorSelling` is
- *  the 15th positional, so the intervening optionals are passed explicitly. */
 const run = (trust: TrustSelling, clientUnitSen: number) =>
   recomputeFromSnapshot(
     { itemCode: 'X-1', itemGroup: 'others', qty: 1, unitPriceSen: clientUnitSen, variants: {} } as never,
     { code: 'X-1', category: 'OTHERS', sell_price_sen: 299_000 } as never,
-    null, // fabric
-    null, // config
-    null, // sofaCombos
-    null, // sofaModulePrices
-    null, // sellingFabricTiers
-    null, // fabricAddonConfig
-    null, // pwpBaseSen
-    null, // pwpSofaComboIds
-    null, // specialAddons
-    null, // sofaModuleCostRows
-    null, // modelFabricOverrides
-    null, // compartmentFabricOverrides
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
     trust,
   );
 

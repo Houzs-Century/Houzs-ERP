@@ -1,11 +1,3 @@
-// Vendored SLICE of apps/backend/src/lib/mfg-products-queries.ts — only the
-// MaintenanceConfig read that SupplyCategoryPicker needs. The real module is
-// ~900 lines (products CRUD, models, fabrics, special add-ons, …); none of
-// that is pulled in by the Suppliers slice. `useMaintenanceConfig` is copied
-// verbatim (same query key, same /maintenance-config/resolved endpoint — now
-// served under /api/scm via the repointed authedFetch). The MaintenanceConfig
-// type is reduced to the one field the picker reads (`supplierCategories`);
-// extend it as later pages need more.
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -23,34 +15,12 @@ import type {
 import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel, type MfgProductCategory } from '../../shared/product-categories';
 import { fmtSen } from '../../shared/format';
 
-/* HOUZS VENDOR — Products wave. The Maintenance editor reads/writes priced
-   pool options ({ value, priceSen, costSen?, sellingPriceSen?, active? }). The
-   source module's `PricedOption` is byte-identical to mfg-pricing's
-   `MfgPricedOption` (the type the rich MaintenanceConfig fields already use),
-   so re-export it under the source name the page imports. */
 export type PricedOption = MfgPricedOption;
 
-/* HOUZS VENDOR — Products wave. Sofa price tier (PRICE_1/2/3); identical to
-   mfg-pricing's MfgFabricTier. SeatHeightPrice already carries `tier?:
-   MfgFabricTier` below; the page imports SofaPriceTier by name. */
 export type SofaPriceTier = MfgFabricTier;
 
-// HOUZS VENDOR NOTE: the Suppliers slice reduced MaintenanceConfig to just
-// `supplierCategories` (all SupplyCategoryPicker reads). The PO New form feeds
-// the SAME resolved config into computeMfgPoUnitCost (from @2990s/shared/
-// mfg-pricing), which needs the RICH shape (divanHeights / legHeights / gaps /
-// sofaSizes / …). So the vendored type now INTERSECTS the rich pricing-engine
-// MaintenanceConfig with the supplier-categories field, keeping both consumers
-// type-safe (and matching the source module, where the full shape carries
-// supplierCategories too). An index signature was dropped — it would have
-// widened every rich field back to `unknown` and broken the engine call.
 export type MaintenanceConfig = MfgMaintenanceConfig & {
-  supplierCategories?: MaintPoolEntry[]; // ['Sofa','Bedframe','Mattress',...]
-  // HOUZS VENDOR — ProductModels wave. The Model list + detail pages read the
-  // rich product-model maintenance pools (size/compartment pools, branding,
-  // SKU code/name format templates, size-label overrides). Mirrored verbatim
-  // from the source MaintenanceConfig (apps/backend/src/lib/mfg-products-
-  // queries.ts), all optional on the wire.
+  supplierCategories?: MaintPoolEntry[];
   bedframeSizes?:    MaintPoolEntry[];
   sofaCompartments?: MaintPoolEntry[];
   mattressSizes?:    MaintPoolEntry[];
@@ -77,11 +47,6 @@ export type MaintenanceConfig = MfgMaintenanceConfig & {
   mattressNameFormat?: string;
 };
 
-// HOUZS VENDOR — Products wave. The Maintenance tab's effective-date drawer
-// reads effectiveFrom / hasPendingPriceChange / pendingEffectiveFrom off the
-// resolved row, so the shape now mirrors the source MaintenanceResolved
-// (apps/backend/src/lib/mfg-products-queries.ts). No vendored consumer read the
-// earlier guessed `scope`/`source` fields, so dropping them is safe.
 export type MaintenanceResolved = {
   data: MaintenanceConfig | null;
   effectiveFrom: string | null;
@@ -119,28 +84,16 @@ export function useMaintenanceConfig(
       authedFetch<MaintenanceResolved>(`/maintenance-config/resolved?scope=${encodeURIComponent(scope)}`),
     enabled,
     staleTime: 60_000,
-    // See useMfgProducts comment — settle errors fast for the migration-pending case.
     retry: retryUnlessClientError,
     retryDelay: 800,
   });
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   HOUZS VENDOR — PO-page additions. The PO New form needs the SKU catalogue
-   (useMfgProducts) + the Special Add-ons pool (useSpecialAddons). Copied from
-   apps/backend/src/lib/mfg-products-queries.ts; MfgProductRow is reduced to the
-   fields the PO form reads (id/code/name/category). Both call the vendored
-   authedFetch (→ /api/scm). The source module also pulls in verified-save /
-   supabase / humanApiError for its CRUD mutations — none of that is needed for
-   these two read hooks, so it is intentionally left out.
-   ═══════════════════════════════════════════════════════════════════════════ */
 
 /* FABRIC_ACCESSORY is shown as "Sofa Accessory" (owner 2026-09-14). The code has no
    'sofa' in it on purpose: 41 readers test a group with includes('sofa'), and a pillow
    would become a SOFA main product to all of them. tasks/PLAN-sofa-accessories-category.md */
 export type MfgCategory = MfgProductCategory;
-/* The category list and the one label per category live in
-   vendor/shared/product-categories.ts (mirror of the backend's). */
 export { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel };
 
 /** MfgProductRow — the PO New form only reads id/code/name/category off each
@@ -156,33 +109,17 @@ export type MfgProductRow = {
   category: MfgCategory;
   size_code?: string | null;
   size_label?: string | null;
-  // HOUZS VENDOR — Products wave. These four are REQUIRED in the source row and
-  // the SKU Master grid treats them as non-optional (price math + status badge),
-  // so they match the source shape. The /mfg-products endpoint always returns
-  // them; no vendored caller constructs a partial MfgProductRow literal (the
-  // ProductModels seeder uses a `Pick<…, 'code'|'category'|'size_code'>`), so
-  // promoting them to required is safe for the PO / SO / ProductModels callers.
   base_price_sen: number | null;
   price1_sen: number | null;
   status: 'ACTIVE' | 'INACTIVE';
   branding?: string | null;
   model_id?: string | null;
-  // HOUZS VENDOR — SO line editor (SoLineCard) additions. The SKU picker
-  // defaults the selling unit price from sell_price_sen, prices sofa seat
-  // heights off seat_height_prices, and filters variant dropdowns by the
-  // picked Model's allowed_options. All optional so the PO-page + ProductModels
-  // callers stay unaffected.
   sell_price_sen?: number | null;
   seat_height_prices?: SeatHeightPrice[] | null;
   allowed_options?: ModelAllowedOptions | null;
-  /** The Model's default_variants, flattened like allowed_options. */
   model_default_variants?: Record<string, string> | null;
-  // HOUZS VENDOR — Products wave (SkuMasterTab). The SKU Master grid + New SKU
-  // drawer + CSV round-trip read the rest of the source row. unit_m3_milli is
-  // required in the source (the grid sorts on it); the rest are optional.
   description?: string | null;
   base_model?: string | null;
-  /** The Model's live name (follows a rename); base_model stays the model code. */
   model_name?: string | null;
   pwp_price_sen?: number | null;
   unit_m3_milli: number;
@@ -194,10 +131,6 @@ export type MfgProductRow = {
   updated_at?: string;
   one_shot?: boolean;
   source_doc_no?: string | null;
-  /* B1 — the derived-cost anchor state for the SKU Master cost-column marker
-     (teal ok / amber suppliers-differ / red gap / service). Present ONLY when the
-     list was fetched with anchorState (the SKU Master screen); undefined for the
-     SO/PO catalogue pickers that don't ask. */
   costAnchorState?: 'ok' | 'conflict' | 'empty' | 'service';
 };
 
@@ -219,11 +152,6 @@ export type ModelAllowedOptions = {
   specials?: string[] | null;
 };
 
-// Company-scope the cache key so a company switch can never serve another
-// company's SKU catalog from an in-memory cache. The switcher already full-
-// reloads (TopNavbar) which empties the cache, but keying by company removes
-// the reliance on that — matches how authed-fetch reads the same localStorage
-// key to stamp X-Company-Id. (Multi-company merge QA, 2026-07.)
 function activeCompanyKey(): string {
   return String(getActiveCompanyId() ?? 'default');
 }
@@ -232,13 +160,7 @@ export function useMfgProducts(opts?: {
   category?: MfgCategory;
   search?: string;
   enabled?: boolean;
-  /* B1 — ask the server for each row's costAnchorState (the SKU Master cost
-     marker). Opt-in and separately cache-keyed so the SO/PO pickers keep their
-     lean, un-annotated list. */
   anchorState?: boolean;
-  /* Read the catalogue from the server on every mount, past both caches — for a
-     screen that acts on SKUs another person may have just created (BUG-85: the
-     Assign-to-suppliers dialog showed "0 SKUs" for a model whose SKU existed). */
   fresh?: boolean;
 }) {
   const qc = useQueryClient();
@@ -249,10 +171,6 @@ export function useMfgProducts(opts?: {
       if (opts?.category) params.set('category', opts.category);
       if (opts?.search) params.set('search', opts.search);
       if (opts?.anchorState) params.set('anchorState', '1');
-      /* The server sends this list with a 60s private max-age. A refetch that
-         follows a write (the query was invalidated) must not be answered from
-         that browser cache, or the list comes back without the SKU just made
-         and is then held as fresh for staleTime (BUG-85). */
       const pastBrowserCache = opts?.fresh || qc.getQueryState(queryKey)?.isInvalidated;
       const res = await authedFetch<{ products: MfgProductRow[] }>(
         `/mfg-products${params.toString() ? `?${params.toString()}` : ''}`,
@@ -294,11 +212,6 @@ export function matchesProductQuery(
   );
 }
 
-/* SKU codes (this company) that already carry at least one supplier binding.
-   Powers the SKU Master "no supplier binding" filter so staff can find the SKUs
-   still missing a supplier and fill them one by one. Company-keyed cache so a
-   company switch never serves the other company's set (same reason useMfgProducts
-   keys by activeCompanyKey). Returns a Set for O(1) membership. */
 export function useMfgProductBoundCodes() {
   return useQuery({
     queryKey: ['mfg-product-bound-codes', activeCompanyKey()],
@@ -312,10 +225,6 @@ export function useMfgProductBoundCodes() {
   });
 }
 
-/* ─── Special Add-ons (migration 0134) — SO-parity read (Loo 2026-06-06).
-   The SO/PO line editor's Specials accordion reads THESE (the same
-   GET /special-addons the POS uses) instead of legacy maintenance_config
-   string pools. Shapes mirror apps/pos/src/lib/queries.ts. */
 export interface SpecialAddonChoice { label: string; extraSen: number; }
 export interface SpecialAddonGroup { label: string; required: boolean; choices: SpecialAddonChoice[]; }
 export interface SpecialAddonRow {
@@ -323,7 +232,7 @@ export interface SpecialAddonRow {
   code: string;
   label: string;
   soDescription: string;
-  categories: string[];          // UPPERCASE mfg categories, e.g. ['BEDFRAME']
+  categories: string[];
   sellingPriceSen: number;
   costPriceSen: number;
   optionGroups: SpecialAddonGroup[];
@@ -341,9 +250,6 @@ export const useSpecialAddons = () =>
     },
   });
 
-/* HOUZS VENDOR — ProductModels wave. The Model Detail page flips a SKU's
-   ACTIVE/INACTIVE status from the SKU table. Copied verbatim from
-   apps/backend/src/lib/mfg-products-queries.ts (PATCH /mfg-products/:id). */
 export function useUpdateMfgProductStatus() {
   const qc = useQueryClient();
   return useMutation({
@@ -361,13 +267,6 @@ export function useUpdateMfgProductStatus() {
   });
 }
 
-/* HOUZS VENDOR — SO line editor (SoLineCard) read. Routes through GET
-   /api/scm/product-models/by-code/:code (backend/src/scm/routes/product-models.ts),
-   which resolves the SKU's model_id → product_models.allowed_options. Returns
-   null for legacy/unknown codes (no Model link) or when no models are seeded yet
-   — so the SO variant dropdowns render UNRESTRICTED for those lines (the exact
-   verbatim fallback the source already takes). Freshly-picked products still
-   carry allowed_options inline off useMfgProducts, so that path is unaffected. */
 /* The raw by-code payload — allowed_options pools + the SKU's REAL category.
    `category` (owner 2026-07-13) lets the SO line editor recognise a sofa/
    bedframe line whose persisted itemGroup came in generic (scan / backdoor
@@ -384,26 +283,12 @@ const normaliseByCode = (res: RawByCode): ModelByCodeResult => ({
   category: res.category ? (res.category.toUpperCase() as MfgCategory) : null,
 });
 
-/* ── by-code request coalescer ───────────────────────────────────────────────
-   WHY: this question is asked once per LINE (every SoLineCard / PoLineCard /
-   MobileNewSO line card calls a hook below), and it can only be asked once the
-   order has loaded and its item codes are known. Asked one code at a time that
-   was a second, N-wide serial hop — one GET /product-models/by-code/:code per
-   line — which on a phone is the dominant cost of opening an order (owner's
-   capture 2026-07-17: one authed-fetch per product, 171 requests for one SO).
-
-   Only the TRANSPORT changes: React Query still keys the cache per code, so
-   staleTime, the shared cache and both select() consumers behave exactly as
-   before, and no call site moves. Codes requested in the same tick fold into
-   ONE GET /product-models/by-code-batch. Desktop and mobile both converge
-   because both already route through these hooks. */
 type ByCodeJob = {
   code: string;
   resolve: (r: ModelByCodeResult) => void;
   reject: (e: unknown) => void;
 };
 
-/* Matches the route's own cap; a longer order simply sends a second batch. */
 const BY_CODE_BATCH_MAX = 100;
 
 let byCodeQueue: ByCodeJob[] = [];
@@ -419,9 +304,6 @@ async function flushByCodeQueue(): Promise<void> {
     const chunk = jobs.slice(i, i + BY_CODE_BATCH_MAX);
     const codes = [...new Set(chunk.map((j) => j.code))];
     try {
-      /* A GET with repeated `code` params, not a POST with a body: the route is
-         mounted openRead, which exempts GET/HEAD only — a POST would demand
-         `edit` on the Products admin area and 403 every salesperson. */
       const params = new URLSearchParams();
       for (const code of codes) params.append('code', code);
       const res = await authedFetch<{ results?: Record<string, RawByCode | undefined> }>(
@@ -429,11 +311,6 @@ async function flushByCodeQueue(): Promise<void> {
       );
       for (const job of chunk) {
         const row = res.results?.[job.code];
-        /* No entry for a code we asked for means the batch did not ANSWER the
-           question — it does not mean "this SKU has no Model". Those two must
-           never collapse into one value: the second renders the variant
-           dropdowns UNRESTRICTED, which would silently widen what an operator
-           may pick. Fail loudly; React Query surfaces it like any other error. */
         if (!row) {
           job.reject(new Error(`by-code-batch returned no entry for ${job.code}`));
           continue;
@@ -451,10 +328,6 @@ function loadModelByCode(code: string): Promise<ModelByCodeResult> {
     byCodeQueue.push({ code, resolve, reject });
     if (byCodeFlushScheduled) return;
     byCodeFlushScheduled = true;
-    /* A microtask, not a timer: React commits every line card together, so the
-       line hooks enqueue within the same task and the batch closes without
-       costing a frame. Anything that enqueues later just forms its own batch —
-       fewer requests than today either way. */
     queueMicrotask(() => { void flushByCodeQueue(); });
   });
 }
@@ -472,8 +345,6 @@ const modelByCodeQueryOptions = (itemCode: string | undefined) => ({
 export const useModelAllowedOptionsByCode = (itemCode: string | undefined) =>
   useQuery({
     ...modelByCodeQueryOptions(itemCode),
-    // Same query (one fetch, shared cache) as useSkuCategoryByCode; select the
-    // allowed_options slice so existing callers keep their ModelAllowedOptions.
     select: (r: ModelByCodeResult) => r.allowedOptions,
   });
 
@@ -487,17 +358,6 @@ export const useSkuCategoryByCode = (itemCode: string | undefined) =>
     select: (r: ModelByCodeResult) => r.category,
   });
 
-/* ════════════════════════════════════════════════════════════════════════════
-   HOUZS VENDOR — Products wave. Everything below was copied verbatim from
-   apps/backend/src/lib/mfg-products-queries.ts so the Products page (SKU Master
-   + Maintenance) and SpecialAddonsTab compile + work. The only deviations:
-     • useUpdateMfgProductPrices routes verified-save through the vendored
-       verified-save (localStorage token, /api/scm base) — see verified-save.ts.
-     • The `addons` (Order Add-ons) hooks in the source hit a supabase `addons`
-       table directly; here they route through GET/POST/PATCH/DELETE
-       /api/scm/addons (backend/src/scm/routes/addons.ts → scm.addons), wired
-       2026-06-20 in the SCM stub-wiring sweep.
-   ════════════════════════════════════════════════════════════════════════════ */
 
 export function useUpdateMfgProductPrices() {
   const qc = useQueryClient();
@@ -518,16 +378,11 @@ export function useUpdateMfgProductPrices() {
       name?: string;
     }) => {
       const { id, ...body } = args;
-      // verified-save: a price PATCH that returns 200 can still LIE (half-write /
-      // stale cache), so read the row back (cache-bypassing) and confirm the
-      // price actually changed before reporting success.
       const expect: Record<string, unknown> = {};
       if (body.basePriceSen !== undefined) expect.base_price_sen = body.basePriceSen;
       if (body.price1Sen    !== undefined) expect.price1_sen     = body.price1Sen;
       if (body.costPriceSen !== undefined) expect.cost_price_sen = body.costPriceSen;
       if (body.barcode      !== undefined) expect.barcode        = body.barcode;
-      // SKU Master edits the code and description too; read those back as well
-      // (the server stores them trimmed).
       if (body.code         !== undefined) expect.code           = body.code.trim();
       if (body.name         !== undefined) expect.name           = body.name.trim();
 
@@ -545,8 +400,6 @@ export function useUpdateMfgProductPrices() {
         fieldNames: { base_price_sen: 'Base price', price1_sen: 'Price 1', cost_price_sen: 'Cost price', name: 'Description', code: 'Product code' },
         fmt: (v) => (v == null ? '(blank)' : fmtSen(Number(v))),
       });
-      /* The PATCH succeeded; only the confirming read did not finish. Saying
-         "Save failed" here made staff re-key a price that had saved. */
       if (!result.ok && result.reason === 'unverified') {
         void serviceNotify({ title: 'Saved', body: message(result), tone: 'info' });
         return { ok: true as const, changed: 1 };
@@ -583,13 +436,9 @@ export function useMfgProductPriceHistory(id: string | null) {
   });
 }
 
-/* Effective-dated SELLING price (Pricing "Option B", ph.2) — the /price-changes
-   timeline. Distinct from the audit drawer above (master_price_history): these
-   are the DATED prices the owner schedules, backed by scm.mfg_product_price_history.
-   Money is integer sen. */
 export type MfgProductPriceChangeRow = {
   id: string;
-  effective_from: string;      // YYYY-MM-DD
+  effective_from: string;
   sell_price_sen: number | null;
   notes: string | null;
   created_by: string | null;
@@ -598,9 +447,7 @@ export type MfgProductPriceChangeRow = {
 
 export type MfgProductPriceChanges = {
   history: MfgProductPriceChangeRow[];
-  /** The price in effect as-of today (a scheduled row <= today, else the flat value). */
   currentSellPriceSen: number | null;
-  /** The next scheduled price strictly after today — powers the "Next: RM X from <date>" badge. */
   pending: { sellPriceSen: number; effectiveFrom: string } | null;
 };
 
@@ -623,15 +470,12 @@ export function useCreateMfgProductPriceChange() {
         { method: 'POST', body: JSON.stringify(body) },
       );
     },
-    // Append-only write — the whole timeline (rows + current + pending) can move,
-    // so orphan every /price-changes query rather than guessing the affected id.
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['mfg-product-price-changes'] });
     },
   });
 }
 
-/* PR #38 — Suppliers carrying a given product (via supplier_material_bindings). */
 export type ProductSupplierRow = {
   id: string;
   supplier_id: string;
@@ -648,14 +492,9 @@ export type ProductSupplierRow = {
     phone: string | null;
   } | null;
 };
-/* The derived-cost ANCHOR for a SKU (auto-derive stage 2b, display side). Says
-   which supplier the Product Maintenance cost is anchored to and in what state,
-   so the drawer / SKU-master column can show it and flag a missing-price gap.
-   costSen is null when the caller cannot view SKU cost (finance-gated server-side). */
 export type ProductCostAnchorState = 'ok' | 'conflict' | 'empty' | 'service';
 export type ProductCostAnchor = {
   state: ProductCostAnchorState;
-  /** For state 'empty': 'no_supplier_binding' | 'no_supplier_with_cost'. null otherwise. */
   reason: string | null;
   anchorSupplierId: string | null;
   anchorSupplierName: string | null;
@@ -677,14 +516,10 @@ export function useMfgProductSuppliers(id: string | null) {
   });
 }
 
-/* HISTORY — three tabs on the SKU drawer. Cost + Supplier-price are new reads
-   (both append-only, company-scoped, cost figures finance-gated server-side so a
-   non-cost caller gets null in the money fields). Selling reuses the /price-changes
-   timeline above. */
 export type MfgProductCostHistoryRow = {
   id: string;
-  effectiveFrom: string;            // YYYY-MM-DD
-  basePriceSen: number | null;      // null when finance-gated OR that lane unchanged
+  effectiveFrom: string;
+  basePriceSen: number | null;
   price1Sen: number | null;
   seatHeightPrices: unknown | null;
   sourceSupplierId: string | null;
@@ -708,10 +543,10 @@ export type SupplierPriceHistoryRow = {
   supplierCode: string | null;
   supplierName: string | null;
   isMainSupplier: boolean;
-  unitPriceSen: number | null;      // null when finance-gated
+  unitPriceSen: number | null;
   priceMatrix: unknown | null;
-  comparableSen: number | null;     // the dearness the anchor ranks on; null when gated
-  direction: 'up' | 'down' | null;  // raised / lowered vs this supplier's prior row
+  comparableSen: number | null;
+  direction: 'up' | 'down' | null;
   effectiveFrom: string;
   notes: string | null;
   createdBy: string | null;
@@ -759,7 +594,6 @@ export function useCreateMfgProduct() {
   });
 }
 
-/* CSV round-trip import — bulk upsert by code. */
 export type BatchImportRow = {
   code: string;
   name: string;
@@ -777,11 +611,9 @@ export type BatchImportRow = {
 
 export type BatchImportResult = {
   upserted: number;
-  /* Of `upserted`, the rows whose code was new. */
   created?: number;
   failed: number;
   failures: Array<{ code: string; reason: string }>;
-  /* A category change on a SKU that belongs to a model moves the model and all its SKUs. */
   modelsMoved?: ImportModelMove[];
 };
 
@@ -833,8 +665,6 @@ export function useMaintenanceConfigHistory(scope = 'master') {
   });
 }
 
-/* ─── Special Add-ons CRUD — same /special-addons Worker routes the read hook
-   above uses, so POS and Backend write the one shared table. */
 export interface SpecialAddonInput {
   code: string;
   label: string;
@@ -874,11 +704,6 @@ export const useDeleteSpecialAddon = () => {
   });
 };
 
-/* ─── Specials effective-dated history + Save-with-effective-date (owner
-   2026-06-22). Mirrors useMaintenanceConfigHistory / useSaveMaintenanceConfig
-   so the Specials / Sofa Specials Maintenance tabs get the SAME Edit -> Save
-   (effective-date) + History chrome as the other pools. A snapshot row carries
-   the WHOLE add-on set; SO costing keeps reading the live /special-addons table. */
 export interface SpecialAddonSnapshotEntry extends SpecialAddonInput {}
 export type SpecialAddonsHistoryRow = {
   id: string;
@@ -918,12 +743,9 @@ export type SofaCompartmentRenameResult = {
   to: string;
   applied: boolean;
   refused: 'in_use' | null;
-  /** `<table>.<column>` -> rows of THIS company still using the code. */
   inUse: Record<string, number>;
   inUseTotal: number;
-  /** table -> rows the rename rewrites (pool, Model ticks, combos, quick picks). */
   changes: Record<string, number>;
-  /** An uploaded photo is filed under the old code and is dropped. */
   photoCleared: boolean;
 };
 
@@ -977,9 +799,6 @@ export function useSaveMaintenanceConfig() {
   });
 }
 
-/* ─── Sofa Compartment photo upload / delete. Multipart POST — never set
-   content-type by hand (fetch picks the FormData boundary; authedFetch only
-   stamps content-type for string bodies, so FormData slips past correctly). */
 export function useUploadSofaCompartmentPhoto() {
   const qc = useQueryClient();
   return useMutation({
@@ -1013,11 +832,6 @@ export function useDeleteSofaCompartmentPhoto() {
   });
 }
 
-/* ─── Order Add-ons (whole-order one-time fees: Dispose, Lift).
-   Wired 2026-06-20 — the source read/wrote the supabase `addons` table directly
-   under RLS; here the same CRUD routes through GET/POST/PATCH/DELETE
-   /api/scm/addons (backend/src/scm/routes/addons.ts → scm.addons). The API
-   returns AdminAddonRow verbatim (category has no DB column → always null). */
 export interface AdminAddonRow {
   id: string;
   label: string;

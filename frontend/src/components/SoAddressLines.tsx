@@ -23,7 +23,6 @@ type Line = 1 | 2 | 3 | 4;
  */
 export function SoAddressLines({ lines, town, onChange, fieldClassName, labelClassName, inputClassName, style, disabled }: {
   lines: readonly [string, string, string, string];
-  /** The order's postcode / city / state: a line 3 / 4 that only repeats them is not shown twice. */
   town: AddressTown;
   onChange: (line: Line, value: string) => void;
   fieldClassName: string;
@@ -50,8 +49,6 @@ export function SoAddressLines({ lines, town, onChange, fieldClassName, labelCla
           <input className={inputClassName(i)} value={value} placeholder={PLACEHOLDERS[i]}
             autoComplete="houzs-no-autofill" disabled={disabled}
             {...addressLineProps(set, spill)}
-            /* A line 2 that already carries lines 3 / 4 can be longer than one
-               book column; the cap must not stop it being edited. */
             maxLength={value.length > ADDRESS_LINE_MAX ? undefined : ADDRESS_LINE_MAX}
             onChange={(e) => set(e.target.value)} />
         </label>

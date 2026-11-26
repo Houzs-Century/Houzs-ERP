@@ -37,7 +37,6 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Base64 (what the page sends a PDF as) -> bytes. */
 function fromBase64(b64: string): Uint8Array {
   const clean = b64.includes(',') ? b64.slice(b64.indexOf(',') + 1) : b64;
   const bin = atob(clean.replace(/\s/g, ''));
@@ -46,7 +45,6 @@ function fromBase64(b64: string): Uint8Array {
   return out;
 }
 
-/** Every merchant report of one acquirer, as the comparison needs it. */
 async function reportsFor(sb: any, companyId: number, acquirerCode: string): Promise<
   { ok: true; reports: ReportForPayout[] } | { ok: false; reason: string }
 > {
@@ -78,7 +76,6 @@ async function reportsFor(sb: any, companyId: number, acquirerCode: string): Pro
   };
 }
 
-/* ── POST /settlement/payouts — upload one advice ─────────────────────────── */
 
 export const payoutUpload = guard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -92,8 +89,6 @@ export const payoutUpload = guard(async (c) => {
   if (!acquirerCode) return c.json({ error: 'no_acquirer', message: 'Choose which acquirer sent this advice.' }, 400);
   if (!contentBase64.trim()) return c.json({ error: 'empty_file', message: 'The file is empty.' }, 400);
 
-  /* Only Public Bank sends one of these so far. Refused by name rather than
-     read as an empty advice, which is the §2.14 rule for every reader here. */
   if (acquirerCode !== 'PBB') {
     return c.json({
       error: 'no_advice_reader',
@@ -189,7 +184,6 @@ export const chargeAccountsHandler = guard(async (c) => {
   return c.json({ chargeAccounts: choices.chargeAccounts, feeAccountByAcquirer: choices.feeAccountByAcquirer });
 });
 
-/* ── GET /settlement/payouts — the list, each re-checked live ─────────────── */
 
 export const payoutList = guard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -229,10 +223,6 @@ export const payoutList = guard(async (c) => {
   for (const p of payouts) {
     const reports = await reportsFor(sb, co.companyId, String(p.acquirer_code));
     if (!reports.ok) return c.json({ error: 'load_failed', reason: reports.reason }, 500);
-    /* RE-CHECKED, not read back from the day rows: a report uploaded since the
-       advice was must count, and one whose lines were decided since must stop
-       blocking it. The stored rows say what the ADVICE said; whether that is
-       satisfied is a question about today. */
     const status = statusOfPayout(
       { netSen: Number(p.net_sen ?? 0), batches: daysByPayout.get(Number(p.id)) ?? [] },
       reports.reports,

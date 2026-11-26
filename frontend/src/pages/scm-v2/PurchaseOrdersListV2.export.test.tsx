@@ -152,7 +152,6 @@ const allOrders = [
 ];
 
 beforeEach(() => {
-  // The SCREEN holds one page of one order; the filtered set holds three.
   h.rows = [allOrders[0]!];
   h.aoa = [];
   h.cells = {};
@@ -203,7 +202,6 @@ describe("Purchase Order list: the ONE Export", () => {
       "Item Description 2", "Location", "Item Group", "Doc Date", "Remaining Qty", "Delivery Date",
       "Estimate Delivery Date", "Supplier Delivery Date 2", "Supplier Delivery Date 3",
     ]);
-    // 2 + 1 lines, and the PO with no line still gets its row.
     expect(h.aoa).toHaveLength(5);
     expect(h.aoa[1]).toEqual([
       "PO-009304", "HC-SO-013389", "400-A006", "AKEMI UNITED SDN BHD", "AK-GUARDIAN (Q)",
@@ -211,9 +209,8 @@ describe("Purchase Order list: the ONE Export", () => {
       "2026-09-12", null, null,
     ]);
     expect(h.aoa[2]![4]).toBe("AK-BASTION (K)");
-    expect(h.aoa[3]![0]).toBe("HC-PO-009950"); // not linked to AutoCount: the ERP number
+    expect(h.aoa[3]![0]).toBe("HC-PO-009950");
     expect(h.aoa[4]!.slice(0, 5)).toEqual(["HC-PO-009951", null, "400-A006", "AKEMI UNITED SDN BHD", null]);
-    // Doc Date and the delivery dates are real Excel dates shown yyyy/mm/dd.
     expect(h.cells["9:1"]).toEqual({ t: "n", v: 46269, z: "yyyy/mm/dd" });
     expect(h.cells["11:1"]).toMatchObject({ t: "n", z: "yyyy/mm/dd" });
     expect(h.written[0]).toMatch(/^purchase-orders-\d{4}-\d{2}-\d{2}\.xlsx$/);
@@ -229,11 +226,9 @@ describe("Purchase Order list: the ONE Export", () => {
   });
 
   it("follows the grid's funnel over the whole fetched set", async () => {
-    // A funnel set this visit (in-visit memory, not localStorage).
     primeInVisitColFilters("purchase-orders-v2", { item_code: ["AK-BASTION (K)"] });
     mount("/scm/purchase-orders");
     await exportNow();
-    // Only PO-009304 has a Bastion line; the funnel keeps the whole PO.
     expect(h.aoa.slice(1).map((r) => r[0])).toEqual(["PO-009304", "PO-009304"]);
   });
 
@@ -251,7 +246,6 @@ describe("Purchase Order list: the ONE Export", () => {
     ];
     const first = h.aoa[1]!;
     expect(moneyCols.map(([, get]) => get(first))).toEqual([15000, 0.055, 1500]);
-    // Every money cell in the file equals the stored sen / 100, never the sen.
     type Pair = { o: (typeof allOrders)[number]; l: PoListLine | null };
     const lines: Pair[] = allOrders.flatMap((o): Pair[] => (o.lines.length ? o.lines.map((l) => ({ o, l })) : [{ o, l: null }]));
     lines.forEach(({ o, l }, i) => {
@@ -265,9 +259,6 @@ describe("Purchase Order list: the ONE Export", () => {
   });
 
   it("carries the _R revision suffix on an AC-linked Doc No too (owner report 2026-09-18)", async () => {
-    // Approving a PO amendment bumps `revision`, but the Doc No cell showed
-    // the AC-linked number as-is (never re-derived, never suffixed) — a
-    // revised PO looked identical to its own original on screen.
     h.authed.mockImplementation(async (path: string) => {
       if (path.startsWith("/mfg-purchase-orders/export/rows")) {
         return {

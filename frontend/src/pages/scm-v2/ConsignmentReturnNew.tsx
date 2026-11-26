@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// ConsignmentReturnNew — full-page Create Consignment Return at
-// /scm/consignment-returns/new.
-//
-// Faithful clone of DeliveryReturnNew.tsx. It reuses the SAME shared components
-// UNCHANGED — SoLineCard (+ emptySoLine / SoLineDraft) + PhoneInput — and the
-// SAME generic data hooks (useStaff, useLocalities, useSoDropdownOptions). The
-// Customer / Return Info / Emergency / Delivery Address cards + SoLineCard list
-// are identical to the DR create flow. There is no payments ledger on a return.
-//
-// The DR-specific wiring is intentionally DROPPED here:
-//   • the ?fromDo / ?fromPicks prefill + DO detail read-back
-//   • the "From Delivery Order" header button + DO-line picker
-// Every line comes from a Consignment Note line (owner 23 Nov 2026; server 409
-// note_link_required): start from the note (?fromConsignmentNote) or the
-// From-Note picker (?fromPicks). There is no free "Add line"; the condition is
-// entered per line.
-//
-// On Save: POST /consignment-returns (header + items). The backend route
-// `/consignment-returns` mirrors `/delivery-returns` 1:1; numbering is
-// CRN-YYMM-NNN.
-// ----------------------------------------------------------------------------
 
 import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
@@ -67,23 +45,13 @@ export const ConsignmentReturnNew = () => {
   const navigate = useNavigate();
   const notify = useNotify();
   const [searchParams] = useSearchParams();
-  // Convert-from: a Consignment Note (=DO) this return collects back. Mirrors the
-  // DR's ?fromDo= prefill — seed header + lines from the note, free-edit after.
   const fromConsignmentNote = searchParams.get('fromConsignmentNote');
   const fromPicks = searchParams.get('fromPicks') === '1';
 
-  /* One key for the one return this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the return detail on success, so the MOUNT is
-     exactly one return: stable across re-renders and across a re-press after a
-     stalled submit, fresh on remount. */
   const idemKey = useIdempotencyKey();
   const create = useCreateConsignmentReturn();
   const loc = useLocalities();
   const cnDetail = useConsignmentNoteDetail(fromConsignmentNote);
-  /* `include` carries the salesperson already on the SOURCE document this one is
-     being raised from, so someone the onlySales narrowing hides is still named.
-     "(former staff)" below is then only reachable for a row that genuinely is
-     gone. Declared after the source query so the id is in scope. */
   const staffQ = usePickableStaff({
     onlySales: true,
     include: [(cnDetail.data?.deliveryOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined],
@@ -96,7 +64,6 @@ export const ConsignmentReturnNew = () => {
   const buildingTypeOpts = optionsOrFallback('building_type', buildingTypeOptsQ.data);
   const relationshipOpts = optionsOrFallback('relationship', relationshipOptsQ.data);
 
-  // ── Customer ──
   const [debtorCode, setDebtorCode] = useState('');
   const [debtorName, setDebtorName] = useState('');
   const [phone, setPhone] = useState('');
@@ -105,7 +72,6 @@ export const ConsignmentReturnNew = () => {
   const [customerType, setCustomerType] = useState('');
   const [customerSoNo, setCustomerSoNo] = useState('');
 
-  // ── Return info ──
   const [buildingType, setBuildingType] = useState('');
   const [venue, setVenue] = useState('');
   const [venueId, setVenueId] = useState('');
@@ -113,7 +79,6 @@ export const ConsignmentReturnNew = () => {
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
 
-  // ── Address ──
   const [address1, setAddress1] = useState('');
   const [address2, setAddress2] = useState('');
   const [state, setState] = useState('');
@@ -122,15 +87,12 @@ export const ConsignmentReturnNew = () => {
   const [salesLocation, setSalesLocation] = useState('');
   const [branding, setBranding] = useState('');
 
-  // ── Emergency ──
   const [emergencyName, setEmergencyName] = useState('');
   const [emergencyRel, setEmergencyRel] = useState('');
   const [emergencyPhone, setEmergencyPhone] = useState('');
 
-  // ── Items ──
   const [lines, setLines] = useState<DraftLine[]>(() => []);
 
-  // ── Convert-from prefill (seed once when the source note arrives) ──
   const [prefilled, setPrefilled] = useState(false);
   useEffect(() => {
     if (!fromConsignmentNote || prefilled) return;
@@ -183,11 +145,6 @@ export const ConsignmentReturnNew = () => {
     setPrefilled(true);
   }, [fromConsignmentNote, prefilled, cnDetail.data]);
 
-  // ── From-Note multi-picker merge (fromPicks) — the operator chose specific
-  //    note lines + quantities on /scm/consignment-returns/from-note. Seed lines from
-  //    the stash, carrying each line's source note-line id so the backend links
-  //    the return to the note line. Debtor comes from the first picked line —
-  //    one debtor per return (the picker enforces it).
   useEffect(() => {
     if (!fromPicks || prefilled) return;
     type Stash = {
@@ -229,9 +186,6 @@ export const ConsignmentReturnNew = () => {
   const staffList = useMemo(() => (staffQ.data ?? []).filter((s) => s.active), [staffQ.data]);
 
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
-  /* Shared address cascade, BOTH directions (address-cascade.ts). Three atoms,
-     so each pick writes all three back — the raw setters keep the value just
-     chosen, which routing through the State picker's handler would clear. */
   const { cities, postcodes } = useAddressCascade(locRows, state, city);
   const applyTriple = (next: { state: string; city: string; postcode: string }) => {
     setState(next.state); setCity(next.city); setPostcode(next.postcode);
@@ -257,7 +211,6 @@ export const ConsignmentReturnNew = () => {
       notify({ title: 'Pick the returned items from a Consignment Note.', tone: 'error' });
       return;
     }
-    // Server rule (consignment-returns.ts → 409 note_link_required): every line names its note line.
     if (validLines.some((l) => !l.doItemId)) {
       void notify({ title: 'Every return line must be picked from a Consignment Note — start from the note.', tone: 'error' });
       return;
@@ -340,7 +293,6 @@ export const ConsignmentReturnNew = () => {
         }
       />
 
-      {/* ── CUSTOMER ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Customer</h2></header>
         <div className={styles.cardBody}>
@@ -398,7 +350,6 @@ export const ConsignmentReturnNew = () => {
         </div>
       </section>
 
-      {/* ── RETURN INFO ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Return Info</h2></header>
         <div className={styles.cardBody}>
@@ -436,7 +387,6 @@ export const ConsignmentReturnNew = () => {
         </div>
       </section>
 
-      {/* ── EMERGENCY CONTACT ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Emergency Contact</h2>
@@ -469,7 +419,6 @@ export const ConsignmentReturnNew = () => {
         </div>
       </section>
 
-      {/* ── DELIVERY ADDRESS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Delivery Address</h2></header>
         <div className={styles.cardBody}>
@@ -520,7 +469,6 @@ export const ConsignmentReturnNew = () => {
         </div>
       </section>
 
-      {/* ── RETURNED ITEMS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Returned Items ({lines.length})</h2></header>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -532,14 +480,6 @@ export const ConsignmentReturnNew = () => {
               onChange={(patch) => updateLine(line.rid, patch)}
               onRemove={() => dropLine(line.rid)}
               canRemove={lines.length > 1}
-              /* Downstream document: the items were already specified on the
-              originating order and their variants ride in with them, so they
-              are NOT re-required here. Same rule DeliveryOrderNewV2 states
-              for the DO. Verified 2026-08-13: this document's server does no
-              variant enforcement at all (findIncompleteVariantLines appears
-              0 times in its route), so the default `= true` was pure
-              client-side invention - a red ring and a ` *` for a field the
-              backend never asked for. */
               variantsRequired={false}
               specLockedReason={null}
               lineDateLocked={false}
@@ -547,8 +487,6 @@ export const ConsignmentReturnNew = () => {
               attachOptions={null}
             />
           ))}
-          {/* No free "Add line": a return line must come from a Consignment Note line
-              (server 409 note_link_required). When empty, steer to the From-Note picker. */}
           {lines.length === 0 && (
             <div style={{
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-3)',

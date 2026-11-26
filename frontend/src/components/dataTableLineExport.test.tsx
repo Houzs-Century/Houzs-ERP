@@ -94,7 +94,6 @@ describe("a workbook of several tables", () => {
     ]);
     expect(h.cells["0:4"]).toEqual({ t: "n", v: excelDaySerial("2026-11-05"), z: "yyyy/mm/dd" });
     expect(h.cells["1:4"]).toMatchObject({ t: "n", v: 3990, z: "#,##0.00" });
-    /* The heading itself is left as text. */
     expect(h.cells["0:0"]).toEqual({ t: "s", v: "Record Payment Received, Bank CANNOT Found" });
   });
 
@@ -157,10 +156,6 @@ describe("applyColumnFilters / sortTableRows — the grid's own rules", () => {
 });
 
 describe("the grid keeps its rows' identity when nothing filters or sorts", () => {
-  /* Found by CI 2026-09-15 (run 34947720029): a copy per call made DataTable
-     report a NEW rows array on every render, and a parent that stores that
-     report and re-renders with freshly built columns (the list pages do both)
-     looped — every frontend test shard hung. */
   it("returns the same array for no funnel and no sort", () => {
     expect(applyColumnFilters(docs, {}, columns)).toBe(docs);
     expect(sortTableRows(docs, null, columns, false, null)).toBe(docs);
@@ -185,7 +180,6 @@ describe("the grid keeps its rows' identity when nothing filters or sorts", () =
 
 describe("DataTable exportLines", () => {
   it("exports every fetched row through the stored funnel, with only the visible columns", async () => {
-    // The page holds ONE row; the server set holds three. An in-visit funnel keeps Open.
     primeInVisitColFilters("docs-export", { status: ["Open"] });
     localStorage.setItem("dt:hidden:docs-export", JSON.stringify(["due"]));
     const fetchRows = vi.fn(async () => docs);
@@ -228,7 +222,6 @@ describe("DataTable exportLines", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
     await waitFor(() => expect(h.files).toHaveLength(1));
-    // columns: 0 Doc No, 1 Item Code, 2 Qty, 3 Delivery Date, 4 Status, 5 Total; row 1 = first data row
     expect(h.cells["3:1"]).toEqual({ t: "n", v: 46296, z: "yyyy/mm/dd" });
     expect(h.cells["5:1"]).toMatchObject({ t: "n", v: 50, z: "#,##0.00" });
   });

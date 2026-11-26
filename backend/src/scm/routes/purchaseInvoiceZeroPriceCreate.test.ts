@@ -39,8 +39,6 @@ const sb = fakeSb({
     purchase_order_id: 'po-1', supplier_id: 'sup-1', currency: 'MYR',
     exchange_rate: 1, migrated_no_stock: false, status: 'POSTED',
   }],
-  /* The three modules one sofa decomposes into. The item code alone does not
-     identify what was received, which is why the lines carry variants. */
   grn_items: [
     { id: 'gi-1', grn_id: 'grn-1', item_code: '9028-1A(LHF)', material_kind: 'mfg_product', material_name: 'Sofa module', qty_accepted: 1, invoiced_qty: 0, returned_qty: 0, unit_price_sen: 0, allocated_charge_sen: 0, company_id: 1 },
     { id: 'gi-2', grn_id: 'grn-1', item_code: '9028-1A(RHF)', material_kind: 'mfg_product', material_name: 'Sofa module', qty_accepted: 1, invoiced_qty: 0, returned_qty: 0, unit_price_sen: 0, allocated_charge_sen: 0, company_id: 1 },
@@ -53,14 +51,8 @@ const sb = fakeSb({
   inventory_lot_consumptions: [], companies: [{ id: 1, code: 'HOUZS' }],
 });
 
-/* supabaseAuth replaces whatever the caller set with the service client, so the
-   fake has to be injected at that seam rather than through the context. */
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => sb }));
 
-/* A Houzs integer id: supabaseAuth translates it and pins `user` to the system
-   scm.staff uuid. Seeding the PINNED uuid instead makes the middleware take its
-   once-per-request early return, so `supabase` is never set and every case
-   fails on a TypeError that has nothing to do with the rule under test. */
 const CALLER = {
   id: 7, email: 'buyer@houzs.test', app_metadata: {},
   user_metadata: { name: 'Buyer' }, aud: 'authenticated', created_at: '',
@@ -97,8 +89,6 @@ describe('POST /purchase-invoices — every line at RM 0.00', () => {
     const res = await post({
       supplierId: 'sup-1', purchaseOrderId: 'po-1', grnId: 'grn-1',
       invoiceDate: '2026-08-19', currency: 'MYR', exchangeRate: 1,
-      /* The header's own "Charge allocation" control, at its default. A zero
-         subtotal is the basis the freight split would divide by. */
       allocationMethod: 'QTY', asDraft: false,
       items: [line('gi-1', '9028-1A(LHF)'), line('gi-2', '9028-1A(RHF)'), line('gi-3', '9028-1NA')],
     });
@@ -114,14 +104,10 @@ describe('POST /purchase-invoices — every line at RM 0.00', () => {
     for (const it of items()) {
       expect(it.unit_price_sen).toBe(0);
       expect(it.line_total_sen).toBe(0);
-      /* No freight line, so nothing to allocate — and nothing allocated. The
-         column stays untouched rather than being written a NaN. */
       expect(it.allocated_charge_sen ?? 0).toBe(0);
     }
   });
 
-  /* The receipt line has to stop showing as outstanding, at zero price as at
-     any other — otherwise the same modules can be billed a second time. */
   it('consumes the receipt lines it billed', async () => {
     for (const g of sb.tables.grn_items) g.invoiced_qty = 0;
     sb.tables.purchase_invoices.length = 0;

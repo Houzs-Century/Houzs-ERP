@@ -12,7 +12,6 @@ const props = {
   line: { name: "Net profit %", color: "#a16a2e", values: [12.5, 9.5], format: (x: number) => `${x.toFixed(1)}%` },
 };
 
-/* jsdom has no ResizeObserver; the chart then draws at its fallback width. */
 beforeAll(() => {
   (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= class { observe() {} disconnect() {} };
 });

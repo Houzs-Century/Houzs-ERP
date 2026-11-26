@@ -48,10 +48,6 @@ import { DO_SIZE as S, DO_THEME as T, SANS, charSpace, pt, type Rgb } from './de
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 import { stripBookText } from './book-text';
 import { drawQrIntoPdf } from './pdf-qr';
-/* Owner spec 2026-08 — photos follow the line onto the printed document
-   (SO → PO → DO). Same shared block the SO/PO PDFs print through; keys are
-   the SO-carried `photo_urls` (mig 20260828T0746). All generated strings are
-   WinAnsi by rule (pdf-item-photos.ts header). */
 import {
   appendPhotoMarker,
   blobToSquarePdfImage,
@@ -68,16 +64,9 @@ import { PDF_COMPRESS } from './pdf-options';
 import { shortRackLabels } from './rack-label';
 
 type DoHeader = {
-  /* Row id — the photo proxy route is keyed by it. Optional so the
-     Consignment Note reuse (which has no DO row) stays valid; absent is the
-     STRICTER direction: no photo fetch, the block simply does not print. */
   id?: string | null;
   do_number: string;
   status: string;
-  /* When set, the header carries a "scan to mark loaded" QR encoding
-     /scm/do-load?id=<this>. EXPLICIT opt-in by name, not a generic id: the
-     Consignment Note print reuses this renderer, and a CN must never grow a
-     control that flips a DELIVERY ORDER's status. Only the DO surfaces set it. */
   /* The PUBLIC scan token (64 hex), stamped by armDoScanToken. Not a row id:
      the QR encodes /d/<token>, which opens with no login, because a driver has
      no account (owner: 「就跟hookka一样」). Absent = print no QR. */
@@ -107,46 +96,24 @@ type DoHeader = {
   po_doc_no?: string | null;
   customer_so_no?: string | null;
   ref?: string | null;
-  /* Resolved salesperson display name for the DELIVERY DETAILS block. The PDF
-     cannot run the staff lookup, so the caller passes the same name it shows on
-     screen (salesperson_name, else the staff-lookup of agent / salesperson_id).
-     Optional: blank / absent ⇒ the row is omitted, like Driver / Vehicle. */
   salesperson?: string | null;
-  /* The delivery window keyed on the Delivery Planning board. Drivers work from
-     this paper, so it prints beside the date. Absent ⇒ the row is omitted. */
   time_range?: string | null;
-  /* The ship-from warehouse, from the DO detail GET. Absent on the Consignment
-     Note reuse, so the row is omitted there. */
   warehouse_name?: string | null;
   warehouse_code?: string | null;
 };
 
 type DoItem = {
-  /* Line row id — pairs with DoHeader.id on the photo proxy route. Optional
-     for the same CN reuse; absent = that line fetches no photos (stricter). */
   id?: string | null;
   item_code: string;
   description: string | null;
   qty: number;
   m3_milli: number | null;
   unit_price_sen: number;
-  /* Variant info snapshotted from the SO (migration 0058) — drives the unified
-     variant line so DO/Consignment Note read like SO/PO/etc. */
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
-  /* Storekeeper picking (resolved server-side on the DO detail): the supplier
-     PO(s) that supplied this line's goods, and the physical rack(s) they are
-     stored on. Both optional / possibly empty → the cell shows a dash. */
   source_pos?: string[] | null;
   racks?: string[] | null;
-  /* 'locked' = the PO / rack this line was stamped with when it shipped;
-     'worked_out' = re-derived from stock records (an unstamped, older DO). */
   source_state?: 'locked' | 'worked_out' | null;
-  /* Line reference photos (R2 keys, delivery_order_items.photo_urls — carried
-     from the SO line, mig 20260828T0746). Optional so the Consignment Note
-     reuse stays valid. When present the row's first description line gains
-     the " (photo)" marker and the ITEM PHOTOS block prints the `.thumb`
-     siblings. */
   photo_urls?: string[] | null;
 };
 
@@ -162,67 +129,45 @@ export function pickingCell(vals: string[] | null | undefined, state: DoItem['so
   return state === 'worked_out' ? `${vals.join('\n')} *` : vals.join('\n');
 }
 
-// ── Page geometry ────────────────────────────────────────────────────────────
 /* jsPDF 'letter': 8.5 x 11 in. The 9.5 x 11 continuous form is 8.5 in between
    its perforations, so this is the sheet the storekeeper tears off — not A4,
    which is 18mm taller and was being scaled down to fit (owner 2026-09-08). */
 export const DO_PAGE_FORMAT = 'letter';
 const PAGE_W = 215.9;
 const PAGE_H = 279.4;
-const M = 14;                       // left / right / top padding
+const M = 14;
 const PAD_BOTTOM = 12;
-const CONTENT_W = PAGE_W - M * 2;   // 187.9mm
+const CONTENT_W = PAGE_W - M * 2;
 
 const EM_DASH = '—';
 
-/** Line height as a multiple of the size, for stacked prose. */
 const LINE = 1.4;
 
-// jsPDF places text on its BASELINE; blocks here are placed by their top edge.
-// This is the cap-height drop that converts one to the other, and it is the
-// single number that keeps the two columns of the header optically level.
 const BASELINE_DROP = 0.78;
 const baselineOf = (topMm: number, sizePt: number): number => topMm + pt(sizePt) * BASELINE_DROP;
 
 const setInk = (doc: Doc, rgb: Rgb): void => { doc.setTextColor(rgb[0], rgb[1], rgb[2]); };
 const setStroke = (doc: Doc, rgb: Rgb): void => { doc.setDrawColor(rgb[0], rgb[1], rgb[2]); };
 
-/* Rule weights. An impact printer forms a line out of pin strikes, so a
-   0.1mm hairline prints broken; 0.25mm is the thinnest that comes out solid
-   on the second ply. */
 const RULE_THIN = 0.25;
 const RULE_HEAVY = 0.6;
 
-/** A horizontal rule. jsPDF strokes centred on the path. */
 const rule = (doc: Doc, x1: number, y: number, x2: number, widthMm: number): void => {
   setStroke(doc, T.line);
   doc.setLineWidth(widthMm);
   doc.line(x1, y, x2, y);
 };
 
-/** Set the one face at a size. Every text call goes through here, so the sheet
- *  cannot grow a second family or a size under the floor by accident. */
 const font = (doc: Doc, sizePt: number, style: 'normal' | 'bold' = 'normal'): void => {
   doc.setFont(SANS, style);
   doc.setFontSize(sizePt);
 };
 
-/**
- * The letterhead: logo + company stack on the left, document title + number on
- * the right, closed by a heavy rule.
- *
- * Both columns are laid out from their own top edge and the rule clears
- * whichever ran longer — the two never consult each other's width because the
- * right column is right-aligned and the left is wrapped into the measure that
- * remains. (That measure is the fix from 2026-08-07: the old shared letterhead
- * let a long address run straight under the meta column.)
- */
 function drawDoHeader(
   doc: Doc,
   header: DoHeader,
   opts: { docTitle: string; logo?: BrandingLogo | null },
 ): number {
-  // ── Right column first: it is fixed-width and defines the left's measure ──
   const rightEdge = PAGE_W - M;
   const titleWords = opts.docTitle.trim().split(/\s+/);
   const titleTracking = charSpace(S.title, 0.06);
@@ -240,8 +185,6 @@ function drawDoHeader(
     ty += pt(S.title * 1.1);
   }
 
-  /* The DO number, bold and large: the one thing on the sheet the warehouse
-     reads from across a desk. It used to be a brass pill. */
   const docNoBaseline = ty - pt(S.title * 1.1) + pt(S.docNo) + 2.5;
   font(doc, S.docNo, 'bold');
   // Owner 2026-09-21: label the number "No. :" so it reads as the document
@@ -306,7 +249,6 @@ function drawDoHeader(
     rightBottom = Math.max(rightBottom, labelBaseline + 0.8);
   }
 
-  // ── Left column, wrapped into what the right one left ────────────────────
   const GUTTER = 7;
   let textX = M;
   let logoBottom = 0;
@@ -329,7 +271,7 @@ function drawDoHeader(
       doc.addImage(logo.dataUrl, logo.format, M + (BOX_W - w) / 2, M + 1, w, h);
       textX = M + BOX_W + 4;
       logoBottom = M + 1 + h;
-    } catch { /* fail-soft: text-only letterhead */ }
+    } catch { }
   }
 
   const leftMaxW = Math.max(40, rightEdge - rightW - GUTTER - textX);
@@ -377,11 +319,6 @@ function drawDoHeader(
     const labelW = doc.getTextWidth(label) + 2;
     const valueW = Math.max(30, leftMaxW - labelW);
     const oneLine = cs.join('  ·  ');
-    /* One line when phone + e-mail fit beside the label. Otherwise each channel
-       takes its own line, and any that is too wide for the indented column (a
-       long e-mail, once the logo + QR have narrowed this column) drops to the
-       full-width left edge so it is NEVER force-broken mid-word — the bug that
-       printed operation@houzscentury.com as "operation@houzsce" / "ntury.com". */
     const csRows: Array<[number, string]> = doc.getTextWidth(oneLine) <= valueW
       ? [[textX + labelW, oneLine]]
       : cs.map((v, i) => [i > 0 && doc.getTextWidth(v) > valueW ? textX : textX + labelW, v]);
@@ -397,7 +334,6 @@ function drawDoHeader(
   return ruleY;
 }
 
-/** Section caption — bold, uppercase. */
 function drawCaption(doc: Doc, text: string, x: number, top: number): number {
   font(doc, S.caption, 'bold');
   setInk(doc, T.ink);
@@ -405,14 +341,6 @@ function drawCaption(doc: Doc, text: string, x: number, top: number): number {
   return top + pt(S.caption) + 3;
 }
 
-/**
- * DELIVER TO / DELIVERY DETAILS — one ruled box, two columns.
- *
- * Drawn in two passes: the columns are measured first (so the box can be
- * sized to the taller one), then the box is stroked and the content is drawn
- * on top. Measuring by drawing into a throwaway pass would double every text
- * call, so instead each column's writer is run once in `measure` mode.
- */
 function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
   const PAD_X = 5;
   const PAD_Y = 3;
@@ -435,7 +363,6 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
     .filter(Boolean)
     .join(', ');
 
-  // ── Left column ──────────────────────────────────────────────────────────
   const drawLeft = (draw: boolean): number => {
     let y = draw ? drawCaption(doc, 'Deliver To', leftX, contentTop) : contentTop + pt(S.caption) + 3;
 
@@ -453,7 +380,6 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
     // field is still carried on DoHeader for search / dedup elsewhere.
 
     font(doc, S.body);
-    // The address measure is capped so it never crowds the details column.
     const addrLines = doc.splitTextToSize(address || EM_DASH, Math.min(78, colW)) as string[];
     y += 2.5 + pt(S.body);
     if (draw) doc.text('Address:', leftX, y);
@@ -472,9 +398,6 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
       doc.text(tel, leftX + labelW, y);
     }
 
-    // Delivery note from the order — the "ring the bell twice", "leave with the
-    // guardhouse" line. Whatever it says, the driver is the one who needs it,
-    // so it prints on the driver's sheet. Absent when blank.
     const note = (header.notes || '').trim();
     if (note) {
       font(doc, S.body);
@@ -489,7 +412,6 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
     return y;
   };
 
-  // ── Right column: label gutter + value ───────────────────────────────────
   const LABEL_W = 30;
   const ROW_GAP = 2.2;
   /* Houzs prints OUR number and the CUSTOMER'S own reference on separate lines;
@@ -508,8 +430,6 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
 
   const rows: Array<{ label: string; value: string | null; bold?: boolean }> = [
     ...soRows,
-    // Who sold the order — printed once the record carries it, omitted (not
-    // dashed) otherwise, the rule the Driver / Vehicle rows follow.
     ...(header.salesperson && header.salesperson.trim()
       ? [{ label: 'Salesperson', value: header.salesperson.trim() }]
       : []),
@@ -522,19 +442,13 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
       ? [{ label: 'Time Slot', value: header.time_range.trim(), bold: true }]
       : []),
     ...(warehousePrintName(header) ? [{ label: 'Warehouse', value: warehousePrintName(header) }] : []),
-    // Who is bringing it, and in what. Printed only once the run is assigned —
-    // a dashed "Driver —" on an unassigned DO is noise on the driver's sheet.
     ...(header.driver_name ? [{ label: 'Driver', value: header.driver_name }] : []),
     ...(header.vehicle ? [{ label: 'Vehicle', value: header.vehicle }] : []),
-    // Status is intentionally NOT shown on the customer's copy (owner
-    // 2026-09-21): the DO states what is delivered, not the order's workflow
-    // state. The status still drives the header QR / on-screen views.
   ];
 
   const drawRight = (draw: boolean): number => {
     let y = draw ? drawCaption(doc, 'Delivery Details', rightX, contentTop) : contentTop + pt(S.caption) + 3;
     for (const row of rows) {
-      /* Wrapped so free text ("TIME AROUND 10:30AM TO 12:30PM") stays in the panel. */
       font(doc, S.body, row.bold ? 'bold' : 'normal');
       const lines = doc.splitTextToSize(row.value || EM_DASH, colW - LABEL_W - 4) as string[];
       y += ROW_GAP + pt(S.body);
@@ -554,8 +468,6 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
   const bottom = Math.max(drawLeft(false), drawRight(false)) + PAD_Y;
   const panelH = bottom - top;
 
-  /* Stroke only. A filled panel — even the palest tint — dithers into dots
-     under every word inside it. */
   setStroke(doc, T.line);
   doc.setLineWidth(RULE_THIN);
   doc.rect(M, top, CONTENT_W, panelH, 'S');
@@ -565,7 +477,6 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
   return top + panelH;
 }
 
-// ── Closing block geometry, shared by the drawer and the page-break check ────
 const FOOTER_RULE_Y = PAGE_H - PAD_BOTTOM - 6;
 /* The MINIMUM blank signing space reserved above the signature rule — a page-
    break threshold, NOT a drawn box: drawClosing always strikes the rule at
@@ -577,17 +488,12 @@ const SIG_BOX_H = 8;
 const SIG_FIELD_ROW = pt(S.sigField) + 3.6;
 const SIG_TITLE_TOP = FOOTER_RULE_Y - 6 - SIG_FIELD_ROW * 2 - 2 - pt(S.sigTitle) - 2.5;
 const SIG_BOX_TOP = SIG_TITLE_TOP - SIG_BOX_H;
-/** Content must end above this or the closing block takes a fresh page. */
 const CLOSING_TOP = SIG_BOX_TOP - 4;
-/* The item photos stop above the closing, so the last photos and the signature
-   share a page: photos allowed down to the footer rule left a page holding only
-   the signature. */
 export const DO_PHOTOS_PAGE_BOTTOM = CLOSING_TOP;
 export function doClosingNeedsNewPage(contentEndY: number): boolean {
   return contentEndY > CLOSING_TOP;
 }
 
-/** Signature blocks + footer, pinned to the bottom of the page they close. */
 function drawClosing(doc: Doc, header: DoHeader, pageOf: { page: number; total: number }): void {
   const colW = (CONTENT_W - 10) / 2;
   const blocks: Array<{ x: number; title: string }> = [
@@ -609,8 +515,6 @@ function drawClosing(doc: Doc, header: DoHeader, pageOf: { page: number; total: 
       const baseline = baselineOf(y, S.sigField);
       doc.text(label, block.x, baseline);
       const labelW = doc.getTextWidth('Date') + 3;
-      /* Solid, not dotted: a row of 0.1mm dots is exactly the mark an impact
-         printer cannot form, and the field read as a smear. */
       rule(doc, block.x + labelW, baseline + 0.8, block.x + colW, RULE_THIN);
       y += SIG_FIELD_ROW;
     }
@@ -628,7 +532,6 @@ function drawClosing(doc: Doc, header: DoHeader, pageOf: { page: number; total: 
   doc.text(`${header.do_number} · Page : ${pageOf.page} of ${pageOf.total}`, PAGE_W - M, footBaseline, { align: 'right' });
 }
 
-/** The footer alone — every page that is not the one carrying the signature. */
 function drawFooterOnly(doc: Doc, header: DoHeader, pageOf: { page: number; total: number }): void {
   rule(doc, M, FOOTER_RULE_Y, PAGE_W - M, RULE_THIN);
   const footBaseline = baselineOf(FOOTER_RULE_Y + 3, S.footer);
@@ -638,10 +541,6 @@ function drawFooterOnly(doc: Doc, header: DoHeader, pageOf: { page: number; tota
   doc.text(`${header.do_number} · Page : ${pageOf.page} of ${pageOf.total}`, PAGE_W - M, footBaseline, { align: 'right' });
 }
 
-/* Draw ONE delivery order's content into `doc`. Does NOT create the doc or
-   save — the caller finalizes, so several DOs can share one doc (batch "Export
-   PDF"). The footer loop starts at the page this DO began on (startPage) so
-   combined docs keep each DO's own "page n of m" scoped to its own pages. */
 export async function renderDeliveryOrderInto(
   doc: Doc,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -652,17 +551,11 @@ export async function renderDeliveryOrderInto(
     docTitle?: string;
     docNoLabel?: string;
     showPicking?: boolean;
-    /** Per-document logo override, same contract as pdf-common's drawHeader:
-     *  null/undefined falls back to the company logo memo. */
     logo?: BrandingLogo | null;
   },
 ): Promise<void> {
-  /* Before ANY drawing — the delivery address is the field that strands a
-     driver when it prints as mojibake. No-op for a pure-WinAnsi DO. */
   await ensurePdfCjkFont(doc, [header, items]);
 
-  // Source PO + Rack picking columns are a DELIVERY-ORDER aid; the Consignment
-  // Note reuses this renderer but opts out (showPicking: false).
   const showPicking = opts?.showPicking !== false;
   const startPage = doc.getNumberOfPages();
 
@@ -700,10 +593,6 @@ export async function renderDeliveryOrderInto(
   });
   const panelBottom = drawInfoPanel(doc, ruleY + 4, header);
 
-  // ── Line items ────────────────────────────────────────────────────
-  // Description cell = SKU description + the UNIFIED variant line (same composer
-  // as SO/DR/SI/consignment), so the line reads identically on every customer
-  // document (Commander 2026-06-16).
   const fabric = await loadCustomerFabricMaps(items);
   // DO is QUANTITY-only (Owner 2026-06-26) — a delivery doc shows quantity /
   // volume, not money. The unit_price_sen still flows to the Sales Invoice.
@@ -711,17 +600,12 @@ export async function renderDeliveryOrderInto(
     const composed = [it.description, docVariantLine(it, fabric.ext, fabric.desc)]
       .filter((s): s is string => Boolean(s));
     if (composed.length === 0) return EM_DASH;
-    /* Owner spec: a row carries NO image — the " (photo)" marker on the first
-       description line points the reader at the ITEM PHOTOS block below. */
     const lines = photoKeysOf(it.photo_urls).length > 0 ? appendPhotoMarker(composed) : composed;
-    // Guard the customer copy against migrated AutoCount book text — see book-text.ts.
     return stripBookText(lines.join('\n')) || EM_DASH;
   };
   const m3Of = (it: DoItem): string => (it.m3_milli != null ? (it.m3_milli / 1000).toFixed(3) : EM_DASH);
 
   const rows = items.map((it, idx) => {
-    // Row numbers are zero-padded (01, 02 …) so the column stays a fixed-width
-    // rail rather than jittering at the tenth row.
     const seq = String(idx + 1).padStart(2, '0');
     return showPicking
       ? [seq, it.item_code, descOf(it), pickingCell(it.source_pos, it.source_state), pickingCell(shortRackLabels(it.racks), it.source_state), String(it.qty), m3Of(it)]
@@ -730,18 +614,12 @@ export async function renderDeliveryOrderInto(
 
   const qtyTotal = items.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
   const m3Total = items.reduce((sum, it) => sum + (it.m3_milli ?? 0), 0) / 1000;
-  // The label spans everything left of the numbers: at 5% the first column is
-  // a row-number rail, and "TOTAL" dropped into it wraps to "TOT / AL".
   const foot = [[
     { content: 'TOTAL', colSpan: showPicking ? 5 : 3 },
     String(qtyTotal),
     m3Total.toFixed(3),
   ]];
 
-  // Column widths as percentages of the measure. The identifier columns (item
-  // code, Source PO) sit one step below body size so a 17-character PO number
-  // fits its column on one line — a document number broken mid-string is the
-  // one thing the storekeeper cannot read back.
   const pct = (p: number): number => (CONTENT_W * p) / 100;
   const idCol = { fontSize: S.tableHead, fontStyle: 'bold' as const };
   const columnStyles = showPicking
@@ -772,8 +650,6 @@ export async function renderDeliveryOrderInto(
     head: [headRow],
     body: rows,
     foot,
-    // The header repeats on every page the table spills onto — a second sheet
-    // of unlabelled numbers is not a delivery note.
     showFoot: 'lastPage',
     theme: 'plain',
     rowPageBreak: 'avoid',
@@ -797,9 +673,6 @@ export async function renderDeliveryOrderInto(
     },
     columnStyles,
     margin: { left: M, right: M, bottom: PAGE_H - FOOTER_RULE_Y + 6 },
-    /* The header row: bold upper-cased labels over a heavy rule. autoTable
-       cannot upper-case a cell, so each head cell paints its own text and
-       cancels autoTable's; the rule is drawn once, from the first cell. */
     willDrawCell: (data: {
       section: string;
       column: { index: number };
@@ -825,14 +698,6 @@ export async function renderDeliveryOrderInto(
     },
   });
 
-  // ── ITEM PHOTOS (owner spec 2026-08) ───────────────────────────────
-  /* One block per document, AFTER the items table and BEFORE the pinned
-     signature/footer. Row-number chips key each group back to the table
-     above; a group never splits across pages (it moves whole, under a
-     continued heading). Pages the block adds are swept up by the closing
-     loop below, so they get the footer like any table spill page. The
-     block draws in jsPDF's built-in helvetica, the same face as the rest of
-     this sheet. Absent entirely when no photo actually fetched. */
   let finalY = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? panelBottom);
   if (showPicking && rows.some((r) => String(r[3]).endsWith(' *') || String(r[4]).endsWith(' *'))) {
     font(doc, S.body, 'normal');
@@ -853,7 +718,6 @@ export async function renderDeliveryOrderInto(
     if (photoRes.drew) finalY = photoRes.endY;
   }
 
-  // ── Closing: signature + footer, pinned to the bottom ──────────────
   if (doClosingNeedsNewPage(finalY)) doc.addPage();
 
   const pageCount = doc.getNumberOfPages();
@@ -886,7 +750,6 @@ export function drawDraftWatermark(doc: Pick<Doc, 'saveGraphicsState' | 'setGSta
   doc.setTextColor(0, 0, 0);
 }
 
-/* Single DO → its own file (unchanged behaviour). */
 export async function generateDeliveryOrderPdf(
   header: DoHeader,
   items: DoItem[],
@@ -899,8 +762,6 @@ export async function generateDeliveryOrderPdf(
   deliverPdf(doc, `${header.do_number}-${safeName(header.debtor_name || 'customer')}.pdf`, opts?.action);
 }
 
-/* Several DOs → ONE combined file, each DO starting on a new page. For the
-   batch "Export PDF" action (download a customer's DOs in one attachment). */
 export async function generateCombinedDeliveryOrderPdf(
   docs: Array<{ header: DoHeader; items: DoItem[] }>,
   opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; showPicking?: boolean; action?: PdfAction },

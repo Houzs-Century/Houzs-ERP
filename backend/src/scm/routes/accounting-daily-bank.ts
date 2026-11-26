@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// accounting-daily-bank — GET /accounting/daily-bank, the owner's board (brief
-// 3.6), and its reads as one loader: the To do's "Can move today"
-// (accounting-todo.ts) reads the same board, so the two never disagree. Moved
-// out of accounting.ts unchanged (2026-11-02) so the To do can import it
-// without importing the whole router.
-// ----------------------------------------------------------------------------
 
 import type { Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
@@ -19,9 +12,6 @@ import { describeVouchers } from './payment-vouchers-describe';
 import { resolveRoles } from '../../acc/rules';
 import { isReversalPair } from '../../acc/reversal-pairs';
 
-/* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6): where the
-   money is today and how much can actually move. Live from the ledger, no
-   cache (2.3) - so it can never disagree with the trial balance. */
 /** The board for one company and day — the handler's reads and the To do's
     "Can move today" (acc/finance-todo) share it, so the two never disagree.
     `withNames` false skips the names the board prints for the day's lines.
@@ -80,11 +70,6 @@ export async function loadDailyBankBoard(
     bankAccountCode: bankByTransit.get(code) ?? null,
   }));
 
-  /* Phase 3: DRAFT vouchers sitting in the approval cycle — money already
-     asked for. Submitted on or before the board date, still undecided-or-
-     approved (posting clears the pending by flipping status; withdraw/reject
-     clear the marks). The error is bound: a failed read must not dress up as
-     "nothing pending" on the one board that answers how much can move. */
   const { data: pendingRaw, error: pErr } = await sb.from('payment_vouchers')
     /* Each voucher's payee, number, note and Paid From ride along: the board
        lists them under the bank they will pay out of (owner 2026-09-29). */
@@ -98,9 +83,6 @@ export async function loadDailyBankBoard(
   if (pErr) return { ok: false, reason: pErr.message };
   let pending = (pendingRaw ?? []) as PendingVoucherRow[];
 
-  /* The cash book's own reads, for its board only; its banks need none of their
-     ledger lines, and a voucher paying out of a bank it does not carry is not
-     its pending (the original board still shows it). */
   let cashbook: DailyBankCashbook | null = null;
   if (opts.book === 'cashbook') {
     const cash = await loadCashbook(sb, co.companyId, date, money.map((m) => m.account_code));
@@ -168,8 +150,6 @@ export async function loadDailyBankBoard(
         const shown = r.or_number ?? r.doc_no;
         if (shown) receiptOf.set(String(r.payment_id), shown);
       }
-      /* How each was paid (the Accounts sheet groups the day's money in by it),
-         and for a payment with no receipt row yet, its order's number. */
       const soIds = [...new Set(todays.filter((l) => l.source_type === 'SOPAY' && l.source_doc_no).map((l) => String(l.source_doc_no)))];
       const siIds = [...new Set(todays.filter((l) => l.source_type === 'SIPAY' && l.source_doc_no).map((l) => String(l.source_doc_no)))];
       const [soPays, siPays] = await Promise.all([
@@ -187,8 +167,6 @@ export async function loadDailyBankBoard(
       }
     }
   }
-  /* A customer payment's id is internal — never printed: its receipt, its
-     order, else the journal's own number. */
   const docOf = (l: BoardLine): string | null => {
     if (l.source_type === 'SOPAY' || l.source_type === 'SIPAY') return receiptOf.get(String(l.source_doc_no ?? '')) ?? l.je_no;
     return null;
@@ -231,17 +209,12 @@ export async function loadCashbook(
       .gte('receipt_date', since).lte('receipt_date', date)
       .order('receipt_date').order('created_at').order('id')
       .range(from, to)),
-    /* Approved = POSTED: approval posts in the same request, and a voucher whose
-       posting died stays DRAFT — pending above, never paid here as well. It comes
-       off on the Malaysia day it was approved, whatever its voucher date. */
     paginateAll<Record<string, unknown>>((from, to) => sb.from('payment_vouchers')
       .select(PV_COLS)
       .eq('company_id', companyId).eq('status', 'POSTED').in('credit_account_code', codes)
       .gte('approved_at', days.startUtc).lt('approved_at', days.endUtc)
       .order('approved_at').order('pv_number').order('id')
       .range(from, to)),
-    /* One posted without an approval stamp falls back to its posting, then its
-       voucher date (payoutDay); none in production on 2026-11-24. */
     paginateAll<Record<string, unknown>>((from, to) => sb.from('payment_vouchers')
       .select(PV_COLS)
       .eq('company_id', companyId).eq('status', 'POSTED').in('credit_account_code', codes)

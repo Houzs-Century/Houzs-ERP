@@ -62,7 +62,6 @@ export interface SoFilterFieldDef {
   kind: SoFilterKind;
   ops: readonly SoFilterOp[];
   choices?: readonly SoFilterChoice[];
-  /** One plain sentence shown under the field in the picker. */
   hint?: string;
 }
 
@@ -75,7 +74,6 @@ export const SO_FILTER_GROUP_LABELS: Record<SoFilterGroup, string> = {
 
 const DATE_OPS = ['preset', 'between', 'on', 'before', 'after'] as const;
 
-/* The line buckets the list itself uses (the list handler's normCategory). */
 const SO_CATEGORY_CHOICES: readonly SoFilterChoice[] = [
   { value: 'sofa', label: 'Sofa' },
   { value: 'bedframe', label: 'Bedframe' },

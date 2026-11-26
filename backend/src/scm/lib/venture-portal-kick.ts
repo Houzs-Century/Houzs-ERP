@@ -96,10 +96,6 @@ export function venturePortalKick() {
       if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return;
       if (c.res.status < 200 || c.res.status > 299) return;
 
-      /* Reading c.executionCtx THROWS when the context has none — a unit test,
-         or any host that is not the Workers runtime. backend/src/index.ts does
-         the same try/catch for the same reason. null is the honest answer and
-         kickVenturePortalDrain reports it rather than pretending to schedule. */
       let ctx: { waitUntil(p: Promise<unknown>): void } | null = null;
       try {
         ctx = c.executionCtx;

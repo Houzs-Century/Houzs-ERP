@@ -11,30 +11,16 @@ export interface DetailBreadcrumb {
 
 interface Props {
   breadcrumbs: DetailBreadcrumb[];
-  /** Tiny brass label above the title, e.g. "Project · AKEMI-001". */
   eyebrow?: string;
   title: string;
-  /** Override the default title classes when a page needs a different
-   *  size/family (e.g. Service Case detail uses IBM Plex Serif 32px). */
   titleClassName?: string;
   description?: ReactNode;
-  /** Page-level action buttons rendered top-right of the sticky chrome. */
   actions?: ReactNode;
-  /** Pin the title block (eyebrow + h1 + description) inside the sticky
-   *  chrome so page identity + actions stay visible while scrolling.
-   *  Opt-in per page (Service Case detail uses it); the default keeps
-   *  the title in normal flow. */
   stickyTitle?: boolean;
-  /** Optional fallback path for the back button when there's no history. */
   backTo?: string;
-  /** Loading + error surfaced above the body grid, before main/aside split. */
   loading?: boolean;
   error?: string | null;
-  /** Body content. Use DetailLayout.Main + DetailLayout.Aside as children
-   *  for a 2-column layout, or pass plain JSX for full-width content. */
   children: ReactNode;
-  /** When true, the body pulls toward the screen edges on large screens
-   *  (less side padding) so the page uses more width. Opt-in per page. */
   wide?: boolean;
 }
 
@@ -68,9 +54,6 @@ export function DetailLayout({
 }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
-  // Push the breadcrumb stack into the top-navbar context. On mount
-  // the TopNavbar re-renders; on unmount the context clears so list
-  // pages fall back to the route-derived crumb.
   useSetBreadcrumbs(breadcrumbs);
 
   function goBack() {
@@ -85,20 +68,9 @@ export function DetailLayout({
   }
 
   return (
-    // The page wrapper in Layout.tsx already constrains us to max-w-1400 +
-    // px-10. We pull the sticky bar to the edges with negative margins so
-    // it spans the full canvas, then re-pad the inner row.
     <div>
-      {/* ── Sticky chrome — back button + page actions ─────────
-          Breadcrumb now lives in the desktop TopNavbar; this row
-          keeps the back affordance + any page-scoped action buttons
-          (Archive / Stage transition / etc.). Mobile still sees the
-          breadcrumb inline so nothing gets lost below lg.
-      */}
       <div
         className={cn(
-          // lg:top-[52px] = the single 2b top-chrome bar (see Layout.tsx
-          // PageHeader — the lg stickies move together).
           "sticky top-14 z-20 -mx-4 -mt-6 mb-4 border-b border-border sm:-mx-6 sm:-mt-8 lg:top-[52px] lg:-mx-10 lg:-mt-10 xl:-mx-12 2xl:-mx-16",
           stickyTitle ? "bg-bg" : "bg-bg/85 backdrop-blur-md"
         )}
@@ -113,8 +85,6 @@ export function DetailLayout({
             <ArrowLeft size={14} strokeWidth={2.2} />
           </button>
 
-          {/* Mobile-only breadcrumb trail: the TopNavbar is lg-only,
-              so without this the breadcrumb would disappear on phones. */}
           <nav
             aria-label="Breadcrumb"
             className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-[11px] text-ink-muted lg:hidden"
@@ -136,7 +106,6 @@ export function DetailLayout({
             })}
           </nav>
 
-          {/* Spacer on desktop so the action buttons stay right-aligned. */}
           <div className="hidden flex-1 lg:block" />
 
           {actions && (
@@ -168,7 +137,6 @@ export function DetailLayout({
         )}
       </div>
 
-      {/* ── Title block (normal flow unless stickyTitle pinned it above) ── */}
       {!stickyTitle && (
       <header className="mb-4">
         {eyebrow && (
@@ -204,7 +172,6 @@ export function DetailLayout({
         </div>
       )}
 
-      {/* ── Body grid — Main + Aside split ───────────────────────────── */}
       {wide ? (
         <div className="lg:-mx-4 xl:-mx-6 2xl:-mx-8">{children}</div>
       ) : (
@@ -238,9 +205,6 @@ export function DetailAside({ children }: { children: ReactNode }) {
   );
 }
 
-// ── Section card ──────────────────────────────────────────────
-// Lighter, denser version of PanelSection — meant for full-page detail
-// surfaces where a Panel-internal "card-in-a-card" feels heavy.
 
 export function Section({
   title,
@@ -251,7 +215,6 @@ export function Section({
   title: string;
   actions?: ReactNode;
   children: ReactNode;
-  /** Tighter inner padding for tabular content. */
   dense?: boolean;
 }) {
   return (
@@ -270,16 +233,11 @@ export function Section({
   );
 }
 
-// ── Stat strip ────────────────────────────────────────────────
-// Horizontal row of small stats, divided by hairlines. Replaces the
-// prior ad-hoc grid-cols-4 stat blocks.
 
 export interface StatItem {
   label: string;
   value: ReactNode;
-  /** Optional small caption shown beneath the value. */
   hint?: string;
-  /** Optional tone tweak for the value. */
   tone?: "default" | "ok" | "err" | "warn";
 }
 
@@ -311,14 +269,10 @@ export function StatStrip({ items }: { items: StatItem[] }) {
   );
 }
 
-// ── Definition list ───────────────────────────────────────────
-// Two-column grid of label/value pairs that wraps responsively.
-// Replaces stacked FieldRow lists where horizontal density is wanted.
 
 export interface DefnItem {
   label: string;
   value: ReactNode;
-  /** Force this row to span the full width — good for long addresses. */
   full?: boolean;
   mono?: boolean;
 }
@@ -362,9 +316,6 @@ export function DefinitionList({ items }: { items: DefnItem[] }) {
   );
 }
 
-// ── Primary action button ─────────────────────────────────────
-// Matches the brass accent button used elsewhere; small variant suited
-// for the sticky chrome row.
 
 export function HeaderButton({
   onClick,

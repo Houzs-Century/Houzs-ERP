@@ -28,14 +28,6 @@ import type { Env, Variables } from "../env";
 
 export const fabricColours = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-/* THE TRIM LIVES IN THE BUILDER, so neither side can be forgotten.
-   `fabric_library` carries BOTH `GARFIELD` (active) and `GARFIELD `
-   (discontinued, trailing space) on production, and the colour `GARFIELD-03`
-   points at the padded one - so a compare that trims only one side calls a live
-   fabric retired, or a retired one live, depending which row it met. An earlier
-   draft trimmed only the value and left the SET to the caller; that is the
-   "optional discipline the caller must remember" shape this repo keeps paying
-   for, so the pair below is the whole contract. */
 
 /** The retired-series lookup, built from EVERY `fabric_library` row and its
  *  `active` flag. A trimmed code counts as retired only when NO active row
@@ -70,10 +62,6 @@ export const retiredSeriesSet = (
   rows: readonly { id?: unknown; active?: unknown }[],
 ): Set<string> => retiredByCode(rows as readonly Record<string, unknown>[], "id", "active");
 
-/** Is this colour's SERIES switched off in the fabric library?
- *
- *  A missing or blank series is NOT retired: it cannot be proven to be, and the
- *  honest default on this route is to keep offering the colour. */
 /* EVERY "is this on offer" rule runs BEFORE the typeahead cap — docs/bugs/0893
    (the fabric-search entry). The cap used to sit in the query and the rules ran
    on what it let through: a search whose first 50 matches were retired, or
@@ -88,7 +76,6 @@ export function coloursOnOffer<T extends Record<string, unknown>>(
   rules: {
     retiredSeries: ReadonlySet<string>;
     retiredCodes: ReadonlySet<string>;
-    /** The Model's fabric pool, or null when the search named no item. */
     pool: readonly string[] | null;
   },
   cap: number | null,
@@ -118,25 +105,17 @@ export const seriesIsRetired = (retired: ReadonlySet<string>, series: unknown): 
 
 fabricColours.use("*", supabaseAuth);
 
-// GET / — active colour rows ordered by sort_order (mirrors 2990's
-// useFabricColoursActive: .eq('active', true).order('sort_order')).
-// Optional ?q= (typeahead) + ?limit= (cap, only applied when q is present).
 fabricColours.get("/", async (c) => {
   const supabase = c.get("supabase");
   const rawQ = (c.req.query("q") ?? "").trim();
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 50, 1), 200);
-  /* ?itemCode= — the SKU a line is being picked for. Its Model's fabric pool is
-     applied here, before the cap, so the 50 answered are 50 the save accepts. */
   const itemCode = (c.req.query("itemCode") ?? "").trim();
   let q = supabase
     .from("fabric_colours")
     .select("fabric_id, colour_id, label, swatch_hex, active, sort_order")
     .eq("active", true)
     .order("sort_order", { ascending: true });
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
-  // Typeahead mode — ilike over the code (colour_id) + label. The `limit` cap is
-  // applied AFTER the on-offer rules below (coloursOnOffer), never in the query.
-  // The no-`q` branch stays the old full-list behaviour.
+  q = scopeToCompany(q, c);
   if (rawQ) {
     const s = escapeForOr(rawQ);
     if (s) q = q.or(`colour_id.ilike.%${s}%,label.ilike.%${s}%`);
@@ -198,8 +177,6 @@ fabricColours.get("/", async (c) => {
     let trk = supabase.from("fabric_trackings").select("fabric_code, is_active");
     trk = scopeToCompany(trk, c);
     const { data: trkRows, error: trkErr } = await trk;
-    /* Same degradation rule as the series read below: an unreadable stock
-       register must not empty the picker. */
     if (!trkErr) retiredCodes = retiredByCode(trkRows ?? [], "fabric_code", "is_active");
   }
 
@@ -208,23 +185,15 @@ fabricColours.get("/", async (c) => {
     let lib = supabase.from("fabric_library").select("id, active");
     lib = scopeToCompany(lib, c);
     const { data: libRows, error: libErr } = await lib;
-    /* A failure here must NOT empty the picker. The colour list is the product;
-       the series filter is a refinement, so an unreadable library degrades to
-       the old behaviour (every active colour) rather than to nothing. */
     if (!libErr) retiredSeries = retiredSeriesSet(libRows ?? []);
   }
 
-  /* The Model's pool, only for a typeahead that named its item. A lookup that
-     fails degrades to NO pool (the old behaviour) rather than an empty picker,
-     the same rule as the two reads above; the save gate still refuses a
-     disallowed fabric, so nothing is let through that could not be before. */
   let pool: readonly string[] | null = null;
   if (rawQ && itemCode) {
     const { model, lookupError } = await loadProductAndModel(supabase, itemCode, activeCompanyId(c));
     if (!lookupError) pool = model?.allowed_options?.fabrics ?? null;
   }
 
-  // Dual-read camelCase ?? snake_case — cover the PostgREST casing either way.
   const colours = coloursOnOffer(
     (data ?? []) as Record<string, unknown>[],
     { retiredSeries, retiredCodes, pool },
@@ -235,9 +204,6 @@ fabricColours.get("/", async (c) => {
     colourId: r.colourId ?? r.colour_id ?? "",
     label: r.label ?? null,
     swatchHex: r.swatchHex ?? r.swatch_hex ?? null,
-    // POS filters on `active` (FabricColourRow.active); the list is active-only
-    // (server .eq('active', true)), so surface it or the POS drops every row and
-    // the colour picker renders empty.
     active: (r.active ?? true) as boolean,
     sortOrder: r.sortOrder ?? r.sort_order ?? 0,
   }));

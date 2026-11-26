@@ -50,7 +50,6 @@ describe('the never-booked state', () => {
     expect(screen.getAllByText('would post').length).toBeGreaterThan(0);
     expect(screen.getAllByText('account_invalid').length).toBeGreaterThan(0);
     expect(screen.getByText('account 999-0000 does not exist for company 2')).toBeTruthy();
-    /* A refusal: no Book button. */
     expect(screen.queryByText(/^Book \d/)).toBeNull();
   });
 
@@ -94,7 +93,6 @@ describe('Book N payments (docs/bugs/0655)', () => {
     fireEvent.click(screen.getByText('Why? (dry run)'));
     await waitFor(() => expect(screen.getByText('Book 2 payments')).toBeTruthy());
     fireEvent.click(screen.getByText('Book 2 payments'));
-    /* The inline confirm says what posts, and nothing is written until it is pressed. */
     expect(screen.getByText('Book 2 payments into the ledger?')).toBeTruthy();
     expect(screen.getByText(/Each posts on its own paid date, RM 2,058\.00 in total: Dr bank or cash, Cr Trade debtors\./)).toBeTruthy();
     expect(mockedFetch).toHaveBeenCalledTimes(1);

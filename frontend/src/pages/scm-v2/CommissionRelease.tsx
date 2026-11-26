@@ -31,14 +31,12 @@ import s from './books/StockClose.module.css';
 export const layerName = (l: Pick<ReleaseLayer, 'key' | 'month'>): string =>
   l.key === 'opening' || l.month == null ? 'Opening balance' : `${monthName(l.month)} bill`;
 
-/** How a bill is split over its orders, as the Split by column says it. */
 const BASIS: Record<ReleaseLayer['basis'], string> = {
   close: 'Event Commission close',
   goods: 'Goods of the orders',
   none: 'Nothing carries it',
 };
 
-/** The month after a YYYY-MM month, as the day the nightly run books it. */
 const bookedOnDay = (ym: string): string => {
   const [y, m] = ym.split('-').map(Number);
   return new Date(Date.UTC(y!, m!, 1)).toISOString().slice(0, 10);

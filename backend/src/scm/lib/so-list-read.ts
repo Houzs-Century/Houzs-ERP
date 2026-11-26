@@ -1,20 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-list-read — what the Sales Order LIST matches, in one place.
-//
-// The list (GET /mfg-sales-orders?page=), its money strip, and the line export
-// (GET /mfg-sales-orders/export/lines) must match the SAME orders for the same
-// tab, search, date window and second-level filter rows (`?f=`). Until
-// 2026-09-15 the predicate set was written out twice inside the list handler —
-// once for the page, once for the money strip — and the copies had already
-// drifted: the page searched the customer's phone, the money strip did not
-// (docs/bugs, "the Sales Order money strip ignored a phone search"). Every
-// reader now builds its query through prepareSoListRead, so a filter added here
-// reaches all of them at once, the same move lib/po-list-read.ts made for the
-// Purchase Order list.
-//
-// Lives here, not in routes/mfg-sales-orders.ts, because that router is over
-// its file-size ceiling.
-// ----------------------------------------------------------------------------
 
 import { HELD_OR_TERM } from './document-hold';
 import { effectiveStatusFilter } from './so-list-filters';
@@ -38,7 +21,6 @@ export type SoListParams = {
   sort: string | null;
   from: string | null;
   to: string | null;
-  /** The second-level filter rows, one `f` param each (so-list-filter-model). */
   f: string[];
   /** Server-filterable column funnels the grid pushes down (owner 2026-09-16) so
      pagination runs over the filtered set: Customer (debtor) Name and Currency,
@@ -57,8 +39,6 @@ export type SoListParams = {
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
 
-/* Multi-value funnel params ride as a JSON array in ONE param (a customer name
-   may contain a comma). Malformed / empty reads as no filter. */
 function jsonArrayParam(v: string | undefined): string[] | null {
   if (v === undefined || v === '') return null;
   try {
@@ -90,7 +70,6 @@ export function readSoListParams(
   };
 }
 
-/* The backend sort whitelist — anything else falls back to so_date. */
 const SORT_COLS = new Set(['so_date', 'doc_no', 'debtor_name', 'status', 'local_total_sen', 'customer_delivery_date']);
 
 export function soListSort(sort: string | null): { col: string; asc: boolean } {
@@ -112,13 +91,8 @@ export function orderSoList<Q>(q: Q, sort: string | null): Q {
 export type SoListRead =
   | {
       ok: true;
-      /** Sales scope + company + second-level filters + tab + search + date
-       *  window: every predicate the list's rows answer to. */
       header: <T>(q: T) => T;
-      /** Sales scope + company + second-level filters only — the status counts,
-       *  which must not narrow by the tab they are counting. */
       scoped: <T>(q: T) => T;
-      /** Which relation the status counts read (so-list-query-filters). */
       countFrom: 'mfg_sales_orders' | 'mfg_sales_orders_with_payment_totals';
     }
   | { ok: false; status: 400 | 500; body: { error: string; invalid?: string[]; reason?: string } };
@@ -178,9 +152,6 @@ export async function prepareSoListRead(
   const scoped = <T>(q: T): T => soFilter.apply(scopeToCompany(applySoScope(q, scopeIds), c));
 
   const status = effectiveStatusFilter(p.status);
-  /* status=OTHER → rows whose status is OUTSIDE the known vocabulary (legacy
-     spellings / blanks), so the list's "Other" pill can be opened. The ON_HOLD
-     tab reads the mig-0324 MARKER, not the status. */
   const otherStatusOr = `status.is.null,status.not.in.(${[...SO_STATUSES].join(',')})`;
   const search = p.q;
 
@@ -191,11 +162,6 @@ export async function prepareSoListRead(
       const vals = soStatusesForTab(status);
       q = status === 'OTHER' ? q.or(otherStatusOr) : (vals.length === 1 ? q.eq('status', vals[0]) : q.in('status', vals));
     }
-    /* free-text search over the reference the list DISPLAYS: customerRefOf is
-       `ref || customer_so_no`, so BOTH are searched (bug 0755). Plus doc_no /
-       debtor / agent / location / branding, the customer's phone (#816), the
-       approval-code orders read above, and the orders a searched system PO
-       number was raised for (poArm — the reverse of the "PO No." column). */
     if (search) {
       const s = escapeForOr(search);
       if (s) q = q.or([
@@ -207,8 +173,6 @@ export async function prepareSoListRead(
         ...poArm,
       ].join(','));
     }
-    /* Optional so_date window (ISO yyyy-mm-dd, inclusive) — the mobile list's
-       period chips. */
     if (p.from) q = q.gte('so_date', p.from);
     if (p.to) q = q.lte('so_date', p.to);
     /* Server-filterable column funnels (owner 2026-09-16): Customer Name and
@@ -216,7 +180,6 @@ export async function prepareSoListRead(
        (not `scoped`) so the list + its count narrow while the status-count pills
        stay full — mirrors how the PO creditor funnel behaves. */
     if (p.debtorNames && p.debtorNames.length > 0) q = q.in('debtor_name', p.debtorNames);
-    /* The Currency cell shows MYR for a blank currency, so MYR admits blanks. */
     if (p.currencies && p.currencies.length > 0) {
       q = p.currencies.includes('MYR')
         ? q.or(`currency.in.(${p.currencies.map(quote).join(',')}),currency.is.null`)

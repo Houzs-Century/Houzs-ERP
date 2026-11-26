@@ -6,7 +6,6 @@ export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   icon: ReactNode;
   size?: 'sm' | 'md' | 'lg';
   variant?: 'primary' | 'secondary' | 'ghost';
-  /** Required: screen-reader description (icons have no text) */
   'aria-label': string;
 }
 

@@ -21,8 +21,6 @@ import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { fakeSb } from '../lib/fake-postgrest';
 import type { Env, Variables } from '../env';
 
-// supabaseAuth in production only attaches the scm service-role client; stub it so
-// the test's own middleware sets the context the handler and canWriteScmConfig read.
 vi.mock('../middleware/auth', () => ({ supabaseAuth: async (_c: unknown, next: () => Promise<void>) => next() }));
 
 const { mrpLeadTimes } = await import('./mrp-lead-times');
@@ -31,11 +29,8 @@ const CO = 1;
 const CALLER = { id: 'staff-uuid', email: 'x@houzs.test', app_metadata: {}, user_metadata: {}, aud: 'authenticated', created_at: '' } as unknown as User;
 
 type Who = { perms: string[] };
-// An SCM user who can reach the module but is NOT a config writer.
 const SALES: Who = { perms: ['scm.access', 'scm.so.view_all'] };
-// Flat-key config writer (Owner grants scm.config.write to a role).
 const CONFIG_WRITER: Who = { perms: ['scm.access', 'scm.config.write'] };
-// Owner / IT Admin — the `*` wildcard.
 const OWNER: Who = { perms: ['*'] };
 
 let sb: ReturnType<typeof fakeSb>;
@@ -72,7 +67,6 @@ describe('PUT /mrp-lead-times — config-write gated', () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string; reason: string };
     expect(body).toMatchObject({ error: 'forbidden', reason: 'missing_scm_config_write' });
-    // SCM humanApiError convention: refusal strings stay short (<200 chars).
     expect(body.reason.length).toBeLessThan(200);
     expect(tables.mrp_category_lead_times).toHaveLength(0);
   });
@@ -103,8 +97,6 @@ describe('GET /mrp-lead-times — stays open (the MRP order-by-date read)', () =
     expect(body.leadTimes['null'].sofa).toBe(3);
   });
 
-  /* 2990-0063: every product category gets a row, a new one included, with no
-     code change; Service stays out (no PO) and Others comes last. */
   it('lists every product category, a newly registered one included', async () => {
     tables.acc_item_groups = [{ code: 'OUTDOOR', name: 'Outdoor', is_active: true }, { code: 'CARPET', name: 'Rugs', is_active: true }];
     const body = (await (await get(SALES)).json()) as { categories: Array<{ key: string; label: string }> };

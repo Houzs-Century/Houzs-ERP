@@ -14,7 +14,6 @@ const pillow = (poItemId: string, colour: string, remaining: number): OpenPoLine
   poItemId, poId: PO, poNumber: PO, supplierId: 'hookka', itemCode: 'HOK-SQUARE PILLOW', materialName: null, supplierSku: null,
   remaining, locationCode: 'KL WAREHOUSE', description2: null, colours: [colour],
 });
-// The PO's order: COVE-13 first, then COVE-09.
 const open = [pillow('c13', 'COVE-13', 2), pillow('c09', 'COVE-09', 3)];
 const DESC = (c: string) => `SQUARE PILLOW (16"x16") (CUSTOM) ${c}`;
 const PAPER = ['COVE-09', 'COVE-09', 'COVE-09', 'COVE-13', 'COVE-13'];
@@ -22,7 +21,6 @@ const PAPER = ['COVE-09', 'COVE-09', 'COVE-09', 'COVE-13', 'COVE-13'];
 describe('the colour of a PO line', () => {
   test('comes from its variants, the supplier code too', () => {
     expect(lineColours(withFabricSupplierCode({ fabricCode: 'COVE-13' }, 'KN390-1'))).toEqual(['COVE-13', 'KN390-1']);
-    // 2990-0067: a stamp left from the previous fabric is not this line's colour.
     expect(lineColours({ fabricCode: 'EZ-011', fabricSupplierCode: 'M2402-4' })).toEqual(['EZ-011']);
     expect(lineColours('{"fabricColor":"BF-02"}')).toEqual(['BF-02']);
     expect(lineColours(null)).toEqual([]);
@@ -30,7 +28,6 @@ describe('the colour of a PO line', () => {
   test('a printed colour is read the ways it is written; a size is not a colour', () => {
     expect([...printedColours(DESC('COVE-09'), open)]).toEqual(['COVE 9']);
     expect([...printedColours('square pillow cove 9', open)]).toEqual(['COVE 9']);
-    // Another number of the same series is a colour, and agrees with neither line.
     expect(byPrintedColour(DESC('COVE-11'), open)).toEqual([]);
     expect(byPrintedColour('SQUARE PILLOW (16"x16")', open)).toEqual(open);
   });
@@ -71,7 +68,6 @@ describe('the check screen ties each row to the line of its own colour (DO-2611-
     expect(byCode.picks).toEqual([{ poItemId: 'c13', qty: 1 }]);
   });
   test('a matched line shows the paper row of its own colour', () => {
-    // Rows printing our code, so each could be either line by code alone.
     const printed = PAPER.map((c) => ({ itemCode: 'HOK-SQUARE PILLOW', barcode: null, description: DESC(c), qty: 1, poNo: null, rack: null }));
     const lines: ReviewLine[] = [
       { key: 'a', poItemId: 'c13', poNumber: null, gift: null, qty: 2, rack: null, suggested: false, read: null },

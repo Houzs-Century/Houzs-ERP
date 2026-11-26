@@ -63,10 +63,8 @@ describe('periodsFor', () => {
 
   test('the default window starts no earlier than the first month with sales (owner 2026-09-22: 从 06/2026 开始); a named range ignores it', () => {
     expect(periodsFor({ granularity: 'month', periods: 12, today, earliest: '2026-06' }).map((p) => p.key)).toEqual(['2026-06', '2026-07', '2026-08', '2026-09']);
-    /* A quarter view keeps the whole quarter the first sales month falls in. */
     const quarters = periodsFor({ granularity: 'quarter', periods: 8, today, earliest: '2026-06' });
     expect(quarters.map((p) => p.from)).toEqual(['2026-04-01', '2026-07-01']);
-    /* Sales older than the window: the window is the window. */
     expect(periodsFor({ granularity: 'month', periods: 3, today, earliest: '2026-01' }).map((p) => p.key)).toEqual(['2026-07', '2026-08', '2026-09']);
     expect(periodsFor({ granularity: 'month', periods: 12, from: '2026-02', to: '2026-04', today, earliest: '2026-06' }).map((p) => p.key)).toEqual(['2026-02', '2026-03', '2026-04']);
     expect(periodsFor({ granularity: 'month', periods: 2, today, earliest: null }).map((p) => p.key)).toEqual(['2026-08', '2026-09']);
@@ -149,7 +147,6 @@ describe('performance vs forecast — the compare groups (owner 2026-09-22)', ()
     ]);
     expect([...accounts.sales.get('sofa')!]).toEqual(['500-0003', '510-0003']);
     expect([...accounts.sales.get('bedding')!]).toEqual(['500-0001']);
-    /* 502-0000 was bound to the accessories first: the OTHERS binding does not claim it again. */
     expect([...accounts.sales.get('accessories')!]).toEqual(['502-0000']);
     expect(accounts.sales.get('others')).toBeUndefined();
     expect([...accounts.purchase.get('others')!]).toEqual(['601-0004']);
@@ -174,7 +171,6 @@ describe('performance vs forecast — the compare groups (owner 2026-09-22)', ()
       actualSalesSen: 90_000, performanceSalesSen: 105_000, performanceCostSen: 60_000, performanceGpSen: 45_000, performanceGpPct: 42.9,
       forecastSalesSen: 120_000, forecastCostSen: 72_000, forecastGpSen: 48_000, forecastGpPct: 40,
     });
-    /* A future period: no actual, no performance — null, never 0; a period with no forecast row: no forecast. */
     expect(compareTotals(by, { actual: false, forecast: true })).toMatchObject({ actualSalesSen: null, performanceSalesSen: null, performanceGpPct: null, forecastSalesSen: 120_000 });
     expect(compareList(by, { actual: true, forecast: false })[0]).toMatchObject({ actualSalesSen: 90_000, forecastSalesSen: null, forecastCostSen: null, forecastGpSen: null, forecastGpPct: null });
     by.others.actualSalesSen = 1;

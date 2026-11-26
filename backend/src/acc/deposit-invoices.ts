@@ -58,9 +58,6 @@ export type DepositInvoiceRow = {
   created_at: string; created_by: string | null; cancelled_at: string | null; cancelled_by: string | null;
 };
 
-/** The day of a payment — a full timestamp is accepted, only the day counts;
-    anything else is no date, and a deposit invoice is never dated today by
-    default (§2.5: the document date drives the reports). */
 const dayOf = (paidAt: string | null | undefined): string | null => {
   const d = String(paidAt ?? '').slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
@@ -71,7 +68,6 @@ const log = (...args: unknown[]): void => {
   console.error('[acc/deposit-invoices]', ...args);
 };
 
-/* ── The switch ──────────────────────────────────────────────────────────── */
 
 export async function loadDepositInvoiceSettings(
   sb: Db,
@@ -109,7 +105,6 @@ export async function saveDepositInvoiceSettings(
   return { ok: true };
 }
 
-/* ── Is one due? ─────────────────────────────────────────────────────────── */
 
 export type NotDueWhy = 'switched_off' | 'before_start' | 'no_date' | 'no_amount' | 'invoice_exists' | 'order_not_live';
 
@@ -144,7 +139,6 @@ export async function depositInvoiceDue(
   return { ok: true, due: true, date };
 }
 
-/* ── Issue ───────────────────────────────────────────────────────────────── */
 
 export type IssueInput = {
   paymentId: string;
@@ -181,16 +175,12 @@ const activeFor = async (sb: Db, paymentId: string): Promise<{ row: DepositInvoi
 export async function issueDepositInvoice(
   sb: Db,
   p: IssueInput,
-  /* The caller has just read that no invoice stands for this payment (the edit hook). */
   knownNone: boolean,
 ): Promise<IssueResult> {
   const paymentId = String(p.paymentId).trim();
   const soDocNo = String(p.soDocNo).trim();
   if (!paymentId || !soDocNo) return { ok: false, status: 'read_failed', reason: 'payment id and order are required' };
 
-  /* The order carries the company and the customer — the same read the
-     payment's own posting makes (acc/payments), the same party code. It does
-     not depend on the standing-invoice read, so both go out together. */
   const [existing, { data: so, error: soErr }] = await Promise.all([
     knownNone ? Promise.resolve({ row: null, error: null }) : activeFor(sb, paymentId),
     sb.from('mfg_sales_orders')
@@ -207,7 +197,6 @@ export async function issueDepositInvoice(
   const companyId = order.company_id ?? null;
   if (companyId == null) return { ok: false, status: 'no_company', reason: `${soDocNo} carries no company` };
 
-  /* The company code is needed only when one is due; it is read alongside rather than after. */
   const [due, code] = await Promise.all([
     depositInvoiceDue(sb, { companyId, soDocNo, paidAt: p.paidAt, amountSen: p.amountSen }),
     companyCodeById(sb, companyId),
@@ -243,9 +232,6 @@ export async function issueDepositInvoice(
     const msg = String(error.message ?? '');
     const clash = String(error.code ?? '') === '23505' || /duplicate key/i.test(msg);
     if (!clash) return { ok: false, status: 'insert_failed', reason: msg };
-    /* A clash on the PAYMENT is a concurrent birth of the same invoice: read
-       it back rather than mint beside it. A clash on the number is the
-       counter racing; the next loop mints again. */
     if (/payment/i.test(msg)) {
       const again = await activeFor(sb, paymentId);
       if (again.error) return { ok: false, status: 'read_failed', reason: `invoice exists but could not be read back: ${again.error}` };
@@ -285,7 +271,6 @@ export async function postDepositInvoice(
   return { ok: true, jeNo: r.jeNo, status: r.status === 'already_posted' ? 'already_posted' : 'posted' };
 }
 
-/* ── Cancel ──────────────────────────────────────────────────────────────── */
 
 export type CancelResult =
   | { ok: true; status: 'cancelled'; diNumber: string; contraJeNo: string | null }
@@ -304,7 +289,6 @@ export async function notesAgainst(
     const { data, error } = await sb.from('acc_credit_notes')
       .select('note_number').eq('company_id', companyId).eq('id', di.credit_note_id).maybeSingle();
     if (error) return { ok: false, reason: `closing note: ${error.message}` };
-    /* Linked is noted, even when the note cannot be read: the link is the fact. */
     numbers.push(String((data as { note_number?: string } | null)?.note_number ?? di.credit_note_id));
   }
   const partial = await refundedByInvoice(sb, companyId, [di.di_number]);
@@ -362,7 +346,6 @@ export async function cancelDepositInvoice(
   return { ok: true, status: 'cancelled', diNumber: di.di_number, contraJeNo };
 }
 
-/* ── The hooks the payment row calls (best-effort, never throw) ──────────── */
 
 /** After a payment row is born: issue its invoice when one is due. `row` is
     the inserted payment (id, so_doc_no, paid_at, amount_sen, method). */
@@ -400,10 +383,6 @@ export async function reissueDepositInvoiceBestEffort(
       const c = await cancelDepositInvoice(sb, {
         companyId: cur.row.company_id, id: cur.row.id, reason: `payment on ${p.docNo} edited — re-issued`, actor: p.actor ?? null,
       });
-      /* An invoice with a credit note against it stays as it is — the pair
-         nets already; the payment's own entry re-posts elsewhere. Otherwise a
-         cancel that failed leaves the old invoice standing; issuing a second
-         beside it would be two invoices for one payment. Stop, out loud. */
       if (!c.ok && c.status === 'noted') { log('edit: invoice left standing —', c.reason); return; }
       if (!c.ok) { log('edit: standing invoice not cancelled:', cur.row.di_number, c.status, c.reason); return; }
     }
@@ -434,7 +413,6 @@ export async function cancelDepositInvoiceForPaymentBestEffort(
   }
 }
 
-/* ── The backlog: payments due an invoice that have none ─────────────────── */
 
 export type MissingPayment = { id: string; so_doc_no: string; paid_at: string | null; amount_sen: number; method: string | null; created_by: string | null };
 
@@ -449,7 +427,6 @@ export async function missingDepositInvoices(
   if (!st.ok) return st;
   if (!st.settings.enabled) return { ok: true, enabled: false, payments: [] };
 
-  /* Paged: PostgREST answers at most 1000 rows, so the old .limit(2000) lost every payment past the 1000th. */
   const fromDate = st.settings.fromDate;
   const { data: pays, error: payErr, truncated: payCut } = await paginateAll<MissingPayment>((from, to) => {
     let q = sb.from('mfg_sales_order_payments')
@@ -474,9 +451,6 @@ export async function missingDepositInvoices(
   if (diCut) return { ok: false, reason: 'deposit invoices: too many to read in one pass' };
   const have = new Set(((dis ?? []) as Array<{ payment_id: string }>).map((d) => String(d.payment_id)));
 
-  /* The orders that already carry a live invoice, and the orders that are
-     no orders (draft, cancelled): chunked under the URL budget, each chunk
-     paged, both reads together. */
   const docNos = [...new Set(candidates.map((p) => p.so_doc_no))];
   const invoiced = new Set<string>();
   const notLive = new Set<string>();
@@ -519,7 +493,6 @@ export async function issueMissingDepositInvoices(
   return { ok: true, issued, skipped };
 }
 
-/* ── The close-out: one credit note per deposit invoice at the final invoice ─ */
 
 type NoteRow = Record<string, any>;
 
@@ -592,9 +565,6 @@ export async function applyDepositInvoicesToInvoice(
     }
     const posted = await postCreditNote(sb, { companyId: p.companyId, note, actor: p.actor });
     if (!posted.ok) log(`close-out: ${String(note.note_number)} raised for ${di.di_number} but not posted:`, posted.status, posted.reason);
-    /* The link is the fact that the pair exists — written even when the
-       posting was refused, so the note is found (and posted from the notes
-       page) rather than raised a second time. */
     const { error: linkErr } = await sb.from('acc_deposit_invoices').update({ credit_note_id: note.id }).eq('id', di.id);
     if (linkErr) { skipped.push({ diNumber: di.di_number, why: `link: ${linkErr.message}` }); continue; }
     applied.push({ diNumber: di.di_number, noteNumber: String(note.note_number), jeNo: posted.ok ? posted.jeNo : null });

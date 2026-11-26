@@ -33,8 +33,6 @@ sofaComboPresets.use('*', supabaseAuth);
 
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
-/* The table is not in the generated Supabase types until the migration merges;
-   like pg() in delivery-places.ts, a narrow table-local bridge. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const pg = (sb: unknown): any => sb;
 
@@ -82,7 +80,6 @@ async function companyPresets(c: AppContext, companyId: number) {
 const nameTaken = (presets: readonly ComboPreset[], name: string, exceptId: string | null) =>
   presets.some((p) => p.id !== exceptId && p.name.toLowerCase() === name.toLowerCase());
 
-// ── GET / — the company's presets, in order. ─────────────────────────────────
 sofaComboPresets.get('/', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -91,7 +88,6 @@ sofaComboPresets.get('/', async (c) => {
   return c.json({ presets: list.presets });
 });
 
-// ── POST / — add a preset at the end. ────────────────────────────────────────
 sofaComboPresets.post('/', async (c) => {
   if (!canWriteScmConfig(c)) return forbidden(c);
   const co = requireActiveCompanyId(c);
@@ -115,7 +111,6 @@ sofaComboPresets.post('/', async (c) => {
   return c.json({ preset: presetOut(data as Row) }, 201);
 });
 
-// ── PATCH /:id — rename, change slots, switch on or off. ─────────────────────
 sofaComboPresets.patch('/:id', async (c) => {
   if (!canWriteScmConfig(c)) return forbidden(c);
   const co = requireActiveCompanyId(c);
@@ -149,7 +144,6 @@ sofaComboPresets.patch('/:id', async (c) => {
   return c.json({ preset: presetOut(data as Row) });
 });
 
-// ── DELETE /:id — delete it; another company's id is a 404. ─────────────────
 sofaComboPresets.delete('/:id', async (c) => {
   if (!canWriteScmConfig(c)) return forbidden(c);
   const co = requireActiveCompanyId(c);
@@ -162,7 +156,6 @@ sofaComboPresets.delete('/:id', async (c) => {
   return c.json({ deleted: presetOut(data as Row).id });
 });
 
-// ── POST /reorder — set the order of every preset of the company. ────────────
 sofaComboPresets.post('/reorder', async (c) => {
   if (!canWriteScmConfig(c)) return forbidden(c);
   const co = requireActiveCompanyId(c);

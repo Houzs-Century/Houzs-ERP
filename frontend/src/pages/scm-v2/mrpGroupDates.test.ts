@@ -3,9 +3,6 @@ import { groupEarliestDate } from './mrp-model-pipeline';
 import type { ModelGroup } from './mrp-model-pipeline';
 import type { MrpLine, MrpSku } from '../../vendor/scm/lib/mrp-queries';
 
-/* The three MRP date columns (Processing / SO / Delivery) read a Model row's
-   EARLIEST line date on each basis. A Model can pool several SO lines, so the
-   aggregation — not the per-line lookup — is the part worth pinning. */
 
 const line = (d: Partial<MrpLine>): MrpLine => ({
   soItemId: 'si', soDocNo: 'HC-SO-1', debtorName: null, customerState: null,

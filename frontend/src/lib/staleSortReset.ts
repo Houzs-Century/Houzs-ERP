@@ -25,8 +25,6 @@
 // the difference between cleaning up a bug and overriding a person.
 // ----------------------------------------------------------------------------
 
-/** Bump ONLY if a future bug makes another one-shot clear necessary. Reusing the
- *  same marker for a new purpose would skip the browsers that already ran it. */
 const MARKER = 'dt:sort-reset:2026-08-05';
 const SORT_PREFIX = 'dt:sort:';
 
@@ -43,8 +41,6 @@ export function clearStaleTableSorts(): number {
     if (typeof localStorage === 'undefined') return 0;
     if (localStorage.getItem(MARKER)) return 0;
 
-    /* Collect first, delete after: removing while iterating by index shifts
-       every later key down and silently skips half of them. */
     const doomed: string[] = [];
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
@@ -55,8 +51,6 @@ export function clearStaleTableSorts(): number {
     localStorage.setItem(MARKER, '1');
     return doomed.length;
   } catch {
-    /* Private mode / quota — the sort simply stays until the user resets it by
-       hand. Strictly better than a boot that throws. */
     return 0;
   }
 }

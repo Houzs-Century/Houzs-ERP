@@ -47,22 +47,13 @@ export type ReportId =
 
 export type ReportItem = {
   id: ReportId;
-  /** The report's name in the list, and its header's unless `title` says otherwise. */
   label: string;
-  /** The header's title where the list's name says more (Sales report · fairs). */
   title?: string;
   group: ReportGroupId;
-  /** Where it opens: the page, and the Accounting tab when it is one. */
   path: string;
   tab?: AccountingTab;
-  /** Journal entries, General ledger and Trial balance are Books pages; opened
-   *  from the list they carry `in=reports`, so the list and its header follow. */
   inReports?: boolean;
-  /** The sidebar entry whose gate decides who sees this report: the Reports
-   *  entry's member for a report with a `gate`, the Books entry for the rest. */
   navTo: string;
-  /** Who sees it — the gate its own sidebar entry had (batch 6 §1.1: "keep
-   *  every member's own gate"). Absent on the Books pages, gated in Books. */
   gate?: ReportGate;
 };
 
@@ -70,7 +61,6 @@ export type ReportItem = {
 export type ReportGate = {
   anyPerm: string[];
   anyAccess: string[];
-  /** The Sales report's cohort: management and the Sales Director only. */
   requireFairReport?: boolean;
 };
 

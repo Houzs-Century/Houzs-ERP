@@ -30,7 +30,6 @@ describe('deriveMasterConfigCostFromSuppliers — COST-only max', () => {
   it('a supplier-only entry is added COST-only (no selling)', () => {
     const master = cfg({ divanHeights: [] });
     const s1 = cfg({ divanHeights: [{ value: '6in', priceSen: 4000, sellingPriceSen: 9999 }] });
-    // the supplier's SELLING is NOT carried onto the master — cost only.
     expect(deriveMasterConfigCostFromSuppliers(master, [s1]).divanHeights).toEqual([{ value: '6in', priceSen: 4000 }]);
   });
 
@@ -40,8 +39,8 @@ describe('deriveMasterConfigCostFromSuppliers — COST-only max', () => {
     const out = deriveMasterConfigCostFromSuppliers(master, [s1]);
     expect(out.gaps).toEqual(['G1', 'G2']);
     expect(out.sofaSizes).toEqual(['2S']);
-    expect(out.specials[0].sellingPriceSen).toBe(7000); // selling preserved
-    expect(out.specials[0].priceSen).toBe(200);         // cost maxed
+    expect(out.specials[0].sellingPriceSen).toBe(7000);
+    expect(out.specials[0].priceSen).toBe(200);
   });
 
   it('does not mutate the input master', () => {
@@ -56,7 +55,7 @@ describe('configCostChanged', () => {
     const a = cfg({ specials: [{ value: 'X', priceSen: 100, sellingPriceSen: 1 }] });
     const same = cfg({ specials: [{ value: 'X', priceSen: 100, sellingPriceSen: 999 }] });
     const dearer = cfg({ specials: [{ value: 'X', priceSen: 200 }] });
-    expect(configCostChanged(a, same)).toBe(false);  // only selling differs -> not a cost change
+    expect(configCostChanged(a, same)).toBe(false);
     expect(configCostChanged(a, dearer)).toBe(true);
     expect(configCostChanged(null, a)).toBe(true);
   });

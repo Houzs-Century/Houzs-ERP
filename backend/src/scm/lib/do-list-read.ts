@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// do-list-read — what the Delivery Order LIST matches, in one place.
-//
-// The list (GET /delivery-orders-mfg?page=) and the line export
-// (GET /delivery-orders-mfg/export/lines) must match the SAME delivery orders
-// for the same tab, search and sort. Both build their read through these
-// functions, so a filter added here reaches both — the move lib/po-list-read.ts
-// made for the Purchase Order list.
-//
-// Lives here, not in routes/delivery-orders-mfg.ts, because that router is over
-// its file-size ceiling.
-// ----------------------------------------------------------------------------
 
 import { DO_STATUS_BUCKETS } from './do-status-buckets';
 import { escapeForOr, phoneSearchOrParts } from './postgrest-search';
@@ -17,7 +5,6 @@ import { normalizePhone } from '../shared/phone';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { inArm } from './so-ref-search';
 
-/* Indexed by a caller's string, so an unknown key is `undefined` — say so. */
 const BUCKETS: Readonly<Record<string, string[] | undefined>> = DO_STATUS_BUCKETS;
 
 /** The list's filter contract, as the query string carries it. */
@@ -35,15 +22,11 @@ export type DoListParams = {
      MRP funnels stay client-side on the loaded page. */
   debtorNames: string[] | null;
   currencies: string[] | null;
-  /** SOs whose reference matches `q` (lib/so-ref-search.ts): the DO's own ref
-      copy is empty on many rows, so the SO link is matched instead. */
   soRefDocNos: string[];
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
 
-/* Multi-value funnel params ride as a JSON array in ONE param (a customer name
-   may contain a comma). Malformed / empty reads as no filter. */
 function jsonArrayParam(v: string | undefined): string[] | null {
   if (v === undefined || v === '') return null;
   try {
@@ -119,20 +102,14 @@ export function windowDoList<Q>(q: Q, p: Pick<DoListParams, 'from' | 'to' | 'dat
 /** COMPANY + sales scope + tab + search + date window. `scopeIds` is the
  *  caller's row-level sales scope (resolveSalesScopeIds; null = view-all). */
 export function filterDoList<Q>(q: Q, p: DoListParams, c: CompanyScopeCtx, scopeIds: string[] | null): Q {
-  let out = scopeToCompany(q, c) as unknown as Filterable; // per-company document
+  let out = scopeToCompany(q, c) as unknown as Filterable;
   if (scopeIds) out = out.in('salesperson_id', scopeIds);
-  /* A known bucket key → all its raw statuses; 'all'/empty → no filter;
-     otherwise a raw DB status. The `on_hold` tab reads the MARKER (mig 0324)
-     ONLY — never HELD_OR_TERM, whose `status.eq.ON_HOLD` arm 22P02s a do_status
-     that has no such label. */
   const status = p.status;
   if (status && status !== 'all') {
     if (status === 'on_hold') out = out.eq('on_hold', true);
     else if (BUCKETS[status]) out = out.in('status', BUCKETS[status]);
     else out = out.eq('status', status);
   }
-  /* free-text search over the columns the list's search matches: customer
-     name, phone, the linked SO reference, and the doc numbers. */
   if (p.q) {
     const s = escapeForOr(p.q);
     if (s) out = out.or([

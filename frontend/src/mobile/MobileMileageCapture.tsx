@@ -5,23 +5,6 @@ import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
 import { uploadBreakdownFile } from "../pages/FleetHealthBreakdownFiles";
 import "./mobile.css";
 
-/* Mileage capture — the mobile DRIVER action for Fleet Maintenance Phase 2.
-   The driver marks the day "fully complete" after the last drop and enters the
-   odometer + a dashboard photo. ONE reading per lorry per day (DAY_COMPLETE).
-
-   Wired to the REAL top-level fleet routes (backend/src/scm/routes/
-   fleet-maintenance.ts):
-     • GET  /api/fleet-maintenance/dashboard        → the lorry list + current km
-     • POST /api/fleet-maintenance/vehicles/:id/mileage  { odometerKm, photoRef,
-       source: "DAY_COMPLETE" } → inserts the reading. The server runs the pure
-       guards: a reading BELOW the latest is a 409 rollback (rejected); an
-       abnormal one-day jump is accepted but flagged for review.
-
-   The photo is uploaded to R2 first (shared slip Worker-proxy pipeline →
-   { r2Key }); its key rides the POST as photoRef. GPS distance is NOT captured
-   as the odometer — the odometer is always the number the driver reads off the
-   dash. The desktop /fleet-health page is the admin surface (plans + board);
-   this screen is the one thing a driver does on a phone. */
 
 type Vehicle = {
   id: string;
@@ -53,12 +36,10 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [done, setDone] = useState<{ plate: string; km: number; flagged: boolean } | null>(null);
-  // Breakdown-report state.
   const [bdFault, setBdFault] = useState("");
   const [bdSeverity, setBdSeverity] = useState<"MINOR" | "MAJOR" | "CRITICAL">("MAJOR");
   const [bdDrivable, setBdDrivable] = useState(false);
   const [bdDesc, setBdDesc] = useState("");
-  // Scene photos AND videos: uploaded onto the case after it is created.
   const [bdFiles, setBdFiles] = useState<File[]>([]);
   const [bdDone, setBdDone] = useState<{ plate: string; grounded: boolean; trips: number; mediaFailed: string | null } | null>(null);
 
@@ -72,7 +53,6 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
 
   const odoNum = odometer.trim() === "" ? null : Number(odometer.replace(/[, ]/g, ""));
   const odoValid = odoNum !== null && Number.isFinite(odoNum) && Number.isInteger(odoNum) && odoNum >= 0;
-  // Soft client-side rollback hint (the server is the real guard).
   const wouldRollback = odoValid && selected?.mileageKm != null && odoNum! < selected.mileageKm;
 
   const submit = async () => {
@@ -100,7 +80,6 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
     }
   };
 
-  // Best-effort GPS: resolves to {lat,lng} or null (never blocks the report).
   const getGps = () =>
     new Promise<{ lat: number; lng: number } | null>((resolve) => {
       if (!("geolocation" in navigator)) return resolve(null);
@@ -130,8 +109,6 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
           gpsLng: gps?.lng,
         },
       );
-      /* The case is the urgent part, so it is saved first; a failed upload
-         is said on the done screen rather than losing the report. */
       let mediaFailed: string | null = null;
       for (const f of bdFiles) {
         try { await uploadBreakdownFile(res.id, f); }
@@ -271,7 +248,6 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
               </div>
             </div>
 
-            {/* Action mode: mark day complete (mileage) OR report a breakdown. */}
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
               {(["mileage", "breakdown"] as const).map((m) => (
                 <button
@@ -340,7 +316,6 @@ export function MobileMileageCapture({ onBack }: { onBack: () => void }) {
               </>
             )}
 
-            {/* Photo — dashboard odometer (mileage) or the scene (breakdown). */}
             <div className="fld-l" style={{ margin: "18px 0 8px" }}>{mode === "breakdown" ? "Photos or videos of the scene (optional)" : "Dashboard photo (optional)"}</div>
             <div style={{ display: "flex", gap: 9 }}>
               <label style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "var(--brand)", border: "none", borderRadius: 13, padding: 14, color: "#fff", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>

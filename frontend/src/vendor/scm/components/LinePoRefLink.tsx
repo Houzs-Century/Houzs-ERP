@@ -1,14 +1,9 @@
-/* LinePoRefLink — the purchase order a goods-receipt / purchase-invoice line
-   came from, as a link to that order (#26). Whether a line HAS one is decided
-   by `linePoLink`, not here. */
 
 import { Link } from 'react-router-dom';
 import { linePoLink, poDetailHref, type LinePoFields } from '../lib/line-po-link';
 
 export function LinePoRefLink({ line, empty = '—', className }: {
   line: LinePoFields;
-  /* What a line with no PO behind it says. A dash on the read grids; the
-     receipt editor says "— (manual)" because that is the only way it happens. */
   empty?: string;
   className?: string;
 }) {

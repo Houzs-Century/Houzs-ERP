@@ -1,24 +1,3 @@
-// ----------------------------------------------------------------------------
-// ConsignmentNoteNew — full-page Create Consignment Note at /scm/consignment-notes/new.
-//
-// Faithful clone of DeliveryOrderNew.tsx. It reuses the SAME shared components
-// UNCHANGED — SoLineCard (+ emptySoLine / SoLineDraft), PaymentsTable,
-// PhoneInput — and the SAME generic data hooks (useStaff, useDrivers,
-// useLocalities, useSoDropdownOptions). The Customer / Delivery Info / Emergency
-// / Delivery Address cards + SoLineCard list + PaymentsTable (draft mode) are
-// identical to the DO create flow.
-//
-// The DO-specific "from Sales Order" wiring is intentionally DROPPED here:
-//   • the ?fromSo / ?fromPicks prefill + SO detail/payments read-back
-//   • the "From Sales Order" header button + SO-line pickers
-//   • the short-stock "Ship anyway?" 409 handling on save
-// A consignment note is always a blank Create form (free-entry lines).
-//
-// On Save: POST /consignment-notes (header + items), then replay the payment
-// drafts through POST /:id/payments before navigating to the new note's detail.
-// The backend route `/consignment-notes` mirrors `/delivery-orders-mfg` 1:1;
-// numbering is CN-YYMM-NNN.
-// ----------------------------------------------------------------------------
 
 import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
@@ -74,25 +53,15 @@ export const ConsignmentNoteNew = () => {
   const navigate = useNavigate();
   const notify = useNotify();
   const [searchParams] = useSearchParams();
-  // Convert-from: a Consignment Order (=SO) this note ships against. Mirrors the
-  // DO's ?fromSo= prefill — seed header + lines from the order, free-edit after.
   const fromConsignmentOrder = searchParams.get('fromConsignmentOrder');
   const fromPicks = searchParams.get('fromPicks') === '1';
 
-  /* One key for the one note this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the note detail on success, so the MOUNT is
-     exactly one note: stable across re-renders and across a re-press after a
-     stalled submit, fresh on remount. */
   const idemKey = useIdempotencyKey();
   const create = useCreateConsignmentNote();
   const addPayment = useAddConsignmentNotePayment();
   const driversQ = useDrivers();
   const loc = useLocalities();
   const coDetail = useConsignmentOrderDetail(fromConsignmentOrder);
-  /* `include` carries the salesperson already on the SOURCE document this one is
-     being raised from, so someone the onlySales narrowing hides is still named.
-     "(former staff)" below is then only reachable for a row that genuinely is
-     gone. Declared after the source query so the id is in scope. */
   const staffQ = usePickableStaff({
     onlySales: true,
     include: [(coDetail.data?.salesOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined],
@@ -105,7 +74,6 @@ export const ConsignmentNoteNew = () => {
   const buildingTypeOpts = optionsOrFallback('building_type', buildingTypeOptsQ.data);
   const relationshipOpts = optionsOrFallback('relationship', relationshipOptsQ.data);
 
-  // ── Customer ──
   const [debtorCode, setDebtorCode] = useState('');
   const [debtorName, setDebtorName] = useState('');
   const [phone, setPhone] = useState('');
@@ -114,7 +82,6 @@ export const ConsignmentNoteNew = () => {
   const [customerType, setCustomerType] = useState('');
   const [customerSoNo, setCustomerSoNo] = useState('');
 
-  // ── Delivery info ──
   const [doDate, setDoDate] = useState(() => todayMyt());
   const [driverId, setDriverId] = useState('');
   const [driverName, setDriverName] = useState('');
@@ -126,7 +93,6 @@ export const ConsignmentNoteNew = () => {
   const [customerDeliveryDate, setCustomerDeliveryDate] = useState('');
   const [note, setNote] = useState('');
 
-  // ── Address ──
   const [address1, setAddress1] = useState('');
   const [address2, setAddress2] = useState('');
   const [state, setState] = useState('');
@@ -135,16 +101,13 @@ export const ConsignmentNoteNew = () => {
   const [salesLocation, setSalesLocation] = useState('');
   const [branding, setBranding] = useState('');
 
-  // ── Emergency ──
   const [emergencyName, setEmergencyName] = useState('');
   const [emergencyRel, setEmergencyRel] = useState('');
   const [emergencyPhone, setEmergencyPhone] = useState('');
 
-  // ── Items + payments ──
   const [lines, setLines] = useState<DraftLine[]>(() => [newLine()]);
   const [paymentDrafts, setPaymentDrafts] = useState<PaymentDraft[]>([]);
 
-  // ── Convert-from prefill (seed once when the source order arrives) ──
   const [prefilled, setPrefilled] = useState(false);
   useEffect(() => {
     if (!fromConsignmentOrder || prefilled) return;
@@ -177,9 +140,6 @@ export const ConsignmentNoteNew = () => {
     setEmergencyRel(str(co.emergency_contact_relationship));
     setEmergencyPhone(str(co.emergency_contact_phone));
 
-    // When we arrived from the multi-line picker (fromPicks) the operator already
-    // chose specific order lines + quantities — the picker-merge effect below
-    // drives the lines. Here we only seed the HEADER from the first order.
     if (!fromPicks && coItems.length > 0) {
       setLines(coItems.map((it, idx) => ({
         ...newLine(),
@@ -200,8 +160,6 @@ export const ConsignmentNoteNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- seed-once from the nav prefill; the loaded-flag guard makes any re-run a no-op
   }, [fromConsignmentOrder, prefilled, coDetail.data]);
 
-  // From-Order multi-picker merge (fromPicks): seed lines from the stash, each
-  // carrying its source CO-line id so the note links back (delivery tracking).
   const [picksLoaded, setPicksLoaded] = useState(false);
   useEffect(() => {
     if (!fromPicks || picksLoaded) return;
@@ -238,9 +196,6 @@ export const ConsignmentNoteNew = () => {
   const drivers = driversQ.data ?? [];
 
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
-  /* Shared address cascade, BOTH directions (address-cascade.ts). Three atoms,
-     so each pick writes all three back — the raw setters keep the value just
-     chosen, which routing through the State picker's handler would clear. */
   const { cities, postcodes } = useAddressCascade(locRows, state, city);
   const applyTriple = (next: { state: string; city: string; postcode: string }) => {
     setState(next.state); setCity(next.city); setPostcode(next.postcode);
@@ -275,8 +230,6 @@ export const ConsignmentNoteNew = () => {
           accountSheet: d.accountSheet || null,
           approvalCode: d.approvalCode || null,
           collectedBy: d.collectedBy || null,
-          // Per-draft key — see lib/idempotency.ts. The note is created first and
-          // the payments posted after, so a retry of the save re-posts these.
           idempotencyKey: d.idempotencyKey,
         };
         Object.assign(body, draftMethodFields(method, d));
@@ -390,7 +343,6 @@ export const ConsignmentNoteNew = () => {
         }
       />
 
-      {/* ── CUSTOMER ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Customer</h2></header>
         <div className={styles.cardBody}>
@@ -448,7 +400,6 @@ export const ConsignmentNoteNew = () => {
         </div>
       </section>
 
-      {/* ── DELIVERY INFO ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Delivery Info</h2></header>
         <div className={styles.cardBody}>
@@ -509,7 +460,6 @@ export const ConsignmentNoteNew = () => {
         </div>
       </section>
 
-      {/* ── EMERGENCY CONTACT ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Emergency Contact</h2>
@@ -542,7 +492,6 @@ export const ConsignmentNoteNew = () => {
         </div>
       </section>
 
-      {/* ── DELIVERY ADDRESS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Delivery Address</h2></header>
         <div className={styles.cardBody}>
@@ -602,7 +551,6 @@ export const ConsignmentNoteNew = () => {
         </div>
       </section>
 
-      {/* ── LINE ITEMS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Line Items ({lines.length})</h2></header>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -614,14 +562,6 @@ export const ConsignmentNoteNew = () => {
               onChange={(patch) => updateLine(line.rid, patch)}
               onRemove={() => dropLine(line.rid)}
               canRemove={lines.length > 1}
-              /* Downstream document: the items were already specified on the
-              originating order and their variants ride in with them, so they
-              are NOT re-required here. Same rule DeliveryOrderNewV2 states
-              for the DO. Verified 2026-08-13: this document's server does no
-              variant enforcement at all (findIncompleteVariantLines appears
-              0 times in its route), so the default `= true` was pure
-              client-side invention - a red ring and a ` *` for a field the
-              backend never asked for. */
               variantsRequired={false}
               specLockedReason={null}
               lineDateLocked={false}
@@ -640,9 +580,6 @@ export const ConsignmentNoteNew = () => {
         </div>
       </section>
 
-      {/* PAYMENTS removed (Wei Siang 2026-06-06): a consignment is goods placed
-          on loan at the showroom, not a sale — no money is collected, so there
-          is no payments ledger. */}
     </div>
   );
 };

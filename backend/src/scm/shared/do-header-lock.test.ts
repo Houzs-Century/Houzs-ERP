@@ -7,8 +7,6 @@ import {
   doHeaderLocked, doLockedHeaderChanges, isDoHeaderKeyLocked, sameDoHeaderValue, stripLockedDoHeaderKeys,
 } from './do-header-lock';
 
-// The exhaustive partition against the route's own PATCH map is
-// tests/doHeaderLockPartition.test.ts (it reads the route file from disk).
 
 describe('the owner ruling 2026-09-14, as data', () => {
   it('locks customer, address, contact and commercial fields', () => {

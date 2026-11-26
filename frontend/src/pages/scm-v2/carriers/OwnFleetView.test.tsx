@@ -54,7 +54,6 @@ describe('the Own fleet tab', () => {
   test('the strip and the month table read the months; per DO leaves the other jobs out', () => {
     show();
     expect(screen.getAllByText('RM 215.00').length).toBe(2);
-    // (RM 215 - RM 35 other jobs) / 3 DOs = RM 60.00; 3PL RM 240 / 2 DOs = RM 120.00.
     expect(screen.getAllByText('RM 60.00').length).toBeGreaterThan(0);
     expect(screen.getAllByText('RM 120.00').length).toBeGreaterThan(0);
     expect(screen.getByText('11/2026')).toBeTruthy();
@@ -63,7 +62,6 @@ describe('the Own fleet tab', () => {
 
   test('a trip lists whose orders it carried, and opens the lines its card priced it with', () => {
     show();
-    // A tie lists the companies by code.
     expect(screen.getByText('2990 1 · HOUZS 1')).toBeTruthy();
     expect(screen.getByText('Supplier')).toBeTruthy();
     fireEvent.click(screen.getByText('TRIP-T1'));

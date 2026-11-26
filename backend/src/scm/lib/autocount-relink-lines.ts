@@ -69,11 +69,8 @@ export interface ErpLineForRelink {
 }
 
 export interface RelinkPlan {
-  /** The rows to stamp, and the key each one gets. */
   assign: Array<{ id: string; dtlKey: number; itemCode: string }>;
-  /** One sentence per row that could NOT be matched, for a person to read. */
   refused: string[];
-  /** Rows that already carry a key — untouched, and counted so the report adds up. */
   alreadyKeyed: number;
   /**
    * ROWS THE ACCOUNT BOOK HAS NO LINE FOR AT ALL — the only refusal a caller may
@@ -109,8 +106,6 @@ export function planLineRelink(input: {
     erpLines.map((l) => l.dtlKey).filter((k): k is number => Number.isFinite(Number(k)) && Number(k) > 0)
       .map((k) => Number(k)),
   );
-  /* Candidates in book order (DtlKey ascending), so a repeated code that DOES
-     get separated is separated deterministically. */
   const candidates = bookLines
     .map((b) => ({ key: Number(b.DtlKey), code: norm(b.ItemCode), desc2: norm(b.Desc2) }))
     .filter((b) => Number.isFinite(b.key) && b.key > 0 && !claimed.has(b.key))
@@ -124,8 +119,6 @@ export function planLineRelink(input: {
   const taken = new Set<number>();
   const unmatched: ErpLineForRelink[] = [];
   const absent: RelinkPlan['absent'] = [];
-  /* EVERY book line, claimed or not — see `absent` on RelinkPlan for why this
-     is not the same question `candidates` answers. */
   const bookCodes = new Set(bookLines.map((b) => norm(b.ItemCode)).filter(Boolean));
 
   for (const row of keyless) {
@@ -136,8 +129,6 @@ export function planLineRelink(input: {
     }
     const sameCode = candidates.filter((c) => !taken.has(c.key) && c.code === want);
     if (sameCode.length === 0) {
-      /* HELD, not refused yet. The book may hold this row as part of a FOLDED
-         sofa line instead of under its own compartment code — pass 2 below. */
       unmatched.push(row);
       continue;
     }
@@ -146,11 +137,6 @@ export function planLineRelink(input: {
       taken.add(sameCode[0].key);
       continue;
     }
-    /* The code repeats among the candidates. Desc2 is what tells two lines of
-       one model apart, and it must be present on BOTH sides to be evidence.
-       PREFIX-TOLERANT: SODTL.Desc2 is nvarchar(100) and the book truncates its
-       own long sofa builds, so an equality test would refuse a legitimate match
-       (the same carve-out persistLineKeys documents). */
     const mine = norm(row.desc2);
     const byDesc = mine
       ? sameCode.filter((c) => c.desc2 && (c.desc2.startsWith(mine) || mine.startsWith(c.desc2)))
@@ -166,32 +152,6 @@ export function planLineRelink(input: {
     );
   }
 
-  /* ── PASS 2: A SOFA THE BOOK KEEPS AS ONE LINE ──────────────────────────────
-     composeEdit folds a build's compartments into a single AutoCount detail
-     (`collapseSofaLines`) and sends it under `<model>-1S`. Pass 1 compares one
-     ERP row to one book row, so where the book took the fold, a build the ERP
-     holds as eight compartments met a book holding ONE line: `8060-CNR` never
-     matched `8060-1S`, and every compartment was refused. That is the whole of
-     HC-GRN-2609-008, and the unexplained `stamped 0` the relink sweep reported
-     on 2026-09-11.
-
-     IT IS A FALLBACK, AND THAT ORDERING IS THE POINT. The book does NOT always
-     fold: `autocountRelinkSweep.test.ts` carries a live delivery order whose
-     9028 compartments are three separate book lines under their own codes, and
-     pass 1 matches all three exactly. Folding first would have refused them and
-     lost three provable stamps. So only a row pass 1 could find NO line for is
-     offered here.
-
-     `<model>-1S` IS THE FOLDED CODE, NOT A COMPARTMENT TO FOLD. A row already
-     carrying it is already at the book's grain — a sales order holds one row per
-     build, and two builds of one model are two rows Desc2 tells apart. `1S` is
-     in the compartment table (a one-seater is a real compartment), so this has
-     to be said out loud: everything BUT `1S` folds.
-
-     It refuses on the same rule as pass 1. The Desc2 that separates two builds
-     of one model is composed from variant and colour columns this planner does
-     not read, so a repeated `<model>-1S` refuses the group rather than guessing.
-     A wrong DtlKey rewrites somebody else's line in a live account book. */
   const foldModel = (code: string | null): string | null => {
     const split = splitSofaCode(String(code ?? ''));
     if (!split || split.compartment.trim().toUpperCase() === '1S') return null;
@@ -199,8 +159,6 @@ export function planLineRelink(input: {
   };
   const missing = (row: ErpLineForRelink) => {
     refused.push(`'${row.acItemCode}' — the account book has no unclaimed line with that item code`);
-    /* The stronger fact, recorded only when it holds: the code is on NO book
-       line at all, so there is nothing this row could be a second copy of. */
     if (!bookCodes.has(norm(row.acItemCode))) {
       absent.push({ id: row.id, itemCode: row.acItemCode ?? '' });
     }
@@ -215,10 +173,6 @@ export function planLineRelink(input: {
   }
 
   for (const [model, rows] of groups) {
-    /* THE BUILD'S OWN KEPT ROWS ANSWER FIRST. One AutoCount line has one DtlKey,
-       so a single distinct value across this build's other compartments IS the
-       key these are missing. A kept `<model>-1S` row is a different build at
-       book grain and does not get a say. */
     const sibling = new Set(
       erpLines
         .filter((l) => foldModel(l.acItemCode) === model

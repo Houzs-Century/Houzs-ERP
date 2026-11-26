@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// ApBillPage — /scm/ap-invoices/:id, an AP bill (or a supplier's debit note) as
-// its own document page in the owner's Claude Design (Money out, batch 4
-// step 6). Today's pop-out becomes a page: Details, Lines with the books line,
-// Payments (what paid it), Attachments and a Trail from its stamps; the action
-// bar keeps every action the pop-out had (Edit, Copy, Post, Cancel, Official
-// invoice, files) and adds Make voucher and Add task. Posting is unchanged —
-// the same calls the list makes. Print (step 8) opens the voucher page's print
-// preview: the AP BILL, its stored files after it unless unticked.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { newIdempotencyKey } from '../../lib/idempotency';
@@ -45,7 +35,6 @@ import mo from './MoneyOut.module.css';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const TONE: Record<BillTone, string> = { calm: mo.toneCalm, warn: mo.toneWarn, info: mo.toneInfo, late: mo.toneLate };
 
-/** The bill as the list's rules read it — one status tag on both. */
 const asRow = (d: ApInvoiceDetail): BillRow => {
   const inv = d.invoice;
   const posted = lifeOf(inv.status) === 'posted';
@@ -90,7 +79,6 @@ export function ApBillPage() {
   const canPost = can('scm.payment_voucher.post');
   const canCancel = can('scm.payment_voucher.cancel');
   const [form, setForm] = useState<'edit' | 'copy' | null>(null);
-  /* One Idempotency-Key per opened copy form: a second press answers the first copy. */
   const createKey = useMemo(() => (form ? newIdempotencyKey() : null), [form]);
   const [addingTask, setAddingTask] = useState(false);
   const [planning, setPlanning] = useState(false);
@@ -98,9 +86,6 @@ export function ApBillPage() {
   const accountName = (code: string): string | null => (accountsQ.data?.accounts ?? []).find((a) => a.account_code === code)?.account_name ?? null;
   const lineAccounts = useMemo(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);
 
-  /* Print (step 8): the AP BILL with its stored files after it — or without,
-     the operator's call in the preview card, as on the voucher page. Files not
-     counted yet: the Worker appends whatever the bill keeps. */
   const filesQ = useApInvoiceFiles(id || null);
   const fileCount = filesQ.data?.files.length ?? null;
   const [includeFiles, setIncludeFiles] = useState(true);
@@ -134,7 +119,6 @@ export function ApBillPage() {
   const debits = [...new Set(d.lines.map((l) => l.debit_account_code))].map((c) => (accountName(c) ? `${c} ${accountName(c)}` : c)).join(', ');
   const credit = d.controlCode ? (accountName(d.controlCode) ? `${d.controlCode} ${accountName(d.controlCode)}` : d.controlCode) : 'the supplier’s control';
   const booksState = life === 'posted' ? 'Posted' : life === 'cancelled' ? (inv.je_no ? 'Reversed' : 'Never posted') : 'Posts when posted';
-  /* When we plan to pay it, against the supplier's due date (the design: · Nd early / · Nd late). */
   const planned = life === 'posted' && outstanding > 0 ? inv.planned_on ?? null : null;
   const planGap = planned && inv.due_date ? Math.round((Date.parse(planned) - Date.parse(inv.due_date)) / 86_400_000) : 0;
 
@@ -170,7 +154,6 @@ export function ApBillPage() {
         });
         return;
       }
-      /* A copy is a new paper — a debit note's copy is a debit note — and opens on its own page. */
       const res = await create.mutateAsync({ ...(dn ? { ...values, docKind: 'DN' as const } : values), idempotencyKey: createKey });
       setForm(null);
       navigate(`/scm/ap-invoices/${res.invoice.id}`);
@@ -186,7 +169,6 @@ export function ApBillPage() {
     <div className="space-y-4">
       <PageHeader back
         beforeBack={() => {
-          /* Opened as a document from another page: back to THAT page and its tab. */
           const href = cameFrom ? returnToWorkspaceOpener() : null;
           if (href) { navigate(href); return false; }
           return true;
@@ -311,7 +293,6 @@ export function ApBillPage() {
 
       <ApInvoiceFilesCard invoiceId={inv.id} canWrite={canCreate} locked={Number(inv.paid_sen) > 0} closed={life === 'cancelled'} />
 
-      {/* The trail from the bill's own stamps and what paid it (AP bills write no entity audit). */}
       <section className={styles.card}>
         <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Trail</h2></div>
         <div className={styles.cardBody}>
@@ -326,7 +307,6 @@ export function ApBillPage() {
         </div>
       </section>
 
-      {/* Mounted while open only — the page's own pop-outs stay the one dialog on it otherwise. */}
       {print.open && <PrintPreviewModal
         open
         onClose={print.close}
@@ -339,7 +319,6 @@ export function ApBillPage() {
           { label: 'Total', value: fmtSen(inv.total_sen) },
           {
             label: 'Files',
-            /* The exclude toggle sits where the decision is made, as on the voucher page. */
             value: fileCount === 0 ? 'none attached' : (
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
                 <input type="checkbox" checked={includeFiles} onChange={(e) => setIncludeFiles(e.target.checked)}

@@ -60,7 +60,6 @@ export async function findOrdersByDoNumber(
       .bind(likePattern)
       .all<{ ref: string | null }>(),
     findScmSoDocNosByDoNumber(env, searchTerm, allowedCompanyIds),
-    // The PO column's Order POs ride the same SO doc_no arm of the list search.
     isSupabaseConfigured(env) ? soDocNosByPoNumberInCompanies(getSupabaseService(env), allowedCompanyIds, searchTerm) : [],
   ]);
   const refKeys = (mirrored.results ?? [])

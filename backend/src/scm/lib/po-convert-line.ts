@@ -1,18 +1,3 @@
-/* ----------------------------------------------------------------------------
-   po-convert-line — the ROW a converted SO line becomes, written once.
-
-   `convertSosToPosCore` has two arms — APPEND to an existing PO (`targetPoId`)
-   and CREATE one per supplier bucket — and both wrote the same sixteen fields
-   in two hand-kept copies that differed only in which PO id they carried. Every
-   field added since (`description2`, `so_item_id`, `photo_urls`, `from_mrp`)
-   had to be added twice, and the comments explaining WHY a field is carried had
-   drifted: the append copy had one line about photos, the create copy had
-   eight. They are one function now, and the reasons live here.
-
-   Extracted 2026-09-10 while adding `line_no` — `mfg-purchase-orders.ts` is
-   over its size ceiling, and the repo's rule for that is a new module rather
-   than a bigger number.
-   -------------------------------------------------------------------------- */
 
 import { buildVariantSummary } from '../shared';
 import { skuCategoryResolver } from './sku-category';
@@ -64,13 +49,8 @@ export function poConvertLineRow(
     qty: l.qty,
     unit_price_sen: l.unitPriceSen,
     line_total_sen: l.qty * l.unitPriceSen,
-    /* Commander 2026-05-28 — per-line delivery date = the source SO LINE's
-       date; per-line warehouse = the SO's sales_location warehouse. Both may be
-       null when the SO didn't carry them — that's allowed. */
     delivery_date: l.deliveryDate,
     warehouse_id: l.warehouseId,
-    /* Commander 2026-05-29 — carry the variant through to the PO so the line
-       shows its config + the MRP can match outstanding PO supply by variant. */
     /* THE SKU DECIDES THE CATEGORY, and this arm used to be the exception.
        `create` and `add-item` both run `lineIdentityFields(skuCategoryResolver…)`
        (docs/bugs/0514); convert copied `l.itemGroup` from whatever reached the
@@ -89,8 +69,6 @@ export function poConvertLineRow(
     item_group: resolvedItemGroup,
     variants: l.variants,
     description2: buildVariantSummary(String(resolvedItemGroup ?? ''), l.variants ?? null) || null,
-    // Release-on-delete link (migration 0098) — every from-SO line carries its
-    // source SO line so recomputeSoPicked can release it on delete/cancel.
     so_item_id: l.soItemId,
     /* Owner 2026-08-10 (migration 0274) — the source SO line's photo keys. The
        array is copied, the R2 objects are not: SO line and PO line point at the
@@ -104,7 +82,6 @@ export function poConvertLineRow(
        supplier PO PDF. The converter already applied the DINING-only rule, so
        this is `l.notes` verbatim (null on every non-dining line). */
     notes: l.notes,
-    // Commander 2026-05-31 — MRP-origin lines are reference-only (no SO lock).
     from_mrp: fromMrp,
   };
 }

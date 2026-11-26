@@ -5,7 +5,6 @@
  * runs BEFORE the SO is even read, trims the reason, and refuses 400
  * `reason_required` on a blank one. */
 import { describe, expect, it } from 'vitest';
-/* `?raw`, not node:fs — backend/tsconfig.json types Workers only. */
 import { soRouterSource } from '../../../tests/lib/so-router-source';
 const rawRoute = soRouterSource();
 

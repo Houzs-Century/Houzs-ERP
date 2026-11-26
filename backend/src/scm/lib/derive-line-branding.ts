@@ -121,7 +121,6 @@ export async function restampHeaderBranding(
     const { error: updErr } = await sb.from('mfg_sales_orders')
       .update({ branding: brand, ...(fair ?? {}) })
       .eq('doc_no', docNo).eq('company_id', companyId);
-    /* A fair the brand moved is in the order's History (fair-audit.ts). */
     if (fair && !updErr) {
       await recordFairChange({
         sb, db: c.env.DB as unknown as FairDb, companySql: activeCompanySql(c, 'p.company_id'), docNo,
@@ -154,8 +153,6 @@ export async function deriveLineBrandingFromProduct(
   rows: LineBrandingRow[],
   fallbackCompanyId: number | null,
 ): Promise<void> {
-  // Group codes that need lookup by their effective company_id so we can hit
-  // the catalog with a single .in() per company (bounded chunks below).
   const need = new Map<number | null, Set<string>>();
   for (const r of rows) {
     if (!isBlank(r.branding) || !r.item_code) continue;
@@ -165,7 +162,6 @@ export async function deriveLineBrandingFromProduct(
   }
   if (need.size === 0) return;
 
-  // key = `${cid ?? 0}:${code}` — same convention we look up with below.
   const brandByKey = new Map<string, string>();
   for (const [cid, codeSet] of need) {
     const codes = [...codeSet];
@@ -227,13 +223,6 @@ export async function deriveHeaderBrandingFromLines(
   sb: SupabaseClient,
   rows: Array<LineBrandingRow & { item_group?: string | null }>,
   fallbackCompanyId: number | null,
-  /* WHEN THE SKU SAYS NOTHING, the brand the SO LIST shows — if it is one of
-     the company's maintained brands (2026-09-14). Without it a Houzs sofa whose
-     SKU carries no branding (the 5526 family) was created with a NULL header
-     while the list printed ZANOTTI, and the Branding filter could not find it:
-     HC-SO-2609-065 / -071 / -072 on production. null = no brand list could be
-     read, and then the SKU-only answer stands. Required, not optional: its
-     absence changes the answer. */
   listFallback: { companyCode: string | null; brands: readonly string[] } | null,
 ): Promise<string | null> {
   const codes = Array.from(new Set(
@@ -247,11 +236,6 @@ export async function deriveHeaderBrandingFromLines(
     let q = pgrestIn(sb.from('mfg_products').select('code, branding, category'), 'code', codes.slice(i, i + 300));
     if (cid != null) q = q.eq('company_id', cid);
     const { data, error } = await q;
-    /* An unreadable catalogue is NOT "this SKU has no brand". Swallowing it via
-       `data ?? []` would stamp a header derived from a partial catalogue, or
-       leave it blank while looking like a considered decision. Return null so
-       the caller leaves the header alone, and the SO list still derives a label
-       from the lines. */
     if (error) return null;
     products.push(...((data ?? []) as HeaderBrandingProduct[]));
   }
@@ -298,15 +282,11 @@ export function pickHeaderBranding(
     if (candidate && namesABrand(candidate)) return candidate;
   }
 
-  /* No line names a brand: the order's category is all there is to say (a
-     bedframe-only Houzs order is BEDFRAME, which is in Houzs's own list). */
   const rep = rows.find((r) => isMain(r.item_code)) ?? rows[0];
   const brand = rep?.item_code ? brandByCode.get(rep.item_code) : undefined;
   if (brand) return brand;
   if (!listFallback || listFallback.brands.length === 0) return null;
 
-  /* The list's own rule, over these rows in the order the create inserts them
-     (line_no = array index), so the header matches the Branding pill. */
   const productCategory = new Map<string, string>();
   for (const [code, cat] of catByCode) productCategory.set(code, normCategory(cat));
   const first = deriveListFirstItemBranding(

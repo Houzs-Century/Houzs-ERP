@@ -1,6 +1,3 @@
-/* The no-login booking page: the person with the link picks the day, the room and the time range,
- * sees only when each room is taken (never what or by whom), books with their details, and lands on
- * a private confirmation address they can cancel from. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,7 +11,6 @@ const TOKEN = "a".repeat(64);
 const MY = 8 * 3600_000;
 const myDay = (t: number) => new Date(t + MY).toISOString().slice(0, 10);
 const todayWd = new Date(`${myDay(Date.now())}T12:00:00+08:00`).getUTCDay();
-// Every day but today, so the first day offered is tomorrow whatever the clock says.
 const DAYS = [0, 1, 2, 3, 4, 5, 6].filter((d) => d !== todayWd);
 const tomorrow = myDay(Date.now() + 86400_000);
 const LINK = {
@@ -38,7 +34,6 @@ describe("MeetingBook", () => {
     });
     render(<MeetingBook />);
     expect(await screen.findByText("Book a meeting room")).toBeTruthy();
-    // Taken times show as "Booked" with no title and no name.
     expect((await screen.findAllByText("Booked")).length).toBe(1);
     fireEvent.change(screen.getByLabelText("Company"), { target: { value: "__other" } });
     fireEvent.change(screen.getByLabelText("Your company name"), { target: { value: "ABC Trading" } });
@@ -47,7 +42,6 @@ describe("MeetingBook", () => {
     fireEvent.change(screen.getByLabelText("Email (we send the confirmation here)"), { target: { value: "lee@example.com" } });
     fireEvent.change(screen.getByLabelText("Meeting title"), { target: { value: "Intro" } });
     fireEvent.click(screen.getByRole("button", { name: "More people" }));
-    // A tap on the room picks its first free hour (10:30, after the 08:00-10:30 booking).
     fireEvent.click(screen.getByRole("button", { name: /^Boardroom/ }));
     expect((screen.getByLabelText("From") as HTMLSelectElement).value).toBe(String(10 * 60 + 30));
     fireEvent.click(screen.getByRole("button", { name: "Book room" }));
@@ -94,7 +88,6 @@ describe("MeetingBook", () => {
     fetchMock.mockResolvedValue(json({ error: "This booking link is not active." }, 404));
     render(<MeetingBook />);
     expect(await screen.findByText("This booking link is not active")).toBeTruthy();
-    // The hub's own sentence repeats the heading; it is shown once, not twice.
     expect(document.body.textContent.match(/not active/gi)?.length).toBe(1);
   });
 });

@@ -1,6 +1,3 @@
-/* Employees & Attendance > Public Holidays (from Hookka's PublicHolidaysCard):
- * dates nobody is docked for not working, and on which any hours count as
- * public-holiday OT. A company list, kept by HR. */
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { api } from "../../api/client";

@@ -12,21 +12,6 @@ import { cn } from "../lib/utils";
 import { LazySlot } from "./LazySlot";
 
 
-/**
- * Global Cmd+K palette.
- *
- * - GlobalSearchProvider mounts once near the top of the tree and
- *   exposes an `open()` function via context. The palette overlay
- *   itself is rendered via portal so it sits above any modal.
- * - GlobalSearchTrigger is a button you can drop in the sidebar (or
- *   any chrome) that opens the palette and reflects the keyboard
- *   shortcut (⌘K / Ctrl+K).
- * - Cmd+K / Ctrl+K opens it from anywhere; Esc dismisses; ↑/↓ moves
- *   selection; Enter navigates to the selected hit.
- *
- * Backend: GET /api/search?q=… returns up to ~6 hits per source,
- * each shaped like { type, id, title, subtitle?, date?, link }.
- */
 
 interface SearchContextValue {
   open: () => void;
@@ -56,12 +41,10 @@ export function GlobalSearchProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  // Fetch the overlay as soon as the shell is up, so opening it never waits.
   useEffect(() => {
     void preloadGlobalSearchPalette();
   }, []);
 
-  // Global hotkey: Cmd+K / Ctrl+K opens; "/" outside of inputs opens.
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       const isMeta = e.metaKey || e.ctrlKey;
@@ -90,7 +73,6 @@ export function GlobalSearchProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// ── Palette, loaded after first paint ─────────────────────
 
 let paletteModule: typeof import("./GlobalSearchPalette") | null = null;
 
@@ -114,7 +96,6 @@ function PaletteSlot({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ── Trigger button ─────────────────────────────────────────
 
 export function GlobalSearchTrigger({
   collapsed,
@@ -123,9 +104,6 @@ export function GlobalSearchTrigger({
 }: {
   collapsed?: boolean;
   className?: string;
-  /** Field palette. "surface" is the classic white field; "inset" is the
-   *  2b top-chrome variant — bg-surface-2 so the field reads recessed
-   *  against the white bar. */
   tone?: "surface" | "inset";
 }) {
   const { open } = useGlobalSearch();
@@ -138,9 +116,6 @@ export function GlobalSearchTrigger({
       <button
         onClick={open}
         className={cn(
-          // 44 px hit area on mobile (Pass A touch-target floor),
-          // compresses to 36 px at sm+ where the desktop sidebar wants
-          // tighter chrome.
           "flex h-11 w-11 sm:h-9 sm:w-9 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary transition-colors hover:border-primary/50 hover:text-primary",
           className
         )}

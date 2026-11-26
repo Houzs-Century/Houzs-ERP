@@ -60,22 +60,8 @@ import type { ConfigParamRule } from '../agent-console';
 import { readAgentSetting } from '../agent-console';
 import { paginateAll } from '../../scm/lib/paginate-all';
 import type { LeadBuffers } from '../../scm/lib/lead-time';
-/* One-directional: procurement-capacity.ts is pure and imports nothing from
-   here, so loading its evidence from this module cannot cycle. */
 import type { ReceiptUnit, LoadUnit } from './procurement-capacity';
 
-/* The slice of the PostgREST client these loaders need. Structural rather than
-   `any`, so a typo in a builder call is a compile error, and declared once so
-   the loaders cannot drift into three different ideas of the same client.
-
-   EXPORTED, because the callers have to name it. The real supabase-js client
-   does NOT structurally satisfy this type — its `order` takes a specific
-   options object, so a param typed `unknown` here is contravariantly
-   incompatible, and inference across it trips TS2589 besides. The workaround
-   was `sb as never` at each call site, which is the worst of both: `never` is
-   assignable to ANYTHING, so a loader could be handed a number and tsc would
-   nod. `as unknown as SbLike`, once, at the top of the caller, asserts the same
-   thing but names what is being asserted and keeps the checking inside. */
 export type SbLike = {
   from: (t: string) => {
     select: (cols: string) => {
@@ -88,32 +74,9 @@ export type SbLike = {
   };
 };
 
-/* The app_settings row both the rules below and the engine read.
-   It lives HERE, and procurement-agent.ts re-exports it, rather than the other
-   way round — deliberately, to break an import cycle that typecheck does not
-   catch and that only fails in production:
-     procurement-agent -> procurement-learning -> procurement-agent
-   The rules below reference this key at MODULE-EVAL time. If the engine were
-   the owner and the engine were imported first (which is exactly what
-   agents/index.ts does), this file's body would run while the engine's consts
-   were still in the temporal dead zone -> ReferenceError at worker init. One
-   direction only, so the cycle cannot exist. */
 export const PROCUREMENT_AGENT_SETTING_KEY = 'agents.procurement';
 
-/* The two tunables the learner may propose. Everything else is rejected at
-   approve time — the whitelist is the fuse, not the learner's good manners.
-
-   Bounds are deliberate, not decorative:
-     min 0  — a NEGATIVE buffer would push the PO date LATER than the customer's
-              own date. That is never a safety margin; it is shipping late on
-              purpose. lead-time.ts refuses negatives at read time too, so a bad
-              row that somehow lands is still inert.
-     max 30 — a month. Past that the "buffer" is not punctuality any more, it is
-              a wrong base lead in his manual table, and the answer is to fix the
-              table rather than let an agent paper over it 60 days deep. It is
-              also the runaway backstop described above. */
 export const PROCUREMENT_SUPPLIER_BUFFER_RULE: ConfigParamRule = {
-  // supplier_code as it exists in scm.suppliers — alnum, dash, underscore.
   pattern: /^procurement\.supplierBufferDays\.([A-Za-z0-9_-]{1,40})$/,
   min: 0,
   max: 30,
@@ -122,8 +85,6 @@ export const PROCUREMENT_SUPPLIER_BUFFER_RULE: ConfigParamRule = {
 };
 
 export const PROCUREMENT_SEASON_BUFFER_RULE: ConfigParamRule = {
-  // Two-digit calendar month, 01..12. Anchored to the month of the customer's
-  // delivery date — the month the goods are NEEDED, which is what is busy.
   pattern: /^procurement\.seasonBufferDays\.(0[1-9]|1[0-2])$/,
   min: 0,
   max: 30,
@@ -136,19 +97,13 @@ export interface ReceiptSample {
   poNumber: string;
   supplierCode: string;
   supplierName: string | null;
-  /** purchase_orders.expected_at — the ORIGINAL asked date (YYYY-MM-DD). */
   askedDate: string;
-  /** The receipt date of the GRN that completed the PO (YYYY-MM-DD). */
   actualDate: string;
 }
 
 export interface LearnerConfig {
-  /** Fewer receipts than this and no proposal is made for that key. */
   minSamples: number;
-  /** Which percentile of slip to buffer to. 0..100. */
   percentile: number;
-  /** Do not propose a change smaller than this many days — a 1-day nudge is
-      noise the owner has to read and approve for nothing. */
   minDelta: number;
 }
 
@@ -159,9 +114,7 @@ export const DEFAULT_LEARNER_CONFIG: LearnerConfig = {
 };
 
 export interface BufferFinding {
-  /** The config_proposals param_key — must match the rule's pattern. */
   paramKey: string;
-  /** Human label for the console. */
   subject: string;
   samples: number;
   medianSlipDays: number;
@@ -228,15 +181,10 @@ export function learnSupplierBuffers(
   const out: BufferFinding[] = [];
   for (const [code, { name, slips }] of bySupplier) {
     if (slips.length < cfg.minSamples) continue;
-    // The key must round-trip the whitelist, or approval would reject a proposal
-    // the agent was allowed to make. Drop rather than mangle the code.
     const paramKey = `procurement.supplierBufferDays.${code}`;
     if (!PROCUREMENT_SUPPLIER_BUFFER_RULE.pattern.test(paramKey)) continue;
 
     const p = percentileOf(slips, cfg.percentile);
-    // A supplier who runs EARLY has a negative percentile slip. That is not a
-    // reason to ask later — the base lead is the owner's call and the buffer's
-    // floor is zero. Punctual suppliers simply carry no buffer.
     const proposed = Math.max(0, Math.min(PROCUREMENT_SUPPLIER_BUFFER_RULE.max, Math.round(p)));
     const current = Number.isFinite(currentBuffers[code]) ? Number(currentBuffers[code]) : 0;
     if (Math.abs(proposed - current) < cfg.minDelta) continue;
@@ -326,7 +274,6 @@ function fmtDays(d: number): string {
   return d > 0 ? `${d}d late` : `${Math.abs(d)}d early`;
 }
 
-// ── Buffer reader (the other direction: approved values -> the PO date) ─────
 
 /**
  * Read the buffers the owner has APPROVED, for scm/lib/lead-time.ts to add on
@@ -356,8 +303,6 @@ export async function loadLeadBuffers(db: D1Database): Promise<LeadBuffers> {
   }
 }
 
-/** A stored buffer map, defensively. Anything non-numeric is dropped rather
-    than coerced — a NaN buffer would poison every date it touched. */
 function asNumberMap(v: unknown): Record<string, number> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
   const out: Record<string, number> = {};
@@ -368,7 +313,6 @@ function asNumberMap(v: unknown): Record<string, number> {
   return out;
 }
 
-// ── Capacity evidence ───────────────────────────────────────────────────────
 
 /**
  * Per-receipt-line evidence of throughput, for procurement-capacity.ts.
@@ -401,7 +345,6 @@ export async function loadCapacityEvidence(
   const grnRows = (grns ?? []).filter((g) => g.received_at && g.supplier_id);
   if (grnRows.length === 0) return [];
 
-  // The PO each GRN came from, for its asked date -> the slip.
   const poIds = [...new Set(grnRows.map((g) => g.purchase_order_id).filter((x): x is string => Boolean(x)))];
   const askedByPo = new Map<string, string>();
   for (let i = 0; i < poIds.length; i += 200) {
@@ -448,9 +391,6 @@ export async function loadCapacityEvidence(
 
     const asked = g.purchase_order_id ? askedByPo.get(g.purchase_order_id) : undefined;
     const received = g.received_at!.slice(0, 10);
-    /* No asked date = no slip = we cannot tell whether this week witnessed the
-       ceiling. Drop it rather than default the slip to 0, which would falsely
-       claim the week was flat out and over-read the supplier's capacity. */
     if (!asked) continue;
     const slip = slipDays(asked, received);
     if (slip == null) continue;
@@ -499,8 +439,6 @@ export async function loadDraftedQtyBySoItem(sb: SbLike): Promise<Map<string, nu
   for (const r of (data ?? []) as Row[]) {
     const id = (r.so_item_id ?? '').trim();
     const q = Number(r.qty ?? 0);
-    // A manually-added PO line carries no so_item_id — it converts no SO line,
-    // so it can't cover one either.
     if (!id || !Number.isFinite(q) || q <= 0) continue;
     out.set(id, (out.get(id) ?? 0) + q);
   }
@@ -546,8 +484,6 @@ export async function loadOpenLoad(
   return out;
 }
 
-/** supplier uuid -> business code. `code` is scm.suppliers' key, not
-    `supplier_code` (which is a PO-line column on a different table). */
 async function loadSupplierCodes(sb: SbLike): Promise<Map<string, string>> {
   type SupRow = { id: string; code: string | null };
   const { data, error } = await paginateAll<SupRow>((from, to) =>
@@ -563,7 +499,6 @@ async function loadSupplierCodes(sb: SbLike): Promise<Map<string, string>> {
   return m;
 }
 
-// ── Evidence loader ─────────────────────────────────────────────────────────
 
 /**
  * Pull the completed-receipt evidence the learners score.
@@ -611,8 +546,6 @@ export async function loadReceiptSamples(
   const poRows = (pos ?? []).filter((p) => p.expected_at && p.supplier_id);
   if (poRows.length === 0) return [];
 
-  // GRN receipts for those POs. Chunked `.in()` — a 3000-PO list in one URL is
-  // a 414, and PostgREST's row cap applies to the response either way.
   type GrnRow = { purchase_order_id: string; received_at: string | null };
   const receiptByPo = new Map<string, string>();
   const ids = poRows.map((p) => p.id);
@@ -623,14 +556,6 @@ export async function loadReceiptSamples(
         .from('grns')
         .select('purchase_order_id, received_at')
         .in('purchase_order_id', chunk)
-        // GRN statuses are DRAFT | POSTED | CANCELLED — there is no RECEIVED.
-        // POSTED is the only one that means the goods are in, and it is what
-        // both the create and the DRAFT->confirm transition write.
-        // recomputePoReceived states the same rule from the other side
-        // ("if CANCELLED or DRAFT -> excluded"); allow-listing POSTED rather
-        // than deny-listing those two means a NEW status would make the learner
-        // under-count (visible as too few samples -> no proposal) instead of
-        // silently scoring something that is not a receipt.
         .eq('status', 'POSTED')
         .order('purchase_order_id')
         .range(from, to),
@@ -640,15 +565,10 @@ export async function loadReceiptSamples(
       const at = (g.received_at ?? '').slice(0, 10);
       if (!at) continue;
       const prev = receiptByPo.get(g.purchase_order_id);
-      // Latest wins — the PO is complete when its LAST GRN lands.
       if (!prev || at > prev) receiptByPo.set(g.purchase_order_id, at);
     }
   }
 
-  // scm.suppliers' business key is `code`, not `supplier_code` (the latter is a
-  // PO-line column on a different table). The buffer is keyed on the CODE, not
-  // the uuid, so a supplier row re-keyed or re-imported keeps its learned
-  // history — and so the owner can read the proposal and know who it is about.
   type SupRow = { id: string; code: string | null; name: string | null };
   const { data: sups, error: sErr } = await paginateAll<SupRow>((from, to) =>
     scope(sb.from('suppliers').select('id, code, name')).order('id').range(from, to),
@@ -659,8 +579,6 @@ export async function loadReceiptSamples(
   const out: ReceiptSample[] = [];
   for (const p of poRows) {
     const actual = receiptByPo.get(p.id);
-    // A PO marked RECEIVED with no GRN receipt date is a data problem, not a
-    // punctual supplier — drop it rather than score it as on-time.
     if (!actual) continue;
     const sup = supById.get(p.supplier_id);
     const code = (sup?.code ?? '').trim();

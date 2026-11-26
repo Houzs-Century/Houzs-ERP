@@ -1,24 +1,3 @@
-// ----------------------------------------------------------------------------
-// DeliveryPlanningBoard — the shared Delivery Planning grid.
-//
-// The whole board body — the CONFIG-DRIVEN region chip row, the optional 4
-// state-tab rail, the compact bulk-edit bar (multiselect), the inline Excel-
-// style cell editors (Status / Sched. Date / Driver / Lorry), the SO line-item
-// drill-down, and the DataGrid with its full HC column set — extracted verbatim
-// from DeliveryPlanning.tsx so it can be reused UNCHANGED in two places:
-//
-//   1. DeliveryPlanning.tsx  — the full board: all 4 state tabs, every bulk
-//      action (Transfer to Delivery Order, Schedule), region chips, expand, multiselect.
-//   2. Trips.tsx "To schedule" panel — the SAME board LOCKED to
-//      state=PENDING_SCHEDULE (no state-tab row), still with the full column
-//      set, region chips, expandable line-item detail and multiselect wired to
-//      the Phase-2 ScheduleTripDrawer.
-//
-// The page owns the data fetch (so the region param stays server-side via
-// useDeliveryPlanning), the selection Set, and any drawers/modals; the board
-// renders and edits. No new endpoint, hook, or state derivation is introduced —
-// it reuses useScheduleDelivery / useDeliveryPlanningLines exactly as before.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, useEffect, useRef, useCallback, createContext, useContext, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -69,8 +48,6 @@ import { useLocalities, postcodeIndex, postcodeLabel } from "../lib/localities-q
 import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
 import { useDeliveryRowMarks, rowMarkTint, useBulkSetRowMark, useBulkClearRowMark, ROW_MARK_PALETTE } from "../lib/delivery-row-mark";
 
-/* HC "Remark 4" delivery sub-status → a small pill class (reuse the cream
-   palette; unknown/blank → muted). Default-shown column. */
 const SUBSTATUS_TONE: Record<string, string> = {
   'Pending Pickup': '#767b6e',
   'Done Shipout': '#2f5d4f',
@@ -91,14 +68,8 @@ function SubstatusPill({ value }: { value: string | null }) {
     }}>{value}</span>
   );
 }
-/* A datetime-or-dash cell (TIMESTAMPTZ columns). */
 const dtOrDash = (iso: string | null): string => (iso ? fmtDateTime(iso) : '—');
 
-/* POD (proof of delivery) cell. SO rows only. A real driver POD left a photo or
-   a GPS fix (has_pod) → a green "POD" chip linking to the DO detail where the
-   signature/photo/GPS are shown. A DELIVERED order with no evidence (office
-   advance / QR scan) → an amber "No POD" chip (the thing dispatchers chase).
-   Not-yet-delivered rows render a muted dash. */
 function PodCell({ o }: { o: PlanningOrder }) {
   if (o.row_type !== 'so') return <NotApplicable />;
   if (o.has_pod) {
@@ -124,8 +95,6 @@ function PodCell({ o }: { o: PlanningOrder }) {
   return <NotApplicable />;
 }
 
-/* Company badge for the SHARED cross-company queue — a small code chip
-   (HOUZS / 2990). null (e.g. ASSR rows / unresolved) renders a muted dash. */
 function CompanyBadge({ code }: { code: string | null }) {
   if (!code) return <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>;
   return (
@@ -138,39 +107,20 @@ function CompanyBadge({ code }: { code: string | null }) {
   );
 }
 
-/* ── Row-type helpers (SO delivery vs ASSR service-case job) ───────────────────
-   The board mixes SO-delivery rows (the original) with Service-Case (ASSR)
-   rows added by the backend. `isAssr` gates every ASSR-specific behaviour;
-   `rowIdOf` is the stable DataGrid key (prefixed so SO doc_nos and ASSR case ids
-   never collide). */
 export const isAssr = (o: PlanningOrder): boolean => o.row_type === 'assr';
-/* DP-Order rows (manual setup / dismantle / supplier-pickup jobs). */
 export const isDp = (o: PlanningOrder): boolean => o.row_type === 'dp';
 export const isProject = (o: PlanningOrder): boolean => o.row_type === 'project';
-/* A DP row's so_doc_no is the synthetic key `DP:<id>`; the backend date / fields
-   endpoints want the bare dp_order id. Same shape ScheduleDpOrderDrawer uses. */
 export const dpIdOf = (o: PlanningOrder): string => o.so_doc_no.replace(/^DP:/, '');
-/* A project row's key is `PRJ:<projectId>#SETUP|DISMANTLE`; the write needs the project id. */
 export const projectIdOf = (o: PlanningOrder): string => o.so_doc_no.replace(/^PRJ:/, '').replace(/#.*$/, '');
-/* A friendly label for a DP job type — resolved from the SHARED canonical map
-   (dpJobTypeLabel) so the board's Type chip and the New-DP-Order dropdown always
-   read the same wording. Empty job_type falls back to a generic 'DP job'. */
 export const dpLabel = (o: PlanningOrder): string =>
   o.dp_job_type ? dpJobTypeLabel(o.dp_job_type) : 'DP job';
-/* ASSR key includes job_kind — a case with BOTH a customer-pickup and a
-   delivery date emits TWO rows sharing one assr_id, so the key must carry the
-   leg to stay unique (the backend's so_doc_no is already `<assrNo>#<jobKind>`). */
 export const rowIdOf = (o: PlanningOrder): string =>
   isDp(o)
-    ? `dp:${o.so_doc_no}` // distinct prefix → excluded from the SO-only bulk actions (which filter `so:`)
+    ? `dp:${o.so_doc_no}`
     : isAssr(o)
       ? `assr:${o.assr_id ?? o.ref ?? ''}:${o.job_kind ?? ''}`
       : `so:${o.so_doc_no}`;
 
-/* The Type column's chip. SO rows read a neutral "SO delivery"; ASSR rows read
-   their job kind — amber "Cust. pickup" for a pickup, green "Delivery" for a
-   delivery. Same inline-pill shape the SO drill-down's CategoryPill / the
-   SubstatusPill use, so it reads consistently across the board. */
 function TypeChip({ order }: { order: PlanningOrder }) {
   let label = 'SO delivery';
   let tone = '#767b6e';
@@ -180,14 +130,10 @@ function TypeChip({ order }: { order: PlanningOrder }) {
     tone = '#8a2f66';
     bg = 'rgba(166, 50, 107, 0.12)';
   } else if (isProject(order)) {
-    // PMS project setup/dismantle — reuse the SETUP/DISMANTLE label, distinct tone.
     label = dpLabel(order);
     tone = '#1f5e73';
     bg = 'rgba(31, 94, 115, 0.12)';
   } else if (isAssr(order)) {
-    // The three ASSR legs keep their own tones; the WORDS come from the shared
-    // map so the chip, the search index and the export cannot drift (they did,
-    // four ways, before the 2026-08-03 rename).
     label = assrJobKindLabel(order.job_kind);
     if (order.job_kind === 'customer_pickup') {
       tone = '#0c3f39';
@@ -214,8 +160,6 @@ function TypeChip({ order }: { order: PlanningOrder }) {
   );
 }
 
-/* A muted em-dash cell — the shared "not applicable" render for columns that
-   don't apply to an ASSR row (stock, driver, lorry). */
 const NotApplicable = () => <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>;
 
 /* ── SO-list type ramp (owner 2026-08-19: "要和 sales order design 设计,字体,
@@ -233,17 +177,8 @@ const detail = (v: ReactNode) => (
   <span style={{ fontSize: 12.5, color: 'var(--hz-c-ink-secondary)', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
 );
 
-/* Region chips — CONFIG-DRIVEN buckets (migration 0053) classified by customer
-   STATE. The bucket list comes from the API's `regions` master (owner-
-   maintained in Delivery Regions), with an "All" tab prepended. SG is visually
-   distinct (dashed teal chip — cross-border, no MY warehouse); that styling keys
-   off the region CODE === 'SG', not a hardcoded position. The chip's key is sent
-   verbatim as ?region= to the API, which buckets every order by customer state. */
 export type RegionTab = { key: string; label: string; sg?: boolean };
 
-/* Build the region chip list from the API `regions` master (+ "All" prepended).
-   Falls back to the five geographic defaults until the API returns the list.
-   Shared by both the board host pages so the chips are identical. */
 export function regionTabsFrom(
   regions?: Array<{ key: string; label: string }>,
 ): RegionTab[] {
@@ -258,27 +193,10 @@ export function regionTabsFrom(
   ];
 }
 
-/* The 4 state tabs (the top row). */
 const STATE_TABS = DELIVERY_STATES;
 
-/* ── Inline (Excel-style) cell editors ────────────────────────────────────────
-   Each cell IS the control (no drill-in). All of them stopPropagation on click /
-   double-click so editing a cell never selects the row or triggers the row's
-   double-click → open-SO navigation. Every change persists immediately through
-   useScheduleDelivery (shared `sched` mutation, optimistic + invalidate).
-
-   Manual-override semantics (owner rule): the Status cell writes deliveryState —
-   the backend treats this as the override that WINS over the derived state, so a
-   coordinator can force e.g. an OVERDUE SO into PENDING_SCHEDULE. The real stock
-   readiness stays visible in its own Stock column (never hidden by the override).
-
-   SO rows write type:'so', id: so_doc_no — matching the amended_delivery_date /
-   delivery_state override path on mfg_sales_orders. ASSR (service-case) rows are
-   date-only for now: the Sched. Date cell writes type:'assr' (+ jobKind); their
-   Status / Driver / Lorry cells are read-only / non-applicable (not wired yet). */
 type SchedMutation = ReturnType<typeof useScheduleDelivery>;
 
-/* Small shared wrapper so clicks inside an editor stay in the editor. */
 const stopRow = {
   onClick: (e: ReactMouseEvent) => e.stopPropagation(),
   onDoubleClick: (e: ReactMouseEvent) => e.stopPropagation(),
@@ -286,35 +204,18 @@ const stopRow = {
 
 type UpdateFieldsMutation = ReturnType<typeof useUpdateDeliveryFields>;
 
-/* ── Inline-editor "saving" flags, carried by context ─────────────────────────
-   PERF (2026-10-23): each inline editor disables itself while its shared mutation
-   is in flight. That disabled bit used to be baked into the ~550-line `columns`
-   array — the accessors closed over `sched` / `updateFields` / `crewPending`,
-   whose identity react-query changes every render and whenever isPending toggles —
-   so the whole array (and, downstream, DataTable's per-row search index and column
-   layout) rebuilt on every render and on every cell commit. The columns are now
-   built from referentially-stable inputs only; the volatile "is a save running"
-   bit rides this context instead. A context change crosses the memoised row
-   renderer (DataTableRowCells) that a now-stable `columns` identity would let it
-   skip, so every editor still reflects "saving" the instant it toggles — the
-   board-wide disable behaves exactly as before, without the per-render rebuild. */
 type BoardPending = { fields: boolean; sched: boolean; crew: boolean };
 const BoardPendingContext = createContext<BoardPending>({ fields: false, sched: false, crew: false });
 
-/* Stable mutate callbacks the column accessors capture (identity never changes),
-   so the columns memo no longer depends on the mutation objects themselves. */
 type ScheduleMutate = SchedMutation['mutate'];
 type UpdateFieldsMutate = UpdateFieldsMutation['mutate'];
 
-/* The fields hook paints the pick at once and rolls it back on failure; say so,
-   or the cell just jumps back with no reason. */
 const fieldNotSaved = (err: unknown) => serviceNotify({
   title: 'Not saved',
   body: err instanceof Error ? err.message : 'Something went wrong.',
   tone: 'error',
 });
 
-/* An option inherits the select's chip colour unless it sets its own. */
 const plainOption = { backgroundColor: 'var(--hz-c-surface)', color: 'var(--hz-c-ink)' };
 
 /* The "Delivery Status" column's inline editor — the customer-message follow-up
@@ -324,7 +225,6 @@ const plainOption = { backgroundColor: 'var(--hz-c-surface)', color: 'var(--hz-c
    through useUpdateDeliveryFields; the blank option clears it. */
 function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder; onUpdateFields: UpdateFieldsMutate }) {
   const { fields } = useContext(BoardPendingContext);
-  // Project (SETUP/DISMANTLE) rows are a read-only PMS mirror — no message here.
   if (isProject(order)) return <NotApplicable />;
   /* SO rows write their own column; DP (manual job) rows write
      scm.dp_orders.delivery_message_status; service-case rows write
@@ -334,7 +234,6 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
   const target = isDp(order) ? { type: 'dp' as const, id: dpIdOf(order) }
     : isAssr(order) ? { type: 'assr' as const, id: String(order.assr_id ?? ''), jobKind: order.job_kind ?? undefined }
     : { type: 'so' as const, id: order.so_doc_no };
-  // The workflow status shows as a coloured chip, on the editable select too.
   const chip = messageStatusChip(order.delivery_message_status);
   const chipStyle = chip ? { backgroundColor: chip.bg, color: chip.fg } : undefined;
   return (
@@ -352,7 +251,6 @@ function MessageStatusEditCell({ order, onUpdateFields }: { order: PlanningOrder
       }}
     >
       <option value="" style={plainOption}>—</option>
-      {/* Keep an off-list current value selectable (robustness). */}
       {order.delivery_message_status
         && !(MESSAGE_STATUSES as readonly string[]).includes(order.delivery_message_status)
         ? <option value={order.delivery_message_status} style={plainOption}>{order.delivery_message_status}</option>
@@ -376,10 +274,7 @@ function DeliveryDateEditCell({ order, onSchedule }: { order: PlanningOrder; onS
   const [val, setVal] = useState(current);
   const { sched: schedPending } = useContext(BoardPendingContext);
   const notify = useNotify();
-  // Follow the row when its date changes underneath (optimistic save, poll).
   useEffect(() => { setVal(current); }, [current]);
-  /* Project (SETUP/DISMANTLE) rows stay a read-only PMS mirror — the date is
-     edited in the project editor (owner's standing rule). */
   if (isProject(order)) {
     return detail(fmtDateOrDash(order.amended_delivery_date));
   }
@@ -463,8 +358,6 @@ function TextEditCell({ order, value, onCommit, placeholder, allowNonSo = false,
   if ((isProject(order) && !allowProject) || ((isAssr(order) || isDp(order)) && !allowNonSo)) return <NotApplicable />;
   return (
     <input
-      // Remount when the saved value changes: an uncontrolled box would keep the
-      // old text, and a blur would save it back over the newer value.
       key={value ?? ''}
       className={styles.inlineEdit}
       defaultValue={value ?? ''}
@@ -518,8 +411,6 @@ function DriverPickCell({ order, drivers, onSchedule, writeSeat }: {
   // (owner 2026-10-31), like an SO row.
   if (isProject(order)) return <span style={{ color: 'var(--hz-c-ink-muted)' }}>{order.crew?.driver_1_name || '—'}</span>;
   const assrLeg = isAssr(order);
-  // Typed on the DO form, not a fleet record: no IC / phone, so the Driver Info
-  // message cannot send. Flag it here, where the real driver is picked.
   const typed = !!order.crew?.driver_1_typed;
   return (
     <span {...stopRow} style={{ display: 'flex', width: '100%', minWidth: 0, alignItems: 'center', gap: 4 }}
@@ -531,7 +422,7 @@ function DriverPickCell({ order, drivers, onSchedule, writeSeat }: {
         value={val}
         disabled={pending}
         onChange={(picked) => {
-          if (picked === KEEP_CURRENT) return;   // re-picking the off-list current = no-op
+          if (picked === KEEP_CURRENT) return;
           const driverId = picked || null;
           if (assrLeg) {
             setVal(picked);
@@ -546,12 +437,9 @@ function DriverPickCell({ order, drivers, onSchedule, writeSeat }: {
   );
 }
 
-/* Lorry Plate — same picker; SO writes the DO crew lorry, ASSR the trip lorry. */
 function LorryPickCell({ order, lorries, onSchedule, writeSeat }: {
   order: PlanningOrder; lorries: LorryRow[]; onSchedule: ScheduleMutate; writeSeat: CrewSeatWrite;
 }) {
-  // SCROLL PERF: memoise the option list (see DriverPickCell) — stable identity
-  // keeps SearchCombo's internal memos from recomputing on every board re-render.
   const items = useMemo(() => lorries.map((l) => ({ id: l.id, label: l.plate })), [lorries]);
   const currentPlate = order.crew?.lorry_plate ?? null;
   const options = useMemo(() => crewComboOptions(items, currentPlate), [items, currentPlate]);
@@ -596,7 +484,6 @@ function LorryPickCell({ order, lorries, onSchedule, writeSeat }: {
 function HelperPickCell({ order, helpers, onSchedule, writeSeat, slot }: {
   order: PlanningOrder; helpers: HelperRow[]; onSchedule: ScheduleMutate; writeSeat: CrewSeatWrite; slot: 1 | 2;
 }) {
-  // SCROLL PERF: memoise the option list (see DriverPickCell).
   const items = useMemo(() => helpers.map((h) => ({ id: h.id, label: h.name })), [helpers]);
   const currentName = (slot === 1 ? order.crew?.helper_1_name : order.crew?.helper_2_name) ?? null;
   const options = useMemo(() => crewComboOptions(items, currentName), [items, currentName]);
@@ -636,9 +523,6 @@ function HelperPickCell({ order, helpers, onSchedule, writeSeat, slot }: {
   );
 }
 
-/* Balance source-of-truth (mirrors the SO list's liveBalance, PR #83):
-   the payment-totals view's balance_sen_live (local_total − Σpayments) when
-   present, else the header's stored balance_sen. */
 const liveBalance = (o: PlanningOrder): number =>
   typeof o.balance_sen_live === 'number' ? o.balance_sen_live : o.balance_sen;
 
@@ -666,22 +550,8 @@ export function selectedBillTotals(
    state tab and the delivery_state derivation already act on the same number,
    so nothing lost the signal, only the column. The API still sends days_left. */
 
-/* ── SO line-item drill-down (parity with the Sales Order list) ───────────────
-   Each planning row expands (▼ caret on the left, added by DataGrid's
-   `expandable` API) to show that SO's line items — same four columns the SO list
-   drill-down shows: Group · Item Code · Description · Description 2.
-
-   Items are fetched from the SHARED cross-company endpoint
-   `useDeliveryPlanningLines(docNo)` (GET /delivery-planning/:docNo/lines), scoped
-   to the caller's ALLOWED companies — lazy-fetched per row on expand and
-   TanStack-cached by doc_no, so re-expanding the same SO is instant. This
-   deliberately does NOT reuse the per-company SO detail hook: that scopes to the
-   ACTIVE company and 404s a cross-company (e.g. 2990) row on the shared board.
-   The planning row already carries `so_doc_no`, which keys the fetch. */
 type DrillItem = {
   id: string;
-  /* snake_case off the SO detail REST response (see SoItem in
-     MfgSalesOrdersList) — the API never transforms these. */
   item_code: string | null;
   item_group: string | null;
   description: string | null;
@@ -689,8 +559,6 @@ type DrillItem = {
   cancelled: boolean | null;
 };
 
-/* Inline category pill — same shape + shared `badgeFor` palette as the SO list
-   drill-down's CategoryPill so the colours stay in lockstep across both pages. */
 const CategoryPill = ({ group }: { group: string | null | undefined }) => {
   const spec = badgeFor(group);
   return (
@@ -707,9 +575,6 @@ const CategoryPill = ({ group }: { group: string | null | undefined }) => {
   );
 };
 
-/* Four drill-down columns — Group · Item Code · Description · Description 2.
-   Matches the SO list's accessors/markup verbatim. Shared layout key so the
-   operator's column prefs persist across every SO they expand. */
 const DRILLDOWN_COLUMNS: GridColumn<DrillItem>[] = [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
@@ -745,10 +610,6 @@ const DRILLDOWN_COLUMNS: GridColumn<DrillItem>[] = [
 ];
 
 const PlanningExpandedLines = ({ docNo }: { docNo: string }) => {
-  /* SHARED-QUEUE line fetch — /delivery-planning/:docNo/lines, scoped to the
-     caller's ALLOWED companies (not the active one). Lazy on expand, cached by
-     doc_no. Using the cross-company endpoint (not the per-company SO detail)
-     means a 2990 row opened while browsing as Houzs loads instead of 404ing. */
   const q = useDeliveryPlanningLines(docNo);
   if (q.isLoading) {
     return (
@@ -765,8 +626,6 @@ const PlanningExpandedLines = ({ docNo }: { docNo: string }) => {
     );
   }
   const allItems = (q.data ?? []) as DrillItem[];
-  /* Filter cancelled lines client-side — the lines endpoint returns them too
-     (matches the SO list drill-down). */
   const items = allItems.filter((it) => !it.cancelled);
 
   if (items.length === 0) {
@@ -794,17 +653,14 @@ const PlanningExpandedLines = ({ docNo }: { docNo: string }) => {
   );
 };
 
-/* Row-context-menu item shape (mirrors DataGrid's contextMenu return). */
 type ContextMenuItems = GridContextMenuItem[];
 
 export type DeliveryBoardStateTabs = {
-  activeState: string;               // 'ALL' | DeliveryState
+  activeState: string;
   onStateChange: (state: string) => void;
 };
 
 export type DeliveryPlanningBoardProps = {
-  /* Data — the page owns the useDeliveryPlanning fetch so the region stays a
-     SERVER-SIDE filter (region is part of the query key). */
   orders: PlanningOrder[];
   counts: Record<string, number>;
   regionTabs: RegionTab[];
@@ -813,29 +669,20 @@ export type DeliveryPlanningBoardProps = {
   isLoading?: boolean;
   error?: unknown;
 
-  /* The 4 state tabs. Present → the top state-tab rail renders and the board
-     client-filters `orders` by the active tab (the full DeliveryPlanning board).
-     Omitted → no state-tab row, `orders` shown as-is (the Trips "To schedule"
-     panel, whose fetch is already LOCKED to state=PENDING_SCHEDULE). */
   stateTabs?: DeliveryBoardStateTabs;
 
-  /* Selection — owned by the page (its drawers read the selected orders). */
   selectedKeys: Set<string>;
   onToggle: (key: string) => void;
   onToggleAll: (keys: string[], allSelected: boolean) => void;
   onClearSelection: () => void;
 
-  /* Shared write path + option lists + the Message column data. */
   sched: SchedMutation;
   drivers: DriverRow[];
   lorries: LorryRow[];
   msgStatuses?: Record<string, { success: boolean; http_code: number | null; created_at: string }>;
 
-  /* Extra buttons rendered at the right of the bulk bar (Transfer to Delivery Order,
-     Schedule, …). The page injects them since they open page-owned drawers. */
   bulkExtras?: ReactNode;
 
-  /* Row interactions (page-specific side effects). */
   onRowDoubleClick?: (order: PlanningOrder) => void;
   contextMenu?: (order: PlanningOrder) => ContextMenuItems;
 
@@ -843,32 +690,16 @@ export type DeliveryPlanningBoardProps = {
      Single-click row hook (board row → map pin linkage; fires alongside the
      grid's own select/multi-select, changing nothing existing). */
   onRowClick?: (order: PlanningOrder) => void;
-  /* Map pin → board row: bump nonce with a rowIdOf key (`so:<docNo>`) to
-     scroll + highlight that row. Forwarded to the DataGrid. */
   scrollToRow?: { key: string; nonce: number } | null;
-  /* While the side map is OPEN the board narrows to these column KEYS — a
-     RENDER-TIME overlay over the DataGrid's hidden set. The user's own saved
-     column prefs are never written; pass null/undefined (map closed) and the
-     full set returns exactly as the user left it. */
   visibleColumnsOverride?: readonly string[] | null;
-  /* Explicit column-visibility choice made by the user (Columns drawer, header
-     context menu, saved layout) — forwarded from the DataGrid so the map pages
-     can switch their compact-columns overlay OFF the moment the user picks
-     columns by hand (the narrowing is a default, never a lock). */
   onUserAdjustColumns?: () => void;
 
   storageKey?: string;
   exportName?: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
-  /* Code-shipped, read-only layout presets for the Columns picker — passed only
-     by the full Delivery Planning board (the date/time/crew sub-pages have their
-     own storage keys and narrower views). */
   layoutPresets?: LayoutSeed[];
-  /* Picking one of `layoutPresets` — the page moves the region chip to match. */
   onApplyLayoutPreset?: (presetId: string) => void;
-  /* First-page row cap with a "Load more" for the rest. No board page passes it
-     any more: the grid mounts only the rows on screen, so every row scrolls in. */
   initialRowLimit?: number;
   /* Drag-to-reorder the board rows (owner 2026-09-26): called with the new order
      of the displayed rows. Passed only by the main Delivery Planning page, whose
@@ -888,9 +719,6 @@ export type DeliveryPlanningBoardProps = {
   resetFilters?: { active: boolean; onReset: () => void };
 };
 
-/* Selection keys are prefixed (`so:<docNo>` / `assr:<id>` / `dp:<id>`). The bulk
-   actions are SO-only, so pull the SO doc_nos out of the selection. Exported so
-   host pages resolve the same selected orders for their drawers. */
 export const soDocNosFromSelection = (selectedKeys: Set<string>): string[] =>
   [...selectedKeys].filter((k) => k.startsWith('so:')).map((k) => k.slice(3));
 
@@ -931,15 +759,10 @@ export function DeliveryPlanningBoard({
 }: DeliveryPlanningBoardProps) {
   const askConfirm = useConfirm();
   const notify = useNotify();
-  /* Salesperson column — agent text / salesperson_id resolved against the staff
-     roster, same helper as the SO list (never renders a raw UUID). */
   const { nameOf: salespersonNameOf } = useStaffLookup();
   /* Writes the customer-message workflow status (delivery_message_status) from
      the "Delivery Status" column's inline select (owner 2026-09-22). */
   const updateFields = useUpdateDeliveryFields();
-  /* Crew (driver / lorry / helper) inline pickers write the DO crew snapshot —
-     the store the board reads and the one that captures the driver's IC/contact.
-     Helpers are fetched here (like updateFields) rather than threaded as a prop. */
   const assignCrew = useAssignDoCrew();
   const updateTrip = useUpdateTrip();
   const dpCrew = useDpCrew();
@@ -947,13 +770,6 @@ export function DeliveryPlanningBoard({
   const localities = useLocalities().data;
   const pcIndex = useMemo(() => postcodeIndex(localities ?? []), [localities]);
 
-  /* PERF (2026-10-23): the inline-editor accessors must NOT close over these
-     mutation objects — react-query gives them a new identity every render and on
-     every isPending toggle, which rebuilt the whole `columns` array per render /
-     per edit. Keep the live mutations in refs and hand the accessors STABLE
-     callbacks + a stable writeCrewSeat; the volatile "saving" flags ride
-     BoardPendingContext (which crosses the memoised row renderer a stable columns
-     identity would otherwise skip). */
   const schedRef = useRef(sched); schedRef.current = sched;
   const updateFieldsRef = useRef(updateFields); updateFieldsRef.current = updateFields;
   const assignCrewRef = useRef(assignCrew); assignCrewRef.current = assignCrew;
@@ -963,10 +779,6 @@ export function DeliveryPlanningBoard({
   const scheduleMutate = useCallback<ScheduleMutate>((...args) => schedRef.current.mutate(...args), []);
   const updateFieldsMutate = useCallback<UpdateFieldsMutate>((...args) => updateFieldsRef.current.mutate(...args), []);
 
-  /* One inline pick → one seat on the row's latest DO; the backend keeps the
-     other seats. No DO yet → nothing to write, so say so and leave the picker.
-     Stable identity (reads the mutations through refs) so it lives in a column
-     accessor without re-triggering the columns memo. */
   const writeCrewSeat = useCallback<CrewSeatWrite>((order, seat, onFail) => {
     /* A DP job has no DO: its crew IS its RUN's crew. The endpoint puts a trip-less
        job on a run first (owner 2026-10-31), so the cell writes with or without a
@@ -1037,9 +849,6 @@ export function DeliveryPlanningBoard({
     if (noDo > 0) void notify({ title: 'Some rows skipped', body: `${noDo} row${noDo === 1 ? ' has' : 's have'} no delivery order yet, so crew cannot be saved there. Create the DO first, then paste again.` });
   };
   const crewPending = assignCrew.isPending || sched.isPending || updateTrip.isPending || dpCrew.isPending;
-  /* The volatile "a save is running" flags for the inline editors — recomputed
-     only when a mutation's isPending actually toggles, so the context value (and
-     the editors' disabled state) changes on save start / stop and nothing else. */
   const boardPending = useMemo<BoardPending>(
     () => ({ fields: updateFields.isPending, sched: sched.isPending, crew: crewPending }),
     [updateFields.isPending, sched.isPending, crewPending],
@@ -1051,15 +860,9 @@ export function DeliveryPlanningBoard({
   const bulkClearMark = useBulkClearRowMark();
   const markBusy = bulkSetMark.isPending || bulkClearMark.isPending;
 
-  /* EM/SG nicety: when the active region is EM or SG, the cross-border columns
-     (shipout date, port ref, customer-delivered date) default-SHOW; elsewhere
-     they sit in the Columns menu like the rest. */
   const isEmSg = activeRegion === 'EM' || activeRegion === 'SG';
 
   const activeState = stateTabs?.activeState ?? 'ALL';
-  /* Apply the active state tab in the client (the fetch already region-scoped).
-     When there is no tab row (Trips), the passed orders are already the single
-     PENDING_SCHEDULE set, so show them as-is. */
   const rows = useMemo<PlanningOrder[]>(
     () => (!stateTabs || activeState === 'ALL' ? orders : orders.filter((o) => o.delivery_state === activeState)),
     [orders, stateTabs, activeState],
@@ -1099,44 +902,29 @@ export function DeliveryPlanningBoard({
          Excel and set each Show Y/N. This array is the pristine ORDER; a column's
          own defaultHidden is what hides it, and a user's saved layout.order still
          wins. A key missing here falls to the end in definition order. */
-      // The customer-message workflow status leads (the visible "status")
       'delivery_message_status',
-      // What the row is, who it is for, and what it is worth
       'row_type', 'company_code', 'so_doc_no', 'do', 'so_date', 'so_ref', 'branding',
       'debtor_name', 'phone', 'venue', 'salesperson',
       'total_amount', 'balance_sen', 'stock_remark',
-      // The delivery dates and the amend conversation
       'processing_date', 'customer_delivery_date', 'amended_delivery_date',
       'amend_date_from_customer', 'amend_reason_from_customer', 'amend_reason', 'time_confirmed',
-      // Customer / house detail, then the address block
       'house_type', 'replacement_disposal', 'disposal_request',
       'po_nos', 'address', 'postcode', 'region',
-      // Logistics — warehouse, execution times, and the EM cross-border legs
       'warehouse', 'time_range', 'departure_at', 'arrival_at',
       'eta_arriving_port', 'arrives_em_warehouse_date',
       // EM transport status (owner 2026-09-23) — the two 3PL legs, same
       // cross-border block (default-show only on the EM / SG tabs).
       'em_delivery_status', 'consignment_no', 'vessel_voyage', 'etd_port_klang',
       'bs_delivery_date', 'esb_remarks', 'bs_remarks', 'ctn',
-      // Crew — assigned later, default-hidden
       'trip_no', 'lorry', 'driver', 'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
-      // Admin remark, document date, real delivered time (default-hidden)
       'dp_remark', 'do_date', 'delivered_at',
-      // Send status, POD evidence, then the message sub-status (delivery_state /
-      // arrangement_stage are no longer board columns — still derived server-side
-      // for the top tabs).
       'wa_message', 'pod', 'delivery_substatus',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
     const cols: GridColumn<PlanningOrder>[] = [
     {
-      /* Row type — SO delivery vs ASSR (service-case) job. A chip per row so the
-         two kinds read apart at a glance. */
       key: 'row_type', label: 'Job Type', width: 130, groupable: true,
       accessor: (o) => <TypeChip order={o} />,
-      /* Search keeps the OLD words as aliases ("cust. pickup", "delivery"):
-         the 2026-08-03 rename changed what the chip says, and someone who has
-         typed "delivery" into this box for a year should still find the row. */
       searchValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o)
         : isAssr(o) ? `${assrJobKindLabel(o.job_kind)} ${o.job_kind === 'customer_pickup' ? 'cust. pickup customer pickup' : o.job_kind === 'delivery' ? 'delivery' : ''}`.trim()
         : 'SO delivery'),
@@ -1144,7 +932,6 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => (isDp(o) || isProject(o) ? dpLabel(o) : isAssr(o) ? assrJobKindLabel(o.job_kind) : 'SO delivery'),
     },
     {
-      /* SO No. for SO rows; the ASSR ref (assr_no) for service-case rows. */
       key: 'so_doc_no', label: 'SO No.', width: 150, sortable: true,
       accessor: (o) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', ...DOCNO_STYLE }}>
@@ -1156,10 +943,6 @@ export function DeliveryPlanningBoard({
       sortFn: (a, b) => (isAssr(a) ? (a.ref ?? '') : a.so_doc_no).localeCompare(isAssr(b) ? (b.ref ?? '') : b.so_doc_no),
     },
     {
-      /* Company — the SHARED cross-company queue serves both HOUZS + 2990, so
-         each row is tagged with its owning company. Default-HIDDEN (owner
-         2026-09-22 column pass); re-show from the Columns drawer. ASSR rows have
-         no company (dash). */
       key: 'company_code', label: 'Company', width: 90, groupable: true, defaultHidden: true,
       accessor: (o) => <CompanyBadge code={o.company_code ?? null} />,
       searchValue: (o) => o.company_code ?? '',
@@ -1198,8 +981,6 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.phone ?? '',
     },
     {
-      /* Latest WhatsApp send for this SO / ASSR job, from scm.wa_message_log —
-         '—' until a send exists. */
       key: 'wa_message', label: 'Send Status', width: 130,
       accessor: (o) => {
         if (o.row_type !== 'so' && o.row_type !== 'assr') return '—';
@@ -1225,8 +1006,6 @@ export function DeliveryPlanningBoard({
       },
     },
     {
-      /* POD — did the driver leave proof (photo/GPS)? A DELIVERED order with no
-         evidence shows "No POD" so dispatch can chase it. Links to the DO. */
       key: 'pod', label: 'POD', width: 110, groupable: true,
       accessor: (o) => <PodCell o={o} />,
       groupValue: (o) => (o.row_type !== 'so' ? '(n/a)' : o.has_pod ? 'POD' : o.delivery_state === 'DELIVERED' ? 'No POD' : '—'),
@@ -1234,9 +1013,6 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => (o.has_pod ? 'POD' : o.delivery_state === 'DELIVERED' ? 'No POD' : ''),
     },
     {
-      /* The real delivered instant (delivery_orders.delivered_at), stamped when
-         POD completes — distinct from the manually-typed customer delivered
-         date. Default-hidden; add via the Columns panel. */
       key: 'delivered_at', label: 'Delivered At', width: 150, sortable: true, defaultHidden: true,
       accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : detail(dtOrDash(o.delivered_at ?? null))),
       searchValue: (o) => o.delivered_at ?? '',
@@ -1296,11 +1072,6 @@ export function DeliveryPlanningBoard({
       groupValue: (o) => o.so_ref ?? '(none)',
     },
     {
-      /* The order's ACTUAL customer state (Kuala Lumpur / Selangor / Johor …).
-         Key stays 'region' so existing saved column layouts keep this column
-         visible in place — but it now shows the granular state, not the region
-         BUCKET. The bucket is the tab row above; which states roll up into which
-         bucket is owner-maintained in Delivery Regions. */
       key: 'region', label: 'State', width: 140, sortable: true, groupable: true,
       accessor: (o) => detail(o.customer_state?.trim() || '—'),
       searchValue: (o) => o.customer_state ?? '',
@@ -1351,10 +1122,6 @@ export function DeliveryPlanningBoard({
       sortFn: (a, b) => String(sxeDateOf(a) ?? '').localeCompare(String(sxeDateOf(b) ?? '')),
       filterType: 'date', dateValue: (o) => sxeDateOf(o),
     },
-    /* Amendment dates (migration 0199). "Amended" (the date WE confirmed / the
-       proposed delivery date) default-SHOWS — it's the firm date the board commits
-       to. "Amend (Cust)" (the customer's requested new date) default-HIDES. The
-       ORIGINAL "Delivery Date" column above is unchanged. */
     {
       key: 'amended_delivery_date', label: 'Delivery Date', width: 170, sortable: true, groupable: true,
       accessor: (o) => <DeliveryDateEditCell order={o} onSchedule={scheduleMutate} />,
@@ -1388,18 +1155,12 @@ export function DeliveryPlanningBoard({
       sortFn: (a, b) => String(a.amend_date_from_customer ?? '').localeCompare(String(b.amend_date_from_customer ?? '')),
       filterType: 'date', dateValue: (o) => o.amend_date_from_customer,
     },
-    /* The customer's own reason for asking to move the date — what they tapped
-       in the WhatsApp amend flow. Read-only: /api/chat-callback writes it. */
     {
       key: 'amend_reason_from_customer', label: 'Customer Amend Reason', width: 170,
       accessor: (o) => detail(o.amend_reason_from_customer || '—'),
       searchValue: (o) => o.amend_reason_from_customer ?? '',
       exportValue: (o) => o.amend_reason_from_customer ?? '',
     },
-    /* HC "Amend Client Date Reason" (migration 0201) — OUR reason for moving
-       the date: a preset from AMEND_REASONS (or free text), chosen by staff
-       and printed by the Postpone notice after "due to". A customer's tap
-       never writes here (it has its own column above). */
     {
       key: 'amend_reason', label: 'Amend Reason', width: 220,
       accessor: (o) => <AmendReasonEditCell order={o} onUpdateFields={updateFieldsMutate} />,
@@ -1414,8 +1175,6 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'dp_remark', label: 'Remarks', width: 200, defaultHidden: true,
-      /* Every row type takes a remark, each on its own record: SO header, DP job,
-         the service-case leg, or the project's board remark. */
       accessor: (o) => (
         <TextEditCell order={o} value={o.dp_remark} placeholder="Remarks…" allowNonSo allowProject={!o.remark_locked}
           onCommit={(v) => updateFieldsMutate(
@@ -1431,13 +1190,6 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'stock_remark', label: 'Stock', width: 170, groupable: true,
-      /* ASSR + DP rows carry no stock/DO data → non-applicable. */
-      /* The shared pill (components/StockRemarkPill.tsx), 2026-08-17. This cell
-         used to carry its own third pair of hard-coded hexes keyed off
-         stock_status while the SO list used grey text and ConsignmentOrders
-         used the designed pill — one value, three looks. `|| o.stock_status`
-         stays: readinessRowFields emits a remark for every stock-bearing row,
-         and the fallback covers a row that predates it. */
       accessor: (o) => (isAssr(o) || isDp(o) ? <NotApplicable /> : (
         <StockRemarkPill remark={o.stock_remark || o.stock_status} />
       )),
@@ -1471,8 +1223,6 @@ export function DeliveryPlanningBoard({
        the top state tabs; the manual state override lives on the bulk "Status"
        action. */
     {
-      /* The live (non-CANCELLED) trip carrying this order's DELIVERY stop —
-         "Time arranged" made concrete. '—' until the order is on a trip. */
       key: 'trip_no', label: 'Trip No.', width: 130, groupable: true, defaultHidden: true,
       accessor: (o) => (o.trip_no
         ? <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{o.trip_no}</span>
@@ -1537,9 +1287,6 @@ export function DeliveryPlanningBoard({
       accessor: (o) => o.eta_arriving_port ?? '—',
       searchValue: (o) => o.eta_arriving_port ?? '',
     },
-    /* EM-region cross-border transit-warehouse arrival date (migration 0199).
-       Default-HIDDEN, but auto-SHOWS on the EM/SG region tabs like shipout / ETA
-       (these cross-border columns only matter for the EM trip). */
     {
       key: 'arrives_em_warehouse_date', label: 'Arrives EM Warehouse', width: 150, sortable: true, defaultHidden: !isEmSg,
       accessor: (o) => detail(fmtDateOrDash(o.arrives_em_warehouse_date)),
@@ -1597,9 +1344,6 @@ export function DeliveryPlanningBoard({
       accessor: (o) => <TextEditCell order={o} value={o.ctn} placeholder="CTN…" onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, ctn: v }, { onError: fieldNotSaved })} />,
       searchValue: (o) => o.ctn ?? '',
     },
-    /* em_delivered_date ("Done Delivery") dropped as a board column (owner
-       2026-09-24 — BS Delivery Date is the EM last-mile date); the field stays
-       editable in the fields drawer. */
     /* Crew — split into the HC delivery-sheet columns. Default-HIDDEN per the
        owner's 2026-09-22 column pass (crew is assigned later, not at planning);
        re-show Driver / Lorry / helpers from the Columns drawer. */
@@ -1666,10 +1410,6 @@ export function DeliveryPlanningBoard({
       numberValue: (o) => (o.row_type !== 'so' ? null : o.local_total_sen / 100),
     },
     {
-      /* Default-HIDDEN since the 2026-08-04 tidy-up. The release gate — which is
-         what a dispatcher actually needs from the money side — already rides on
-         the row; the raw balance is a finance figure, and it is 0 on every ASSR /
-         DP / project row by construction. */
       key: 'balance_sen', label: 'Balance', width: 130, align: 'right', sortable: true,
       /* Below zero is an OVER-COLLECTION, not a settled row — it must not share
          the muted grey that means "nothing owed" (owner 2026-08-16); a live
@@ -1690,9 +1430,6 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'do', label: 'DO No.', width: 130, groupable: true,
-      // A Service Case has no DO of its own; it shows the ORIGINAL order's DO numbers
-      // (related_do_nos, back-filled on the server) so logistics can trace the first
-      // delivery. An SO/DP/project row always uses its own delivery_orders.
       accessor: (o) => {
         const nums = o.delivery_orders.length > 0
           ? o.delivery_orders.map((d) => d.do_number)
@@ -1711,11 +1448,6 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => (o.po_nos ?? []).join(' '),
       groupValue: (o) => (o.po_nos?.length ? o.po_nos.join(', ') : '(none)'),
     },
-    /* DO Date — the latest DO's OWN document date (delivery_orders.do_date), from
-       the same latest-DO lookup the crew / HC fields use. Default-HIDDEN since
-       the 2026-08-04 tidy-up: the DO column beside it already says whether a DO
-       exists, which is the planning question; its document date is a lookup, and
-       it is blank on every ASSR / DP / project row. */
     {
       key: 'do_date', label: 'DO Date', width: 120, sortable: true, defaultHidden: true,
       accessor: (o) => detail(fmtDateOrDash(o.do_date)),
@@ -1724,24 +1456,9 @@ export function DeliveryPlanningBoard({
       filterType: 'date', dateValue: (o) => o.do_date,
     },
     ];
-    // Stable sort into the default header order above (unlisted keys keep
-    // their definition order at the end).
     return cols.sort((a, b) => (pos.get(a.key) ?? 999) - (pos.get(b.key) ?? 999));
-  // PERF (2026-10-23): DEPS ARE REFERENTIALLY-STABLE INPUTS ONLY, so `columns`
-  // keeps a constant identity across renders / edits (feeding DataTable's stable
-  // search index + layout). The EM/SG cross-border default-show (isEmSg) flips on
-  // activeRegion; the driver / lorry / helper option lists and the Salesperson
-  // roster lookup feed the pickers / cells (all react-query-stable once loaded).
-  // The mutations are NOT here: the accessors call the STABLE scheduleMutate /
-  // updateFieldsMutate / writeCrewSeat (ref-backed), and the "saving" disable
-  // rides BoardPendingContext — so a mutation's identity / isPending no longer
-  // rebuilds this array. (eslint-disable: those stable callbacks are intentionally
-  // omitted from the deps.)
   }, [isEmSg, drivers, lorries, helpers, msgStatuses, salespersonNameOf, pcIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Map-open column narrowing: everything NOT in the override hides at render
-     time (DataGrid overlayHidden). The user's persisted layout is untouched —
-     closing the map returns their own column set exactly as saved. */
   const overlayHidden = useMemo<string[] | undefined>(() => {
     if (!visibleColumnsOverride || visibleColumnsOverride.length === 0) return undefined;
     const keep = new Set(visibleColumnsOverride);
@@ -1750,9 +1467,6 @@ export function DeliveryPlanningBoard({
 
   return (
     <div className="space-y-4">
-      {/* 4 STATE TABS (top row) — only on the full board (DeliveryPlanning).
-          Pending Delivery / Pending Schedule / Overdue / Delivered, with counts.
-          OVERDUE keeps its red tone so a backlog reads at a glance. */}
       {stateTabs && (
         <div className="flex flex-wrap items-center gap-2 border-b border-border pb-0.5">
           {([{ key: 'ALL' as const, label: 'All' },
@@ -1794,10 +1508,6 @@ export function DeliveryPlanningBoard({
         </div>
       )}
 
-      {/* Pending Schedule sub-split (derived arrangement stages) — visible only
-          on that tab, in the tab-badge idiom: Pending Date Arrangement (needs a
-          date → Delivery Date Arrangement page) vs Date arranged, with the time
-          side's split in brackets. A count line, not a second tab rail. */}
       {stateTabs && activeState === 'PENDING_SCHEDULE' && (
         <div className="text-[12px] text-ink-muted">
           <span className="font-semibold text-ink-secondary">{DATE_ARRANGEMENT_LABEL.PENDING_DATE}</span>
@@ -1813,9 +1523,6 @@ export function DeliveryPlanningBoard({
         </div>
       )}
 
-      {/* REGION chip row — the CONFIG-DRIVEN buckets from the API master (All +
-          whatever the owner maintains in Delivery Regions). SG (by code) is
-          dashed-teal (cross-border). Classified by customer state. */}
       <div className={styles.regionChips}>
         {regionTabs.map((r) => (
           <button
@@ -1840,11 +1547,6 @@ export function DeliveryPlanningBoard({
         </div>
       )}
 
-      {/* Compact bulk-edit bar — appears once one or more rows are ticked.
-          "<N> selected · Set [field] → [value] [Apply]" mass-writes one field
-          across every selected SO via useScheduleDelivery; the value control's
-          TYPE follows the chosen field. Page-specific actions (Transfer to Delivery Order,
-          Schedule) are injected via `bulkExtras` on the right. */}
       {selectedKeys.size > 0 && (
         <div className={styles.bulkBar}>
           <span className={styles.bulkCount}>{selectedKeys.size} selected</span>
@@ -1925,7 +1627,6 @@ export function DeliveryPlanningBoard({
         /* Drag over the Total Amount / Balance cells to add them up, like Excel
            (HC-0164, Syu). */
         cellRangeSum
-        /* Whole row on one screen for review and screenshots (Delivery, 11-02). */
         fitToWidth
         exportName={exportName}
         rowKey={rowIdOf}
@@ -1942,8 +1643,6 @@ export function DeliveryPlanningBoard({
         groupBanner
         isLoading={isLoading}
         emptyMessage={emptyMessage}
-        /* First-class multi-select (prefixed so:/assr: keys) → the bulk bar. The
-           bulk actions themselves are SO-only (see soDocNosFromSelection). */
         selectable={{
           selectedKeys,
           onToggle,
@@ -1951,9 +1650,7 @@ export function DeliveryPlanningBoard({
         }}
         onRowDoubleClick={onRowDoubleClick}
         expandable={{
-          /* Line-item drill-down is SO-only (ASSR/DP/project rows carry no SO lines). */
           renderExpansion: (row) => (isAssr(row) || isDp(row) || isProject(row) ? null : <PlanningExpandedLines docNo={row.so_doc_no} />),
-          /* Falsy key suppresses the expand chevron for non-SO rows. */
           rowExpansionKey: (row) => (isAssr(row) || isDp(row) || isProject(row) ? '' : row.so_doc_no),
         }}
         rowStyle={(o) => {

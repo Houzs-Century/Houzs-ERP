@@ -1,6 +1,3 @@
-/* The rules of a batch combo write, kept pure so they can be tested without a
- * database. Combos are append-only: every change is a new row, and a combo at
- * one Price is the newest row of its tuple. */
 
 export type HeightPrices = Record<string, number | null>;
 
@@ -18,9 +15,7 @@ export function newestComboRow<T extends { effective_from: string; created_at: s
 
 export type MergedPrices = {
   prices: HeightPrices;
-  /** Any cell ends up different from what the row holds. */
   changed: boolean;
-  /** Heights that held a price and lose it. */
   removed: string[];
 };
 

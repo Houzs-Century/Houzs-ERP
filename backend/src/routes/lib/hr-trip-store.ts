@@ -98,14 +98,12 @@ export type TripMonth = {
   month: string;
   first: string;
   last: string;
-  /** The month's rows HR has not removed, and what each earned (same order). */
   rows: RowRecord[];
   rowPay: TripRowPay[];
   people: Person[];
   rates: TripRates;
   pay: Map<number, TripPay>;
   missed: Map<number, MissedInfo>;
-  /** Names on the rows that resolve to nobody, with how many rows carry each. */
   unmatched: { name: string; rows: number }[];
 };
 
@@ -182,7 +180,6 @@ export async function loadTripMonth(db: Db, companyId: number, month: string, to
   const workedBy = group(worked);
   const leaveBy = group(leave);
   const overrideBy = new Map(overrides.map((o) => [o.employee_id, o]));
-  /* Only days already gone count: today is still being worked. */
   const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
   const missed = new Map<number, MissedInfo>();
   const missedOf = (id: number): MissedInfo => {
@@ -227,9 +224,7 @@ export async function loadTripMonth(db: Db, companyId: number, month: string, to
   };
 }
 
-/* ── Delivery Planning -> rows ─────────────────────────────────────────── */
 
-/* Each stop type as a Delivery Planning job type (DP_ENTRY_MENU). */
 const STOP_KIND: Partial<Record<string, TripJobType>> = {
   DELIVERY: "DELIVERY_ORDER",
   PICKUP: "ASSR_PICKUP",
@@ -241,22 +236,17 @@ const STOP_KIND: Partial<Record<string, TripJobType>> = {
   TRANSFER: "TRANSFER",
   LORRY_SERVICE: "LORRY_SERVICE",
 };
-/* A service case's legs ride stops carrying assr_case_id, typed by the board's
-   own ASSR_LEG_BY_STOP, so its delivery leg is a DELIVERY stop that is NOT a DO. */
 const CASE_LEG_KIND: Partial<Record<string, TripJobType>> = { customer_pickup: "ASSR_PICKUP", delivery: "ASSR_SERVICE", inspection: "ASSR_INSPECTION" };
 
 export type PlanningStop = {
   stop_id: string;
-  /** The DO the stop delivers (null for a job that is not a DO). */
   do_id: string | null;
   stop_type: string;
   trip_id: string;
   trip_date: string;
   trip_no: string;
   plate: string | null;
-  /** The stop's own snapshot: the DO's or SO's total when it was scheduled. */
   revenue_sen: string | number | null;
-  /** The DP job's own sales amount ("Delivery (no SO)"), sen; null when none. */
   dp_sales_sen?: string | number | null;
   customer_name: string | null;
   stop_dp_no: string | null;
@@ -362,22 +352,16 @@ export type PlanningDo = {
   so_doc_no: string | null;
   debtor_name: string | null;
   do_status: string | null;
-  /** The SO's due date (amended, else the customer's): the day Last Mile puts it on the lorry. */
   so_due_date: string | null;
-  /** This is its SO's newest live DO (not cancelled, newest created_at, ties by id), the one Last Mile shows. */
   is_latest_live: boolean | null;
-  /** The Malaysia date of delivered_at. */
   delivered_day: string | null;
   do_date: string | null;
   local_total_sen: string | number | null;
   do_state: string | null;
   do_postcode: string | null;
   is_dropship: boolean | null;
-  /** A 3PL carrier billed this DO (scm.threepl_do_charges). */
   has_3pl: boolean | null;
-  /** A stop on a trip that is not cancelled carries this DO: that stop is its row. */
   on_live_trip: boolean | null;
-  /** The plate typed on the crew record, and the lorry master it resolves to. */
   crew_plate: string | null;
   lorry_plate: string | null;
   lorry_internal: boolean | null;
@@ -391,8 +375,6 @@ export type PlanningDo = {
   h2_name: string | null;
 };
 
-/* Which DOs our own lorries ran, and the day each ran: the rule the Own fleet
-   cost reads too (scm/lib/own-lorry-do-run.ts). */
 export { doRunDate, isOwnLorryDoRun };
 
 /** Each delivery order our own lorries ran on a day of [first, last], as a
@@ -536,9 +518,6 @@ export function projectLegRows(p: ProjectLeg, first: string, last: string, plann
   return out;
 }
 
-/* The company's shipped DOs with every date doRunDate may pick (its SO's due
-   date, whether it is the SO's newest live DO, the Malaysia day it was delivered,
-   its DO date). SQL only narrows to DOs with any of them in range; doRunDate decides. */
 const doRunCandidates = (companyId: number) => sql`
     live AS (
       SELECT l.id, ROW_NUMBER() OVER (PARTITION BY l.so_doc_no ORDER BY l.created_at DESC, l.id DESC) AS rn

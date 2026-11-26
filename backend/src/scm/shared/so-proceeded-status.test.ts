@@ -1,10 +1,3 @@
-/* THE RULE HAS TO REFUSE, OR IT IS NOT A RULE.
- *
- * Setting a Processing Date on a CONFIRMED order IS the proceed, so the board
- * must show it in production. The dangerous half is everything this must NOT
- * do — a rule that fires too widely drags a delivered order back into
- * production, and that is worse than the gap it closes.
- */
 import { describe, expect, it } from 'vitest';
 import {
   CONFIRM_DELIVERY_PAST_PROBLEM,
@@ -59,8 +52,6 @@ describe('statusAfterProcessingDateSet', () => {
   });
 
   it('does not move backwards when a date is CLEARED', () => {
-    /* Clearing is super-admin-only and what the status becomes is the owner's
-       decision, not an inference this function may make. */
     expect(call('IN_PRODUCTION', '2026-08-01', null)).toBeNull();
   });
 

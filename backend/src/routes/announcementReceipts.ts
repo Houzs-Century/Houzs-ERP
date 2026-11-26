@@ -52,15 +52,10 @@ app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), as
   if (!ann) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
-  // A Sales Director may only see read-receipts for notices they authored.
   if (sdBlockedFromRow(salesDirectorScope(c), ann, c.get("user")?.id ?? null)) {
     return c.json({ success: false, error: "Announcement not found" }, 404);
   }
 
-  // Only the active users this notice actually targets (userCanSee respects
-  // ALL_USERS / DEPARTMENT_IDS / POSITION_IDS / USER_IDS / MIXED), narrowed to
-  // the notice's TARGETED companies (user_companies grants, fail-open — see
-  // helper). A notice targeting all companies counts the whole roster.
   const roster = audienceOf(ann, await loadRoster(c.env, readTargetCompanyIds(ann)));
   const ackedAtByUser = await loadAckMap(c.env, id);
   const reminders = await loadReminderMap(c.env, id);
@@ -86,8 +81,6 @@ app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), as
   });
   const acked: Array<Person & { ackedAt: string | null }> = [];
   const pending: Array<Person & { state: PendingState; remindedAt: string | null }> = [];
-  // Two-level drill-down (notice → department → person): one bucket per
-  // department in the audience, in roster (name) order of first appearance.
   const byDepartment = new Map<
     string,
     { id: number | null; name: string; total: number; acked: number; pending: number }
@@ -135,14 +128,6 @@ app.get("/:id/acks", requirePermissionOrSalesDirector("announcements.write"), as
   });
 });
 
-// ============================================================
-// GET /ack-summary — { [id]: { total, acked } } for every human post the
-// caller may manage, in ONE round trip. Feeds the Manage table's ack-rate
-// column and stat strip (design handoff 2026-09-04); walking /:id/acks per row
-// would be N requests. Same gate + Sales-Director ownership rule as the
-// receipts. Company narrowing is done in JS against the grants map because
-// each notice has its own target set.
-// ============================================================
 app.get("/ack-summary", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const user = c.get("user");
   if (!user) {
@@ -167,10 +152,6 @@ app.get("/ack-summary", requirePermissionOrSalesDirector("announcements.write"),
   return c.json({ success: true, data });
 });
 
-// The ONE per-notice arithmetic behind /ack-summary and /ack-trend: the
-// audience (roster through the gate, narrowed by company grants) and how many
-// of it acknowledged. Kept together so the Manage table and the dashboard
-// chart can never disagree on a rate.
 async function noticeAckTotals(
   env: Env,
   rows: AnnouncementRow[],
@@ -192,15 +173,6 @@ async function noticeAckTotals(
   return out;
 }
 
-// ============================================================
-// GET /ack-trend — the dashboard's "Ack rate · last 30 days" (design handoff
-// 2026-09-04, screen 5; endpoint 2026-09-06): six 5-day buckets ending now,
-// each the summed audience and acknowledgements of the human notices POSTED
-// in it, plus the 30-day summary. Same gate, ownership rule and per-notice
-// arithmetic as /ack-summary, so the card and the Manage table agree. A
-// bucket with no notice has pct null (drawn empty, never as 0%). Buckets
-// carry ISO instants only; the client renders them with the house fmtDate.
-// ============================================================
 const ACK_TREND_DAYS = 30;
 const ACK_TREND_BUCKETS = 6;
 app.get("/ack-trend", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
@@ -257,15 +229,6 @@ app.get("/ack-trend", requirePermissionOrSalesDirector("announcements.write"), a
   return c.json({ success: true, data: { days: ACK_TREND_DAYS, buckets, summary } });
 });
 
-// ============================================================
-// GET /team-pending — the supervisor's gap (design handoff 2026-09-04, the
-// dashboard "My team's pending" card). Every authed user may call it; the
-// answer is scoped to THEIR direct reports (users.manager_id = caller) and
-// lists each mandatory human notice a report has not acknowledged, with the
-// same pending state the drawer shows. No reports → an empty answer, and the
-// card does not render. Reminders stay manual; the automatic escalation job
-// is a separate follow-up.
-// ============================================================
 app.get("/team-pending", async (c) => {
   const user = c.get("user");
   if (!user) {
@@ -330,15 +293,6 @@ app.get("/team-pending", async (c) => {
   });
 });
 
-// ============================================================
-// POST /:id/escalate — "Notify their supervisors" (design handoff 2026-09-04,
-// the drawer's second action). For every person still pending on the notice
-// (optionally one department: body.departmentId) with a manager on the org
-// chart, the manager gets ONE system notice naming their pending reports. It
-// rides the bell (source NOT NULL never pops a modal), and postPersonalNotice's
-// dedupe swallows a repeat while the first is still unread. Manual, on the
-// poster's click — the automatic overdue job is a separate follow-up.
-// ============================================================
 app.post("/:id/escalate", requirePermissionOrSalesDirector("announcements.write"), async (c) => {
   const id = c.req.param("id");
   const ann = await getScopedAnnouncement(c, id);
@@ -354,7 +308,6 @@ app.post("/:id/escalate", requirePermissionOrSalesDirector("announcements.write"
   const body = (await c.req.json().catch(() => ({}))) as { departmentId?: unknown };
   const deptFilter =
     body.departmentId == null ? null : parseInt(String(body.departmentId), 10);
-  // The same implementation the overdue cron runs (services/announcementEscalation.ts).
   const r = await escalatePending(c.env, ann, deptFilter);
   return c.json({ success: true, ...r });
 });

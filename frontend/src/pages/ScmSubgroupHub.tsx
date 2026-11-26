@@ -14,13 +14,11 @@ import { collapsedEntryTo } from "../components/navFilter";
  * Kept as a plain object at module scope so it's a single flat lookup.
  */
 const CARD_DESCRIPTIONS: Record<string, string> = {
-  // Sales Order
   "/scm/sales-orders":     "Customer orders — draft to delivered.",
   "/scm/delivery-orders":  "Dispatch and delivery tracking.",
   "/scm/sales-invoices":   "Billing issued after delivery.",
   "/scm/delivery-returns": "Returned goods and credit notes.",
 
-  // Consignment
   "/scm/consignment-orders":            "Stock sent out on consignment terms.",
   "/scm/consignment-notes":             "Delivery notes against consignment orders.",
   "/scm/consignment-returns":           "Consigned stock returned to base.",
@@ -29,7 +27,6 @@ const CARD_DESCRIPTIONS: Record<string, string> = {
   "/scm/purchase-consignment-receives": "Consigned stock coming in from suppliers.",
   "/scm/purchase-consignment-returns":  "Consigned stock returned to supplier.",
 
-  // Procurement
   "/scm/products":          "SKU master, categories, product models.",
   "/scm/suppliers":         "Vendor directory and contact details.",
   "/scm/mrp":               "Material requirements and stock status.",
@@ -38,20 +35,17 @@ const CARD_DESCRIPTIONS: Record<string, string> = {
   "/scm/purchase-invoices": "Supplier invoices to pay.",
   "/scm/purchase-returns":  "Stock returned to supplier.",
 
-  // Transportation
   "/scm/delivery-planning":         "Route planning and dispatch board.",
   "/scm/fleet":                     "Drivers, helpers, and lorries.",
   "/scm/lorry-capacity":            "Available capacity by lorry.",
   "/scm/delivery-planning-regions": "Delivery region maintenance.",
 
-  // Warehouse
   "/scm/warehouses":         "Location master.",
   "/scm/inventory":          "Stock on hand by SKU and warehouse.",
   "/scm/stock-adjustments":  "Manual stock corrections.",
   "/scm/stock-transfers":    "Stock moved between warehouses.",
   "/scm/stock-takes":        "Physical count sessions.",
 
-  // Finance
   "/scm/accounting":  "SCM-scoped GL and journals.",
   "/scm/outstanding": "Receivables and payables ageing.",
 };
@@ -81,14 +75,11 @@ export function ScmSubgroupHub({
   description,
 }: {
   groupId: string;
-  /** One-line landing pitch shown under the title. Kept as a prop so each
-   *  sub-group can tune the copy without a NAV_TABS churn. */
   description: string;
 }) {
   const navigate = useNavigate();
   const { can, pageAccess } = useAuth();
 
-  // Same visibility filter ScmHub uses so the two hubs never drift.
   const visible = (t: NavTab): boolean => {
     if (t.perm && !can(t.perm)) return false;
     if (t.anyPerm || t.anyAccess) {
@@ -119,12 +110,6 @@ export function ScmSubgroupHub({
     return undefined;
   };
   const group = findGroup(NAV_TABS);
-  /* Finance keeps its pages inside sub-groups (Money in, Books, ...), which have
-     no page of their own; taking only direct children with a `to` told a clerk
-     with Money-in access alone that they had no Finance modules. A sub-group
-     stands for the pages in it the reader may open; a collapsed one (Reports)
-     stays one card, opening the first of its reports they may open, as the
-     sidebar does. */
   const openable = (tabs: readonly NavTab[]): NavTab[] =>
     tabs.filter(visible).flatMap((k): NavTab[] => {
       if (!k.children) return k.to ? [k] : [];
@@ -142,9 +127,6 @@ export function ScmSubgroupHub({
     return true;
   });
 
-  // Empty state — a role with SCM access but no leaves inside this specific
-  // sub-group (e.g. warehouse without inventory / stock take). Better than a
-  // blank grid.
   if (!group) {
     return (
       <div>

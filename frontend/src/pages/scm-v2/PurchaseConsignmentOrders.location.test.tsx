@@ -1,7 +1,3 @@
-/* DEV-60: the Purchase Consignment Order list carries a Purchase Location
- * column. The list endpoint now embeds purchase_location; the column and the
- * row drawer show it code-first (warehouseLabel), the same as the PO list.
- */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

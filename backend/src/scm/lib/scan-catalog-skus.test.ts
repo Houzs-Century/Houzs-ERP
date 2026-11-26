@@ -5,8 +5,6 @@ const row = (code: string, model: ScanCatalogRow['model']): ScanCatalogRow =>
   ({ code, name: code, category: 'ACCESSORY', base_model: null, model });
 
 describe('scanCatalogSkus', () => {
-  // 19 Oct: JM-BAMBOO JACQUARD WP MP (K) sat under an inactive Model, the scan
-  // offered it, and both create attempts were refused as "no longer active".
   it('drops a SKU whose Model is inactive, as the SO picker and validateItemCodes do', () => {
     const out = scanCatalogSkus([
       row('JM-BAMBOO JACQUARD WP MP (K)', { active: false }),

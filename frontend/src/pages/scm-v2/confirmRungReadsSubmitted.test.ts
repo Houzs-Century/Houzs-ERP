@@ -42,7 +42,6 @@ import { describe, expect, it } from 'vitest';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { statusFor as soStatusFor } from './so-list-status';
 
-/** The five documents and the value each STORES for the confirm rung. */
 const CONFIRM_RUNG: ReadonlyArray<readonly [docType: 'so' | 'po' | 'grn' | 'pi' | 'si', stored: string]> = [
   ['so', 'CONFIRMED'],
   ['po', 'SUBMITTED'],
@@ -53,9 +52,6 @@ const CONFIRM_RUNG: ReadonlyArray<readonly [docType: 'so' | 'po' | 'grn' | 'pi' 
 
 describe('the stored values are untouched', () => {
   it('each document still stores its own name for the rung — four different ones', () => {
-    /* Asserted as a SET so the test says what it means: the whole point is that
-       five documents share one WORD while keeping four stored values. If this
-       ever collapses to one value, somebody renamed a column. */
     expect([...new Set(CONFIRM_RUNG.map(([, stored]) => stored))].sort())
       .toEqual(['CONFIRMED', 'POSTED', 'SENT', 'SUBMITTED']);
   });
@@ -78,15 +74,12 @@ describe('the word on screen', () => {
   });
 
   it('documents the owner did NOT name keep their word', () => {
-    /* Not laziness — a sweep that renames what nobody asked about is how a
-       consistency change becomes a regression. */
     expect(statusLabel('pr', 'POSTED')).toBe('Confirmed');
     expect(statusLabel('stockTake', 'POSTED')).toBe('Confirmed');
     expect(statusLabel('stockTransfer', 'POSTED')).toBe('Confirmed');
   });
 });
 
-// ── The scan ────────────────────────────────────────────────────────────────
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -99,36 +92,30 @@ function productionSources(dir = SRC): string[] {
   });
 }
 
-/* The files that legitimately keep "Confirmed" for a rung this ruling does not
-   cover. Each is listed with the document it belongs to, so the next reader can
-   see it was decided rather than missed. */
 const NOT_IN_SCOPE = new Set([
-  'pages/scm-v2/do-list-status.ts',                    // delivery order — own vocabulary
-  'pages/scm-v2/DeliveryOrderDetailV2.tsx',            // delivery order
-  'pages/scm-v2/MfgDeliveryOrdersListV2.tsx',          // delivery order
-  'vendor/scm/lib/packing-list-model.ts',              // delivery order rung
-  'pages/scm-v2/ConsignmentNotes.tsx',                 // consignment — not named
-  'pages/scm-v2/ConsignmentOrders.tsx',                // consignment — not named
-  'pages/scm-v2/PurchaseConsignmentReturns.tsx',       // consignment — not named
-  'pages/scm-v2/PurchaseReturnDetailV2.tsx',           // purchase return — not named
-  'pages/scm-v2/PurchaseReturnsListV2.tsx',            // purchase return — not named
-  'pages/scm-v2/StockTakesListV2.tsx',                 // stock take — not named
-  'pages/scm-v2/StockTransfersListV2.tsx',             // stock transfer — not named
-  'vendor/scm/lib/pms-project-status.ts',              // PMS project — a different module
-  'mobile/MobilePMS.tsx',                              // PMS project
-  'pages/announcements/InboxView.tsx',                 // an acknowledgement, not a document status
+  'pages/scm-v2/do-list-status.ts',
+  'pages/scm-v2/DeliveryOrderDetailV2.tsx',
+  'pages/scm-v2/MfgDeliveryOrdersListV2.tsx',
+  'vendor/scm/lib/packing-list-model.ts',
+  'pages/scm-v2/ConsignmentNotes.tsx',
+  'pages/scm-v2/ConsignmentOrders.tsx',
+  'pages/scm-v2/PurchaseConsignmentReturns.tsx',
+  'pages/scm-v2/PurchaseReturnDetailV2.tsx',
+  'pages/scm-v2/PurchaseReturnsListV2.tsx',
+  'pages/scm-v2/StockTakesListV2.tsx',
+  'pages/scm-v2/StockTransfersListV2.tsx',
+  'vendor/scm/lib/pms-project-status.ts',
+  'mobile/MobilePMS.tsx',
+  'pages/announcements/InboxView.tsx',
   'mobile/MobileOvertime.tsx',                         // overtime-claim status (HC-0125) — not a document rung
   'pages/hr/OvertimeTab.tsx',                          // overtime-claim status (HC-0125, desktop) — not a document rung
   'pages/hr/OtRequestsPage.tsx',                       // overtime-claim status (HC-0125, redesign) — not a document rung
-  'vendor/scm/lib/status-pill.ts',                     // holds every map, in scope and out
-  'mobile/MobileModuleList.tsx',                       // holds every module's filters, in scope and out
+  'vendor/scm/lib/status-pill.ts',
+  'mobile/MobileModuleList.tsx',
 ]);
 
 describe('no surface still calls the five documents\' confirm rung "Confirmed"', () => {
   it('no line names one of the five stored values beside a "Confirmed" label', () => {
-    /* Comments are stripped first: this file, status-pill.ts and several pages
-       EXPLAIN the old word in prose, and documentation of a correction must not
-       read as the defect. Same reason doDispatchedReadsLoaded.test.ts strips. */
     const offenders = productionSources().flatMap((path) => {
       const rel = relative(SRC, path).replaceAll('\\', '/');
       if (NOT_IN_SCOPE.has(rel)) return [];

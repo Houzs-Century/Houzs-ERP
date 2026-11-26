@@ -1,10 +1,3 @@
-// The statement table (the owner's Claude Design, batch 6 §4.1) and the
-// columns it draws: Compare's other period, By month's Total and months, the
-// change computed once; the frozen account column with the code before the
-// name, % beside every figure, the row dresses, an account's lines opened
-// under its row (the name: the whole span; a figure: that column), a
-// category's figure handed to the General ledger, and the widths a person
-// drags — remembered per view, reset per column or all at once.
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -43,7 +36,6 @@ describe('the columns a statement shows', () => {
   });
 
   test('Compare: the previous period steps back by whole months from a 1st, else by its own length; last year by the calendar', () => {
-    /* A month in progress is compared day for day with the month before. */
     expect(compareRange('2026-10-01', '2026-10-31', '2026-10-29', 'previous')).toEqual({ from: '2026-09-01', to: '2026-09-30' });
     expect(compareRange('2026-07-01', '2026-09-30', '2026-10-29', 'previous')).toEqual({ from: '2026-04-01', to: '2026-06-30' });
     expect(compareRange('2026-10-10', '2026-10-20', '2026-10-29', 'previous')).toEqual({ from: '2026-09-29', to: '2026-10-09' });
@@ -57,7 +49,6 @@ describe('the columns a statement shows', () => {
     expect(cols[0]).toMatchObject({ label: 'Total', sub: '3 months', kind: 'total', from: '2026-08-01', to: '2026-10-31' });
     expect(cols[1]).toMatchObject({ label: 'Oct 2026', sub: 'to 2026/10/29 *', from: '2026-10-01', to: '2026-10-31' });
     expect(cols[2]!.sub).toBeUndefined();
-    /* A balance sheet adds no months up: no Total. */
     expect(monthColumns('2026-10-29', 3, '2026-10-29', false).map((c) => c.key)).toEqual(['2026-10', '2026-09', '2026-08']);
   });
 
@@ -147,7 +138,6 @@ describe('the statement table', () => {
     expect(within(lines).getByText('Advert')).toBeTruthy();
     const gl = within(lines).getByRole('link', { name: /Open in General ledger/ });
     expect(gl.getAttribute('href')).toBe('/scm/accounting?tab=gl&accounts=900-A001&from=2026-09-01&to=2026-10-31&in=reports');
-    /* A figure switches the lines to that month, and pressed again closes them. */
     fireEvent.click(screen.getByRole('button', { name: '900-A001 · ADVERT · Oct 2026' }));
     expect(ledger.calls.at(-1)).toMatchObject({ from: '2026-10-01', to: '2026-10-31' });
     fireEvent.click(screen.getByRole('button', { name: '900-A014 · REFUND · Oct 2026' }));
@@ -207,7 +197,6 @@ describe('the statement table', () => {
       ['Account', null, '2'], ['Total2 months%', null, '2'], ['Oct 2026to 2026/11/09 *', '2', null],
     ]);
     expect([...parts!.querySelectorAll('th')].map((h) => h.textContent)).toEqual(['Settlement', 'Deposit']);
-    /* A split line: a figure under each; a line not split: one figure across the month, centred. */
     const cellsOf = (name: string) => [...screen.getByText(name).closest('tr')!.querySelectorAll('td')];
     expect(cellsOf('Deposit received').map((td) => td.textContent)).toEqual(['900.00100.0%', '500.00', '400.00']);
     const tax = cellsOf('Taxation');
@@ -215,7 +204,6 @@ describe('the statement table', () => {
     expect(tax[1]!.className).toMatch(/cellAcross/);
     /* A month without the line: one empty cell across it (owner 2026-11-10: the dashes made it busy). */
     expect(cellsOf('Finance cost').map((td) => [td.textContent, td.getAttribute('colspan')])).toEqual([['7.00—', null], ['', '2']]);
-    /* No full rule between a month's two columns; the month ends with one. */
     expect(screen.getByRole('columnheader', { name: 'Settlement' }).className).not.toMatch(/colRule/);
   });
 
@@ -242,25 +230,19 @@ describe('the statement table', () => {
     expect(table.className).toMatch(/tableGrouped/);
 
     const [top, parts] = screen.getAllByRole('rowgroup')[0]!.querySelectorAll('tr');
-    /* The newest month on the band, the next one plain, and so on. */
     const monthHeads = [...top!.querySelectorAll('th[data-group]')];
     expect(monthHeads.map((h) => [h.getAttribute('data-group'), /band/.test(h.className)])).toEqual([['2026-10', true], ['2026-09', false]]);
-    /* Each column's mark, beside a name that still reads plainly. */
     expect([...parts!.querySelectorAll('[data-mark]')].map((m) => m.getAttribute('data-mark'))).toEqual(['petrol', 'gold', 'petrol', 'gold']);
     expect(screen.getAllByRole('columnheader', { name: 'Settlement' })).toHaveLength(2);
 
     const tds = (name: string) => [...screen.getByText(name).closest('tr')!.querySelectorAll('td')];
     const dep = tds('Deposit received');
-    /* Total, Oct S, Oct D, Sep S, Sep D: a nil share is empty, the money where it belongs. */
     expect(dep.map((td) => td.textContent)).toEqual(['90.00100.0%', '', '40.00', '', '50.00']);
     expect(dep.map((td) => /band/.test(td.className))).toEqual([false, true, true, false, false]);
-    /* Inside a month a faint dashed rule, a firm one where the month ends (none after the last). */
     expect(dep.map((td) => (/partRule/.test(td.className) ? 'part' : /groupRule/.test(td.className) ? 'month' : ''))).toEqual(['', 'part', 'month', 'part', '']);
-    /* A line with no Total keeps the Total's dash; across a month with nothing, an empty cell. */
     const adv = tds('Supplier advances');
     expect(adv.map((td) => [td.textContent, td.getAttribute('colspan')])).toEqual([['--', null], ['3.00', '2'], ['', '2']]);
     expect(/band/.test(adv[1]!.className)).toBe(true);
-    /* The block title is a band of its own: no month band through it. */
     const block = screen.getByText('CASH IN').closest('tr')!;
     expect(block.className).toMatch(/rowBlock/);
     expect([...block.querySelectorAll('td')].some((td) => /band/.test(td.className))).toBe(false);

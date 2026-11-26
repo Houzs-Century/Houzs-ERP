@@ -38,7 +38,6 @@ export function methodLabel(method: string | null | undefined): string {
 
 export type AccountLine = {
   key: string; who: string; doc: string; description: string; journal: string; inSen: number | null; outSen: number | null;
-  /** A payment voucher's line: the voucher's id; null for anything else. */
   voucherId: string | null;
 };
 
@@ -55,7 +54,6 @@ export function accountLines(block: DailyBankBlock): AccountLine[] {
       : { key: `in:${label}`, who: `${ms.length} customers`, doc: `${ms.length} receipts`, description: `${label} · ${ms.length} sales${few ? ` · ${few}` : ''}`, journal: '', inSen: sum(ms.map((m) => m.amountSen)), outSen: null, voucherId: null };
   });
   const other = (m: DailyBankMovement, dir: 'in' | 'out'): AccountLine => (m.sourceType === 'TYPED'
-    /* A receipt typed into the cash book: no document, no journal — its note and who typed it. */
     ? { key: `${dir}:typed:${m.sourceDocNo ?? ''}`, who: '', doc: '', description: [m.note, m.typedBy ? `typed by ${m.typedBy}` : null].filter(Boolean).join(' · '), journal: '',
       inSen: dir === 'in' ? m.amountSen : null, outSen: dir === 'out' ? m.amountSen : null, voucherId: null }
     : {
@@ -74,8 +72,6 @@ const TICK_LABELS: AuditLabelDictionary = {
   fields: { deducted: 'Taken off the cash book' },
 };
 
-/** An approved voucher's tick, unticked: it comes off the bank. Ticking says its money
-    left before the bank's cash book started, so it is already inside the starting balance. */
 function DontDeductTick({ line, voucherId, block }: { line: AccountLine; voucherId: string; block: DailyBankBlock }) {
   const skip = useSkipCashbookVoucher();
   const confirm = useConfirm();
@@ -95,7 +91,6 @@ function DontDeductTick({ line, voucherId, block }: { line: AccountLine; voucher
   );
 }
 
-/** A ticked voucher: on its line, marked, its amount not taken off. Untick to deduct it again. */
 function NotDeductedRow({ n, block, date, ticks }: { n: DailyBankNotDeducted; block: DailyBankBlock; date: string; ticks: Ticks }) {
   const unskip = useUnskipCashbookVoucher();
   const confirm = useConfirm();
@@ -144,7 +139,6 @@ function AccountBlock({ block, date, focused, ruled, ticks }: {
   }, [focused]);
   const lines = accountLines(block);
   const notDeducted = ticks ? (block.notDeducted ?? []) : [];
-  /* Columns after Out: the tick (writers on the cash book), then a ticked voucher's history. */
   const tickCol = ticks?.canWrite === true;
   const historyCol = notDeducted.length > 0;
   const extra = (tickCol ? 1 : 0) + (historyCol ? 1 : 0);

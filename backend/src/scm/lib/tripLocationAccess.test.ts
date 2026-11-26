@@ -5,14 +5,6 @@ import { isTripLocationPing, pingCallerAllowed } from './tripLocation';
 import type { DeliveryScope } from './deliveryScope';
 import type { Env, Variables } from '../env';
 
-/*
- * Production, 7 days: POST /trips/:id/location was refused 403 415 times for 7
- * users, so drivers vanished from the Lorry Live Map. A Driver / Helper holds
- * view on scm.transportation.drivers (enough for GET /trips, which shows them
- * their own IN_PROGRESS trip) but the area guard asked `edit` for the ping.
- * These pin the fix: the guard lets ONLY the ping through without the level,
- * and the handler accepts a bypassed caller only on a trip they are crewed on.
- */
 
 const AREA = 'scm.transportation.drivers';
 const driver = {

@@ -16,17 +16,11 @@
 // ----------------------------------------------------------------------------
 import type { StopStatus } from './delivery-stop-status';
 
-/* ── Time slot ────────────────────────────────────────────────────────────
-   The DO's `time_range` is free text. The owner's canonical windows are
-   AM 9:00–12:00 and PM 2:00–6:00; anything else the dispatcher typed (e.g.
-   "10 AM–1 PM") is a CUSTOM slot shown verbatim. null when no slot is set. */
 export type SlotKind = 'AM' | 'PM' | 'CUSTOM';
 
-const AM_END = 12 * 60; // 12:00
-const PM_START = 12 * 60; // 12:00 — a window that STARTS at/after noon is PM.
+const AM_END = 12 * 60;
+const PM_START = 12 * 60;
 
-/** Minutes-after-midnight for one clock token ("9", "09:00", "2pm", "13.30"),
- *  carrying an am/pm hint from elsewhere in the range when the token has none. */
 function clockMinutes(token: string, apHint: 'am' | 'pm' | null): number | null {
   const m = /^(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?$/.exec(token.trim());
   if (!m) return null;
@@ -61,8 +55,6 @@ export function slotKindOf(timeRange: string | null | undefined): SlotKind | nul
   if (t === 'am') return 'AM';
   if (t === 'pm') return 'PM';
   const { start, end } = slotMinutes(timeRange);
-  // AM only for an ascending morning window (so an ambiguous "11-2" — read as
-  // 11:00 then 2:00 — is not mislabelled AM; it falls through to CUSTOM).
   if (end != null && end <= AM_END && (start == null || start < end)) return 'AM';
   if (start != null && start >= PM_START) return 'PM';
   return 'CUSTOM';
@@ -116,13 +108,9 @@ export function condenseWindow(label: string | null | undefined): string {
   };
   if (start != null && end != null) return `${fmt(start)}–${fmt(end)}`;
   if (start != null) return fmt(start);
-  return t; // present but unparseable — keep what the dispatcher typed
+  return t;
 }
 
-/* ── Lorry run status ─────────────────────────────────────────────────────
-   Not departed = no stop started · On the way = any stop started, not all done
-   · Completed = every drop delivered. A "started" stop is the stop-status rule's
-   `active` or `done`. An empty run (a trip with no drops yet) is Not departed. */
 export type RunStatus = 'NOT_DEPARTED' | 'ON_THE_WAY' | 'COMPLETED';
 
 export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
@@ -138,9 +126,6 @@ export function runStatusOf(stopStatuses: readonly StopStatus[]): RunStatus {
   return 'NOT_DEPARTED';
 }
 
-/* ── Late ──────────────────────────────────────────────────────────────────
-   A drop is late exactly when the shared stop-status rule says `overdue` — the
-   owner's non-ETA definition. The pill needs a short reason. */
 export function isLate(status: StopStatus): boolean {
   return status === 'overdue';
 }
@@ -164,9 +149,6 @@ export function lateReason(
   return 'Past its delivery window';
 }
 
-/* ── Stat strip ────────────────────────────────────────────────────────────
-   The day KPIs. POD rate = delivered drops with real POD evidence ÷ all drops;
-   the per-run `with_pod` already counts only real evidence, so pass it through. */
 export type DayStats = {
   lorries: number;
   drops: number;
@@ -175,7 +157,6 @@ export type DayStats = {
   late: number;
   totalSen: number;
   withPod: number;
-  /** 0–100, rounded; null when there are no drops (nothing to rate). */
   podRatePct: number | null;
 };
 
@@ -214,7 +195,6 @@ export function dayStatsFrom(runs: readonly RunRollup[]): DayStats {
   return z;
 }
 
-/* ── Progress bar ──────────────────────────────────────────────────────────*/
 export function progressPct(delivered: number, drops: number): number {
   if (drops <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((delivered / drops) * 100)));
@@ -239,10 +219,6 @@ export function isDepartLate(deltaMin: number | null): boolean {
   return deltaMin != null && deltaMin > DEPART_LATE_MIN;
 }
 
-/* ── History (phase 3c) ─────────────────────────────────────────────────────
-   Past delivered drops (GET /trips/history), grouped by delivery day for the
-   History tab. The row shape mirrors the endpoint; the grouping + the day
-   summary (lorries / drops / POD% / total) are pure and tested. */
 export type HistoryRow = {
   day: string;
   soDocNo: string | null;

@@ -1,6 +1,3 @@
-/* Where a delivery return's credit note stands (backlog A1) — the server works
-   it out from the notes actually linked (backend scm/lib/cn-from-return.ts);
-   desktop and phone read the same words from here. */
 
 export type ReturnCreditState = 'NOT_INVOICED' | 'AWAITING' | 'DRAFTED' | 'ISSUED' | 'UNKNOWN';
 

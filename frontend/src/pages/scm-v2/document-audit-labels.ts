@@ -21,8 +21,6 @@
 
 import type { AuditLabelDictionary } from '../../components/audit/audit-labels';
 
-/* Shared by all four: every document line carries the same commercial columns,
-   and spelling them out four times is how two of them end up disagreeing. */
 const LINE_FIELDS: Record<string, string> = {
   qty: 'Quantity', unitPriceSen: 'Unit price', discountSen: 'Discount',
   unitCostSen: 'Unit cost', lineTotalSen: 'Line total',
@@ -39,8 +37,6 @@ const LINE_MONEY = [
   'taxSen', 'lineCostSen', 'lineMarginSen',
 ];
 
-/* The customer-address block the delivery order and the sales invoice both
-   inherit from the sales order. */
 const CUSTOMER_FIELDS: Record<string, string> = {
   debtorCode: 'Customer code', debtorName: 'Customer', agent: 'Agent',
   salesLocation: 'Sales location', ref: 'Ref No.', poDocNo: 'Customer PO no',
@@ -57,11 +53,7 @@ const CUSTOMER_FIELDS: Record<string, string> = {
   emergencyContactRelationship: 'Emergency contact relationship',
 };
 
-/* ── Purchase Order — routes/mfg-purchase-orders.ts ───────────────────────── */
 
-/* SEND is the verb no other document here uses: it records that the PO was
-   EMAILED to its supplier, which is the one event in this log that leaves the
-   building. */
 const PO_ACTIONS: Record<string, string> = {
   CREATE:  'Created purchase order',
   UPDATE:  'Updated',
@@ -90,7 +82,6 @@ export const PURCHASE_ORDER_AUDIT_LABELS: AuditLabelDictionary = {
   moneyFields: new Set([...LINE_MONEY, 'totalSen']),
 };
 
-/* ── Purchase Invoice — routes/purchase-invoices.ts ───────────────────────── */
 
 const PI_ACTIONS: Record<string, string> = {
   CREATE:  'Created purchase invoice',
@@ -108,9 +99,6 @@ const PI_FIELDS: Record<string, string> = {
   invoiceDate: 'Invoice date', dueDate: 'Due date',
   currency: 'Currency', exchangeRate: 'Exchange rate', notes: 'Remark',
   totalSen: 'Total', lineCount: 'Lines',
-  /* Written by the POST path, which records whether the AP/GL leg succeeded
-     separately from the status change — a post can move the invoice and still
-     fail to reach the ledger. */
   apPosted: 'Posted to AP ledger', reversalOk: 'AP reversal succeeded',
 };
 
@@ -120,7 +108,6 @@ export const PURCHASE_INVOICE_AUDIT_LABELS: AuditLabelDictionary = {
   moneyFields: new Set([...LINE_MONEY, 'totalSen']),
 };
 
-/* ── Sales Invoice — routes/sales-invoices.ts ─────────────────────────────── */
 
 const SI_ACTIONS: Record<string, string> = {
   CREATE:  'Created invoice',
@@ -145,7 +132,6 @@ export const SALES_INVOICE_AUDIT_LABELS: AuditLabelDictionary = {
   moneyFields: new Set([...LINE_MONEY, 'totalSen', 'paidSen', 'balanceSen']),
 };
 
-/* ── Delivery Order — routes/delivery-orders-mfg.ts ───────────────────────── */
 
 /* The DO keeps its own vocabulary — the owner's 2026-09-12 exception to the
    SUBMITTED rename — so POST is labelled in the delivery order's words rather

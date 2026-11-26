@@ -49,42 +49,29 @@ export const MRP_EXPORT_HEADERS = [
   'State', 'Processing Date', 'Delivery Date', 'Qty Needed',
   'Stock', 'Coverage', 'PO Outstanding', 'Shortage', 'Status', 'Supplier', 'Customer',
 ] as const;
-const COL = MRP_EXPORT_HEADERS.length; // 16
+const COL = MRP_EXPORT_HEADERS.length;
 
 type Cell = string | number | null;
 export type SheetRow =
   | { kind: 'group'; cells: Cell[] }
   | { kind: 'demand'; cells: Cell[]; shortage: boolean };
 
-/* Coverage: 'stock' / 'needs PO', blank for a PO-covered line — that text now
-   lives in PO Outstanding (poOutstandingText below). */
 export function coverageText(l: Pick<MrpLine, 'source' | 'poNumber' | 'poEta'>): string {
   if (l.source === 'stock') return 'stock';
   if (l.source === 'shortage') return 'needs PO';
   return '';
 }
 
-/* The covering PO, verbatim as a string. `·` is U+00B7 with two spaces either
-   side, matching the mockup. Blank unless the line is actually PO-covered —
-   the text used to live in Coverage; it now has its own column. */
 export function poOutstandingText(l: Pick<MrpLine, 'source' | 'poNumber' | 'poEta'>): string {
   if (l.source !== 'po') return '';
-  // allocSourceOf guarantees a PO number here; guard defensively anyway.
   if (!l.poNumber) return '';
   return l.poEta ? `${l.poNumber}  ·  ETA ${fmtDate(l.poEta)}` : l.poNumber;
 }
 
-/* Readiness word, derived from the ONE coverage signal the MRP screen has (there
-   is no separate SO workflow status in the plan): stock → READY, an outstanding
-   PO → IN PRODUCTION, an uncovered line → CONFIRMED (the order is confirmed and
-   awaiting a PO). */
 export function statusText(source: MrpLine['source']): string {
   return source === 'stock' ? 'READY' : source === 'po' ? 'IN PRODUCTION' : 'CONFIRMED';
 }
 
-/* The supplier column (FULL name): a covered (PO) line shows the covering PO's
-   supplier; an uncovered (shortage) line shows the SKU's main/first bound
-   supplier (what a PO would be raised against); a stock line shows nothing. */
 export function supplierText(sku: MrpSku, l: Pick<MrpLine, 'source' | 'poSupplierName'>): string {
   if (l.source === 'po') return l.poSupplierName ?? '';
   if (l.source === 'shortage') {
@@ -95,10 +82,6 @@ export function supplierText(sku: MrpSku, l: Pick<MrpLine, 'source' | 'poSupplie
   return '';
 }
 
-/* Item Description 2 for a sofa piece: sofaSetsToSkus stores the module's
-   variantLabel as "<itemCode> · <fabric/spec>" (or just the itemCode when there
-   is no spec). The v7 layout puts the code in its own column, so strip the
-   prefix here to leave only the fabric / special text. */
 export function sofaSpec(itemCode: string, variantLabel: string | null): string {
   if (!variantLabel || variantLabel === itemCode) return '';
   const pfx = `${itemCode} \u00b7 `;
@@ -108,8 +91,6 @@ export function sofaSpec(itemCode: string, variantLabel: string | null): string 
 const isoDay = (iso: string | null): string => (iso ? iso.slice(0, 10) : '');
 const blankRow = (): Cell[] => Array<Cell>(COL).fill(null);
 
-/* Build one demand/piece row (columns A..P). `warehouse`/`stock`/`spec` come
-   from the SKU; the rest from the SO line. */
 function demandRow(opts: {
   warehouse: string; itemCode: Cell; spec: string; sku: MrpSku; line: MrpLine;
 }): SheetRow {
@@ -117,21 +98,14 @@ function demandRow(opts: {
   const cells = blankRow();
   cells[0] = warehouse;
   cells[1] = itemCode;
-  // col 2 (Description) stays blank on a demand row — it lives on the group header.
   cells[3] = spec;
   cells[4] = line.soDocNo;
   cells[5] = line.customerState ?? '';
   cells[6] = isoDay(line.processingDate);
-  // An undated line is planned LAST — the page tags it "No date" rather than blank.
   cells[7] = line.deliveryDate ? isoDay(line.deliveryDate) : 'No date';
   cells[8] = line.qty;
-  // col 9 (Stock) stays blank on a demand row — it's a SKU-level total, and
-  // repeating it on every line under the group header was noise (owner
-  // 2026-09-17: "idw repetitive below just 6 on first row can already").
   cells[10] = coverageText(line);
   cells[11] = poOutstandingText(line);
-  // A covered line's Shortage stays blank rather than a literal 0 — same
-  // owner note: only an actual shortage figure is worth printing.
   cells[12] = line.source === 'shortage' ? line.shortageQty : null;
   cells[13] = statusText(line.source);
   cells[14] = supplierText(sku, line);
@@ -154,22 +128,16 @@ export function buildSheetRows(
   const out: SheetRow[] = [];
   for (const g of models) {
     if (isSofa) {
-      // Group header keyed by the SO — customer/state/dates are shared by every
-      // line of the order, so read them off the first line (a sofa group always
-      // has at least one module with at least one line).
       const first = g.variants[0].lines[0];
       const head = blankRow();
       head[0] = g.warehouseCode ?? g.warehouseName ?? '';
-      head[1] = g.itemCode; // the SO doc no
+      head[1] = g.itemCode;
       head[2] = g.description ?? '';
       head[5] = first.customerState ?? '';
       head[6] = isoDay(first.processingDate);
       head[7] = first.deliveryDate ? isoDay(first.deliveryDate) : 'No date';
       head[8] = g.qtyNeeded;
       head[9] = g.stock;
-      // PO Outstanding on the header is the SAME rollup the on-screen group row
-      // shows (g.poOutstanding — total qty covered by a PO across every line
-      // below), not the individual PO strings a demand row carries.
       head[11] = g.poOutstanding;
       head[12] = g.shortage;
       head[15] = first.debtorName ?? '';
@@ -182,8 +150,6 @@ export function buildSheetRows(
           }));
         }
       }
-      // Cover / pillow riders — the ACCESSORY shortage lines that ride onto this
-      // sofa's PO, shown under it exactly as on the Sofa tab.
       for (const { sku, line } of accessoryBySoDoc.get(g.itemCode) ?? []) {
         out.push(demandRow({
           warehouse: sku.warehouseCode ?? sku.warehouseName ?? '',
@@ -193,13 +159,12 @@ export function buildSheetRows(
         }));
       }
     } else {
-      // SKU-grouped: header carries the code + description + rolled-up numbers.
       const head = blankRow();
       head[1] = g.itemCode;
       head[2] = g.description ?? '';
       head[8] = g.qtyNeeded;
       head[9] = g.stock;
-      head[11] = g.poOutstanding; // rollup, same as the sofa branch above
+      head[11] = g.poOutstanding;
       head[12] = g.shortage;
       out.push({ kind: 'group', cells: head });
       for (const v of g.variants) {
@@ -215,15 +180,10 @@ export function buildSheetRows(
   return out;
 }
 
-/* Which category each tab asks the server for — the SAME rule the page uses:
-   the Sofa tab requests the full plan (so a sofa's accessory riders are present),
-   Others requests the full plan too, and the rest request their own category. */
 function apiCategoryOf(view: MrpView): string | null {
   return view.value === 'sofa' ? null : mrpCategoryOf(view.value);
 }
 
-// Palette (hex, #RRGGBB) — header dark green, group light green, shortage light
-// red. From the v7 mockup.
 const C_HEADER_FILL = '#14532D';
 const C_HEADER_FONT = '#FFFFFF';
 const C_GROUP_FILL = '#E4F0E9';
@@ -234,7 +194,7 @@ const C_TITLE_FONT = '#0C4D31';
 const C_SUBTITLE_FONT = '#6A6F66';
 
 const COL_WIDTHS = [11, 21, 32, 36, 15, 16, 15, 15, 11, 8, 12, 26, 10, 17, 30, 14];
-const NUM_COLS = new Set([8, 9, 12]); // Qty Needed, Stock, Shortage (0-based)
+const NUM_COLS = new Set([8, 9, 12]);
 
 function subtitle(view: MrpView, asOf: string | null, warehouseLabel: string, filters: MrpFilters): string {
   const grouped = view.value === 'sofa'
@@ -255,17 +215,8 @@ function subtitle(view: MrpView, asOf: string | null, warehouseLabel: string, fi
 export type WorkbookMeta = { asOf: string | null; warehouseLabel: string; filters: MrpFilters };
 export type SheetSpec = { view: MrpView; rows: SheetRow[] };
 
-/* One data/header cell for write-excel-file. A group/shortage row paints the
-   WHOLE row (every column, empty ones included), matching the v7 mockup, so an
-   empty cell in such a row still carries the fill; an empty cell in a plain row
-   is `null` (empty, unstyled). */
 function toXlsxCell(value: Cell, col: number, fill: string | null, groupBold: boolean): WxlCell {
   const has = value !== null && value !== '';
-  // PO Outstanding (col 11) carries a NUMBER on a group header row (the qty
-  // rollup) and a STRING on a demand row (the PO + ETA text) — so type is
-  // decided per-value there, not by a fixed column. Every other numeric
-  // column is number-only, so NUM_COLS still decides for a blank cell (no
-  // value to read a type from).
   const isNum = has ? typeof value === 'number' : NUM_COLS.has(col);
   if (!has && !fill) return null;
   const cell: NonNullable<WxlCell> = {};
@@ -276,13 +227,10 @@ function toXlsxCell(value: Cell, col: number, fill: string | null, groupBold: bo
   if (isNum) cell.align = 'right';
   if (fill) cell.backgroundColor = fill;
   if (groupBold) { cell.fontWeight = 'bold'; cell.color = C_GROUP_FONT; cell.fontSize = 10; }
-  // A shortage row's Shortage figure reads red + bold.
   if (fill === C_SHORT_FILL && col === 12) { cell.fontWeight = 'bold'; cell.color = C_SHORT_FONT; }
   return cell;
 }
 
-/* Turn one tab's rows into the write-excel-file sheet matrix: title + subtitle
-   (each merged across all columns) + the coloured header + the data rows. */
 function toSheetMatrix(view: MrpView, rows: SheetRow[], meta: WorkbookMeta): WxlSheetData {
   const pad = (): WxlCell[] => Array.from({ length: COL - 1 }, () => null);
   const titleRow: WxlCell[] = [
@@ -314,7 +262,6 @@ export async function buildMrpWorkbookBlob(sheets: SheetSpec[], meta: WorkbookMe
   const writeXlsxFile = (await import('write-excel-file')).default;
   const data: WxlSheetData[] = sheets.map(({ view, rows }) => toSheetMatrix(view, rows, meta));
   const columns = sheets.map(() => COL_WIDTHS.map((w) => ({ width: w })));
-  // Freeze the title + subtitle + header (rows 1-3) on every sheet.
   return writeXlsxFile(data, {
     sheets: sheets.map((s) => s.view.label),
     columns,
@@ -339,7 +286,6 @@ export type ExportMrpWorkbookOptions = {
 export async function exportMrpWorkbook(opts: ExportMrpWorkbookOptions): Promise<void> {
   const { views, warehouseId, includeUndated, filters, asOf, warehouseLabel, onError } = opts;
   try {
-    // Fetch each DISTINCT category once (Sofa + Others both use the full plan).
     const planByCategory = new Map<string | null, Promise<MrpResponse>>();
     const planFor = (category: string | null): Promise<MrpResponse> => {
       const cached = planByCategory.get(category);
@@ -369,7 +315,6 @@ export async function exportMrpWorkbook(opts: ExportMrpWorkbookOptions): Promise
   }
 }
 
-/* Re-exported for a caller that already holds the tabs list. */
 export { mrpViews };
 
 function downloadBlob(blob: Blob, filename: string): void {

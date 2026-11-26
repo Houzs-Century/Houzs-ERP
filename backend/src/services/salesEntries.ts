@@ -26,7 +26,6 @@ export async function nextSalesEntryDocNo(env: Env): Promise<string> {
   return `${prefix}${String(next).padStart(6, "0")}`;
 }
 
-// ── Items ─────────────────────────────────────────────────────
 
 export interface SalesItemInput {
   line_no?: number;
@@ -90,7 +89,6 @@ export async function replaceItems(
   }
 }
 
-// ── Payments ─────────────────────────────────────────────────
 
 export interface SalesPaymentInput {
   paid_at: string;

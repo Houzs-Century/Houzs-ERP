@@ -20,8 +20,6 @@ import styles from './UploadDrawer.module.css';
 /** Where the page lands once the drawer closes after an upload: the account, and the month the file starts in. */
 export type BankUploaded = { accountCode: string; statementId: number; month: string };
 
-/** The file's bytes or its text, through FileReader — the one reader every
-    browser (and the test runner's DOM) has. */
 const readAs = (f: File, as: 'bytes' | 'text'): Promise<ArrayBuffer | string> => new Promise((resolve, reject) => {
   const r = new FileReader();
   r.onload = () => resolve(r.result as ArrayBuffer | string);
@@ -44,9 +42,6 @@ export function BankUploadDrawer({ account, onClose }: { account: string | null;
   const chosen = accounts.find((a) => a.account_code === accountCode) ?? null;
   const bank = chosen?.bank_name ?? chosen?.bank_code ?? '';
   const [file, setFile] = useState<{ name: string; content: string; format: 'CSV' | 'PDF' } | null>(null);
-  /* Which year and month, for a file whose dates carry no year or that has no
-     transactions at all. It never moves a movement: each lands in the month of
-     its own date. */
   const [statementMonth, setStatementMonth] = useState('');
   const [read, setRead] = useState<Read | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
@@ -57,9 +52,6 @@ export function BankUploadDrawer({ account, onClose }: { account: string | null;
     setRefused(null);
     if (!f) { setFile(null); return; }
     if (/\.pdf$/i.test(f.name)) {
-      /* The bank's monthly statement PDF: the browser reads the text with where
-         it was drawn; the server reads the bank's layout. pdf.js is loaded
-         here, on the press, and never for a CSV. */
       void readAs(f, 'bytes')
         .then(async (data) => {
           const { extractPdfText } = await import('../../vendor/scm/lib/pdf-text');
@@ -80,7 +72,6 @@ export function BankUploadDrawer({ account, onClose }: { account: string | null;
     upload.mutate({ accountCode, fileName: file.name, content: file.content, format: file.format, statementMonth: statementMonth || null }, {
       onSuccess: (r) => {
         const notes = [
-          /* Said, because each is a place a reader could think the file was misread. */
           ...(r.joinedPairs > 0 ? [`${plural(r.joinedPairs, 'credit')} had their charge taken back separately and were joined`] : []),
           ...(r.skippedLines > 0 ? [`${plural(r.skippedLines, 'row')} carried no transaction`] : []),
         ];
@@ -129,7 +120,6 @@ export function BankUploadDrawer({ account, onClose }: { account: string | null;
               </select>
             )}
           </div>
-          {/* A setup that cannot read anything says so BEFORE an upload, not as a refusal after one. */}
           {chosen && !chosen.ready && (
             <div className={styles.warn}><AlertTriangle size={14} /> {chosen.bank_code} has no statement columns set up, so nothing can be read from its file yet.</div>
           )}
@@ -140,7 +130,6 @@ export function BankUploadDrawer({ account, onClose }: { account: string | null;
           <label className={drawer.field}>
             <span className={drawer.fieldLabel}>Year and month <span className={drawer.optional}>· optional</span></span>
             <input className={drawer.input} type="month" value={statementMonth} aria-label="Statement month" onChange={(e) => setStatementMonth(e.target.value)} />
-            {/* Said plainly: the field never files a movement into a month — each belongs to the month of its own date. */}
             <span className={styles.hint}>
               For a file whose dates carry no year, or one with no transactions at all (a quiet month&apos;s statement is filed
               under the month chosen here). For a file that prints full dates, naming the month says it covers that whole

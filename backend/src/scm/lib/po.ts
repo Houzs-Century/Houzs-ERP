@@ -1,6 +1,3 @@
-// PO helpers — pure functions for shape validation + print template rendering.
-// Database-touching validation (lane state, !po_issued) lives in the route handler
-// since it requires Supabase client. This file is for pure logic + tests.
 
 import { fmtDate } from '../shared/format';
 
@@ -38,7 +35,6 @@ export function validatePoLineItemsShape(items: unknown): ValidationResult {
   return { ok: true };
 }
 
-// HTML escape for the print template
 function esc(s: string | null | undefined): string {
   if (s == null) return '';
   return String(s)

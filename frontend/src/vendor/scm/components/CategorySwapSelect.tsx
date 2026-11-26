@@ -18,7 +18,6 @@ export function CategorySwapSelect({ kind, id, category }: {
   const qc = useQueryClient();
   const askConfirm = useConfirm();
   const [error, setError] = useState<string | null>(null);
-  // The edit dialogs hold a snapshot of the row, so the saved value is kept here.
   const [current, setCurrent] = useState(category.toUpperCase());
   const save = useMutation({
     mutationFn: (next: string) => authedFetch(`/${kind === 'model' ? 'product-models' : 'mfg-products'}/${id}`, {

@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// BankStatementsTop — the top of Bank statements (the owner's Claude Design
-// redesign, batch 3; "same layout as Merchant reports"): a card per bank
-// account — the lines left to decide on it and where its statements stand —
-// and, for the chosen one, its months by statement month. Then the month's own
-// head: the four steps it walks (statement in, matched, tallied, locked),
-// Statement closes at − Per the ledger = Difference, and what that difference
-// is made of. Every figure is the server's (GET /bank/months and
-// /bank/months/:a/:m); nothing here decides whether a month may lock.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, EyeOff, Landmark, Lock, Upload } from 'lucide-react';
@@ -26,13 +16,11 @@ export const monthShort = (ym: string): string => fmtDate(`${ym}-01`).slice(0, 7
 /** 2026-10 → "October 2026". */
 export const monthTitle = (ym: string): string =>
   new Date(`${ym}-01T00:00:00Z`).toLocaleString('en-MY', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-/* "Sep", not en-MY's "Sept": the design's three letters ("Lock Oct"). */
 const monthWord = (ym: string, month: 'long' | 'short'): string =>
   new Date(`${ym}-01T00:00:00Z`).toLocaleString('en-US', { month, timeZone: 'UTC' });
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 const signed = (sen: number): string => `${sen > 0 ? '+' : sen < 0 ? '−' : ''}${fmt(Math.abs(sen))}`;
 
-/* ── A card per bank account ─────────────────────────────────────────────── */
 
 export type BankCard = { code: string; name: string; bank: string; sub: string; toDecide: number; status: { text: string; tone: BankTone } };
 
@@ -72,7 +60,6 @@ export function BankCards({ cards, selected, onSelect }: { cards: BankCard[]; se
   );
 }
 
-/* ── The months of one account ───────────────────────────────────────────── */
 
 /** A month's pill: a closed month says so; then what keeps it from closing. */
 export function monthPill(m: BankMonth): { text: string; tone: BankTone; dot?: boolean; lock?: boolean } {
@@ -145,7 +132,6 @@ export function MonthStrip({ bank, months, selected, onPick, onUpload }: {
   );
 }
 
-/* ── One month: where it stands ──────────────────────────────────────────── */
 
 /** `from` is To do's own "upload the statement" day, where it falls inside this month. */
 export function MissingBanner({ bank, a, from, onUpload }: { bank: string; a: BankMonthAssembly; from: string; onUpload: () => void }) {
@@ -169,7 +155,6 @@ export function lockReasons(r: Reconciliation, a: BankMonthAssembly, open: numbe
   if (!a.complete) out.push('not covered end to end');
   if (r.closingStatementSen == null) out.push('no closing balance to tally against');
   else if (r.consistent && !r.tallies) {
-    /* The server's unexplained holds the set-aside lines too; said apart. */
     if (asideSen !== 0) out.push(`set-aside lines change the balance by ${fmt(Math.abs(asideSen))}`);
     const rest = (r.unexplainedSen ?? 0) - asideSen;
     if (rest !== 0) out.push(`${fmt(Math.abs(rest))} unexplained`);
@@ -186,13 +171,11 @@ export type MonthFacts = {
   total: number;
   open: number;
   missing: string | null;
-  /** What the lines set aside move the balance by — out of the ledger, on the statement. */
   asideSen: number;
   asideCount: number;
 };
 
 const outstandingCount = (r: Reconciliation): number => r.outstandingPayments.count + r.outstandingReceipts.count;
-/** What the ledger entries not on the bank yet move the difference by (statement − ledger). */
 const outstandingEffect = (r: Reconciliation): number => -(r.outstandingPayments.sen + r.outstandingReceipts.sen);
 const isTallied = (f: MonthFacts): boolean => f.reconciliation.tallies && f.open === 0;
 
@@ -285,7 +268,6 @@ export function DifferenceWalk({ f, onLines, onLedger, onAside }: { f: MonthFact
   const r = f.reconciliation;
   if (r.differenceSen == null) return null;
   const n = outstandingCount(r);
-  /* The set-aside lines are said apart; what is left nobody has accounted for. */
   const unexplained = (r.unexplainedSen ?? 0) - f.asideSen;
   return (
     <div className={styles.walk}>

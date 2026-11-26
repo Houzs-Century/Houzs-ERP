@@ -35,7 +35,6 @@ const cat = (id: string, label: string, kids: LaidNode[], base: number): LaidNod
   const amountSen = kids.reduce((s, k) => s + k.amountSen, 0);
   return { kind: 'category', id, label, amountSen, pct: Math.round((amountSen / base) * 1000) / 10, children: kids };
 };
-/** A view: its sales on 500-0001, its cost of sales nodes, one expense, no other income or tax. */
 const side = (salesSen: number, cost: LaidNode[], costSen: number, expenseSen: number): PnlViewSide => ({
   layout: {
     baseSen: salesSen,
@@ -126,14 +125,12 @@ describe('the table', () => {
     for (const h of ['Actual', 'Performance', 'Forecast', 'Actual − Forecast', 'Performance − Forecast']) {
       expect(heads(t).some((x) => x.startsWith(h))).toBe(true);
     }
-    /* Sales on the same row in every view, then each less the Forecast. */
     const sales = rowText(t, 'SALES OF BEDDING');
     expect(sales).toContain('1,000,000.00');
     expect(sales).toContain('1,200,000.00');
     expect(sales).toContain('1,500,000.00');
     expect(sales).toContain('(500,000.00)');
     expect(sales).toContain('(300,000.00)');
-    /* Performance's own cost line: only it has a figure there. */
     const cost = rowText(t, 'Cost of the goods on the orders');
     expect(cost).toContain('600,000.00');
     expect(rowText(t, 'NET PROFIT')).toContain('350,000.00');
@@ -174,7 +171,6 @@ describe('the table', () => {
 });
 
 describe('by month', () => {
-  /** A period's reply: each view's sales on 500-0001, its cost half of it; the Forecast where the period has one. */
   const reply = (actualSen: number, perfSen: number, forecastSen: number | null): PnlViewsPayload => ({
     from: '', to: '', months: [],
     actual: side(actualSen, [acct('601-0001', 'PURCHASE OF BEDDING', actualSen / 2, actualSen)], actualSen / 2, 0),
@@ -188,7 +184,6 @@ describe('by month', () => {
     [PATH('2026-10-01', '2026-10-31')]: reply(200_000_00, 260_000_00, 250_000_00),
     [PATH('2026-09-01', '2026-09-30')]: reply(100_000_00, 120_000_00, null),
   };
-  /** A row's amounts, column by column, the % beside left out. */
   const amounts = (t: HTMLElement, text: string) => {
     const row = within(t).getAllByRole('row').find((r) => r.textContent.includes(text))!;
     return within(row).getAllByRole('cell').map((td) => td.textContent.replace(td.querySelector('[data-pct]')?.textContent ?? '', ''));
@@ -212,7 +207,6 @@ describe('by month', () => {
       '200,000.00', '260,000.00', '60,000.00',
       '100,000.00', '120,000.00', '20,000.00',
     ]);
-    /* Performance's own cost line: Actual has none there, so the difference is Performance's. */
     expect(amounts(t, 'Cost of the goods on the orders')).toEqual([
       '', '355,000.00', '355,000.00', '', '165,000.00', '165,000.00', '', '130,000.00', '130,000.00', '', '60,000.00', '60,000.00',
     ]);

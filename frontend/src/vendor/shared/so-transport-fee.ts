@@ -17,8 +17,6 @@ export type TransportFeeProblem = { code: string; message: string; field: string
 /** The catalog service code the Transport fee box writes its line under. */
 export const TRANSPORT_FEE_ITEM_CODE = 'TRANSPORTATION CHARGES';
 
-/** States whose orders need a transport fee. Matched on the upper-cased,
- *  space-collapsed name, so the AutoCount spellings pass too. */
 const FEE_STATES: ReadonlySet<string> = new Set([
   'SABAH', 'SARAWAK', 'LABUAN', 'KELANTAN', 'TERENGGANU', 'TRENGGANU', 'PERLIS', 'SINGAPORE',
 ]);
@@ -38,8 +36,6 @@ export type TransportFeeLine = {
   itemCode: string | null;
   description: string | null;
   itemGroup: string | null;
-  /** The line's amount after discount, in sen; null when the caller cannot
-   *  know it (a live-check payload without prices), which is not judged. */
   amountSen: number | null;
 };
 

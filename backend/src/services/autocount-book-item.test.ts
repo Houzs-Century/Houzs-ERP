@@ -1,5 +1,3 @@
-// autocount-book-item — the book's Item Description, Item Group and UOM for a
-// line, from the generated live-book snapshot (autocount-item-master.ts).
 import { describe, expect, it } from 'vitest';
 import { AC_ITEM_MASTER_ROWS, AC_ITEM_MASTER_TSV } from './autocount-item-master';
 import { acBookItemIndex, bookLineItem } from './autocount-book-item';
@@ -41,8 +39,6 @@ describe('bookLineItem', () => {
   });
 
   it('falls back to the ERP values, category and UOM in capitals, when the book has no such item', () => {
-    /* The item code is whatever the write-back's resolver answers — for a code the
-       book never held that is the ERP code itself (its erp-canonical rule). */
     const r = resolveAcItemCode('NOT-A-REAL-CODE-XYZ', {});
     expect(bookLineItem({ itemCode: 'NOT-A-REAL-CODE-XYZ', description: ' Our words ', category: 'accessory', uom: 'unit' }, null)).toEqual({
       itemCode: r.ok ? r.acItemCode : 'NOT-A-REAL-CODE-XYZ', resolved: r.ok, inBook: false,
@@ -53,9 +49,6 @@ describe('bookLineItem', () => {
   });
 
   it('forwards the write-back binding: where the map is ambiguous, a binding naming a book item decides the code', () => {
-    /* 9028-1S has several book items in the cutover map; with no supplier the
-       resolver answers the ERP code (autocount-item-code.test.ts). A binding to
-       one of those items is the tie-breaker the write-back uses. */
     const erp = { itemCode: '9028-1S', description: null, category: 'sofa', uom: 'unit' };
     const without = bookLineItem(erp, null);
     const bound = bookLineItem(erp, null, { bindings: new Map([['9028-1S', 'AMN-SF9028 SOFA']]) });

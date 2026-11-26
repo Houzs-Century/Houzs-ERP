@@ -98,8 +98,6 @@ export function buildPiReturnablePool(
   return poolOf(rows, postedGrnNumberById, (r) => invoicedQtyByGrnItem.get(r.id) ?? 0);
 }
 
-/* `capOf` answers how much of a row this source may return (0 = not this
-   source's row); the receipt's own remaining is always the outer cap. */
 function poolOf(
   rows: readonly GrnLineRow[],
   postedGrnNumberById: ReadonlyMap<string, string>,
@@ -109,7 +107,6 @@ function poolOf(
   const out: ReturnableLine[] = [];
   for (const r of rows) {
     if (seen.has(r.id)) continue;
-    // Only POSTED receipts: a draft receipt's stock has not moved in yet.
     const grnNumber = postedGrnNumberById.get(r.grn_id);
     if (grnNumber === undefined) continue;
     const remaining = Math.min(capOf(r), Math.max(0, (r.qty_accepted ?? 0) - (r.returned_qty ?? 0)));

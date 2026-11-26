@@ -1,27 +1,3 @@
-/**
- * The WRITE half of the delivery-fee derivation: turn the derived
- * `ServiceLineSpec`s into rows, hand them to `scm.rebuild_mfg_so_delivery_lines`
- * under that function's per-doc_no advisory lock, and record the move.
- *
- * It lives here rather than inline in `recomputeDeliveryFeeCore` because of
- * WHERE THE LOCK IS. The RPC locks; the derivation READS before it. Two line
- * PATCHes from one Save — `runSoLineWrites` fans the dirty-line stage out with
- * `Promise.allSettled` (`so-add-lines.ts:184` -> `:124`), while the ADD stage is
- * already sequential for exactly this class of reason — can therefore both
- * derive from the same pre-edit snapshot, and the second write puts the
- * operator's figure back:
- *
- *   P_fee   writes discount_sen = 12500 (250 -> 125), reads, derives 125
- *   P_sofa  reads BEFORE that commit, derives 250 (discount 0)
- *   P_fee   takes the lock, writes 125
- *   P_sofa  takes the lock, writes 250      <- quoted RM 125, invoice RM 250
- *
- * The lock made that ordering deterministic; it never made it impossible.
- * Migration 0314 closes it: the caller passes the operator-owned fee state it
- * derived FROM, the function re-reads that state under the lock, and returns
- * FALSE without writing when it has moved. `stale` here is that FALSE, and the
- * caller re-derives from scratch and tries again.
- */
 import { recordSoAudit } from './so-audit';
 import { todayMyt } from './my-time';
 import { deliveryFeeStateKey, type ServiceLineSpec } from '../shared/service-lines';
@@ -44,9 +20,7 @@ export type LiveDeliveryLine = {
 };
 
 export type DeliveryRebuildOutcome =
-  /** Written. `netFeeSen` is what the header now mirrors. */
   | { status: 'written'; netFeeSen: number }
-  /** Refused: the fee lines moved between the read and the lock. Re-derive. */
   | { status: 'stale' };
 
 /** Build the rebuilt SVC-DELIVERY* rows, exactly as the RPC expects them.
@@ -69,7 +43,7 @@ export function buildDeliveryRebuildRows(
   return specs.map((spec, i) => {
     const disc = Math.min(ctx.discountByCode.get(spec.itemCode) ?? 0, spec.totalSen), net = spec.totalSen - disc;
     return {
-      doc_no: ctx.docNo,                              // NOT NULL — omitting it silently dropped the line (the bug)
+      doc_no: ctx.docNo,
       line_no: ctx.keptMaxLineNo >= 0 ? ctx.keptMaxLineNo + 1 + i : null,
       line_date: lineDateToday,
       debtor_name: ctx.debtorName,
@@ -129,8 +103,6 @@ export async function applyDeliveryFeeRebuild(
   },
 ): Promise<DeliveryRebuildOutcome> {
   const { docNo, sourceDocNo, rows, liveLines } = args;
-  /* company_id is NOT passed: the RPC reads it off the SO header, so a rebuilt
-     line can never land in another company (mig 0083 made it NOT NULL). */
   const netFeeSen = rows.reduce((s, r) => s + Number(r.total_sen ?? 0), 0); // header mirrors the LINES: net after discounts (owner 2026-08-07)
   const expectState = deliveryFeeStateKey(liveLines);
   if (expectState === null) {
@@ -144,9 +116,6 @@ export async function applyDeliveryFeeRebuild(
     p_rows: rows,
     p_expect_state: expectState,
   });
-  /* FALSE is not a failure — it is the lock telling us our inputs are stale.
-     Nothing was written, so there is nothing to undo and nothing to log as an
-     error; the caller re-reads and derives again. */
   if (!rebuildErr && rebuilt === false) return { status: 'stale' };
   if (rebuildErr) {
     if (sb?.__atomicCommand === true) throw new Error(`Delivery line rebuild failed: ${rebuildErr.message}`);

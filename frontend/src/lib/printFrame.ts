@@ -19,13 +19,11 @@ function retitleWhilePrinting(title: string, printing: Window): void {
   const restore = () => {
     if (done) return;
     done = true;
-    // Only undo our own change: a page that retitled itself meanwhile keeps its title.
     if (document.title === name) document.title = prev;
   };
   document.title = name;
   printing.addEventListener("afterprint", restore, { once: true });
   if (printing !== window) window.addEventListener("afterprint", restore, { once: true });
-  // Some browsers never fire afterprint for an iframe; the dialog is long closed by then.
   window.setTimeout(restore, 60_000);
 }
 

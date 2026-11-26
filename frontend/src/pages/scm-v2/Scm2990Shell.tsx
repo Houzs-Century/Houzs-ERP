@@ -1,25 +1,3 @@
-// Scm2990Shell — the shared app-shell wrapper for every VENDORED 2990's SCM
-// page mounted at a parallel /scm/* route. Extracted from the original
-// SuppliersV2Route so the PO pages (and future domains) can reuse the exact
-// same provider setup instead of each re-declaring it.
-//
-// The vendored page tree expects three things from its host that 2990's
-// provides at its own root but Houzs's main.tsx does not:
-//   1. <NotifyProvider>  — supplies useNotify() (create / save / error toasts).
-//   2. <ConfirmProvider> — supplies useConfirm() (the in-app "are you sure?"
-//      gate the PO detail/list use for Cancel / Reopen / Delete / remove-line).
-//      The Suppliers slice never needed this (the list raises no confirm), so
-//      the original route stubbed confirm with window.confirm; the PO pages DO
-//      call useConfirm(), so it's mounted here for real.
-//   3. dialog-service registration — so authedFetch's 409 short-stock confirm
-//      and any serviceNotify land in THESE in-app dialogs instead of a naked
-//      window.confirm / window.alert. Wired via the bridge below, which now
-//      registers the real useConfirm (not the window.confirm fallback).
-//
-// All providers are scoped to this subtree, so they can't clash with Houzs's
-// own toast / dialog providers. QueryClientProvider + BrowserRouter already
-// exist in main.tsx and @tanstack/react-query is shared, so the vendored hooks
-// just work.
 
 import { useEffect, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
@@ -33,9 +11,6 @@ import { registerDialogService } from '../../vendor/scm/lib/dialog-service';
 import { rememberScmListReturn } from '../../lib/scmListReturn';
 import { prefetchDocCreate } from '../../lib/prefetch-routes';
 
-/** Registers the live confirm + notify fns with the module-level dialog-service
- *  bridge so non-React callers (authedFetch's short-stock gate, query onError
- *  toasts) raise the in-app dialogs. Must render inside BOTH providers. */
 function DialogServiceBridge() {
   const notify = useNotify();
   const confirm = useConfirm();
@@ -53,9 +28,6 @@ function ScmListReturnTracker() {
   const location = useLocation();
   useEffect(() => {
     rememberScmListReturn(location.pathname, location.search);
-    // Warm this list's "New" form chunk while the operator reads the list, so the
-    // New button doesn't cold-load its lazy chunk and flash the skeleton. No-op on
-    // detail/create pages (no `<path>/new` chunk exists for them).
     prefetchDocCreate(location.pathname);
   }, [location.pathname, location.search]);
   return null;
@@ -67,9 +39,6 @@ export function Scm2990Shell({ children }: { children: ReactNode }) {
       <ConfirmProvider>
         <PromptProvider>
           <ChoiceProvider>
-            {/* Print preview for ANY document, opened imperatively from a row
-                menu — inside ChoiceProvider so it sits in the same dialog band
-                as Confirm / Choice / Notify and can use them. */}
             <PrintChainProvider>
             <DialogServiceBridge />
             <VpBrandPromptBridge />

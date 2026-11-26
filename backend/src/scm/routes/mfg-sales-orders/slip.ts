@@ -4,9 +4,6 @@ import { scopeToCompany } from '../../lib/companyScope';
 import { mimeFromKey } from '../../lib/r2';
 import { slipBindings } from '../../lib/slip';
 
-/* GET /:docNo/slip-url — moved out of mfg-sales-orders.ts, which calls this where the block
-   stood, so registration order is unchanged. The body is moved verbatim and left
-   unindented on purpose: source tests anchor on `\nmfgSalesOrders.<verb>(`. */
 export function registerSlipRoutes(mfgSalesOrders: Hono<{ Bindings: Env; Variables: Variables }>): void {
 /* P1 (Owner 2026-06-03, migration 0143) — serve an SO's payment slip so the
    Backend SO detail page can display the proof. (Mirrored the legacy
@@ -22,9 +19,6 @@ export function registerSlipRoutes(mfgSalesOrders: Hono<{ Bindings: Env; Variabl
 mfgSalesOrders.get('/:docNo/slip-url', async (c) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
-  /* This route does not return a row, it streams the R2 OBJECT the row points
-     at — so an unscoped lookup hands over the other company's payment slip
-     itself, not a field of it. */
   const { data: row, error } = await scopeToCompany(sb
     .from('mfg_sales_orders')
     .select('slip_key')

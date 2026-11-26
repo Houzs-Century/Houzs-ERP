@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// statementWidths — the column widths a person drags on a Finance statement
-// (batch 6 §4.1): three per view — the account column, the Total column, and
-// every period column together (they stay aligned). Untouched, a column sizes
-// to what it holds; dragged, it keeps the width it was given, per view
-// (Single, Compare, By month; the Cash flow's Total and By month), in this
-// browser (reportPrefs: fin-reports-colw-v2). A double-click on an edge puts
-// that column back; "Reset column widths" puts the view back.
-// ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { readStatementWidths, writeStatementWidths, type StatementWidths } from './reportPrefs';
@@ -34,7 +25,6 @@ export function useStatementWidths(view: string) {
     return next;
   }), [view]);
 
-  /* A drag starts at the column's drawn width and follows the pointer. */
   const startResize = (group: WidthGroup, e: ReactMouseEvent<HTMLElement>) => {
     e.preventDefault();
     const cell = e.currentTarget.parentElement;

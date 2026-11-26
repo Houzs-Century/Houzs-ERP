@@ -1,10 +1,3 @@
-// Vendored from apps/backend/src/lib/drivers-queries.ts — Drivers CRUD hooks
-// used by the Drivers page (and, in 2990's, the DO driver picker).
-//
-// HOUZS VENDOR NOTE: the source `import { supabase } from './supabase'` was
-// imported but NEVER referenced (all calls go through authedFetch → /api/scm);
-// it is DROPPED exactly as in the other vendored query slices. Everything else
-// is copied verbatim.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -16,34 +9,16 @@ export type DriverRow = {
   phone: string;
   ic_number: string | null;
   vehicle: string | null;
-  // Migration 0195 — in-house staff driver vs outsourced/3rd-party.
-  //
-  // Consumers dual-read `inHouse ?? in_house`, and the camel half is DEAD. The
-  // reason previously given here ("the pg driver camelCases result cols") is
-  // Hookka's rule and is false for Houzs: pg.ts:5-10 deliberately does not
-  // install that transform ("fix the route, do not flip a global transform"),
-  // and these rows never reach the pg driver anyway — they come from PostgREST
-  // over /api/scm/drivers, which returns the snake_case names listed in
-  // scm/routes/drivers.ts:24's COLS. Only the snake half ever resolves. The
-  // reads are kept (`?? ` is free and every sibling SCM surface has the same
-  // shape); the claim is not.
   in_house?: boolean;
   inHouse?: boolean;
   active: boolean;
   created_at: string;
-  /** The 3PL company this person is registered under, or null. */
   threepl_company_id?: string | null;
-  /** Mig 20261107T2000: the warehouse this driver works from. */
   warehouse_id?: string | null;
 };
 
 export type NewDriver = {
-  /** Attach to a 3PL carrier. Setting it forces the row OUTSOURCE server-side. */
   threeplCompanyId?: string | null;
-  /** OPTIONAL since 2026-08-02: the server mints DRV-### when it is absent.
-   *  Still accepted so an import can carry real codes — but no UI sends it,
-   *  and a required text box for a value the system allocates is how DRV-05
-   *  ended up beside DRV-050 with the same driver under both. */
   driverCode?: string;
   name: string;
   phone: string;

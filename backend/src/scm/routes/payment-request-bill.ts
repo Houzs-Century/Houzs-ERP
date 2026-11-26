@@ -44,7 +44,6 @@ const shiftDay = (ymd: string, days: number): string => {
   return d.toISOString().slice(0, 10);
 };
 
-/** The files the body sends as ONE bill's pages — the extract door's own checks. */
 function filesOf(body: Row): { files: BillFile[] } | { error: string; message: string } {
   const raw = Array.isArray(body.files) ? body.files : [];
   if (raw.length === 0) return { error: 'no_files', message: 'Attach the bill first.' };
@@ -64,7 +63,6 @@ function filesOf(body: Row): { files: BillFile[] } | { error: string; message: s
   return { files };
 }
 
-/* ── POST /read-bill ───────────────────────────────────────────────────────── */
 export const readRequestBillHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -77,7 +75,6 @@ export const readRequestBillHandler = async (c: any): Promise<Response> => {
   let exclude: BillProbe['exclude'] = {};
   const requestId = typeof body.requestId === 'string' ? body.requestId.trim() : '';
   if (requestId) {
-    /* A stored bill: the requester's own request, or any for Finance. */
     const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests')
       .select('id, requested_by, pv_id, ap_invoice_id').eq('id', requestId), c).maybeSingle();
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -95,17 +92,12 @@ export const readRequestBillHandler = async (c: any): Promise<Response> => {
     files = got.files;
   }
 
-  /* No reader here is not a refusal: the request still goes, and Finance reads
-     the bill when it answers (pv-extract { fromRequest }). */
   const apiKey = c.env?.ANTHROPIC_API_KEY;
   if (!apiKey) return c.json({ ok: false, reason: 'The bill reader is not set up here — send the request; Finance reads the bill.' });
   const read = await extractOneBill(apiKey, files, requestAiTag(c, 'bill_extract', BILL_MODEL));
   if (!read.ok) return c.json({ ok: false, reason: read.reason });
   const ex = read.extraction;
 
-  /* An event bill is one the reader says names an event — in a company that
-     runs events at all. A failed events read asks for nothing: the requester is
-     never stopped by our own outage. */
   const companySql = activeCompanySql(c, 'p.company_id');
   let hasEvents = false;
   try { hasEvents = await companyHasEvents(c.env.DB, companySql); } catch { hasEvents = false; }
@@ -165,12 +157,9 @@ export const readRequestBillHandler = async (c: any): Promise<Response> => {
   });
 };
 
-/* The same read on the scan queue (lib/ai-read-jobs.ts): the request answers
-   at once and the form polls; the job runs readRequestBillHandler unchanged. */
 export const enqueueRequestBillReadHandler = aiReadEnqueue('pr_read_bill', mayOpen, oneJsonBody);
 export const pollRequestBillReadHandler = aiReadPoll('pr_read_bill', mayOpen);
 
-/* ── GET /bill-matches ─────────────────────────────────────────────────────── */
 export const billMatchesHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -201,7 +190,6 @@ type Bucket = { put: (k: string, v: ArrayBuffer, o?: unknown) => Promise<unknown
 async function putIndexed(c: any, bucket: Bucket, spec: Pick<DocFilesSpec, 'table' | 'fkColumn' | 'keyPrefix'>, companyId: number, docId: string, file: { name: string; mime: string; bytes: Uint8Array }): Promise<Row | null> {
   const sb = c.get('supabase');
   const { data: existing, error: exErr } = await sb.from(spec.table).select('sort_no').eq('company_id', companyId).eq(spec.fkColumn, docId);
-  /* An unreadable index is not "no files yet": nothing is stored on a guess. */
   if (exErr) return null;
   const sortNo = ((existing ?? []) as Row[]).reduce((m, r) => Math.max(m, Number(r.sort_no ?? 0)), 0) + 1;
   const key = `${spec.keyPrefix}/${companyId}/${docId}/${crypto.randomUUID()}.${EXT[file.mime] ?? 'bin'}`;
@@ -238,11 +226,9 @@ export const uploadOfficialDocHandler = async (c: any): Promise<Response> => {
   if (!bucket) return c.json({ error: 'r2_not_configured', reason: 'R2 binding SLIPS not configured' }, 500);
   const file = { name: String(body.fileName ?? '').trim() || 'official-invoice', mime, bytes };
 
-  /* On the request itself, as the official invoice. */
   const kept = await putIndexed(c, bucket, { table: 'acc_payment_request_files', fkColumn: 'request_id', keyPrefix: 'payment-request-files' }, co.companyId, String(req.id), file);
   if (!kept) return c.json({ error: 'save_failed', reason: 'The file could not be indexed on the request.' }, 500);
 
-  /* The bill's live payments: every instalment's answer. */
   const rootId = String(req.parent_request_id ?? req.id);
   const { data: kin, error: kErr } = await sb.from('acc_payment_requests').select('id, pv_id, ap_invoice_id, bill_no, bill_total_sen, parent_request_id')
     .eq('company_id', co.companyId).or(`id.eq.${rootId},parent_request_id.eq.${rootId}`);
@@ -258,7 +244,6 @@ export const uploadOfficialDocHandler = async (c: any): Promise<Response> => {
   const dErr = pvs.error ?? apis.error;
   if (dErr) return c.json({ error: 'load_failed', reason: dErr.message }, 500);
 
-  /* What the reader reads off it against the proforma — said, never decided. */
   let note: string | null = null;
   const apiKey = c.env?.ANTHROPIC_API_KEY;
   if (apiKey) {
@@ -279,7 +264,6 @@ export const uploadOfficialDocHandler = async (c: any): Promise<Response> => {
   ] as const) {
     for (const d of rows) {
       if (d.status === 'CANCELLED') continue;
-      /* The file travels with the money, marked or not. */
       await putIndexed(c, bucket, spec, co.companyId, String(d.id), file);
       if (d.official_doc !== 'OWED' && d.official_doc !== 'RECEIVED') continue;
       const { error: upErr } = await sb.from(table).update(stamp).eq('company_id', co.companyId).eq('id', d.id);

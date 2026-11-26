@@ -1,11 +1,3 @@
-/* Remaining-to-deliver per SALES-ORDER LINE id.
- *
- * Moved out of routes/delivery-orders-mfg.ts, where it was a private helper in
- * a 5,589-line file, so that the identity assertion below could be added
- * without growing that file — the file-size gate charges GROWTH and names this
- * as the way to pay. It also puts the function beside `doLineRemaining`, the
- * same shape one document further down the chain.
- */
 import { soDeliverableRemaining } from '../routes/delivery-orders-mfg';
 
 export async function soRemainingByItemId(

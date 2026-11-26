@@ -1,20 +1,3 @@
-// ── AutoCount full snapshots (migration reconciliation) ─────────────
-// Unfiltered copies of AutoCount's Sales Orders and Purchase Order headers
-// into the ac_snapshot_* staging tables (mig 0282).
-//
-// This is NOT another mirror. The live `sales_orders` mirror is filtered:
-// runPull() skips every order routeRegion() rejects, which on 2026-08-12 left
-// it holding 3,208 rows against SO numbers issued up to SO-013214. Because the
-// dropped rows leave no trace, "is the migration data clean yet?" had no
-// answer — a document missing from the ERP and a document the filter removed
-// look identical.
-//
-// So the snapshot stores EVERY row and, for sales orders, records what
-// routeRegion() would have decided (`region_route`, NULL = the live mirror
-// skips it). The filter's losses become a WHERE clause.
-//
-// Read-only against AutoCount, and it writes only to its own staging tables —
-// it can never corrupt the mirror the business runs on.
 
 import type { Env, ACSalesOrder, ACPurchaseOrderDoc } from "../types";
 import { AutoCountClient, dateOnly, routeRegion } from "./autocount";
@@ -31,9 +14,6 @@ export interface SnapshotResult {
   message: string;
 }
 
-// Matches the DO mirror's batch size: big enough that 13k rows is ~33 round
-// trips, small enough that one bad batch loses little and the bound-parameter
-// count stays well inside the driver's limit.
 const FLUSH_AT = 400;
 
 function num(v: unknown): number | null {

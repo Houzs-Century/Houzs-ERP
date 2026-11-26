@@ -1,8 +1,3 @@
-/* Roles & Permissions › Titles (part B): the editor renders one row per active
- * Title from the API payload, a cohort change saves a body the API accepts for
- * that cohort (profile only where the cohort takes one, flags only where it
- * owns them), and Reset removes the stored row. The vocabularies come from the
- * payload — nothing here restates a backend list. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 

@@ -15,10 +15,6 @@ import * as schema from "./schema.pg";
  */
 export function getDb(env: Env) {
   const db = drizzle(getSql(resolveDatabaseUrl(env)), { schema });
-  // Cutover parity: the old SQLite client exposed `db.get<T>(sql)` for
-  // single-row raw queries. postgres-js Drizzle has no `.get`, so add a thin
-  // wrapper over `.execute` returning the first row. (Raw multi-row
-  // `db.all<T>(sql)` sites were converted to `db.execute<T>(sql)` directly.)
   return Object.assign(db, {
     async get<T extends Record<string, unknown> = Record<string, unknown>>(
       query: SQLWrapper | string,

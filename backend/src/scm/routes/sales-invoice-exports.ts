@@ -28,14 +28,8 @@ import { withSoRefDocNos } from '../lib/so-ref-search';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
-/* The list's stamps each read with one `in` list sized for a 100-row page, so
-   the whole filtered set is stamped a page-sized batch at a time. */
 const STAMP_BATCH = 100;
 
-/* The list's derived header columns, a page-sized batch at a time. A failed
-   deposit read leaves the field null; the screen shows the larger outstanding
-   and moves on, a file must not carry a figure nobody could compute. Returns
-   the reason it refused, or null. */
 async function stampSiHeaders(sb: unknown, rows: Array<Record<string, unknown>>, companyId: number | null): Promise<string | null> {
   for (let i = 0; i < rows.length; i += STAMP_BATCH) {
     const batch = rows.slice(i, i + STAMP_BATCH);
@@ -49,10 +43,6 @@ async function stampSiHeaders(sb: unknown, rows: Array<Record<string, unknown>>,
   return null;
 }
 
-/* GET /sales-invoices/export/rows — every invoice the list's filter and the
-   caller's sales scope match, each carrying its lines (lib/si-export-rows.ts),
-   with the list's header stamps and finance strip. `{ salesInvoices, total,
-   lineCount, truncated }`. */
 export async function siExportRowsHandler(c: Ctx) {
   const sb = c.get('supabase');
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));

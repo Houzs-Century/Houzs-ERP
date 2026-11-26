@@ -1,9 +1,3 @@
-/* The 2990 POS Marketing sales lines. Shapes from company 2's live orders
- * (2026-10-08): builds stamped with buildKey + cellIndex, the older unkeyed
- * pairs that store the priced compartment first whichever side it sits on
- * (2990-SO-2607-003), and headrests added after a build was keyed
- * (2990-SO-2608-064). Pinned: one row per sofa build, compartments left to
- * right; everything else 1:1; age on the order date, never the birthday. */
 import { describe, expect, it } from 'vitest';
 import { foldSalesLines, type SalesLinesItem, type SalesLinesOrder, type SalesLinesProduct } from './sales-lines';
 
@@ -33,7 +27,6 @@ describe('foldSalesLines', () => {
     const rows = foldSalesLines(
       [order('SO-1')],
       [
-        // Stored rows come back in uuid order, not line order.
         item('SO-1', 'XAMMAR-2A(RHF)', { lineNo: 1, cellIndex: 1, buildKey: 'build-1', totalSen: 157111 }),
         item('SO-1', 'XAMMAR-1A(LHF)', { lineNo: 0, cellIndex: 0, buildKey: 'build-1', totalSen: 104389 }),
       ],
@@ -142,9 +135,6 @@ describe('foldSalesLines', () => {
   });
 });
 
-/* Margin is the finance tier's (the route passes canViewScmFinance). Shapes off
- * 2990-SO-2608-023: ANNSA-2S RM 3,065 at cost RM 1,386, whose stored
- * line_margin_sen still reads the full price. */
 describe('foldSalesLines — margin', () => {
   const annsa = item('SO-2608-023', 'ANNSA-2S', { lineNo: 0, cellIndex: 0, buildKey: 'build-1', totalSen: 306500, costSen: 138600 });
 

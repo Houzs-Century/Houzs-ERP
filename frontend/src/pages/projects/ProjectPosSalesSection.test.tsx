@@ -1,9 +1,3 @@
-/* The POS Sales section of a Cash & Carry project (layout E9). Pinned: an
-   event with no synced bill still shows the section with its Export and
-   Total Sales buttons; a bill lists by receipt and opens to its item rows
-   with the Disc wording; Total Sales writes the NET takings (paid minus
-   returns) through the project finance PATCH; a viewer without the Sales
-   section sees nothing and fires no read. */
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, test, vi, beforeEach } from "vitest";
 import type { QueryState } from "../../hooks/useQuery";
@@ -85,7 +79,6 @@ describe("ProjectPosSalesSection", () => {
     posQuery = query({ data: response([receipt({ id: 1, receipt_no: "T02-000001", salesman_name: "Farah", salesman_id: 3 })]) });
     mount();
     expect(screen.getByText("POS Sales (1)")).toBeTruthy();
-    /* The first "Total" is the header tile; the table's Total column comes after. */
     expect((screen.getAllByText("Total")[0]!.nextSibling)?.textContent).toBe("RM 90.00");
     const row = screen.getByText("T02-000001").closest("tr")!;
     expect(row.textContent).toContain("Aina");

@@ -29,7 +29,7 @@ const Harness = ({ fillScreen }: { fillScreen?: boolean }) => {
 };
 
 const RECTS: Partial<Record<string, { top: number; bottom: number }>> = {
-  root: { top: 300, bottom: 1850 }, // 50px of toolbar, then the rows
+  root: { top: 300, bottom: 1850 },
   wrap: { top: 350, bottom: 1850 },
 };
 let mainScrollH = 3_000;
@@ -52,15 +52,12 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); mainScrollH = 3_000; });
 
 describe('how tall a frozen table may be', () => {
-  /* The page header clears 64px; the rows start 50px under the table's top:
-     the screen leaves 800 − 64 − 50 − 12 = 674px for them. */
   test('by default, with a lot of page below, it is not boxed: the page scrolls', () => {
     render(<Harness />);
     expect(screen.getByTestId('wrap').style.maxHeight).toBe('');
     expect(screen.queryByTestId('runway')).toBeNull();
   });
 
-  /* 150px of page below the table: the box gives that back, 674 − 138 = 536px. */
   test('by default, with a little page below, it stays frozen and shrinks to fit', () => {
     mainScrollH = 2_000;
     render(<Harness />);

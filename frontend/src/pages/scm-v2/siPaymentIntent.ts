@@ -1,29 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-// siPaymentIntent — the URL contract that carries "open the payment editor"
-// from the Sales Invoice LIST to the Sales Invoice DETAIL screen.
-//
-// WHY A SHARED MODULE FOR ONE QUERY PARAM. Because the last one was written on
-// only one side and nobody could tell. The list navigated to
-// `?tab=payments&record=1` and NOTHING in the app ever read `tab` or `record` on
-// a sales invoice — `SalesInvoiceDetailV2` calls `useSearchParams()` and never
-// calls `.get()` at all. So "Record payment" on the list opened the invoice and
-// then sat there: the button did nothing, which is the single worst shape a bug
-// takes here (CLAUDE.md: a failure that reaches nobody). A param written by one
-// file and read by another, with no shared definition, is unfalsifiable — there
-// is nothing a test can hold. This module IS the thing a test can hold.
-//
-// WHY THE LIST DELEGATES AT ALL. The amount has to be decided on the screen
-// that can tell "the order collected nothing" from "we could not read the
-// order". `GET /sales-invoices/:id` answers that with `orderDepositUnavailable`;
-// the LIST rows carry only `so_deposit_applied_sen`, and
-// `siDepositAppliedSen` reads absent/null as 0 — deliberately, because for a
-// DISPLAYED figure over-stating what is owed is the safe direction. For a figure
-// that is about to be BOOKED AS CASH it is the dangerous one: the outstanding
-// would fall back to the full total and Mark paid would record the customer's
-// deposit a second time. So the list never computes a receipt; it hands the
-// intent to the detail screen and the detail screen computes it (markPaidPlan).
 
 /**
  * `open`    — show the payments editor as it is (the list's "Record payment").
@@ -89,8 +66,6 @@ export function useSiPaymentIntent(args: {
   const navigate = useNavigate();
   const location = useLocation();
   const doneFor = useRef<string | null>(null);
-  /* The callbacks are re-created every render and are deliberately NOT in a
-     dependency array; `doneFor` is what makes this run once. */
   useEffect(() => {
     const { invoiceId, ready, onOpen, onBalance } = args;
     if (!invoiceId || !ready || doneFor.current === invoiceId) return;

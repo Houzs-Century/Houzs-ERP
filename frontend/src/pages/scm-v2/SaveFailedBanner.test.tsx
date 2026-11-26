@@ -27,8 +27,6 @@ describe("SaveFailedBanner", () => {
   });
 });
 
-/* A source pin: the editor page is too large to mount for one banner, and the
-   defect was the page rendering a plain div that never scrolled. */
 describe("the Sales Order editor renders its Save failure through SaveFailedBanner", () => {
   it("uses the banner, and no longer renders the bare 'Save failed.' div", () => {
     expect(rawDetailEditor).toMatch(/<SaveFailedBanner message=\{saveError\}/);

@@ -18,7 +18,6 @@ const base = (over: Req): Req => ({
 });
 let requests: Req[] = [];
 let isFinance = false;
-/* A failed read of one request (the list itself loaded). */
 let detailFail: Error | null = null;
 const detailRefetch = vi.fn();
 const createAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({ id: 'r-new' }) }));
@@ -27,7 +26,6 @@ const uploadAsync = vi.fn(async (_b: Req) => ({ ok: true }));
 const returnMutate = vi.fn();
 /* 申请付余额 (item 2, 2026-10-01). */
 const balanceAsync = vi.fn(async (_b: Req) => ({ ok: true, request: base({ id: 'r-bal' }), overTotal: false }));
-/* The bill reader's answer for the photo being attached (item 1, 2026-10-01). */
 const readAsync = vi.fn(async (_b: Req): Promise<Req> => ({
   ok: true, bill: { billNo: 'MLE-0925', billDate: '2026-09-01', totalSen: 850_000, vendorName: 'MLE EVENTS SDN BHD' },
   hasEvents: true, eventBill: false, eventSuggestions: [], matches: [],
@@ -89,7 +87,6 @@ describe('MobilePaymentRequests', () => {
     fireEvent.focus(screen.getByLabelText('Event'));
     fireEvent.mouseDown(screen.getByText(/MLE @ PWCC/));
     fireEvent.change(screen.getByLabelText("Payee's bank"), { target: { value: 'Maybank' } });
-    /* No photo yet: nothing is sent, and the sheet says what is missing. */
     fireEvent.click(screen.getByText('Send to Finance'));
     expect(screen.getByText('Still needed: a photo of the bill.')).toBeTruthy();
     expect(createAsync).not.toHaveBeenCalled();
@@ -111,7 +108,7 @@ describe('MobilePaymentRequests', () => {
     isFinance = false;
     render(<MobilePaymentRequests onBack={() => undefined} />);
     expect(screen.getByText('Bank confirmed')).toBeTruthy();
-    fireEvent.click(screen.getAllByText('Returned').at(-1)!.closest('button')!); // the row, not the filter chip
+    fireEvent.click(screen.getAllByText('Returned').at(-1)!.closest('button')!);
     expect(screen.getByText('Returned by Chew: Attach the organiser invoice')).toBeTruthy();
     fireEvent.click(screen.getByText('Fix and send again'));
     expect(screen.getByText('Send again')).toBeTruthy();
@@ -176,7 +173,6 @@ describe('the phone form filled from the bill', () => {
     fireEvent.change(screen.getByLabelText('Take a photo of the bill'), { target: { files: [new File(['jpg'], 'page-1.jpg', { type: 'image/jpeg' })] } });
     await waitFor(() => expect((screen.getByLabelText('Pay to') as HTMLInputElement).value).toBe('HOUZS VENTURE HOLDINGS SDN BHD'));
     expect((screen.getByLabelText('What is it for') as HTMLTextAreaElement).value).toBe("Payroll cost share — Aug'26 · adjustment");
-    /* They change what it is for — the next page does not take it back. */
     fireEvent.change(screen.getByLabelText('What is it for'), { target: { value: 'HC share of Aug payroll' } });
     fireEvent.change(screen.getByLabelText('Take a photo of the bill'), { target: { files: [new File(['jpg'], 'page-2.jpg', { type: 'image/jpeg' })] } });
     await waitFor(() => expect((screen.getByLabelText('Account no.') as HTMLInputElement).value).toBe('123-4567-8901'));
@@ -221,8 +217,6 @@ test('the phone form takes a note to Finance, sent trimmed; the request shows it
   expect(createAsync.mock.calls[0]![0]).toMatchObject({ note: 'Pay before Friday' });
 });
 
-/* Regression: a failed read of one request said "Not found", which reads as
-   deleted. Only a 404 says that now; any other failure offers Retry. */
 test('a request that fails to load says so and offers Retry; a 404 still says Not found', () => {
   requests = [base({})]; isFinance = false;
   detailFail = Object.assign(new Error('The server took too long to answer.'), { status: 504 });

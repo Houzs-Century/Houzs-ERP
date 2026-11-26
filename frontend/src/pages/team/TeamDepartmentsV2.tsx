@@ -15,13 +15,6 @@ import { ListSkeleton } from "../../components/Skeleton";
 import type { TeamMember, Department } from "../../types";
 import { buildDeptNodes, type DeptNode } from "./teamShared";
 
-/* Departments — design handoff screen 05. Card grid for a company-wide
- * headcount scan; a department with no lead surfaces as a red card. Clicking
- * a card opens that department's roster in the Directory (same right-pane
- * table, scoped). The lead is a REAL field since mig-pg 0331 (set from the Edit
- * panel); when none is set it falls back to the derived one (deriveDeptLead) and
- * the card marks it "derived". headcount_target, when set, is the card's
- * denominator ("active / target"). */
 
 const DEPT_PALETTE = [
   "64748b", "3b82f6", "06b6d4", "10b981",
@@ -194,7 +187,6 @@ function DeptCard({
         <span className={cn("font-money text-[13px]", noLead ? "text-err" : "text-ink")}>
           {counts.active}
           {target != null ? (
-            /* Planned headcount (mig-pg 0331) takes the denominator when set. */
             <span className={cn("text-[11px]", noLead ? "text-err" : "text-ink-muted")}>
               {" "}/ {target}
             </span>
@@ -283,11 +275,9 @@ function DeptEditor({
   const dialog = useDialog();
   const [name, setName] = useState(dept?.name ?? "");
   const [description, setDescription] = useState(dept?.description ?? "");
-  // The reference-number segment (OPS-ANN-2609-0001): 2–4 letters, unique.
   const [code, setCode] = useState(dept?.code ?? "");
   const codeOk = code.trim() === "" || /^[A-Za-z]{2,4}$/.test(code.trim());
   const [color, setColor] = useState(dept?.color ?? DEPT_PALETTE[0]);
-  // Lead + headcount target (mig-pg 0331). "" = no lead / no target.
   const [leadUserId, setLeadUserId] = useState<string>(
     dept?.lead_user_id != null ? String(dept.lead_user_id) : "",
   );
@@ -296,8 +286,6 @@ function DeptEditor({
   );
   const [busy, setBusy] = useState(false);
 
-  // Lead candidates — the department's own members (active first), non-disabled.
-  // A brand-new department has none, so the Leadership section only shows on edit.
   const leadOptions = useMemo(
     () =>
       users
@@ -317,8 +305,6 @@ function DeptEditor({
         code: code.trim() ? code.trim().toUpperCase() : null,
       };
       if (dept) {
-        // Lead / headcount ride only on the edit path — a new department has no
-        // members to lead yet. "" clears each (null).
         await api.patch(`/api/departments/${dept.id}`, {
           ...base,
           lead_user_id: leadUserId === "" ? null : Number(leadUserId),
@@ -463,10 +449,6 @@ function DeptEditor({
         </div>
       </PanelSection>
 
-      {/* Leadership — only on an existing department (a new one has no members
-          to lead yet). The lead is now a REAL choice, not the manager_id
-          inference; leaving it blank keeps the derived-lead fallback and the
-          red "No lead" state. */}
       {dept && (
         <PanelSection title="Leadership">
           <div className="flex flex-col gap-3">

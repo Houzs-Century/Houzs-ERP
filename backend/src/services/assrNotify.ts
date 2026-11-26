@@ -27,7 +27,6 @@ import { uplineUserIds } from "./orgScope";
 import { postPersonalNotice } from "./personalNotice";
 import { fmtDateTime } from "../scm/shared/format";
 
-/** users.id rows whose display name matches `name` (lowercased, trimmed). */
 async function resolveUserIdsByName(env: Env, name: string): Promise<number[]> {
   const n = name.trim().toLowerCase();
   if (!n) return [];
@@ -60,9 +59,6 @@ async function resolveUserNamesByIds(env: Env, ids: number[]): Promise<string[]>
   return clean.map((id) => byId.get(id)).filter((s): s is string => !!s);
 }
 
-// The notice is posted from a UTC Worker; fmtDateTime stamps the reassignment
-// moment in Malaysia time (UTC+8, no DST) so the body reads at the wall-clock
-// the office saw. This used to be a fifth hand-rolled copy of that shift.
 const fmtMytDateTime = fmtDateTime;
 
 export async function notifyServiceCaseResponsible(
@@ -71,15 +67,11 @@ export async function notifyServiceCaseResponsible(
     reason: "created" | "reassigned";
     assrNo: string | null;
     customerName: string | null;
-    /** Direct responsible users (assigned_to / assigned_to_2). */
     userIds?: Array<number | null | undefined>;
-    /** Free-text sales_agent name(s) to resolve to users.id. */
     agentNames?: Array<string | null | undefined>;
   },
 ): Promise<void> {
   try {
-    // 1. Collect the PRIMARY responsible ids: explicit assignees + any user
-    //    whose name matches a sales_agent free-text value.
     const primary = new Set<number>();
     for (const v of opts.userIds ?? []) {
       const n = Number(v);
@@ -89,18 +81,14 @@ export async function notifyServiceCaseResponsible(
       if (!name) continue;
       for (const id of await resolveUserIdsByName(env, name)) primary.add(id);
     }
-    if (primary.size === 0) return; // nobody resolvable → nothing to notify
+    if (primary.size === 0) return;
 
-    // 2. Expand each primary id UP the reporting chain (self + all managers),
-    //    then de-dupe the union.
     const targets = new Set<number>();
     for (const id of primary) {
       for (const up of await uplineUserIds(env, id)) targets.add(up);
     }
     if (targets.size === 0) return;
 
-    // 3. English admin copy — no emoji (repo rule). Case number + customer +
-    //    short reason.
     const assr = (opts.assrNo ?? "").trim() || "(new)";
     const customer = (opts.customerName ?? "").trim();
     const forWhom = customer ? ` for ${customer}` : "";
@@ -121,8 +109,6 @@ export async function notifyServiceCaseResponsible(
             .filter((v, i, a) => a.indexOf(v) === i)
             .join(" · ")
         : "";
-    // Timestamp lives in the BODY, not the title, so the title stays a stable
-    // dedup key (postPersonalNotice de-dupes an identical still-unacked notice).
     const stamp = `${fmtMytDateTime(new Date())} MYT`;
     const title =
       opts.reason === "created"

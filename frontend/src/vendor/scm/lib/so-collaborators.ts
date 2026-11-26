@@ -50,8 +50,6 @@ export function collaboratorEntries(
     if (s.id) byId.set(s.id, (s.name || s.staffCode || "").trim());
   }
 
-  /* Deduped because the array is a set on the server but nothing forces that
-     on the wire, and a name printed twice reads as two different people. */
   const seen = new Set<string>();
   const entries: Array<{ id: string; name: string }> = [];
   for (const id of ids) {

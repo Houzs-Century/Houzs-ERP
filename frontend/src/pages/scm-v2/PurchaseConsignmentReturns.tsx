@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseConsignmentReturns — Purchase Consignment Return list, cloned from the
-// polished Purchase Returns list (PurchaseReturnsList.tsx). Same DataGrid UX:
-//   • double-click a row → open the detail page
-//   • right-click → context menu (View · Edit · Cancel)
-//   • click a row → drill-down with full line items
-//
-// Reuses the shared DataGrid + fmtDateOrDash + buildVariantSummary UNCHANGED;
-// only the queries are repointed at `/purchase-consignment-returns` (pc-return
-// hooks) and navigation points at /purchase-consignment-return.
-//
-// Dropped from the PR clone (per scope): the "From Goods Receipt" button that
-// routes to the real GRN list. A new return is raised from the New page (or
-// pre-filled from a Purchase Consignment Receive / Order). The Transfer-From
-// (GRN) column is relabelled to the source Purchase Consignment Receive.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -72,7 +56,6 @@ const buildColumns = (): GridColumn<PrRow>[] => [
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
     accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--hz-c-primary)', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(r.status)}>{r.return_number}</span>,
     searchValue: (r) => r.return_number,
-    /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (r) => r.return_number,
     sortFn: (a, b) => a.return_number.localeCompare(b.return_number),
   },
@@ -99,7 +82,6 @@ const buildColumns = (): GridColumn<PrRow>[] => [
     key: 'receive_number', label: transferFromColumnLabel('pcr'), width: 170, sortable: true, groupable: true,
     accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--hz-c-primary)', fontVariantNumeric: 'tabular-nums' }}>{r.pc_receive?.receive_number ?? '—'}</span>,
     searchValue: (r) => r.pc_receive?.receive_number ?? '',
-    /* Accessor is JSX → export the source receive doc-no string. */
     exportValue: (r) => r.pc_receive?.receive_number ?? '',
     groupValue: (r) => r.pc_receive?.receive_number ?? '(none)',
   },
@@ -118,7 +100,6 @@ const buildColumns = (): GridColumn<PrRow>[] => [
       </span>
     ),
     searchValue: (r) => fmtSen(Number(r.refund_sen ?? 0)),
-    /* Accessor is JSX → export the NUMBER in ringgit so Excel can SUM it. */
     exportValue: (r) => Number(r.refund_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => Number(a.refund_sen ?? 0) - Number(b.refund_sen ?? 0),
@@ -131,14 +112,12 @@ const buildColumns = (): GridColumn<PrRow>[] => [
       </span>
     ),
     searchValue: (r) => statusLabel('pr', r.status),
-    /* Accessor is JSX → export the human status label, not blank. */
     exportValue: (r) => STATUS_LABEL[r.status] ?? r.status.replace(/_/g, ' '),
     groupValue: (r) => STATUS_LABEL[r.status] ?? r.status,
     sortFn: (a, b) => a.status.localeCompare(b.status),
   },
 ];
 
-/* ── Drill-down — per-line breakdown for one return ── */
 type PrItem = Record<string, unknown> & {
   id: string;
   item_code?: string | null;
@@ -243,14 +222,9 @@ const ExpandedLines = ({ pr }: { pr: PrRow }) => {
   );
 };
 
-/* Status TONE for the drawer badge (purchase_return_status enum): POSTED is
-   the live return = warning, COMPLETED = success, CANCELLED = error. */
 const PCT_TONE: Record<string, DrawerTone> = { POSTED: 'warning', COMPLETED: 'success', CANCELLED: 'error' };
 const PCT_LINE_COLS = 'grid-cols-[minmax(0,1fr)_44px_96px]';
 
-/* Quick-view drawer — row click opens the same right slide-over the Sales
-   Order / Purchase Return lists have. Lines ride the SAME detail query the
-   expand chevron uses. */
 export function PurchaseConsignmentReturnDrawer({
   row, onClose, onOpenFull, onEdit, onCancel,
 }: {
@@ -334,7 +308,6 @@ export function PurchaseConsignmentReturnDrawer({
 
 export const PurchaseConsignmentReturns = () => {
   const navigate = useNavigate();
-  /* Row click → quick-view drawer. */
   const [selected, setSelected] = useState<PrRow | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const statusChip = searchParams.get('status') ?? 'all';

@@ -62,7 +62,6 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
   const roadTrack = useLorryRoadTrack(lorryId, date);
   const driven = drivenPath(roadTrack.data, track?.fixes ?? []);
 
-  /* A failed read used to look exactly like "no run today / no position yet". */
   const failed = [day.isError && "today's runs", positions.isError && "the GPS position", trackQ.isError && "today's track"].filter(Boolean);
   return (
     <div className="space-y-3">

@@ -19,7 +19,6 @@ import userEvent from '@testing-library/user-event';
 
 const fetchBlobUrl = vi.fn();
 
-/* Only the network edge is faked — the tile ladder and the viewer run real. */
 vi.mock('../../api/client', () => ({
   api: {
     fetchBlobUrl: (...a: unknown[]) => fetchBlobUrl(...a),
@@ -63,7 +62,6 @@ describe('DoLinePhotoStrip', () => {
     expect(screen.queryByText('err')).toBeNull();
     const [path, typeHint] = fetchBlobUrl.mock.calls[0] as [string, string];
     expect(path).toBe(`${BASE}/${encodeURIComponent(`${KEY}.thumb`)}`);
-    /* One encoded segment — the raw key's slashes must not reach the URL. */
     expect(path).not.toContain('so-items/');
     expect(typeHint).toBe('image/jpeg');
   });
@@ -93,8 +91,6 @@ describe('DoLinePhotoStrip', () => {
 
     await waitFor(() => expect(fetchBlobUrl).toHaveBeenCalled());
     const [path, typeHint] = fetchBlobUrl.mock.calls[0] as [string, string];
-    /* The BASE key, not the `.thumb` the tile shows — the viewer's whole job
-       is the full-resolution image. */
     expect(path).toBe(`${BASE}/${encodeURIComponent(KEY)}`);
     expect(path).not.toContain('.thumb');
     expect(path).not.toContain('so-items/');
@@ -108,7 +104,6 @@ describe('DoLinePhotoStrip', () => {
 
     expect(await screen.findByText('err')).toBeTruthy();
     expect(screen.queryByAltText('Line photo')).toBeNull();
-    // Not a button: a retry that repeats the same failing request is theatre.
     expect(screen.queryByRole('button', { name: /err/i })).toBeNull();
   });
 });

@@ -1,31 +1,9 @@
-// ----------------------------------------------------------------------------
-// fair-report.ts — the PURE gate + shaping math for the Fair Report
-// (GET /scm/reports/fair-report), an exhibition-performance report with three
-// document-stage views (SO / DO / Invoice).
-//
-// WHY A SEPARATE PURE MODULE: the whole correctness surface here is (1) WHO may
-// read WHICH stage — an owner-ruled matrix that must be exactly right — and
-// (2) the money splits (product-vs-service revenue, deposit-by-tender, margin,
-// below-deposit). The codebase tests both by extracting PURE functions and
-// pinning them (lib/fulfillment-costing.ts is the model), NOT by mocking
-// Supabase. Every decision that could be wrong lives here as a plain function
-// the route calls and the tests exercise; the route only fetches + assembles.
-//
-// UNITS: every *_sen value is an integer number of cents (1/100 of MYR).
-// Percentages are plain numbers (e.g. 12.5 == 12.5%).
-// ----------------------------------------------------------------------------
 
 import { isFinanceViewer, isSalesDirectorUser } from '../../services/pmsAccess';
 import { signedBalanceSen } from '../shared/so-outstanding';
 import { isServiceLine } from '../shared/service-sku';
 import type { AuthUser } from '../../services/auth';
 
-// ── Stage ────────────────────────────────────────────────────────────────────
-// 'pnl' is the exhibition P&L view (revenue - three-way fulfillment cost -
-// project_cost_rates overhead = net profit). It is management-only, like do /
-// invoice. Its per-order rows need a fair (project) so the per-brand rate card
-// resolves to exactly one row; with none picked it lists every fair, each on
-// its own card (everyFairPnl).
 export type FairStage = 'so' | 'do' | 'invoice' | 'pnl';
 export const FAIR_STAGES: readonly FairStage[] = ['so', 'do', 'invoice', 'pnl'];
 
@@ -63,9 +41,7 @@ export function isFairManagement(user: AuthUser | null | undefined): boolean {
 
 export interface FairAccessResult {
   allowed: boolean;
-  /** Plain-language reason (humanApiError style) when denied; undefined when allowed. */
   error?: string;
-  /** Which tier the caller resolved to — echoed in the 403 log / response meta. */
   tier: 'management' | 'sales_director' | 'none';
 }
 
@@ -88,19 +64,11 @@ export function fairReportAccess(stage: FairStage, user: AuthUser | null | undef
     if (management || salesDirector) return { allowed: true, tier };
     return { allowed: false, error: DENY_ORDINARY, tier };
   }
-  // stage === 'do' || 'invoice' || 'pnl' — management only.
   if (management) return { allowed: true, tier };
   if (salesDirector) return { allowed: false, error: DENY_SD_BEYOND_SO, tier };
   return { allowed: false, error: DENY_ORDINARY, tier };
 }
 
-// ── Tender / payment-method mapping ──────────────────────────────────────────
-//
-// The mfg_sales_order_payments.method vocabulary is a CLOSED enum
-// (merchant | transfer | cash | installment — routes/mfg-sales-orders.ts). The
-// owner's Fair Report labels map it: cash→Cash, merchant→Merchant,
-// installment→Installment, transfer→Online. An unknown method returns null
-// (dropped from the tender split rather than shown under a made-up label).
 export type TenderLabel = 'Cash' | 'Merchant' | 'Installment' | 'Online';
 export const TENDER_LABELS: readonly TenderLabel[] = ['Cash', 'Merchant', 'Installment', 'Online'];
 
@@ -145,7 +113,6 @@ export function paymentMethodsUsed(payments: readonly PaymentRow[]): TenderLabel
   return TENDER_LABELS.filter((t) => seen.has(t));
 }
 
-// ── Money helpers ────────────────────────────────────────────────────────────
 const n = (v: number | null | undefined): number => Number(v ?? 0);
 
 /** margin% = (revenue − cost) / revenue × 100. null when revenue is 0 (a
@@ -179,15 +146,13 @@ export function belowDeposit(o: {
   return n(o.balanceSen) > 0 && n(o.paidSen) <= n(o.depositSen);
 }
 
-// ── stage=so row ─────────────────────────────────────────────────────────────
 export interface FairSoInputs {
-  // header money
-  local_total_sen: number | null;               // amount = product + service
+  local_total_sen: number | null;
   mattress_sofa_sen: number | null;
   bedframe_sen: number | null;
   accessories_sen: number | null;
   others_sen: number | null;
-  service_sen: number | null;                    // service revenue
+  service_sen: number | null;
   mattress_sofa_cost_sen: number | null;
   bedframe_cost_sen: number | null;
   accessories_cost_sen: number | null;
@@ -198,9 +163,9 @@ export interface FairSoInputs {
 }
 
 export interface FairSoMoney {
-  amount_sen: number;          // total = product + service
-  selling_sen: number;         // PRODUCT only (mattress_sofa+bedframe+accessories+others), EXCLUDING service
-  service_rev_sen: number;     // service revenue
+  amount_sen: number;
+  selling_sen: number;
+  service_rev_sen: number;
   cost_by_category: {
     mattress_sofa_cost_sen: number;
     bedframe_cost_sen: number;
@@ -208,9 +173,9 @@ export interface FairSoMoney {
     others_cost_sen: number;
     service_cost_sen: number;
   };
-  total_so_cost_sen: number;   // total_cost_sen
-  goods_cost_sen: number;      // total_cost_sen less the service lines' cost
-  margin_pct: number | null;   // goods only: (selling − goods cost) / selling
+  total_so_cost_sen: number;
+  goods_cost_sen: number;
+  margin_pct: number | null;
 }
 
 /**
@@ -253,8 +218,6 @@ export function fairSoMoney(h: FairSoInputs): FairSoMoney {
   const selling =
     n(h.mattress_sofa_sen) + n(h.bedframe_sen) + n(h.accessories_sen) + n(h.others_sen);
   const serviceRev = n(h.service_sen);
-  // amount = product + service. Prefer the persisted order total; fall back to
-  // the reconstructed sum when local_total_sen is 0/absent.
   const amount = n(h.local_total_sen) || selling + serviceRev;
   const totalCost = n(h.total_cost_sen);
   const goodsCost = totalCost - n(h.service_cost_sen);
@@ -275,16 +238,11 @@ export function fairSoMoney(h: FairSoInputs): FairSoMoney {
   };
 }
 
-// ── stage=do cost comparison ─────────────────────────────────────────────────
 export type DoCostLine = {
   qty: number | null;
   unit_cost_sen: number | null;
-  ship_cost_sen: number | null;   // frozen ship-time FIFO (mig 0143); NULL on legacy DOs
-  /** The line's category. SERVICE lines (delivery fee, installation) are not
-   *  stock and never carry a frozen cost, so they must not decide the LEGACY
-   *  verdict — see the note on `is_legacy`. Absent/unknown counts as stock. */
+  ship_cost_sen: number | null;
   item_group?: string | null;
-  /** SVC-… codes are service lines too (isServiceLine). */
   item_code?: string | null;
 };
 
@@ -327,7 +285,6 @@ export function doCostTotal(lines: readonly DoCostLine[]): {
   return { total_do_cost_sen: total, goods_do_cost_sen: goods, qty, is_legacy: legacy, has_zero_frozen: zeroFrozen };
 }
 
-// ── stage=invoice cost progression ───────────────────────────────────────────
 export type SiCostLine = { qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null };
 
 const siLineCost = (l: SiCostLine): number =>
@@ -356,7 +313,6 @@ export function siGoodsTotals(lines: readonly SiGoodsLine[]): { goods_invoiced_s
   return { goods_invoiced_sen: invoiced, goods_cost_sen: cost };
 }
 
-// ── Summaries (per-stage KPI header cards) ───────────────────────────────────
 export interface FairSoSummary {
   orders: number;
   total_amount_sen: number;
@@ -364,8 +320,8 @@ export interface FairSoSummary {
   total_service_rev_sen: number;
   total_so_cost_sen: number;
   total_goods_cost_sen: number;
-  total_margin_sen: number;      // goods: selling − goods cost
-  margin_pct: number | null;     // goods only
+  total_margin_sen: number;
+  margin_pct: number | null;
   total_balance_sen: number;
   below_deposit_count: number;
   tender_totals: TenderSplit;
@@ -415,7 +371,7 @@ export interface FairDoSummary {
   deliveries: number;
   total_so_cost_sen: number;
   total_do_cost_sen: number;
-  cost_delta_sen: number;   // do − so (positive = cost grew at delivery)
+  cost_delta_sen: number;
   legacy_count: number;
 }
 
@@ -437,10 +393,10 @@ export interface FairInvoiceSummary {
   total_invoiced_sen: number;
   total_so_cost_sen: number;
   total_do_cost_sen: number;
-  total_si_cost_sen: number;   // landed
+  total_si_cost_sen: number;
   total_goods_invoiced_sen: number;
   total_goods_si_cost_sen: number;
-  margin_pct: number | null;     // goods only: goods invoiced vs their landed cost
+  margin_pct: number | null;
 }
 
 export function summarizeInvoice(
@@ -465,14 +421,6 @@ export function summarizeInvoice(
   return s;
 }
 
-// ── stage=pnl — the exhibition P&L ───────────────────────────────────────────
-//
-// Per fair (one PROJECT): revenue = confirmed-SO amount; COGS = the three-way
-// fulfillment cost per order (the most-progressed booked stage wins — landed SI
-// cost if invoiced, else DO ship-time cost if delivered, else the SO category
-// cost); overhead = the project_cost_rates card applied to the fair's revenue.
-// net_profit = revenue − COGS − overhead. Nothing here reads the DB — the route
-// fetches, these functions decide.
 
 /** The per-brand cost-rate card (project_cost_rates, mig 063). Percentages are
  *  plain integers (14 == 14%). `boost_min_sales` is a RINGGIT threshold — the
@@ -490,7 +438,7 @@ export interface FairOverheads {
   transport_sen: number;
   merchandise_sen: number;
   commission_sen: number;
-  commission_pct: number;       // the % actually applied (normal or boost)
+  commission_pct: number;
   commission_is_boost: boolean;
   total_overhead_sen: number;
 }
@@ -517,7 +465,6 @@ export function computeFairOverheads(input: { revenueSen: number; cogsSen: numbe
 
   const cogs = n(input.cogsSen);
   const gpPct = ((rev - cogs) / rev) * 100;
-  // boost_min_sales is a whole-ringgit threshold; compare it to revenue in RM.
   const revenueRm = rev / 100;
   const gpGate = rate.boost_min_gp_pct == null || gpPct >= Number(rate.boost_min_gp_pct);
   const salesGate = rate.boost_min_sales == null || revenueRm >= Number(rate.boost_min_sales);
@@ -540,16 +487,16 @@ export function computeFairOverheads(input: { revenueSen: number; cogsSen: numbe
 export type PnlCostStage = 'so' | 'do' | 'invoice';
 
 export interface FairPnlLineInput {
-  amount_sen: number | null;       // revenue = product + service
-  so_cost_sen: number | null;      // SO category cost (header total_cost)
-  do_cost_sen: number | null;      // Σ linked DO cost, or null when no DO exists
-  si_cost_sen: number | null;      // Σ linked SI cost, or null when no SI exists
+  amount_sen: number | null;
+  so_cost_sen: number | null;
+  do_cost_sen: number | null;
+  si_cost_sen: number | null;
 }
 
 export interface FairPnlLineCost {
   effective_cost_sen: number;
-  effective_cost_stage: PnlCostStage;   // which arm the COGS came from
-  gross_profit_sen: number;           // revenue − effective cost
+  effective_cost_stage: PnlCostStage;
+  gross_profit_sen: number;
   margin_pct: number | null;
 }
 
@@ -586,19 +533,19 @@ export interface FairPnlSummaryRow {
 
 export interface FairPnlSummary {
   orders: number;
-  delivered_orders: number;    // orders that have at least one DO
-  invoiced_orders: number;     // orders that have at least one SI
+  delivered_orders: number;
+  invoiced_orders: number;
   total_revenue_sen: number;
   total_product_rev_sen: number;
   total_service_rev_sen: number;
   total_so_cost_sen: number;
-  total_do_cost_sen: number;         // Σ over orders that have a DO
-  total_si_cost_sen: number;         // Σ over orders that have an SI
-  total_cogs_sen: number;            // Σ effective (most-progressed) cost
-  gross_profit_sen: number;          // revenue − COGS
+  total_do_cost_sen: number;
+  total_si_cost_sen: number;
+  total_cogs_sen: number;
+  gross_profit_sen: number;
   gross_margin_pct: number | null;
   overheads: FairOverheads;
-  net_profit_sen: number;            // gross − overhead
+  net_profit_sen: number;
   net_margin_pct: number | null;
 }
 
@@ -639,14 +586,6 @@ export function summarizeFairPnl(rows: readonly FairPnlSummaryRow[], rate: FairC
   return s;
 }
 
-// ── stage=pnl with no fair picked — every fair ──────────────────────────────
-//
-// Owner 2026/11/02 (the redesign's Sales report): the P&L stage shows WITHOUT a
-// fair picked first — every fair with orders in the period, one line each,
-// and a click opens that fair's own P&L. Each line is summarizeFairPnl over the
-// fair's orders with THE FAIR'S OWN rate card, so it carries exactly the
-// figures the fair's P&L shows once it is picked (COGS at the latest stage,
-// overhead on the card, the boost when the fair qualifies).
 
 /** One order of the period with the fair it belongs to (null: none). */
 export interface FairPnlOrderOfFair extends FairPnlSummaryRow {
@@ -668,9 +607,7 @@ export interface FairPnlFairRow {
   project: string | null;
   project_start_date: string | null;
   project_end_date: string | null;
-  /** The venue its orders were taken at (the commonest on its orders). */
   venue: string | null;
-  /** The fair's brand — the rate card its overhead is priced on. */
   brand: string | null;
   rate_present: boolean;
   summary: FairPnlSummary;
@@ -678,11 +615,9 @@ export interface FairPnlFairRow {
 
 export interface EveryFairPnl {
   fairs: FairPnlFairRow[];
-  /** The period's orders that carry no fair: in no line above. */
   no_fair: { orders: number; revenue_sen: number };
 }
 
-/** The value seen most often (blank ones aside); a tie goes to the first in A–Z. */
 function commonest(values: ReadonlyArray<string | null>): string | null {
   const count = new Map<string, number>();
   for (const v of values) {
@@ -753,16 +688,15 @@ export function dayInWindow(day: string | null, from: string | null, to: string 
   return true;
 }
 
-// ── Filter helpers ───────────────────────────────────────────────────────────
 export interface FairFilters {
-  venue?: string | null;        // venue TEXT (venue_id is a dead scm.venues FK)
-  state?: string | null;        // customer_state
-  project?: number | null;      // project_id (int)
+  venue?: string | null;
+  state?: string | null;
+  project?: number | null;
   branding?: string | null;
-  salesperson?: string | null;  // salesperson_id (uuid)
-  dateFrom?: string | null;     // YYYY-MM-DD (inclusive)
-  dateTo?: string | null;       // YYYY-MM-DD (inclusive)
-  month?: string | null;        // YYYY-MM
+  salesperson?: string | null;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  month?: string | null;
 }
 
 /**
@@ -778,7 +712,6 @@ export function resolveDateWindow(f: Pick<FairFilters, 'month' | 'dateFrom' | 'd
   if (/^\d{4}-\d{2}$/.test(m)) {
     const [y, mo] = m.split('-').map(Number);
     const first = `${m}-01`;
-    // last day of month: day 0 of next month
     const lastDate = new Date(Date.UTC(y, mo, 0));
     const last = `${m}-${String(lastDate.getUTCDate()).padStart(2, '0')}`;
     from = from && from > first ? from : first;

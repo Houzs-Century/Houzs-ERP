@@ -51,28 +51,20 @@ export async function recordSoAudit(
 ): Promise<void> {
   try {
     let actorName = args.actorName ?? null;
-    // Best-effort name snapshot — if caller didn't pass one, look it up
-    // from the staff row. Failure here is silent (we just leave it null).
     if (!actorName && args.actorId) {
       try {
         const { data } = await sb.from('staff').select('name').eq('id', args.actorId).maybeSingle();
         actorName = (data as { name?: string } | null)?.name ?? null;
       } catch {
-        /* swallow */
       }
     }
 
-    // Multi-company (migration 0061): mfg_so_audit_log.company_id is NOT NULL.
-    // Resolve it from the SO being audited (the audit belongs to that SO's
-    // company). Self-contained so no caller has to thread it. Best-effort —
-    // if the lookup fails the whole audit write is already swallowed below.
     let companyId: number | null = null;
     try {
       const { data: soRow } = await sb.from('mfg_sales_orders')
         .select('company_id').eq('doc_no', args.docNo).maybeSingle();
       companyId = (soRow as { company_id?: number | null } | null)?.company_id ?? null;
     } catch {
-      /* swallow — pre-migration / missing SO leaves company_id off (best-effort). */
     }
 
     const { error } = await sb.from('mfg_so_audit_log').insert({
@@ -101,12 +93,6 @@ export async function recordSoAudit(
   }
 }
 
-/* ──────────────────────────────────────────────────────────────────────
-   diffFields — shared helper for UPDATE_DETAILS / UPDATE_LINE handlers.
-   Given a `before` row (snake_case from supabase) and a `patch` body
-   (camelCase from the client) plus an alias map, returns the array of
-   FieldChange objects for fields that actually changed.
-   ────────────────────────────────────────────────────────────────────── */
 export function diffFields(
   before: Record<string, unknown>,
   patchCamel: Record<string, unknown>,
@@ -117,8 +103,6 @@ export function diffFields(
     if (patchCamel[camel] === undefined) continue;
     const fromVal = before[snake];
     const toVal = patchCamel[camel];
-    // Loose equality: treat null and '' as the same, numbers and stringified
-    // numbers as the same. Avoids noisy diffs from JSON round-tripping.
     const a = fromVal == null ? '' : String(fromVal);
     const b = toVal == null ? '' : String(toVal);
     if (a !== b) out.push({ field: camel, from: fromVal ?? null, to: toVal ?? null });

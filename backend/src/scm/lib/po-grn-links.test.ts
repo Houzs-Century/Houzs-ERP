@@ -1,5 +1,3 @@
-/* Sister review G5: the PO's Linked documents list a receipt that holds one of
-   its lines even when the receipt's header names another PO. */
 import { describe, expect, test } from 'vitest';
 import { readPoLinkedGrns, readPoLineLinkedGrnIds } from './po-grn-links';
 

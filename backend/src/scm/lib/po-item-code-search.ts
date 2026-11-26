@@ -1,13 +1,3 @@
-// ---------------------------------------------------------------------------
-// Find a Purchase Order by an item code on one of its lines (Hookka #460: "which
-// PO was this item bought under?"). The PO header has no item code, so the list
-// resolves the matching PO ids first and adds them to its search as an id arm.
-//
-// The ids ride in the list request's URL next to the SO-reference ids
-// (so-ref-search.ts), so both share ONE cap sized to the URL budget
-// (paginate-all.ts URL_QUERY_BUDGET, 3,000 bytes for ids at ~45 bytes per
-// quoted uuid). A code on more POs than the cap keeps the newest POs.
-// ---------------------------------------------------------------------------
 import type { Variables } from '../env';
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { escapeForOr } from './postgrest-search';

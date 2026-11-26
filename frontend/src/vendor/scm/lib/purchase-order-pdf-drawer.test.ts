@@ -1,5 +1,3 @@
-// DEV-74 (Sim 2026-10-13): a bedframe line with a drawer special prints a
-// pull-out picture for the supplier; a line without one prints as before.
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';

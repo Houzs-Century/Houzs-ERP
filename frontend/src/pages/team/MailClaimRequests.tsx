@@ -35,7 +35,6 @@ export function MailClaimRequests() {
       setRejecting(null);
       setReason("");
       reload();
-      // The approved address joins the Google list and the mailbox table.
       void queryClient.invalidateQueries({
         predicate: (q) => q.queryKey[0] === "uq" && String(q.queryKey[1]).startsWith("/api/mail-center"),
       });

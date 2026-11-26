@@ -54,47 +54,25 @@ import {
   type BookFingerprint, type SweepRow,
 } from '../lib/ac-line-order-sweep';
 
-/* Reading the account book is a READ, and this writes nothing at all — so it
-   takes the read keys, not the requeue ones. Rebuilding a document is the
-   narrower act and keeps its narrower gate. */
 const SWEEP_KEYS = ['scm.autocount.read', 'settings.manage'] as const;
 
-/* PostgREST answers a page at a time whatever is asked for, so paging is not
-   optional above a few thousand rows — the sales-order line table is ~60,000. */
 const PAGE = 1000;
 
-/* How many failing documents come back in the LIST. The counts are always
-   complete; this caps what a person reads, and 200 is already more than anyone
-   rebuilds in one sitting. */
 const FAILING_CAP = 200;
 
-/** The columns that decide the ITEM CODE LIST, and only those.
- *
- *  A sweep needs the ordered codes, not the whole payload — so no location, no
- *  photographs, no delivery date, no keys. `variants` and `description2` are
- *  here because the sofa collapse reads both (its echo path compares the stored
- *  AutoCount Desc2 against what the ERP row holds), `cancelled` because `live()`
- *  drops those lines before composing, and `created_at`/`id` because they ARE
- *  the ERP's line order. */
 const LINE_COLS = 'doc_no, item_code, item_group, description, description2, qty, unit_price_sen, variants, cancelled, created_at, id';
 
-/* The SCM routes carry an untyped supabase-js client; matching that here rather
-   than importing a generated type is what every other route in this folder does. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
 type Sb = any;
 
 class PageReadError extends Error {}
 
-/** Read every row a query matches, in pages. */
 async function readAllPages(
   build: () => { range: (a: number, b: number) => PromiseLike<{ data: unknown; error: { message: string } | null }> },
 ): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await build().range(from, from + PAGE - 1);
-    /* THROWN, never `?? []`. A failed page would otherwise reach the comparison
-       as "this document has no lines", and the sweep would report that as a real
-       finding — a defect invented out of our own read error. */
     if (error) throw new PageReadError(error.message);
     const rows = (data ?? []) as Record<string, unknown>[];
     out.push(...rows);
@@ -115,7 +93,6 @@ export const autocountLineSweepHandler = async (
   const sb = c.get('supabase') as Sb;
   const companyId = activeCompanyId(c);
 
-  /* ONE call, the whole book. */
   const read = await callAcRead(c.env, 'line_fingerprints', { Type: 'SO' });
   if (!read.ok) {
     return c.json({
@@ -131,15 +108,11 @@ export const autocountLineSweepHandler = async (
   let headers: Record<string, unknown>[];
   let lineRows: Record<string, unknown>[];
   try {
-    /* The company predicate is the whole tenant boundary on this client — it is
-       the service role, so no policy is evaluated (CLAUDE.md, company scope). */
     headers = await readAllPages(() => sb.from('mfg_sales_orders')
       .select('doc_no, linked_ac_docno')
       .eq('company_id', companyId)
       .not('linked_ac_docno', 'is', null)
       .order('doc_no', { ascending: true }));
-    /* Scoped by the doc numbers this company owns rather than by a column of
-       its own: the line table carries no company_id. */
     const owned = new Set(headers.map((h) => String(h.doc_no ?? '')));
     lineRows = (await readAllPages(() => sb.from('mfg_sales_order_items')
       .select(LINE_COLS)
@@ -166,8 +139,6 @@ export const autocountLineSweepHandler = async (
     return c.json({ error: 'read_failed', reason: (e as Error).message }, 500);
   }
 
-  /* Built ONCE. `resolveAcItemCode` compiles the cutover index on every call
-     that is not handed one, and this loop calls it ~11,000 times. */
   const itemIndex = acItemIndex();
 
   const rows: SweepRow[] = headers.map((h) => {
@@ -179,9 +150,6 @@ export const autocountLineSweepHandler = async (
     try {
       erpCodes = composeDetails(live(lines), { itemIndex, bindings }).details.map((d) => d.ItemCode);
     } catch {
-      /* A sofa build the gate refuses, or an item code the cutover map does not
-         carry. Both mean we cannot say what a send WOULD do, which is its own
-         verdict — never a finding against the book. */
       erpCodes = null;
     }
     return {

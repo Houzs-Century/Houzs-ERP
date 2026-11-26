@@ -1,14 +1,3 @@
-/* A venue already SAVED on an order is what the phone editor shows (owner
- * 2026-06-23: "never override a manual or loaded pick"). A saved venue with no
- * venue_id — 3,219 of 3,242 live orders on 2026-09-24 — used to rank BELOW the
- * salesperson's default venue, and the signed-in user's own default could seed
- * the picker before the order had even loaded. Dormant in production only
- * because those default ids (scm.venues) match nothing in the picker's list;
- * here they DO match, which is the case the fix is for.
- *
- * Same harness as MobileNewSO.fairWindow.test.tsx, plus the venue master and the
- * salesperson list, so a default can actually resolve.
- */
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -55,7 +44,6 @@ const VENUES = [venue("V-DEFAULT", "PJ SHOWROOM"), venue("107", "2990s PJ")];
 const staff = (id: string, venueId: string | null) => ({
   id, staffCode: id, name: id, role: "sales", showroomId: null, venueId, initials: id, color: "#000", active: true, userId: null, email: null, phone: null,
 });
-/* S1 is Scarlett's shape on production: a default venue of her own. */
 const STAFF = [staff("S1", "V-DEFAULT"), staff("S2", null)];
 
 const header = (o: { venue: string | null; salesperson_id: string }) => ({

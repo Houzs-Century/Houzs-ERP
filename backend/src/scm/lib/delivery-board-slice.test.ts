@@ -1,5 +1,3 @@
-/* 2026-10-26: the board re-downloaded 5.4 MB on every edit, 72% of it Delivered
-   rows. state=OPEN leaves them out and carries their per-region count. */
 import { describe, expect, it } from 'vitest';
 import { addSkippedDelivered, boardSlice, splitDeliveredForOpen } from './delivery-board-slice';
 

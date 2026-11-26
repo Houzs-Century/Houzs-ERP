@@ -1,28 +1,3 @@
-// ----------------------------------------------------------------------------
-// assr/case-fields — the ASSR case vocabularies that are NOT the stage pipeline:
-// who a timeline note is addressed to, and the issue-category fallback list.
-// NO React, no query client, no I/O — same contract as ./stages.
-//
-// WHY THIS FILE EXISTS. Both lists were written out twice, once on the desktop
-// page and once on the mobile screen, and one pair had ALREADY drifted:
-//
-//   · NOTE AUDIENCE — desktop's <option>s read "Service (internal)",
-//     "Customer-visible", "Supplier (internal)", "Sales (internal)"; mobile's
-//     `NOTE_AUDIENCE_OPTIONS` read "Service", "Customer", "Supplier", "Sales".
-//     Same four stored values, two different promises. This is the label a
-//     person reads while deciding whether a CUSTOMER will see what they are
-//     about to type, so "Customer" and "Customer-visible" are not stylistic
-//     variants of each other — one states the consequence and the other leaves
-//     the reader to guess it. The explicit wording wins here.
-//   · ISSUE CATEGORY — the same five strings on both surfaces. In sync on the
-//     day this file was written, which is the only interesting thing about it:
-//     the drift above is what the second copy does eventually, not immediately.
-//
-// The stored VALUES are the server's, not ours: `NOTE_CATEGORIES`
-// (backend/src/routes/assr.ts) accepts exactly these four and coerces anything
-// else to "service", and only `customer` is visible outside the team (portal).
-// Change a value here and the note silently lands in the wrong bucket.
-// ----------------------------------------------------------------------------
 
 import type { AssrOrderPo } from "../../../shared/assr-case-pos";
 
@@ -74,8 +49,6 @@ export const ASSR_ISSUE_CATEGORIES = [
   "Installation / assembly issue",
 ] as const;
 
-/* The case's PO readers live in vendor/shared/assr-case-pos so the printed
-   copy (backend routes/assr_print.ts) reads the same value as the screens. */
 export {
   assrOrderPos, assrOrderPoText, assrMergedPos, assrMergedPoText, type AssrOrderPo,
   assrExchangePos, assrExchangePoText, type AssrExchangePo,

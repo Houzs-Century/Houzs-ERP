@@ -29,13 +29,9 @@ export function MediaLightbox({
   index: number;
   onChange: (i: number) => void;
   onClose: () => void;
-  /** API base path that streams an R2 key, e.g. "/api/projects/attachments". */
   baseUrl: string;
-  /** Optional small label rendered at top-left (e.g. "Setup"). */
   badge?: string;
 }) {
-  // Both images and videos participate in prev/next navigation —
-  // documents (PDF/xlsx/docx) are dead-ends visually so they stay out.
   const mediaIndices = useMemo(
     () =>
       items
@@ -98,8 +94,6 @@ export function MediaLightbox({
     setUrl(null);
     let revoked = false;
     api
-      // Re-type octet-stream blobs from the item's known MIME so a PDF renders
-      // inline in the <iframe> below instead of triggering a download.
       .fetchBlobUrl(`${baseUrl}/${item.r2_key}`, item.content_type)
       .then((u) => {
         if (!revoked) setUrl(u);

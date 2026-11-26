@@ -10,7 +10,6 @@ export function windowLabel(earliest: string | null, latest: string | null): str
   return earliest ? `From ${earliest}` : `Until ${latest}`;
 }
 
-/* Spelling variants of one state collapse to one label, so a region's areas read cleanly. */
 const AREA_LABEL: Record<string, string> = {
   "kuala lumpur": "Kuala Lumpur", "wp kuala lumpur": "Kuala Lumpur", "w p kuala lumpur": "Kuala Lumpur",
   "pulau pinang": "Penang", penang: "Penang",

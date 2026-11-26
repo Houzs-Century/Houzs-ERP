@@ -14,9 +14,6 @@ import { scopeToCompanyId } from './companyScope';
 export type SoTransportFeeChange =
   | { kind: 'header'; state: string | null; country: string | null }
   | { kind: 'line'; itemId: string; after: TransportFeeLine | null }
-  /* An amendment: an optional State move plus line ops. A null price keeps the
-     stored price on a CHANGE; on an ADD it takes the catalog price, which this
-     check cannot see, so it is judged as RM 0 (type the fee on the line). */
   | {
       kind: 'amendment';
       state: { state: string | null; country: string | null } | null;
@@ -44,8 +41,6 @@ export async function soTransportFeeEditProblem(
 
   const { data: rows, error: rowsErr } = await sb.from('mfg_sales_order_items')
     .select('id, item_code, item_group, description, qty, unit_price_sen, discount_sen, total_sen, cancelled').eq('doc_no', args.docNo);
-  /* A failed read must not read as "no lines": that would refuse a good edit,
-     or (worse) let one through on a different branch. Say what happened. */
   if (rowsErr) return checkFailed(rowsErr.message);
   const live = ((rows ?? []) as LineRow[]).filter((r) => !r.cancelled);
   const toFee = (r: LineRow): TransportFeeLine => ({

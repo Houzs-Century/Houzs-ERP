@@ -40,7 +40,6 @@ type Spec<R> = {
   body: string;
   pathOf: (r: R) => string;
   docOf: (r: R) => string;
-  /** A post can answer 200 and still report a part that failed. */
   problemOf: (res: unknown) => string | null;
   refresh: QueryKey[];
   onDone: () => void;

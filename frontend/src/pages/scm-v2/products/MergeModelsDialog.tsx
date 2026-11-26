@@ -5,9 +5,6 @@ import { Button } from '../../../components/Button';
 import { Modal } from '../../../vendor/scm/components/Modal';
 import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
 
-/* Merge Product Models into one kept Model (POST /mfg-products/merge/models/*).
-   Check plans and writes nothing; Merge sends back the phrase Check returned, so
-   the server refuses if anything changed in between. */
 
 type Plan = {
   refusals: string[];
@@ -32,7 +29,6 @@ export const MergeModelsButton = ({ codes }: { codes: string[] }) => {
   return (
     <>
       <Button variant="secondary" onClick={() => setOpen(true)}>Merge models</Button>
-      {/* On the page body: inside the page header its top sat under the app's tab bar. */}
       {open && createPortal(<MergeModelsDialog codes={codes} onClose={() => setOpen(false)} />, document.body)}
     </>
   );

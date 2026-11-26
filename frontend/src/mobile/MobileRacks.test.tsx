@@ -1,17 +1,3 @@
-/* A storekeeper must be able to FIND a rack on the phone.
- *
- * Before this screen, `frontend/src/mobile` touched `/warehouse` only to CREATE
- * a rack (MobileModuleList's FORM_RACK). There was no lookup at all, so
- * "which rack is that customer's sofa on" meant walking to a PC.
- *
- * FAILS ON THE PRE-FIX CODE — the screen did not exist.
- *
- * These drive the REAL screen with only `authedFetch` faked, so they cover the
- * read it issues, the search/filters, and the ordering. The ordering assertion
- * is the one that discriminates: rack labels must sort NATURALLY (A2 before
- * A10) through the shared `compareRackLabels`, not as strings — a plain
- * `localeCompare` puts A10 before A2 and the test goes red.
- */
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -82,10 +68,6 @@ const wrap = () => {
 
 describe("the mobile shell reaches this screen", () => {
   it("opens Racks for the DESKTOP rack URL, not a stub", async () => {
-    /* The row and the URL must land on the same screen. `destinationScreen` is
-       what both the menu tap and a typed /scm/warehouses/racks resolve through
-       (MobileApp), so a missing arm shows the "not built for phones" stub while
-       the menu row sits right there. */
     const { destinationScreen, MOBILE_MENU_GROUPS } = await import("./MobileApp");
     expect(destinationScreen("/scm/warehouses/racks", "Racks")).toEqual({ t: "racks" });
     const warehouse = MOBILE_MENU_GROUPS.find((g) => g.group === "Warehouse");
@@ -154,9 +136,6 @@ describe("MobileRacks screen", () => {
   });
 
   it("says the read FAILED rather than showing an empty warehouse", async () => {
-    /* The real shape: vendor `authedFetch` throws an Error carrying `.status`.
-       403 is the case that matters — a position the endpoint refuses must be
-       told the read failed, never shown a warehouse with no racks in it. */
     const refused = Object.assign(new Error("Forbidden"), { status: 403 });
     authedFetch.mockRejectedValue(refused);
     wrap();
@@ -165,11 +144,6 @@ describe("MobileRacks screen", () => {
   });
 
   it("pins the search box and chip row to their own height (no flex grow/shrink)", async () => {
-    /* jsdom has no layout, so this pins the MECHANISM, not the pixels. In a
-       real 375px render both collapsed or ballooned inside the vertical scroll
-       column: `.chips` scrolls sideways (flex min-height drops to 0, shrank to a
-       sliver) and `.searchbar` carries `flex: 1` (grew ~200px tall whenever a
-       search left few results). Measured after the fix: 36px and 32px. */
     const { container } = wrap();
     await screen.findByText("A2");
     expect((container.querySelector(".searchbar") as HTMLElement).style.flex).toMatch(/^(none|0 0 auto)$/);

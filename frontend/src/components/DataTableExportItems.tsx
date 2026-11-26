@@ -31,7 +31,6 @@ export function DataTableExportItems({ className, disabled, sheetLabel, onSheet,
   disabled?: boolean;
   sheetLabel: string;
   onSheet: () => void;
-  /** Only a table that prints passes this; without it there is no PDF line. */
   onPdf?: () => void;
   divider?: boolean;
 }) {
@@ -60,7 +59,6 @@ export function HeaderExportMenu({ at, onClose, onExcel, onPdf }: {
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const pos = useViewportClampedPos(at, ref) ?? { top: at.y, left: at.x };
-  /* Closes the way DataTable's header menu closes: any click away, a scroll, Escape. */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("click", onClose);

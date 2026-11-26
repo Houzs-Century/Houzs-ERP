@@ -48,9 +48,7 @@ export type EmployeeInput = {
   nationality: string;
   icNumber: string;
   passportNumber: string;
-  /** Work permit expiry (YMD) for a foreign worker, "" if none. Feeds the Overview "permits expiring" reminder. */
   workPermitExpiry: string;
-  /** The day this person is due to be confirmed off probation (YMD), "" if none. Feeds the Overview "confirmation due" reminder. */
   confirmDueOn: string;
   isOutsource: boolean;
   payMode: PayMode;
@@ -69,7 +67,6 @@ export type EmployeeInput = {
   taxResidency: TaxResidency | null;
   taxCategory: TaxCategory | null;
   taxChildReliefSen: number | null;
-  /** The names the person goes by on the trip sheet (AMIR), comma-separated. */
   tripNames: string;
 };
 
@@ -111,9 +108,6 @@ export function emptyEmployeeInput(todayYmd: string): EmployeeInput {
   };
 }
 
-/* Two independent number series: own staff EMP-###, outsourced OSC-###, so the
- * prefix alone tells payroll which rules apply. Next = highest existing + 1;
- * hand-typed codes outside the pattern are ignored. */
 export function nextEmpNo(existing: ReadonlyArray<string | null>, isOutsource: boolean): string {
   const prefix = isOutsource ? "OSC" : "EMP";
   const re = new RegExp(`^${prefix}-(\\d+)$`, "i");

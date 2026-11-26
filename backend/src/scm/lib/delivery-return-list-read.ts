@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// delivery-return-list-read — what the Delivery Returns LIST matches, the list
-// row's derived fields, and the lines each row carries, in one place.
-//
-// The list (GET /delivery-returns) and its export (GET /delivery-returns/export/rows)
-// must read the SAME returns for the same caller and query: the same company,
-// the same SALES SCOPE (own + downline unless view-all), the same status. Both
-// build their header read through filterDeliveryReturnList +
-// orderDeliveryReturnList, stamp the SO number and strip finance keys through
-// the functions here, and attach lines through attachDeliveryReturnLines. The
-// list still stops at its screen cap; the export pages to exhaustion.
-//
-// The tab and the search box filter in the BROWSER over this read (the list has
-// always done so); the export applies the same predicate to its rows.
-// ----------------------------------------------------------------------------
 
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { lookupByIds } from './document-line-export';
@@ -24,24 +9,6 @@ import { BRANDING_MAP, LOCATION_MAP, VENUE_MAP } from '../../services/autocount-
 import { toDrListLine, type DrListLine } from './return-line-export-columns';
 import { companyHasAutoCountBook, readReturnBookContext, returnLineBookFacts } from './return-line-book-facts';
 
-/* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
-   subtotals. All are in DR_HEADER_COLS (so they travel in the DR list payload)
-   but must reach ONLY a finance-viewer (lib/houzs-perms.canViewScmFinance).
-   Stripped from every row for a non-finance caller. The DR header carries FOUR
-   categories (no service_sen, unlike SO/DO/SI). Refund/total shown to everyone
-   (local_total_sen / refund_sen) are NOT listed here.
-
-   KEPT LOCAL to the delivery return, deliberately — do NOT "converge" it onto
-   SO_FINANCE_KEYS. It is the finance-shaped subset of DR_HEADER_COLS, and the
-   delivery return speaks a narrower money vocabulary than the SO: no
-   service_sen / service_cost_sen and no deposit_sen (a return takes no
-   deposit). refund_sen is in the header and deliberately NOT here — the refund
-   is what the customer is owed and everyone who passes the access gate may see
-   it, the same line #625 drew and #632 kept. The per-LINE keys ARE shared: they
-   are byte-identical across all seven sales documents, so they live in
-   lib/finance-keys (SO_ITEM_FINANCE_KEYS). */
-/* A per-document subset (see above): the four DR categories and their costs,
-   no service_* and no deposit_*, which SO_FINANCE_KEYS carries. */
 /* eslint-disable no-restricted-syntax -- the delivery return's own header columns, a subset of the shared SO list */
 export const DR_FINANCE_KEYS = [
   'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen',
@@ -50,11 +17,6 @@ export const DR_FINANCE_KEYS = [
 ] as const;
 /* eslint-enable no-restricted-syntax */
 
-/* Full DR header — mirrors the editable DO header shape. The pre-rebuild
-   columns (delivery_order_id / sales_invoice_id / reason / received-inspected-
-   refunded timestamps / inspection_notes) stay; the DO-clone fields added in
-   migration 0102 (debtor metadata / salesperson / address / per-category
-   totals + costs / branding / venue / ref / warehouse) extend it. */
 export const DR_HEADER_COLS =
   'id, return_number, do_doc_no, delivery_order_id, sales_invoice_id, ' +
   'debtor_code, debtor_name, return_date, reason, status, ' +
@@ -68,8 +30,6 @@ export const DR_HEADER_COLS =
   'local_total_sen, total_cost_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'currency, warehouse_id, notes, created_at, created_by, updated_at';
 
-/* No cost / margin columns: the line read never carries them, so no gate is
-   needed on what it returns. */
 export const DR_LINE_READ_COLS =
   'id, delivery_return_id, do_item_id, created_at, item_code, item_group, description, description2, ' +
   'uom, qty_returned, condition, unit_price_sen, discount_sen, line_total_sen, notes, variants';
@@ -131,12 +91,6 @@ type Q = {
 };
 type Sb = { from(table: string): Q };
 
-/* Convert-from column (display-only, audit R8): the DR list already shows its
-   source DO (do_doc_no); resolve the Sales Order behind that DO so the list can
-   also show "From SO", matching the SO/DO/SI lists. Keyed by delivery_order_id
-   -> delivery_orders.so_doc_no, company-scoped. Stamps `so_doc_no` in place and
-   returns the read error: the list shows the rows anyway (the SO number is
-   ancillary), the export refuses. */
 export async function stampDrListSoDocNo(
   sbIn: unknown,
   c: CompanyScopeCtx,
@@ -153,13 +107,6 @@ export async function stampDrListSoDocNo(
   return { error: dos.error ? `delivery orders: ${dos.error}` : null };
 }
 
-/* The book's spellings, stamped on each row for the grid and the file:
-   `ac_agent` — AutoCount's "Agent", by the write-back's own rule (resolveAcAgent:
-   the typed agent through AGENT_MAP, else the salesperson's name through it,
-   else the name); `ac_branding` / `ac_venue` — through BRANDING_MAP / VENUE_MAP
-   as the write-back sends them. For the company whose book it is only; elsewhere
-   the salesperson's name (else the typed agent) and the ERP's own words. Staff
-   names are read by the ids of rows already read under the company scope. */
 export async function stampDrListBookSpellings(
   sbIn: unknown,
   c: CompanyScopeCtx,

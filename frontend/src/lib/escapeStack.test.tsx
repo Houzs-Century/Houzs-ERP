@@ -1,6 +1,3 @@
-/* B22: one Esc closes one layer. Before, every dialog listened on window, so
-   an Esc on a confirm raised from inside an AP invoice popup also closed the
-   popup (and lost what was typed), and the scm ModalOverlay frame ignored Esc. */
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';

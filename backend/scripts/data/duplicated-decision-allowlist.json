@@ -1969,6 +1969,11 @@
       "check": "D2",
       "key": "DELIVERY_ORDER,DELIVERY_RETURN,GRN,PAYMENT_VOUCHER,PURCHASE_INVOICE,PURCHASE_ORDER,SALES_INVOICE,SALES_ORDER ~ DELIVERY_ORDER,DELIVERY_RETURN,GRN,PURCHASE_INVOICE,PURCHASE_ORDER,SALES_INVOICE,SALES_ORDER",
       "why": "TWO DIFFERENT QUESTIONS over the search hit types, differing by PAYMENT_VOUCHER on purpose: globalSearch STATUS_DOC lists the hits that carry a status pill; the AI Connector's SEARCH_TO_FLOW (services/mcp-actions.ts) lists the hits that anchor a relationship map (scm/routes/document-flow.ts), and a payment voucher has no map. Divergence costs a document_flow answer 'no map for this', never a wrong number."
+    },
+    {
+      "check": "D1",
+      "key": "ACCOMMODATION,COGS,COGS_ACCESSORIES,COGS_BEDFRAME,COGS_MATT_SOFA,COMMISSION,CONTRACTOR,DEPOSIT,LICENSE,MARKETING,MERCHANDISE,MISC,PERMIT,RENTAL,SETUP,STAFFING,TRANSPORT,TRANSPORT_FEE,TRANSPORT_SETUP_DISMANTLE|backend/src/services/projects.ts frontend/src/vendor/scm/lib/pms-ledger-categories.ts",
+      "why": "NOT REVIEWED BY THE OWNER YET. The fair ledger cost categories: backend LEDGER_COST_CATEGORIES decides which lines count as cost in the fair P&L; frontend LEDGER_COST_CATS (#2583) is the picker. The pair is older than PR #6050; the scanner only saw it after #6050 deleted the inline comments that kept the backend array over its 4,000-character limit. A divergence would let a user pick a category the P&L does not count. Open item in tasks/TODO.md."
     }
   ]
 }

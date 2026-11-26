@@ -45,7 +45,6 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const INPUT_CLASS =
   'rounded-md border border-border bg-surface px-3 py-2 text-[13px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20';
 
-/** bps -> a human percent. Display only; the integer bps is never mutated. */
 const fmtPct = (bps: number) => `${(bps / 100).toFixed(1)}%`;
 
 /** First and last day of the current Malaysian month — the default period, not
@@ -70,13 +69,7 @@ export const HrCommission = () => {
   const askPrompt = usePrompt();
   const notify = useNotify();
 
-  /* Close and reopen are separate backend keys from scm.hr.read/manage, so the
-     buttons follow those keys and nothing else. Hiding a control the API would
-     refuse is the point: the server is still the authority (it re-checks), this
-     only stops the UI from offering an action that cannot succeed. */
   const { can } = useAuth();
-  // can() already answers true on the `*` wildcard, so Owner / IT Admin hold
-  // both without either key being listed separately.
   const mayClose = can('scm.hr.close');
   const mayReopen = can('scm.hr.reopen');
 
@@ -122,8 +115,6 @@ export const HrCommission = () => {
       danger: true,
     });
     if (!ok) return;
-    /* A reason is mandatory server-side AND in the database. Asked for here so
-       the refusal never arrives as a validation error after the fact. */
     const reason = await askPrompt({
       title: 'Why is this period being reopened?',
       body: 'This is kept with the period permanently, next to your name.',
@@ -191,8 +182,6 @@ export const HrCommission = () => {
                 variant="primary"
                 icon={<Lock {...ICON} />}
                 onClick={onClose}
-                // Closing an empty period would freeze "nobody earned anything"
-                // as an approved payroll run. Nothing to approve, so no button.
                 disabled={busy || data.showrooms.length === 0}
               >
                 {closePayout.isPending ? 'Closing…' : 'Close period'}
@@ -212,9 +201,6 @@ export const HrCommission = () => {
         }
       />
 
-      {/* The period picker is its own row, not a PageHeader action: the header
-          rail centres its children, which would float these labelled fields off
-          the buttons' baseline. */}
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">From</span>
@@ -257,9 +243,6 @@ export const HrCommission = () => {
             {formatDate(data.from)} to {formatDate(data.to)}
           </span>
           {data.closed ? (
-            /* A closed period is served from frozen rows, so these figures are
-               the ones that were approved — not a fresh recompute against
-               today's rates. Saying so is the whole point of freezing them. */
             <Badge tone="success" variant="soft" caseless>
               <span className="inline-flex items-center gap-1">
                 <Lock size={11} strokeWidth={2} />
@@ -274,11 +257,6 @@ export const HrCommission = () => {
             </Badge>
           )}
           {data.overrideMode === 'chain' && (
-            /* The ladder these figures were actually computed against — the
-               SNAPSHOT on a closed period, today's on an open one. Without it a
-               chain override is an amount with nothing on the page that
-               explains it, and on a closed period the live HR Settings ladder
-               may no longer be the one that produced it. */
             <Badge tone="accent" variant="soft" caseless>
               {data.overrideLevels.length > 0
                 ? `Chain override · ${data.overrideLevels.map((l) => `L${l.level} ${fmtPct(l.rateBps)}`).join(' · ')}`
@@ -288,11 +266,6 @@ export const HrCommission = () => {
         </div>
       )}
 
-      {/* The reopen fields are NOT rendered here on purpose. /commission serves
-          only status='CLOSED' rows, and a reopen flips the row to 'REOPENED' and
-          leaves a fresh row behind on the next close — so closed.reopened* is
-          always null in this response. Those fields belong to the history table
-          below, which is the read that actually returns REOPENED rows. */}
 
       {data && data.showrooms.length === 0 && (
         <EmptyState
@@ -321,7 +294,6 @@ export const HrCommission = () => {
             getRowKey={(r) => r.staffId}
             expandable={{
               render: (r) => <CommissionBreakdown row={r} />,
-              // No breakdown to show: no chevron.
               rowKey: (r) => (r.kpiDetail.length > 0 || (r.overrideDetail ?? []).length > 0 ? r.staffId : ''),
               expandedIds: expanded,
               onExpandedChange: setExpanded,
@@ -330,9 +302,6 @@ export const HrCommission = () => {
         </section>
       ))}
 
-      {/* Payout history — every close and every reopen, newest first. This is
-          the audit answer to "what did we approve, when, and who moved it".
-          Clicking a row loads that period into the report above. */}
       <section className="space-y-2">
         <h2 className="text-[14px] font-semibold text-ink">Payout history</h2>
 
@@ -366,10 +335,6 @@ const mono = 'font-mono';
 
 const overrideText = (row: HrCommissionRow): string => {
   const overrideLevels = row.overrideDetail ?? [];
-  /* null rate = chain mode, where the override is a sum over levels of
-     different rates on different bases. Printing a blended rate would be a
-     figure nobody can reconcile against a payslip, so the amount stands alone
-     and the per-level split lives in the expansion. */
   if (row.overrideRateBps === null) {
     return overrideLevels.length === 0 && row.overrideCommissionSen === 0 ? '—' : fmtSen(row.overrideCommissionSen);
   }

@@ -74,8 +74,8 @@ describe('Stock Take Approvals inbox', () => {
     fireEvent.click(rowOf(container, 'HC-STK-2612'));
     const drawer = screen.getByRole('dialog', { name: 'Stock take approval HC-STK-2612' });
     expect(within(drawer).getByText('Stock take approval')).toBeTruthy();
-    expect(within(drawer).getByText('MATT-A')).toBeTruthy();                 // the variance line
-    expect(within(drawer).getByText('Sim')).toBeTruthy();                    // submitted by
+    expect(within(drawer).getByText('MATT-A')).toBeTruthy();
+    expect(within(drawer).getByText('Sim')).toBeTruthy();
     expect(within(drawer).getByRole('button', { name: /Approve & post/ })).toBeTruthy();
     expect(within(drawer).getByRole('button', { name: /Return to Open/ })).toBeTruthy();
     expect(screen.queryByText('Stock take page')).toBeNull();

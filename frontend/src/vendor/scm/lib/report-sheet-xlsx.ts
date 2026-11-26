@@ -14,7 +14,6 @@
 import type { Cell, Row, SheetData } from 'write-excel-file';
 import { sheetWithTotalsBelow, type ReportSheet, type SheetColumn, type SheetRow, type SheetRowKind, type SheetTable } from './report-sheet';
 
-/* The screen's own colours (tokens.css): ink, soft text, the two shades. */
 const INK = '#11140f';
 const SOFT = '#8a8578';
 const TOTAL_FILL = '#eceeea';
@@ -115,7 +114,6 @@ export function sheetMatrix(given: ReportSheet): SheetData {
 export const columnWidths = (sheet: ReportSheet): Array<{ width: number }> => {
   const widest = sheet.tables.reduce((best, t) => (t.columns.length > best.length ? t.columns : best), [] as SheetColumn[]);
   const out = [{ width: LABEL_WIDTH }, ...widest.map((c) => ({ width: c.kind === 'pct' ? PCT_WIDTH : AMOUNT_WIDTH }))];
-  /* A column asked wider — by any of the tables sharing it — is that wide. */
   for (const t of sheet.tables) {
     t.columns.forEach((c, i) => { if (c.width != null) out[i + 1] = { width: Math.max(out[i + 1]?.width ?? AMOUNT_WIDTH, c.width) }; });
   }
@@ -132,7 +130,6 @@ export async function downloadReportXlsx(sheet: ReportSheet, fileName: string): 
     fileName,
     sheet: sheetName(sheet.title),
     columns: columnWidths(sheet),
-    /* The title, the subtitle, a blank and the first table's header stay put; so does the name column. */
     stickyRowsCount: 3 + (sheet.tables[0]?.title ? 1 : 0) + headRowsOf(sheet),
     stickyColumnsCount: 1,
   });

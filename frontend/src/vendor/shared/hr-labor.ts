@@ -38,10 +38,6 @@ export function rulesForEmployeeHours(rules: AttendanceRules, hoursPerDay: numbe
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/* The hours a punch puts on Working Hours: regular + OT as one figure (the
- * day type decides later what part is OT). A broken punch (tapped in and out
- * at knock-off, less than one OT block of work) credits the standard day when
- * the pay rules say so, else nothing. */
 export function punchDayHours(
   inMin: number,
   outMin: number,
@@ -54,9 +50,6 @@ export function punchDayHours(
   return { hours: round2((day.regularWorkMin + day.otMin) / 60), broken: false };
 }
 
-/* The hours a punch docks: the shortfall against the standard day after
- * same-day OT has offset lateness (Hookka folds late into short; there is no
- * separate late dock). A broken punch never docks. */
 export function punchShortfallHours(inMin: number, outMin: number, rules: AttendanceRules): number {
   if (outMin <= inMin) return 0;
   const day = computeAttendanceDay(inMin, outMin, rules);
@@ -67,9 +60,6 @@ export function punchShortfallHours(inMin: number, outMin: number, rules: Attend
 /** Less than this is rounding, not a shortfall. */
 export const MIN_DOCK_HOURS = 0.05;
 
-/* OT of a logged day by day type: Sunday and public holidays pay every hour
- * at their multiplier; a weekday pays the hours above the standard day at
- * the employee's own multiplier. */
 export function dayTypedOt(
   ymd: string,
   holidays: ReadonlySet<string>,
@@ -92,12 +82,6 @@ export type CostEmployee = {
   resignedOn: string;
 };
 
-/* What each of one day's entries cost, in sen (Hookka's
- * workerDayEntryCostsSen). Monthly-paid: regular hours at salary / the
- * month's actual working days / standard hours; OT hours at salary / days per
- * month / standard hours x the day's multiplier, OT spread pro rata over the
- * day's entries. Daily-paid: the day rate split by hours. Nothing after a
- * resignation. */
 export function dayEntryCostsSen(args: {
   employee: CostEmployee;
   salarySen: number;

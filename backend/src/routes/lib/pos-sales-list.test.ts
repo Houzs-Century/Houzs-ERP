@@ -1,5 +1,3 @@
-// The POS Sales list a project page shows (layout E9): bills grouped by
-// receipt, the Disc column's wording, the header totals, and the filters.
 import { describe, expect, test } from "vitest";
 import {
   discLabel,
@@ -114,8 +112,6 @@ describe("filters", () => {
 
   test("date, terminal, cashier, method and status each narrow the list", () => {
     expect(filterPosReceipts(rs, none)).toHaveLength(4);
-    /* Newest first; 3 and 4 share a time so the receipt no breaks the tie;
-       bill 1 is 01:00 on the 14th Malaysia time, the earliest of the day. */
     expect(filterPosReceipts(rs, { ...none, date: "2026-10-14" }).map((r) => r.id)).toEqual([3, 4, 2, 1]);
     expect(filterPosReceipts(rs, { ...none, terminal: "T01" }).map((r) => r.id)).toEqual([1]);
     expect(filterPosReceipts(rs, { ...none, cashier_id: 2 }).map((r) => r.id)).toEqual([3, 4, 2]);

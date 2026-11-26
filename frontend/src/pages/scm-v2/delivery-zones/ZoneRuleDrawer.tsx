@@ -1,5 +1,3 @@
-// Add or edit one zone rule, with the live effect on the map shown before saving:
-// which postcodes the rule covers and which ones change zone because of it.
 import { useState } from 'react';
 import { ResizableDrawer } from '../../../components/ResizableDrawer';
 import { cn } from '../../../lib/utils';

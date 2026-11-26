@@ -7,7 +7,6 @@ const TOOL: AgentToolDef = {
   input_schema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] },
 };
 
-/** An Anthropic-shaped OK response. */
 function resp(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
 }
@@ -77,7 +76,6 @@ describe('askAgentBrainWithTools', () => {
     expect(dispatch).toHaveBeenCalledWith('search_erp', { q: 'SO-1' });
     expect(sink.tokensIn).toBe(18);
     expect(sink.tokensOut).toBe(9);
-    // The second turn must echo the assistant turn + a tool_result carrying tu_1.
     const second = bodyOf(fetchMock, 1);
     const lastMsg = second.messages[second.messages.length - 1];
     expect(lastMsg.role).toBe('user');
@@ -103,8 +101,8 @@ describe('askAgentBrainWithTools', () => {
     });
 
     expect(out).toBe('Final.');
-    expect(bodyOf(fetchMock, 0).tools).toBeDefined(); // first turn offers tools
-    expect(bodyOf(fetchMock, 1).tools).toBeUndefined(); // last turn does not
+    expect(bodyOf(fetchMock, 0).tools).toBeDefined();
+    expect(bodyOf(fetchMock, 1).tools).toBeUndefined();
   });
 
   it('is best-effort: a non-ok response yields null (caller falls back)', async () => {

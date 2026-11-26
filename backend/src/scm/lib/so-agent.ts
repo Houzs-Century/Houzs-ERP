@@ -1,34 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-agent — who the ERP records as having sold a Sales Order, in the ONE
-// column AutoCount is given.
-//
-// 2026-08-13, the day the ERP -> AutoCount write-back went live, two re-queued
-// sales orders retried four times each and the live AED_HOUZS book answered,
-// verbatim:
-//
-//   Foreign Key Error (Constraint Name=FK_SO_SalesAgent)
-//
-// Traced: `composeCreateSo` sends `mfg_sales_orders.agent` and nothing else,
-// `agent` is a legacy free-text column filled only from `body.agent`, and no
-// current SO form sends that field — so every order created since the cutover
-// carried an EMPTY agent. An empty Agent reaches AcSyncService as `""`
-// (`Set(() => so.Agent = Str(p, "Agent"))`, and `Str` turns an absent key into
-// the empty string), `""` is not a row in `dbo.SalesAgent`, and the whole
-// document is refused before it lands. `/ensure-masters` could not save it
-// either: `mastersOf` only asks for an agent when the payload names one, so an
-// empty agent opens nothing and the create dies on the foreign key.
-//
-// The ERP's REAL salesperson identity is `mfg_sales_orders.salesperson_id` ->
-// `scm.staff`, stamped at create. The SO detail page has been hiding the gap
-// for months — `salespersonNameOf(salesOrder.agent, salesOrder.salesperson_id)`
-// falls back to the id, so a name appears on screen even when `agent` is empty.
-//
-// So `agent` is stamped from the salesperson the order is actually attributed
-// to. The write-back's own half of this rule (what is SENT, after AGENT_MAP)
-// lives in `resolveAcAgent` in src/services/autocount-writeback.ts — two
-// questions, deliberately in two places: this one decides what the ERP STORES,
-// that one decides how the account book SPELLS it.
-// ----------------------------------------------------------------------------
 
 /**
  * Minimal PostgREST surface, pinned exactly as `VenueBindingSb` pins it — this
@@ -111,7 +80,6 @@ export async function readStaffForStamp(
   staffId: string | null | undefined,
 ): Promise<{ name: string | null; venueId: string | null } | null> {
   const id = typeof staffId === 'string' ? staffId.trim() : '';
-  /* `.eq('id', null)` is not "no salesperson", it is a malformed filter. */
   if (!id) return null;
   try {
     const { data } = await sb.from('staff').select('name, venue_id').eq('id', id).maybeSingle();

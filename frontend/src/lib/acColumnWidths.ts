@@ -90,7 +90,6 @@ export function onAddressPaste(
   const start = el.selectionStart ?? el.value.length;
   const end = el.selectionEnd ?? start;
   const merged = el.value.slice(0, start) + pasted + el.value.slice(end);
-  /* Inside the column: let the browser do its own paste, caret and all. */
   if (merged.length <= ADDRESS_LINE_MAX) return;
   e.preventDefault();
   if (!spill) { setLine(merged); return; }

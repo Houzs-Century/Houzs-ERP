@@ -1,13 +1,3 @@
-// The 2990 tablet is the only door a showroom salesperson has, and a PIN is the
-// whole credential. So the three things pinned here are the three that would
-// cost a real person a shift:
-//   · a FAILED status read must never render as "No PIN yet" — that invites an
-//     admin to overwrite a working credential they cannot see;
-//   · a member with no sales profile must be told so, not handed a box whose
-//     write is refused with a message they never asked for;
-//   · a save that just made someone POS-eligible must OPEN the box, because
-//     that is the whole point of the change (the old screen had a button
-//     nobody knew to press).
 import { cleanup, render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -98,7 +88,6 @@ describe("PosPinCard", () => {
     get.mockResolvedValue({ ...READY_NO_PIN, staffActive: false });
     mount();
     expect(await screen.findByText(/will not list them/)).toBeTruthy();
-    // Still settable — the profile may be re-activated; the warning is the point.
     expect(screen.getByText("Set PIN")).toBeTruthy();
   });
 
@@ -154,7 +143,6 @@ describe("PosPinCard", () => {
   it("asks the admin to save the assignment before issuing a PIN", async () => {
     mount({ pendingSave: true });
     expect(await screen.findByText(/Save the assignment first/)).toBeTruthy();
-    // No status read while the eligibility is only in the unsaved draft.
     expect(get).not.toHaveBeenCalled();
   });
 

@@ -5,7 +5,6 @@ const sortDocs = (rows: RunStopOrder[]) =>
   [...rows].sort(runSheetTieBreak).map((r) => r.so_doc_no);
 
 describe("timeSlotStartMin", () => {
-  // The office types these verbatim on the DO (real production values).
   test("reads the start of the office free-text window", () => {
     expect(timeSlotStartMin("TIME AROUND 1:30PM TO 3:30PM")).toBe(13 * 60 + 30);
     expect(timeSlotStartMin("TIME AROUND 11AM TO 1PM")).toBe(11 * 60);
@@ -35,7 +34,6 @@ describe("timeSlotStartMin", () => {
 });
 
 describe("timeSlotEndMin", () => {
-  // The END of the window = the last clock time (drives the "late" pill).
   test("reads the end of the office free-text window", () => {
     expect(timeSlotEndMin("TIME AROUND 1:30PM TO 3:30PM")).toBe(15 * 60 + 30);
     expect(timeSlotEndMin("TIME AROUND 11AM TO 1PM")).toBe(13 * 60);

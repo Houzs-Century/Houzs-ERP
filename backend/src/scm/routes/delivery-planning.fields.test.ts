@@ -18,7 +18,6 @@ describe('delivery_message_status whitelist', () => {
     expect(HC_MESSAGE_STATUS_VALUES).toContain('To Send Delivery Date');
     expect(HC_MESSAGE_STATUS_VALUES).toContain('Done Send');
     expect(HC_MESSAGE_STATUS_VALUES).toContain('Done Remind (3)');
-    // inbound customer taps (chat-request-patch) write these onto the column
     expect(HC_MESSAGE_STATUS_VALUES).toContain('Done Scheduling');
     expect(HC_MESSAGE_STATUS_VALUES).toContain('Pending Reschedule (D)');
   });
@@ -33,7 +32,7 @@ describe('delivery_message_status whitelist', () => {
 
   it('drops the retired states and never carries the SEND status', () => {
     expect(HC_MESSAGE_STATUS_VALUES).not.toContain('Done All');
-    expect(HC_MESSAGE_STATUS_VALUES).not.toContain('Peding Delivery (EM)'); // the sheet typo, normalised on backfill
+    expect(HC_MESSAGE_STATUS_VALUES).not.toContain('Peding Delivery (EM)');
     expect(HC_MESSAGE_STATUS_VALUES).not.toContain('To Send Delivery Time');
   });
 });

@@ -51,7 +51,6 @@ describe('places of a zone', () => {
     expect(rows[1]).toContain('Ipoh');
     expect(rows[1]).toContain('CARRIER A, CARRIER B');
     expect(within(table).queryByText('Alor Setar')).toBeNull();
-    /* A town a card prices cannot be removed; one no card prices can. */
     expect(screen.queryByRole('button', { name: 'Remove Ipoh' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Remove Gerik' }));
     await waitFor(() => expect(sent('DELETE')).toHaveLength(1));

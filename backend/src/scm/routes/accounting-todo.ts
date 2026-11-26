@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// accounting-todo — GET /accounting/todo and /accounting/todo/count: Finance's
-// To do (the owner's Claude Design redesign, Finance-1a-To-do, 2026-11-02).
-//
-// The reads only; the rules are acc/finance-todo.ts. Each section reads on its
-// own, and a read that fails is NAMED in `problems` and leaves its jobs out —
-// never shown as "nothing waiting". The count is the same rules without the
-// money board, the done list or the names, for the sidebar's badge.
-// ----------------------------------------------------------------------------
 
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt, mytDateOf } from '../lib/my-time';
@@ -32,13 +23,10 @@ type Read<T> = { ok: true; value: T } | { ok: false; what: string; reason: strin
 
 const fail = (what: string, reason: string) => ({ ok: false as const, what, reason });
 const day = (v: unknown): string | null => (v == null || v === '' ? null : mytDateOf(String(v)));
-/** HH:MM in Malaysia — the done list's clock. */
 const clock = (v: unknown): string => new Date(new Date(String(v)).getTime() + 8 * 3_600_000).toISOString().slice(11, 16);
-/** The first instant of a Malaysian day, as the UTC timestamp the columns hold. */
 const dayStart = (ymd: string): string => new Date(`${ymd}T00:00:00+08:00`).toISOString();
 const latest = (vs: unknown[]): string => vs.map(String).filter(Boolean).sort().slice(-1)[0] ?? '';
 
-/* ── Merchant reports ─────────────────────────────────────────────────────── */
 
 type CardFacts = Pick<TodoFacts, 'acquirers' | 'lastReportTo' | 'keyedCardDays' | 'cardRows'> & { batches: Rows };
 
@@ -63,9 +51,6 @@ async function readCards(sb: any, companyId: number, today: string): Promise<Rea
     if (to && active.has(code) && (lastReportTo[code] == null || to > lastReportTo[code]!)) lastReportTo[code] = to;
   }
 
-  /* Card payments keyed under a merchant's name after its last report — its
-     report is due the morning after. A payment with no merchant named could be
-     any of them, so it raises nothing. Looked at over the last month only. */
   const floor = addDays(today, -31);
   const froms = acquirers.map((a) => (lastReportTo[a.code] ? addDays(lastReportTo[a.code]!, 1) : floor));
   const from = froms.length ? froms.reduce((m, d) => (d < m ? d : m)) : today;
@@ -104,7 +89,6 @@ async function readCards(sb: any, companyId: number, today: string): Promise<Rea
   return { ok: true, value: { acquirers, lastReportTo, keyedCardDays, cardRows, batches: batchRows } };
 }
 
-/* ── Bank statements ──────────────────────────────────────────────────────── */
 
 type BankFacts = Pick<TodoFacts, 'bankAccounts' | 'lastStatementTo' | 'bankLines' | 'lockedLastMonth'> & { statements: Rows; locks: Rows };
 
@@ -146,7 +130,6 @@ async function readBank(sb: any, companyId: number, today: string): Promise<Read
     if (to && code in lastStatementTo && (lastStatementTo[code] == null || to > lastStatementTo[code]!)) lastStatementTo[code] = to;
   }
 
-  /* A locked month takes no more decisions, so its lines are not anybody's job. */
   const locked = new Set(lockRows.map((l) => `${l.account_code}|${String(l.period_month).slice(0, 7)}`));
   const stmt = new Map(stmtRows.map((s) => [Number(s.id), s]));
   const bankLines: TodoBankLine[] = [];
@@ -165,13 +148,8 @@ async function readBank(sb: any, companyId: number, today: string): Promise<Read
   return { ok: true, value: { bankAccounts, lastStatementTo, bankLines, lockedLastMonth, statements: stmtRows, locks: lockRows } };
 }
 
-/* ── Payments: requests and vouchers ─────────────────────────────────────── */
 
 async function readRequests(sb: any, companyId: number): Promise<Read<TodoFacts['requests']>> {
-  /* The four ways a request waits for Finance — routes/payment-requests.ts
-     waitingCountHandler counts the same four: new, or answered by a bill or a
-     voucher that was since cancelled, or answered by nothing. Read here as the
-     answered requests and then the state of what answered them. */
   const cols = 'id, payee_name, amount_sen, created_at, ap_invoice_id, pv_id';
   const [submitted, vouchered] = await Promise.all([
     paginateAll<Record<string, any>>((lo, hi) => sb.from('acc_payment_requests').select(cols)
@@ -199,7 +177,6 @@ async function readRequests(sb: any, companyId: number): Promise<Read<TodoFacts[
   };
 }
 
-/** A voucher's total in ringgit sen — a foreign-currency voucher at its rate. */
 const myrSen = (totalSen: unknown, rate: unknown): number => {
   const r = Number(rate);
   return Math.round(Number(totalSen ?? 0) * (Number.isFinite(r) && r > 0 ? r : 1));
@@ -218,11 +195,8 @@ async function readVouchers(sb: any, companyId: number): Promise<Read<TodoFacts[
   };
 }
 
-/* ── Receipts and invoices ───────────────────────────────────────────────── */
 
 async function readTransfers(sb: any, companyId: number): Promise<Read<TodoFacts['transfers']>> {
-  /* Only money paid since the books started: a receipt from before them is
-     never met by a statement in these books (Houzs opens 01/09/2026). */
   const opening = await loadBooksOpening(sb, companyId);
   if (!opening.ok) return fail('official receipts', opening.reason);
   const start = opening.opening?.booksStart ?? null;
@@ -242,7 +216,6 @@ async function readOverdue(sb: any, companyId: number, today: string): Promise<R
     .lt('due_date', addDays(today, -OVERDUE_DAYS)).order('id').range(lo, hi));
   if (all.error) return fail('overdue invoices', all.error.message);
   const rows = (all.data ?? []) as Rows;
-  /* What the invoice still owes after its order's deposit and the credit notes knocked off it — the SI list's own rule. */
   await stampOrderDeposit(sb, rows, companyId);
   return {
     ok: true,
@@ -255,11 +228,9 @@ async function readOverdue(sb: any, companyId: number, today: string): Promise<R
   };
 }
 
-/* ── Done today ──────────────────────────────────────────────────────────── */
 
 async function readDone(sb: any, companyId: number, today: string, cards: CardFacts | null, bank: BankFacts | null): Promise<Read<TodoDone[]>> {
   const from = dayStart(today);
-  /* A voucher counts once for each step taken on it today — three plain reads, one per step. */
   const pvStep = (col: string) => sb.from('payment_vouchers').select('id, pv_number, payee_name, checked_at, approved_at, posted_at')
     .eq('company_id', companyId).gte(col, from);
   const [confirmed, decided, checkedPv, approvedPv, postedPv, requests, receipts] = await Promise.all([
@@ -324,10 +295,7 @@ async function readDone(sb: any, companyId: number, today: string, cards: CardFa
   return { ok: true, value: done };
 }
 
-/* ── Whose desk ──────────────────────────────────────────────────────────── */
 
-/* Who holds the voucher keys by ROLE barely changes; the badge polls every
-   minute, so the answer is kept a few minutes per company. */
 const HOLDERS_TTL_MS = 5 * 60_000;
 const holdersCache = new Map<string, { at: number; names: string[] }>();
 
@@ -352,7 +320,6 @@ async function readViewer(c: any, companyId: number, problems: string[]): Promis
     const literal = holdsHouzsPermLiterally(c, perm);
     try {
       const names = await literalHolderNames(c, perm, companyId);
-      /* Nobody holds it by role here: it is on whoever may do it. */
       return { mine: literal || (names.length === 0 && hasHouzsPerm(c, perm)), names };
     } catch (e) {
       problems.push(`who ${perm.endsWith('check') ? 'checks' : 'approves'} vouchers (${e instanceof Error ? e.message : String(e)})`);
@@ -368,9 +335,7 @@ async function readViewer(c: any, companyId: number, problems: string[]): Promis
   };
 }
 
-/* ── Facts and handlers ──────────────────────────────────────────────────── */
 
-/* ── Books: the newest self-check, the trial balance, the stock close ───── */
 
 async function readSelfCheck(sb: any, companyId: number): Promise<Read<TodoFacts['selfCheck']>> {
   const r = await latestSelfCheck(sb, companyId);
@@ -378,7 +343,6 @@ async function readSelfCheck(sb: any, companyId: number): Promise<Read<TodoFacts
   return { ok: true, value: r.run ? { ranOn: mytDateOf(r.run.ranAt), findings: r.run.findings, items: r.run.items } : null };
 }
 
-/** Σ debit − Σ credit over every posted line — the trial balance's own difference. */
 async function readTrialBalance(sb: any, companyId: number): Promise<Read<number>> {
   const all = await paginateAll<Record<string, any>>((lo, hi) => sb.from('v_account_balances')
     .select('account_code, total_debit_sen, total_credit_sen').eq('company_id', companyId).order('account_code').range(lo, hi));
@@ -386,7 +350,6 @@ async function readTrialBalance(sb: any, companyId: number): Promise<Read<number
   return { ok: true, value: ((all.data ?? []) as Rows).reduce((d, r) => d + Number(r.total_debit_sen ?? 0) - Number(r.total_credit_sen ?? 0), 0) };
 }
 
-/** Whether the stock close's newest run for last month failed. */
 async function readStockClose(sb: any, companyId: number, today: string): Promise<Read<{ lastMonthFailed: boolean }>> {
   const lastMonth = addDays(`${today.slice(0, 7)}-01`, -1).slice(0, 7);
   const { data, error } = await sb.from('acc_stock_close_runs').select('action, ran_at')
@@ -401,7 +364,6 @@ async function readStockClose(sb: any, companyId: number, today: string): Promis
     stock close — the page wants them, the badge does not. */
 export async function readFinanceTodoFacts(sb: any, companyId: number, today: string, full: boolean): Promise<TodoFacts> {
   const problems: string[] = [];
-  /* A section that throws is a failed read like any other — named, and the rest still shown. */
   const safe = async <T,>(what: string, run: () => Promise<Read<T>>): Promise<Read<T>> => {
     try { return await run(); } catch (e) { return fail(what, e instanceof Error ? e.message : String(e)); }
   };
@@ -423,7 +385,6 @@ export async function readFinanceTodoFacts(sb: any, companyId: number, today: st
   if (!bank.ok) problems.push(`${bank.what} (${bank.reason})`);
 
   const tf = ok<TodoTaskFacts>(taskFacts, { tasks: [], occurrences: {}, remarkCounts: {}, rulesOff: [], groups: [], customRuleDefs: [] });
-  /* Finance's own rules that are on, each read on its own — one that fails is named. */
   const off = new Set(tf.rulesOff);
   const customRules = await Promise.all(tf.customRuleDefs.filter((r) => !off.has(r.id)).map(async (rule) => {
     try { return { rule, items: await readCustomRuleItems(sb, companyId, today, rule) }; } catch (e) {

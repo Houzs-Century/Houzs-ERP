@@ -46,8 +46,6 @@ type LineRow = PoLineSource & {
   variants: unknown;
 };
 
-/* The builder surface the reads below use — structural, so the test fake and
-   supabase-js both satisfy it without an `any`. */
 type Q = {
   select(cols: string): Q;
   order(col: string, opts: { ascending: boolean; nullsFirst?: boolean }): Q;
@@ -61,8 +59,6 @@ type Q = {
 type Sb = { from(table: string): Q };
 type Page<T> = PromiseLike<{ data: T[] | null; error: { message: string } | null }>;
 
-/* A PO line's printed position: line_no, then creation order, then id (the
-   same order lib/po-line-order.ts `inPoLineOrder` asks the database for). */
 const byLinePosition = (a: LineRow, b: LineRow): number => {
   const an = a.line_no ?? -Infinity;
   const bn = b.line_no ?? -Infinity;
@@ -101,8 +97,6 @@ export async function attachPoLines<H extends PoLineHeader>(
   if (lineRead.error) return { error: `lines: ${lineRead.error.message}`, rows: [], lineCount: 0 };
   const all = lineRead.data;
 
-  /* The SO number a line was raised for. Company-scoped: a line pointing at
-     another company's sales order must not print that company's number. */
   const so = await lookupByIds<{ id: string; doc_no: string | null }>(
     all.map((l) => l.so_item_id),
     (batch, from, to) =>
@@ -184,10 +178,6 @@ export async function buildPoExportRows(
     orderPoList(filterPoList(sb.from('purchase_orders').select(poListSelect(filters)), filters, c, validStatuses), filters.sort)
       .range(from, to));
   if (read.error) return { error: `purchase orders: ${read.error.message}` };
-  // includeLineLinked=false: the export stamps every PO a tab matches, so the
-  // per-line reads the line link needs would blow the Worker subrequest budget.
-  // The header FK stays (unchanged export behaviour); the paged list carries the
-  // fuller line-linked set (see stampPoListGrns).
   const stamped = await stampPoListGrns(sb, read.data ?? [], false);
   if (stamped.error) return { error: `GRNs: ${stamped.error}` };
   const withLines = await attachPoLines(sb, c, stamped.rows, { outstandingOnly: filters.status === 'outstanding' });

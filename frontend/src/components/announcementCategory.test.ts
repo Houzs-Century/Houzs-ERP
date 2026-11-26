@@ -7,9 +7,6 @@ import {
   requiresAcknowledgement,
 } from "./announcementCategory";
 
-/* The four categories, their CTA wording and which of them block. Every
-   surface (modal, inbox, dashboard, bell, phone) reads this one table, so a
-   change here is a product-wide change — these tests make that deliberate. */
 
 describe("announcementCategory", () => {
   test("labels and CTA wording are the banner's (Notice / Warning / SOP / Learning)", () => {

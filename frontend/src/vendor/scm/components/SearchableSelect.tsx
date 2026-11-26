@@ -32,15 +32,6 @@ import { useAnchoredPanel, anchoredPanelStyle } from "../../../lib/anchoredPanel
  *  findable (the DP project picker hides the code but still searches it). */
 export type SearchableSelectOption = { value: string; label: string; group?: string; search?: string };
 
-/**
- * How many options reach the DOM at once. The menu is 280px tall — about ten
- * visible rows — so rendering the whole list builds thousands of pixels of <li>
- * inside it and rebuilds them on every keystroke. One page, extended on scroll.
- *
- * HOOKKA measured the identical component on their prod (2026-08-01): opening a
- * 360-option product picker cost a 1,383ms main-thread task and took the DOM
- * from 906 to 2,354 nodes, with another 1,024ms on the next keystroke.
- */
 const OPTION_PAGE = 60;
 
 /** Extend the window by one page, never past the end. Pure, so it is testable
@@ -127,55 +118,31 @@ export function SearchableSelect({
   options: SearchableSelectOption[];
   disabled?: boolean;
   placeholder?: string;
-  /** Applied to the input so it matches the surrounding form controls. */
   className?: string;
   invalid?: boolean;
   ariaLabel?: string;
-  /** Hover tooltip (e.g. why a field is locked). Falls back to the selected label. */
   title?: string;
-  /** Render a rich option row (structured layout, match highlight) in place of
-   *  the plain label. Gets the option and the live query; the CLOSED input still
-   *  shows the plain `label`, so set a sensible label even with this on. */
   renderOption?: (option: SearchableSelectOption, query: string) => ReactNode;
-  /** Paint a down-chevron inside the field's right edge, like the State picker.
-   *  Self-positioned here, so it never depends on the host form passing a
-   *  wrapper + chevron class: hosts that did not (DP drawers, warehouse) showed
-   *  the chevron on its own line under the input. */
   chevron?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  // Index into `filtered` of the highlighted option; -1 is none.
   const [active, setActive] = useState(-1);
   const listId = useId();
   const optionId = (i: number) => `${listId}-opt-${i}`;
   const wrapRef = useRef<HTMLDivElement>(null);
-  // The blur's delayed close must not outlive the field: firing after unmount sets
-  // state on a gone component (in a test, after jsdom is torn down: "window is not defined").
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current); }, []);
-  // Set by a pick, so the blur that follows a Tab pick does not commit again.
   const pickedRef = useRef(false);
-  // Pin the portalled menu to the input, tracking scroll/resize, and FLIP it
-  // above when the room below cannot hold it. Portalling alone only escapes the
-  // card's clip — measured on prod's New Sales Order, the City menu still ran
-  // 111px past the bottom of the window, where `position: fixed` puts it out of
-  // reach of any scroll.
   const menuPos = useAnchoredPanel(wrapRef, open && !disabled, 280);
 
-  // The label to show when closed — the selected option's, verbatim.
   const selectedLabel = useMemo(
     () => options.find((o) => o.value === value)?.label ?? "",
     [options, value],
   );
 
-  // Client-side filter: empty search → every option (short lists still work).
-  // FILTERING stays over the full list; only what reaches the DOM is capped.
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    // Just opened, the search still holds the current label: every option. A
-    // label built from parts ("HOK-2009(A)-(SS) · PC151-18") is in no option's
-    // search text, so filtering on it said "No match" (DO-2611-037).
     if (!q || search === selectedLabel) return options;
     return options.filter((o) =>
       o.search !== undefined
@@ -184,9 +151,6 @@ export function SearchableSelect({
     );
   }, [options, search, selectedLabel]);
 
-  // How many of `filtered` are rendered. Rewound whenever the term or the open
-  // state changes — DURING RENDER, not in an effect, so no frame ever shows the
-  // previous term's scroll depth against the new term's results.
   const [shown, setShown] = useState(OPTION_PAGE);
   const windowKey = `${open ? "o" : "c"}:${search}`;
   const [lastWindowKey, setLastWindowKey] = useState(windowKey);
@@ -200,7 +164,6 @@ export function SearchableSelect({
   const menuOpen = open && !disabled && Boolean(menuPos);
   const activeOption = active >= 0 && active < visible.length ? active : -1;
 
-  // Keep the highlighted row in view as the arrows move it.
   useEffect(() => {
     if (activeOption < 0) return;
     const el = document.getElementById(optionId(activeOption));
@@ -224,10 +187,8 @@ export function SearchableSelect({
         aria-expanded={menuOpen}
         aria-controls={menuOpen ? listId : undefined}
         aria-autocomplete="list"
-        // The browser's own address autofill must not paint over the picked value.
         autoComplete="off"
         aria-activedescendant={menuOpen && activeOption >= 0 ? optionId(activeOption) : undefined}
-        // Closed → the selected label; open → the live search term.
         value={open ? search : selectedLabel}
         placeholder={selectedLabel ? undefined : placeholder}
         disabled={disabled}
@@ -242,11 +203,7 @@ export function SearchableSelect({
           e.currentTarget.select();
         }}
         onBlur={() => {
-          // Text deleted, then the operator moved on: that is a clear, not a
-          // cancel. (A pick closes the menu first, so it never lands here.)
           if (open && !search.trim() && selectedLabel) onChange("");
-          // A name typed in full, then the operator clicked away: it is picked, as
-          // Enter would. Only an exact name, and only when it changes the value.
           const typed = open && !pickedRef.current && search.trim() && search !== selectedLabel ? exactPick(search, filtered) : null;
           if (typed && typed.value !== value) onChange(typed.value);
           if (closeTimer.current) clearTimeout(closeTimer.current);
@@ -276,8 +233,6 @@ export function SearchableSelect({
             return;
           }
           if (e.key === "Tab") {
-            // Focus moves on as usual; a highlighted option, else the typed one, is committed first.
-            // Tabbing through untouched (the search still holds the current label) re-sends nothing.
             const tabbed = !open ? null : active >= 0 && filtered[active] ? filtered[active]
               : search !== selectedLabel ? enterPick(search, filtered) : null;
             if (tabbed && tabbed.value !== value) pick(tabbed);
@@ -317,8 +272,6 @@ export function SearchableSelect({
             onScroll={(e) => {
               if (hiddenCount === 0) return;
               const el = e.currentTarget;
-              // One page ahead of the viewport, so the extension lands before
-              // the operator reaches the bottom.
               if (el.scrollHeight - el.scrollTop - el.clientHeight < 160) {
                 setShown((s) => nextOptionWindow(s, filtered.length));
               }
@@ -334,7 +287,6 @@ export function SearchableSelect({
                   {heading && (
                     <li
                       role="presentation"
-                      // Not a pick: keep the input focused.
                       onMouseDown={(e) => e.preventDefault()}
                       style={{
                         padding: "8px 10px 2px",
@@ -351,8 +303,6 @@ export function SearchableSelect({
                     role="option"
                     id={optionId(i)}
                     aria-selected={isSel}
-                    // onMouseDown + preventDefault so the input doesn't blur-close
-                    // before the pick lands.
                     onMouseDown={(e) => {
                       e.preventDefault();
                       pick(o);
@@ -369,7 +319,6 @@ export function SearchableSelect({
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
-                    // The mouse and the arrows share one highlight.
                     onMouseEnter={() => setActive(i)}
                   >
                     {renderOption ? renderOption(o, search) : o.label}
@@ -383,8 +332,6 @@ export function SearchableSelect({
               </li>
             )}
             {hiddenCount > 0 && (
-              // Without this the list looks complete at 60 and the operator
-              // types a term they could have scrolled to.
               <li
                 aria-live="polite"
                 style={{

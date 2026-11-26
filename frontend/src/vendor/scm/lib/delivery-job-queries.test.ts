@@ -1,6 +1,3 @@
-/* Last Mile stop drawer: the driver needs the name to ask for at a supplier or
-   venue. It is shown once, in the Customer card, now that the job panel below
-   no longer repeats its Contact row. */
 import { describe, expect, test } from "vitest";
 import { stopContactName } from "./delivery-job-queries";
 

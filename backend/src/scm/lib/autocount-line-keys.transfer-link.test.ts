@@ -79,8 +79,6 @@ describe('a conversion the book linked is paired by the link', () => {
     expect(reason).toContain('ambiguous_in_book');
   });
 
-  /* A host built before the link was added reports no FromDocDtlKey, and one
-     unlinked line is enough: the old checks decide, exactly as before. */
   test('without the link on every line, the count and code checks still run', async () => {
     const sb = doSeed();
     const reason = await persistLineKeys(sb, { op: 'so_to_do', doc_no: 'HC-DO-2609-096' }, target(), [

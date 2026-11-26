@@ -8,24 +8,9 @@ import type {
   VideoLayout,
 } from "../components/AnnouncementMedia";
 
-// ---------------------------------------------------------------------------
-// MobileAnnouncementMedia — the ONE phone renderer for an announcement's
-// attachments (annAttBig() from the owner's mobile design): a photo grid, then
-// video blocks, then PDF / file rows with a Download action.
-//
-// Lifted out of MobileAnnouncements.tsx unchanged so the new pop-up
-// (MobileAnnouncementPopup) shows the SAME attachments with the SAME download
-// affordance as the Announcements detail screen, instead of a second copy that
-// could drift. The desktop equivalent is components/AnnouncementMedia; the two
-// read the same layout hint (mig 0140) so a notice lays out the same on both.
-// Types come from the desktop module so there is one definition of an
-// attachment / a layout hint in the app.
-// ---------------------------------------------------------------------------
 
 export type { AnnAttachment, AnnMediaLayout, PhotoLayout, VideoLayout };
 
-// The minimum an announcement must carry to render its media — the mobile list
-// row type and the shared banner type both satisfy it.
 export type MediaBearingAnnouncement = {
   id: string;
   attachments?: AnnAttachment[] | null;
@@ -35,8 +20,6 @@ export type MediaBearingAnnouncement = {
 export const isImage = (att: AnnAttachment) => (att.mime || "").startsWith("image/");
 export const isVideo = (att: AnnAttachment) => (att.mime || "").startsWith("video/");
 
-// Layout-hint helpers (mig 0140). Mirror the desktop AnnouncementMedia mapping
-// so a notice lays out identically on both platforms.
 function photoCols(layout: PhotoLayout): number {
   return layout === "4" ? 2 : Number(layout);
 }
@@ -57,9 +40,6 @@ export const fmtSize = (n?: number) => {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-// A photo/video thumb streamed from R2. <img src> can't carry the bearer, so we
-// fetch it as a blob URL (api.fetchBlobUrl) and revoke on unmount. Falls back to
-// the design's .ph placeholder if there's no image / the fetch fails.
 export function MediaThumb({ ann, att, style, preferThumb = false }: { ann: MediaBearingAnnouncement; att: AnnAttachment; style: React.CSSProperties; preferThumb?: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -68,9 +48,6 @@ export function MediaThumb({ ann, att, style, preferThumb = false }: { ann: Medi
     let live = true;
     let made: string | null = null;
     const path = `/api/announcements/${encodeURIComponent(ann.id)}/attachments/${att.r2Key}`;
-    // WO-7 — multi-photo grid tiles load the light `.thumb` sibling first
-    // (fallback: the original, which is all pre-thumb notices have). Single
-    // full-width photos and video posters keep the original for sharpness.
     loadThumbFirst((p) => api.fetchBlobUrl(p), path, preferThumb)
       .then((u) => {
         if (!live) {
@@ -95,7 +72,6 @@ export function MediaThumb({ ann, att, style, preferThumb = false }: { ann: Medi
   return <div className="ph" style={style} />;
 }
 
-// annDl() — stream the attachment as a blob and trigger a browser download.
 export async function download(ann: MediaBearingAnnouncement, att: AnnAttachment) {
   try {
     const u = await api.fetchBlobUrl(
@@ -109,20 +85,15 @@ export async function download(ann: MediaBearingAnnouncement, att: AnnAttachment
     link.remove();
     setTimeout(() => URL.revokeObjectURL(u), 4000);
   } catch {
-    /* silent — the row stays visible, tap to retry. */
   }
 }
 
-// annAttBig() — inline attachments: a photo grid, then video blocks, then PDF /
-// file rows. Nothing renders if there are no attachments.
 export function Attachments({ ann }: { ann: MediaBearingAnnouncement }) {
   const atts = ann.attachments ?? [];
   if (!atts.length) return null;
   const photos = atts.filter(isImage);
   const rest = atts.filter((a) => !isImage(a));
 
-  // Honour the author's layout hint; fall back to a count-derived default so
-  // legacy (NULL media_layout) notices render as before.
   const photoLayout = ann.mediaLayout?.photo ?? defaultPhotoLayout(photos.length);
   const cols = photoCols(photoLayout);
   const videoLayout = ann.mediaLayout?.video ?? "1x1";

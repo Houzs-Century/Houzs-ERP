@@ -21,7 +21,7 @@ import { activeCompanyId } from './companyScope';
 export type SwrEnvelope<T> = { __swr: 1; v: T; soft: number; at: string };
 export type SwrSource = 'fresh' | 'stale' | 'miss' | 'bypass';
 
-const LOCK_SECONDS = 60; // KV's minimum expirationTtl
+const LOCK_SECONDS = 60;
 /** A Refresh within this many seconds of the stored copy being built is served that copy. */
 export const REFRESH_FLOOR_SECONDS = 60;
 
@@ -69,7 +69,6 @@ export async function cachedSwr<R>(opts: {
   compute: () => Promise<R>;
   cacheable: (r: R) => boolean;
   waitUntil: ((p: Promise<unknown>) => void) | null;
-  /** The viewer pressed Refresh: recompute now unless the stored copy is under REFRESH_FLOOR_SECONDS old. */
   refresh?: boolean;
   now?: () => number;
 }): Promise<{ result: R; source: SwrSource; at: string | null }> {
@@ -80,7 +79,6 @@ export async function cachedSwr<R>(opts: {
   const store = async (r: R) => {
     if (cacheable(r)) await writeSwr(kv, key, r, opts.softSeconds, opts.hardSeconds, now());
   };
-  // A failed KV write costs only the next reader a recompute; it must never fail this one.
   const storeLogged = async (r: R) => {
     try {
       await store(r);
@@ -92,9 +90,6 @@ export async function cachedSwr<R>(opts: {
   let hit: unknown = null;
   try { hit = await kv.get(key, { type: 'json' }); } catch { hit = null; }
 
-  /* A Refresh press recomputes and stores in the request, so the answer it gets
-     is the database's, not the copy it was refreshing. A copy younger than the
-     floor is served as is: a row of impatient clicks costs one report, not one each. */
   if (opts.refresh && !(isEnvelope<R>(hit) && now() - Date.parse(hit.at) < REFRESH_FLOOR_SECONDS * 1000)) {
     const fresh = await compute();
     await storeLogged(fresh);
@@ -112,7 +107,6 @@ export async function cachedSwr<R>(opts: {
           await store(await compute());
           await kv.delete(lockKey);
         } catch {
-          /* keep serving the stale copy until it hard-expires */
         }
       })());
     }

@@ -1,6 +1,3 @@
-// The approver badge on the SO + PO amendment queues. Word and colour come from
-// lib/amendment-approver.ts (shared with the phone); the pill shape is
-// StatusPill's, so the row reads as one family.
 
 import { AMENDMENT_APPROVER_LABEL, AMENDMENT_APPROVER_TONE, type AmendmentApprover } from '../lib/amendment-approver';
 import styles from './StatusPill.module.css';

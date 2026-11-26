@@ -18,7 +18,6 @@
    stay identical. */
 
 export const DO_LABELS = {
-  /* Header — AutoCount captions. */
   docNo: 'Doc No',
   docDate: 'Doc Date',
   ref: 'Ref',
@@ -26,7 +25,6 @@ export const DO_LABELS = {
   debtorName: 'Debtor Name',
   agent: 'Agent',
   currency: 'Curr. Code',
-  /* Line — AutoCount captions. */
   itemCode: 'Item Code',
   detailDescription: 'Detail Description',
   detailDescription2: 'Detail Description 2',
@@ -35,7 +33,6 @@ export const DO_LABELS = {
   qty: 'Qty',
   poDocNo: 'PO Doc No.',
   itemGroup: 'Item Group',
-  /* The ERP's own, no AutoCount caption. */
   invoicedQty: 'Invoiced Qty',
   returnedQty: 'Returned Qty',
   uninvoicedQty: 'Uninvoiced Qty',
@@ -97,10 +94,6 @@ export type DoBookHeader = {
   ac_agent: string | null;
 };
 
-/* The word the Delivery Orders LIST pill shows for each stored status — the
-   label half of STATUS_TONE in frontend/src/pages/scm-v2/do-list-status.ts,
-   keyed by the stored value. This file's canonical test asserts the two say the
-   same words. LOADED reads "Confirmed" and DISPATCHED "Loaded" on screen. */
 export const DO_STATUS_WORDS: Readonly<Record<string, string>> = {
   DRAFT: 'Draft',
   LOADED: 'Confirmed',

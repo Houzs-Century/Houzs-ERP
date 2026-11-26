@@ -42,18 +42,13 @@ import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* DataGrid layout key for the product picker. The legacy list rendered one
-   sticky section per category — seed a default "group by Category" layout
-   ONCE (first visit only) to keep that read; afterwards the operator's own
-   layout persists. */
 const PICK_GRID_KEY = 'dg-so-from-products-pick';
 if (typeof window !== 'undefined' && window.localStorage.getItem(PICK_GRID_KEY) == null) {
   try {
     window.localStorage.setItem(PICK_GRID_KEY, JSON.stringify({ groupBy: ['category'] }));
-  } catch { /* storage full / disabled — grid just starts flat */ }
+  } catch { }
 }
 
-/* ── helpers ─────────────────────────────────────────────────────────────── */
 const todayMY = (): string => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 const addDays = (iso: string, n: number): string => {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -73,7 +68,6 @@ const FABRICS = ['BF-16', 'BF-22', 'PC151-01', 'FB-09', 'LN-31'];
 const DIVANS = ['10', '13', '15'];
 const LEGS = ['NO LEG', '2', '4'];
 const SEATS = ['24', '28', '30'];
-/* Representative colour-matched module compositions (a "set"). */
 const SOFA_SETS: string[][] = [
   ['2A', 'L', '2A'], ['1A', 'L', '1A'], ['2A', '2A'], ['1S', 'CNR', '2S'],
   ['2A', 'L', '1A'], ['2S', 'STOOL'], ['1S', '2S'], ['2A', 'CNR', '2A'],
@@ -85,9 +79,6 @@ type GenLine = {
   description: string;
   qty: number;
   variants: Record<string, unknown> | null;
-  /* Sent to the server as the line price. The server recomputes and rejects
-     the whole SO if the client value drifts >0.5%, so for priced products we
-     echo their own price (test products are unpriced → 0 is safe). */
   unitPriceSen?: number;
 };
 type SoSpec = {
@@ -98,23 +89,20 @@ type SoSpec = {
   lines: GenLine[];
 };
 
-/* ── test-batch generator ───────────────────────────────────────────────── */
 function buildTestBatch(
   prods: { mattress: MfgProductRow[]; bedframe: MfgProductRow[]; sofa: MfgProductRow[]; accessory: MfgProductRow[] },
   counts: { mattressOnly: number; mattressBedframe: number; sofaSet: number },
   baseDate: string,
 ): SoSpec[] {
   const specs: SoSpec[] = [];
-  // CODY first (Commander: bedframes from the Hookka-priced CODY model), else any bedframe.
   const cody = prods.bedframe.filter((p) => p.code.toUpperCase().startsWith('CODY'));
   const bedframes = cody.length > 0 ? cody : prods.bedframe;
   let cust = 0;
 
-  // 1. Mattress only — shortest processing (ready soonest).
   for (let i = 0; i < counts.mattressOnly; i++) {
     const m = pick(prods.mattress, i);
     if (!m) break;
-    const proc = addDays(baseDate, 3 + (i % 8));      // ~3–10 days out
+    const proc = addDays(baseDate, 3 + (i % 8));
     specs.push({
       customerName: pick(CUSTOMERS, cust++), combo: 'Mattress only',
       processingDate: proc, deliveryDate: addDays(proc, 5),
@@ -122,12 +110,11 @@ function buildTestBatch(
     });
   }
 
-  // 2. Mattress + Bedframe — medium processing (bedframe must be ordered).
   for (let i = 0; i < counts.mattressBedframe; i++) {
     const bf = pick(bedframes, i);
     const m = pick(prods.mattress, i + 3);
     if (!bf || !m) break;
-    const proc = addDays(baseDate, 14 + (i % 10));     // ~2–3.5 weeks out
+    const proc = addDays(baseDate, 14 + (i % 10));
     specs.push({
       customerName: pick(CUSTOMERS, cust++), combo: 'Mattress + Bedframe',
       processingDate: proc, deliveryDate: addDays(proc, 7),
@@ -144,12 +131,11 @@ function buildTestBatch(
     });
   }
 
-  // 3. Sofa set (+ accessory) — longest processing (made-to-order set).
   for (let i = 0; i < counts.sofaSet; i++) {
     const sofa = pick(prods.sofa, i);
     if (!sofa) break;
     const modules = pick(SOFA_SETS, i);
-    const proc = addDays(baseDate, 28 + (i % 14));     // ~4–6 weeks out
+    const proc = addDays(baseDate, 28 + (i % 14));
     const lines: GenLine[] = [{
       itemCode: sofa.code, itemGroup: 'sofa', description: sofa.name, qty: 1,
       variants: {
@@ -158,7 +144,6 @@ function buildTestBatch(
         depth: pick(SEATS, i), seatHeight: pick(SEATS, i), legHeight: pick(LEGS, i), tier: 'PRICE_2',
       },
     }];
-    // Most sofa sets ride with a pillow accessory.
     const acc = prods.accessory.length > 0 ? pick(prods.accessory, i) : null;
     if (acc && i % 2 === 0) lines.push({ itemCode: acc.code, itemGroup: 'accessory', description: acc.name, qty: 2, variants: null });
     specs.push({
@@ -184,7 +169,6 @@ const specToBody = (s: SoSpec) => ({
   })),
 });
 
-/* ── page ───────────────────────────────────────────────────────────────── */
 export const SoFromProducts = () => {
   const navigate = useNavigate();
   const notify = useNotify();
@@ -200,17 +184,14 @@ export const SoFromProducts = () => {
     accessory: products.filter((p) => p.category === 'ACCESSORY'),
   }), [products]);
 
-  // Quick test batch config.
   const [counts, setCounts] = useState({ mattressOnly: 35, mattressBedframe: 10, sofaSet: 5 });
   const [baseDate, setBaseDate] = useState<string>(todayMY());
 
-  // Manual picker.
   const [manualCustomer, setManualCustomer] = useState('');
   const [manualProc, setManualProc] = useState<string>('');
   const [manualDeliv, setManualDeliv] = useState<string>('');
   const [picks, setPicks] = useState<Record<string, { picked: boolean; qty: number }>>({});
 
-  // Run state.
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [result, setResult] = useState<{ created: string[]; errors: { name: string; msg: string }[] } | null>(null);
@@ -239,15 +220,10 @@ export const SoFromProducts = () => {
     setResult({ created, errors });
   };
 
-  // Manual: each ticked product → its own one-line SO (always composition-valid).
   const pickedManual = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const runManual = () => {
     if (!manualCustomer.trim()) { notify({ title: 'Enter a customer name first.', tone: 'error' }); return; }
     if (Boolean(manualProc) !== Boolean(manualDeliv)) { notify({ title: 'Processing Date and Delivery Date must be set together (or both empty).', tone: 'error' }); return; }
-    // Loo 2026-06-11 — mirror the SO API's date gates (no past dates; factory
-    // start never after delivery) so a bad manual pick fails HERE, not as a
-    // per-SO 400 row in the batch result. The input `min` attr alone is
-    // bypassable (typed dates / a page left open across midnight).
     if (manualProc && manualProc < todayMY()) { notify({ title: 'Processing Date cannot be in the past — pick today or a future date.', tone: 'error' }); return; }
     if (manualDeliv && manualDeliv < todayMY()) { notify({ title: 'Delivery Date cannot be in the past — pick today or a future date.', tone: 'error' }); return; }
     if (manualProc && manualDeliv && manualProc > manualDeliv) { notify({ title: 'Processing Date cannot be later than the Delivery Date.', tone: 'error' }); return; }
@@ -370,7 +346,6 @@ export const SoFromProducts = () => {
         }
       />
 
-      {/* Progress / result banner */}
       {(running || result) && (
         <section className={styles.card}>
           <div className={styles.cardBody}>
@@ -409,7 +384,6 @@ export const SoFromProducts = () => {
         </section>
       )}
 
-      {/* Card 1 — Quick test batch */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}><Sparkles {...ICON} /> Quick test batch</h2>
@@ -457,7 +431,6 @@ export const SoFromProducts = () => {
             </span>
           </div>
 
-          {/* Preview */}
           {preview.length > 0 && (
             <div style={{ marginTop: 'var(--space-3)', maxHeight: 280, overflow: 'auto', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-12)' }}>
@@ -491,7 +464,6 @@ export const SoFromProducts = () => {
         </div>
       </section>
 
-      {/* Card 2 — Pick products (one SO per ticked line) */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Pick products</h2>

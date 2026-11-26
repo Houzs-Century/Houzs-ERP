@@ -14,7 +14,6 @@ vi.mock('../lib/delivery-planning-queries', () => ({
 }));
 vi.mock('./NotifyDialog', () => ({ useNotify: () => () => {} }));
 vi.mock('../lib/mutation-error', () => ({ writeFailedAs: () => () => {} }));
-// The Sales Order postcode picker reads my_localities; a fixed slice here.
 vi.mock('../lib/localities-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/localities-queries')>()),
   useLocalities: () => ({
@@ -26,7 +25,6 @@ vi.mock('../lib/localities-queries', async (importOriginal) => ({
     ],
   }),
 }));
-// The portalled combobox needs layout jsdom lacks; a native select stands in.
 vi.mock('./SearchableSelect', () => ({
   SearchableSelect: ({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) => (
     <select data-testid="postcode-picker" value={value} onChange={(e) => onChange(e.target.value)}>
@@ -38,7 +36,6 @@ vi.mock('./SearchableSelect', () => ({
 
 const { EditDpOrderDrawer } = await import('./EditDpOrderDrawer');
 
-// The DpOrderRow fields the drawer reads (the rest are irrelevant to it).
 const row = {
   id: 'dp-7',
   dp_no: null,
@@ -73,7 +70,6 @@ describe('EditDpOrderDrawer', () => {
     expect(screen.getByDisplayValue('MSJ TRANSPORT SDN BHD')).toBeTruthy();
     expect(screen.getByDisplayValue('No 3, Jalan Perdagangan')).toBeTruthy();
     expect(screen.getByDisplayValue('Johor Bahru')).toBeTruthy();
-    // Origin ("from") section prefilled too.
     expect(screen.getByDisplayValue('KL Warehouse')).toBeTruthy();
     expect(screen.getByDisplayValue('Lot 12, Jalan Balakong')).toBeTruthy();
   });
@@ -81,7 +77,6 @@ describe('EditDpOrderDrawer', () => {
   test('Save sends every field, a cleared one as null', () => {
     mutate.mockClear();
     render(<EditDpOrderDrawer row={row} onClose={() => {}} />);
-    // Correct the party name; clear the remark stays empty -> null.
     fireEvent.change(screen.getByDisplayValue('MSJ TRANSPORT SDN BHD'), { target: { value: '  MSJ Transport  ' } });
     fireEvent.click(saveBtn());
     expect(mutate).toHaveBeenCalledTimes(1);
@@ -97,7 +92,6 @@ describe('EditDpOrderDrawer', () => {
       city: 'Johor Bahru',
       postcode: '81100',
       state: 'Johor',
-      // Origin ("from") rides along for a transfer.
       fromName: 'KL Warehouse',
       fromAddress1: 'Lot 12, Jalan Balakong',
       fromAddress2: null,
@@ -113,7 +107,6 @@ describe('EditDpOrderDrawer', () => {
     mutate.mockClear();
     const setupRow = { ...row, job_type: 'SETUP' } as unknown as Parameters<typeof EditDpOrderDrawer>[0]['row'];
     render(<EditDpOrderDrawer row={setupRow} onClose={() => {}} />);
-    // The From section is absent, so its fields never reach the patch.
     expect(screen.queryByText('From (origin)')).toBeNull();
     fireEvent.click(saveBtn());
     const sent = mutate.mock.calls[0][0] as Record<string, unknown>;

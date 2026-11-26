@@ -33,8 +33,6 @@ import { uplineUserIds } from "./orgScope";
 import { usersHoldingPermission } from "./permissionHolders";
 import { postPersonalNotice } from "./personalNotice";
 
-/** announcements.source tags — non-null keeps these out of the office composer
- *  list and the pop-up banner, and inside the bell's system slice. */
 const SO_SOURCE = "so_amendment";
 const PO_SOURCE = "po_amendment";
 
@@ -61,17 +59,9 @@ const cleanIds = (ids: Ids): number[] =>
    DEPTH rather than by naming ids keeps this true as the org chart moves. */
 const UPLINE_TOP_LEVELS_EXCLUDED = 2;
 
-/** Each seed plus the managers above it, MINUS the top two levels of each
- *  chain, de-duped across seeds.
- *
- *  The seed itself is never trimmed. It is the person who has to sign; a short
- *  chain (an approver reporting straight to the top) must still reach them,
- *  even when trimming would otherwise empty the list. */
 async function withUpline(env: Env, seeds: number[]): Promise<number[]> {
   const out = new Set<number>();
   for (const id of seeds) {
-    // uplineUserIds returns [self, manager, manager's manager, …] in order, so
-    // the levels to drop are the TAIL.
     const chain = await uplineUserIds(env, id);
     const keepTo = Math.max(1, chain.length - UPLINE_TOP_LEVELS_EXCLUDED);
     for (const up of chain.slice(0, keepTo)) out.add(up);
@@ -79,19 +69,15 @@ async function withUpline(env: Env, seeds: number[]): Promise<number[]> {
   return [...out];
 }
 
-/** `reason` flattened to one line and clipped — an operator's free text lands
- *  in a notice body, and a 2000-character paste would make the card unreadable. */
 function shortReason(reason: string | null | undefined): string {
   const r = (reason ?? "").replace(/\s+/g, " ").trim();
   if (!r) return "";
   return r.length > 200 ? `${r.slice(0, 199)}…` : r;
 }
 
-/* ── SO amendments ───────────────────────────────────────────────────────── */
 
 export type SoAmendmentLane = "LINES" | "DELIVERY" | "PRICE" | "LINE_ADDREMOVE";
 
-/** Lane wording for the notice copy. */
 const LANE_NOTICE_LABEL: Record<SoAmendmentLane, string> = {
   LINES: "product lines",
   DELIVERY: "delivery / customer info",
@@ -99,11 +85,6 @@ const LANE_NOTICE_LABEL: Record<SoAmendmentLane, string> = {
   LINE_ADDREMOVE: "add / cancel a product line",
 };
 
-/** Permission key that signs each lane. MUST stay identical to the gate's own
- *  table (scm/shared/amendment-lane.ts LANE_APPROVE_KEY) — a drift here would
- *  notify a desk that cannot sign. Held as a literal rather than imported so a
- *  Houzs-side service does not pull in the SCM bundle; amendmentNotify.test.ts
- *  asserts the two tables agree. */
 const LANE_APPROVE_PERM: Record<SoAmendmentLane, string> = {
   LINES: "scm.amendment.approve_lines",
   DELIVERY: "scm.amendment.approve_delivery",
@@ -122,9 +103,7 @@ export async function notifySoAmendmentRaised(
     companyId?: number | string | null;
     reason?: string | null;
     requesterName?: string | null;
-    /** users.id of the SO's salesperson, when it resolves. */
     salespersonUserId?: number | null;
-    /** users.id of the person who raised it — excluded from every audience. */
     requesterUserId?: number | null;
   },
 ): Promise<void> {
@@ -136,9 +115,6 @@ export async function notifySoAmendmentRaised(
     const tail = reason ? ` Reason: ${reason}` : "";
     const requester = Number(opts.requesterUserId) || 0;
 
-    // 1. The desk that has to sign, plus its upline. A LEGACY (lane-null) row
-    //    keeps the pre-rework key so the surviving chains still reach someone;
-    //    mig 0225 is why Purchaser + Logistic hold it.
     const approvePerm = opts.lane
       ? LANE_APPROVE_PERM[opts.lane]
       : "scm.amendment.approve_so";
@@ -160,8 +136,6 @@ export async function notifySoAmendmentRaised(
       });
     }
 
-    // 2. The salesperson whose order it is — informational, not a to-do, so it
-    //    is a SEPARATE notice rather than the approver's card sent wider.
     const salesAudience = cleanIds([opts.salespersonUserId]).filter(
       (id) => id !== requester && !approverAudience.includes(id),
     );
@@ -288,12 +262,10 @@ export async function notifySoAmendmentResolved(
     amendmentNo: string;
     soDocNo: string;
     outcome: "approved" | "rejected";
-    /** Rejection reason — the reject route requires one, so it is always set there. */
     reason?: string | null;
     actorName?: string | null;
     requesterUserId?: number | null;
     salespersonUserId?: number | null;
-    /** users.id of whoever pressed the button — never notified of their own act. */
     actorUserId?: number | null;
   },
 ): Promise<void> {
@@ -309,8 +281,6 @@ export async function notifySoAmendmentResolved(
     const reason = shortReason(opts.reason);
     await postPersonalNotice(env, {
       userIds: audience,
-      // A rejection is the one that needs chasing — it rides the WARNING
-      // category so the card reads as something to deal with, not an FYI.
       category: opts.outcome === "approved" ? "GENERAL" : "WARNING",
       title:
         opts.outcome === "approved"
@@ -328,7 +298,6 @@ export async function notifySoAmendmentResolved(
   }
 }
 
-/* ── PO amendments ───────────────────────────────────────────────────────── */
 
 export async function notifyPoAmendmentRaised(
   env: Env,
@@ -339,7 +308,6 @@ export async function notifyPoAmendmentRaised(
     reason?: string | null;
     requesterName?: string | null;
     requesterUserId?: number | null;
-    /** Set when the row was AUTO-raised by an approved SO amendment. */
     sourceSoAmendmentNo?: string | null;
   },
 ): Promise<void> {

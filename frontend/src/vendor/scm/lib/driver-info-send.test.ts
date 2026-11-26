@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { groupTimeSlot, phoneKey, planDriverInfoGroup } from './driver-info-send';
 import type { PlanningOrder } from './delivery-planning-queries';
 
-/** A PlanningOrder stub carrying only the crew the plan reads. */
 const row = (crew: Partial<NonNullable<PlanningOrder['crew']>> | null): PlanningOrder =>
   ({
     crew: crew === null ? null : {
@@ -37,8 +36,6 @@ describe('planDriverInfoGroup', () => {
     });
   });
 
-  // 2026-11-10: a driver typed on the DO form has no fleet record behind it, so no
-  // IC or phone. The send says to pick the real driver, not "add a contact in Fleet".
   it('blocks a driver only typed on the DO form as not linked', () => {
     const plan = planDriverInfoGroup([row({ driver_1_name: 'ALI TYPED', lorry_plate: 'WXX 1', driver_1_typed: true })], '10am');
     expect(plan.block).toBe('not_linked');

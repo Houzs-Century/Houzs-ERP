@@ -8,11 +8,9 @@
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface AssrWindow {
-  /** Days in the window, for the "N days" captions. */
   days: number;
   from: string | null;
   to: string | null;
-  /** SQL that keeps `col` inside the window. */
   sql: (col: string) => string;
 }
 

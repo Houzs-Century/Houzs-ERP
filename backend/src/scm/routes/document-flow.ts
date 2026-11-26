@@ -57,9 +57,6 @@ documentFlow.use('*', supabaseAuth);
 
 type NodeType =
   | 'so' | 'do' | 'si' | 'payment' | 'po' | 'grn' | 'pi' | 'dr' | 'pr'
-  // Consignment family (its own self-contained graph — not linked to the SO root):
-  //   sales:    cso ──▶ cdo ──▶ cdr   (Consignment Order / Note / Return)
-  //   purchase: pco ──▶ pcr ──▶ pcrn  (PC Order / Receive / Return)
   | 'cso' | 'cdo' | 'cdr' | 'pco' | 'pcr' | 'pcrn';
 type EdgeKind = 'full' | 'partial' | 'value' | 'payment';
 type EdgeLinkage = 'chain' | 'provenance';
@@ -67,10 +64,10 @@ type EdgeLinkage = 'chain' | 'provenance';
 const CONSIGNMENT_TYPES: NodeType[] = ['cso', 'cdo', 'cdr', 'pco', 'pcr', 'pcrn'];
 
 type FlowNode = {
-  key: string;            // unique `${type}:${id}`
+  key: string;
   type: NodeType;
-  id: string;             // navigation key (doc_no for SO, uuid for the rest)
-  label: string;          // human document number
+  id: string;
+  label: string;
   status: string | null;
   isAnchor: boolean;
 };
@@ -82,20 +79,11 @@ const cover = (childQty: number, parentQty: number): EdgeKind =>
 const uniq = (xs: Array<string | null | undefined>) =>
   [...new Set(xs.filter((x): x is string => !!x))];
 
-/* A PO's goods receipts are its LINES' receipts, never the GRN header FK. The
-   receive flow (grns POST /from-po-items) groups multi-selected picks by
-   SUPPLIER into ONE GRN whose header names only the FIRST source PO, while every
-   grn_item keeps its own purchase_order_item_id — so one GRN routinely receives
-   lines across many POs. Keying a PO's GRNs off grns.purchase_order_id therefore
-   hides that receipt on every source PO but the header one. Derive the PO ▸ GRN
-   coverage from the grn_items line link instead, per (PO, GRN); the header FK is
-   only a fallback for a GRN that received nothing on record. Same union the
-   multi-GRN PI resolver already uses. Pure so the mapping is unit-testable. */
 export function derivePoGrnCoverage(
   poItemQty: ReadonlyMap<string, { poId: string; qty: number }>,
   grnLines: ReadonlyArray<{ grn_id: string; purchase_order_item_id: string | null; qty: number }>,
 ): Map<string, { childQty: number; parentQty: number }> {
-  const agg = new Map<string, { childQty: number; parentItems: Set<string> }>(); // `${poId}|${grnId}`
+  const agg = new Map<string, { childQty: number; parentItems: Set<string> }>();
   for (const l of grnLines) {
     const itemId = l.purchase_order_item_id;
     if (!itemId || !l.grn_id) continue;
@@ -115,20 +103,8 @@ export function derivePoGrnCoverage(
   return out;
 }
 
-/* A PO's "From SOs: …" note records source SO doc numbers with the company
-   prefix stripped ("2990-SO-2606-033" → "SO-2606-033"); Houzs docs have no
-   prefix and pass through unchanged. Strip a leading "<digits>-" so the token
-   matches what the note actually contains. */
 const stripCompanyPrefix = (docNo: string): string => docNo.replace(/^\d+-/, '');
 
-/* R7 fix — WHOLE-TOKEN match of an SO doc number inside a PO's free-text "From
-   SOs: …" note. A plain substring test (`note.includes('SO-1')`) wrongly links
-   documents whose numbers are substrings of one another: "SO-1" would match the
-   "SO-10" in the note, and "SO-2606-3" would match "SO-2606-33". Doc numbers are
-   made of [A-Za-z0-9-], so we require that neither side of the match is flanked
-   by another doc-number character — i.e. the token stands alone in the note
-   (delimited by ": ", ", ", whitespace, or the string ends). The token is regex-
-   escaped; the match is case-insensitive to mirror how numbers are written. */
 const DOC_TOKEN_CHAR = /[A-Za-z0-9-]/;
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -158,22 +134,10 @@ export { parseProvenanceNote };
 
 export const noteMentionsToken = (note: string, token: string): boolean => {
   if (!note || !token) return false;
-  // (?<![A-Za-z0-9-]) TOKEN (?![A-Za-z0-9-]) — TOKEN not adjacent to another
-  // doc-number char on either side, so "SO-1" never matches inside "SO-10".
   const re = new RegExp(`(?<!${DOC_TOKEN_CHAR.source})${escapeRegExp(token)}(?!${DOC_TOKEN_CHAR.source})`, 'i');
   return re.test(note);
 };
 
-/* Resolve the set of Sales Order doc_nos the anchor document descends from.
-   Every by-id / by-anchor read is scoped to the ACTIVE company via
-   scopeToCompany (same idiom the sibling SCM routes use), so a caller in
-   company A can never resolve a root SO from company B's document by feeding an
-   enumerated id — the anchor read simply returns nothing for a foreign id.
-   All tables touched here carry company_id (migration 0083). scopeToCompany
-   no-ops when the active company is unresolved (pre-migration / cold-start). */
-/* The handler's chunked reader: batched by URL bytes, paged past the 1000-row cap,
-   and a failed batch is recorded in the response's `degraded` and returned as
-   `error` so a caller can tell a failed read from an empty one. */
 type ReadRes = <T = any>(
   label: string, ids: readonly string[], make: (b: string[], from: number, to: number) => PromiseLike<any>,
 ) => Promise<{ data: T[]; error: { message: string } | null }>;
@@ -242,12 +206,10 @@ async function resolveRootSos(sb: any, c: Context<any>, type: NodeType, id: stri
       return data?.grn_id ? resolveRootSos(sb, c, 'grn', data.grn_id, rd) : [];
     }
     case 'dr': {
-      // Delivery Return hangs off its Delivery Order — resolve through the DO.
       const { data } = await scopeToCompany(sb.from('delivery_returns').select('delivery_order_id').eq('id', id), c).maybeSingle();
       return data?.delivery_order_id ? resolveRootSos(sb, c, 'do', data.delivery_order_id, rd) : [];
     }
     case 'pr': {
-      // Purchase Return hangs off its Goods Receipt (or, failing that, its PO).
       const { data } = await scopeToCompany(sb.from('purchase_returns').select('grn_id, purchase_order_id').eq('id', id), c).maybeSingle();
       if (data?.grn_id) return resolveRootSos(sb, c, 'grn', data.grn_id, rd);
       return data?.purchase_order_id ? resolveRootSos(sb, c, 'po', data.purchase_order_id, rd) : [];
@@ -268,25 +230,11 @@ async function soDocNosFromDoItems(c: Context<any>, doItemIds: string[], sb: any
   return soDocNosFromSoItems(c, uniq(data.map((r) => r.so_item_id)), sb, rd);
 }
 
-/* Self-contained graph for the consignment family. The consignment chains are
-   NOT linked to the mfg Sales Order root, so they get their own rooted builder:
-     sales:    cso (Consignment Order) ▶ cdo (Note) ▶ cdr (Return)
-     purchase: pco (PC Order) ▶ pcr (PC Receive) ▶ pcrn (PC Return)
-   FKs (confirmed against migrations 0153/0154):
-     consignment_delivery_orders.consignment_so_doc_no
-     consignment_delivery_order_items.consignment_so_item_id
-     consignment_delivery_returns.consignment_do_id
-     consignment_delivery_return_items.consignment_do_item_id
-     purchase_consignment_receives.purchase_consignment_order_id
-     purchase_consignment_receive_items.pc_order_item_id
-     purchase_consignment_returns.pc_order_id / .pc_receive_id
-     purchase_consignment_return_items.pc_receive_item_id                       */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function buildConsignmentFlow(sb: any, c: Context<any>, type: NodeType, id: string, cid: number | null) {
   const anchorKey = keyOf(type, id);
   const nodes = new Map<string, FlowNode>();
   const edges: FlowEdge[] = [];
-  // Consignment chains are execution FKs end to end — every edge is 'chain'.
   const addEdge = (from: string, to: string, kind: EdgeKind) => {
     if (nodes.has(from) && nodes.has(to)) edges.push({ from, to, kind, linkage: 'chain' });
   };
@@ -295,13 +243,10 @@ async function buildConsignmentFlow(sb: any, c: Context<any>, type: NodeType, id
     return { nodes: [...nodes.values()], edges, rootSos };
   };
 
-  // ── SALES chain: cso ▶ cdo ▶ cdr ─────────────────────────────────────────
   if (type === 'cso' || type === 'cdo' || type === 'cdr') {
     let rootDoc: string | null = null;
     if (type === 'cso') rootDoc = id;
     else if (type === 'cdo') {
-      // Scope the anchor read to the active company so a foreign id resolves to
-      // no root (defence-in-depth on top of the root-ownership gate below).
       const { data } = await scopeToCompany(sb.from('consignment_delivery_orders').select('consignment_so_doc_no').eq('id', id), c).maybeSingle();
       rootDoc = data?.consignment_so_doc_no ?? null;
     } else {
@@ -313,8 +258,6 @@ async function buildConsignmentFlow(sb: any, c: Context<any>, type: NodeType, id
     }
     if (!rootDoc) return orphan([]);
 
-    // Multi-company: only trace this consignment family if the ACTIVE company
-    // owns the root order — otherwise collapse to the orphan anchor.
     if (cid != null) {
       const { data: own } = await sb.from('consignment_sales_orders').select('company_id').eq('doc_no', rootDoc).maybeSingle();
       if (!own || Number(own.company_id) !== cid) return orphan([]);
@@ -382,12 +325,9 @@ async function buildConsignmentFlow(sb: any, c: Context<any>, type: NodeType, id
     return orphan([rootDoc]);
   }
 
-  // ── PURCHASE chain: pco ▶ pcr ▶ pcrn ─────────────────────────────────────
   let rootPco: string | null = null;
   if (type === 'pco') rootPco = id;
   else if (type === 'pcr') {
-    // Scope the anchor read to the active company (defence-in-depth on top of
-    // the root-ownership gate below).
     const { data } = await scopeToCompany(sb.from('purchase_consignment_receives').select('purchase_consignment_order_id').eq('id', id), c).maybeSingle();
     rootPco = data?.purchase_consignment_order_id ?? null;
   } else {
@@ -400,8 +340,6 @@ async function buildConsignmentFlow(sb: any, c: Context<any>, type: NodeType, id
   }
   if (!rootPco) return orphan([]);
 
-  // Multi-company: only trace this PC family if the ACTIVE company owns the root
-  // PC order — otherwise collapse to the orphan anchor.
   if (cid != null) {
     const { data: own } = await sb.from('purchase_consignment_orders').select('company_id').eq('id', rootPco).maybeSingle();
     if (!own || Number(own.company_id) !== cid) return orphan([]);
@@ -475,38 +413,22 @@ async function buildConsignmentFlow(sb: any, c: Context<any>, type: NodeType, id
   return orphan([rootPco]);
 }
 
-/* ── GET /document-flow/candidate-pos/:soDocNo ──────────────────────────────
-   ADVISORY, READ-ONLY. For an SO whose purchase leg was never linked
-   (purchase_order_items.so_item_id NULL — every PO raised before the MRP-linked
-   flow of 2026-07-09), surface the live POs that MIGHT cover it, matched by
-   item_code ALONE. This writes NOTHING and creates NO link: a pre-MRP PO was
-   a shared stock buy (one PO, qty N, feeding several SOs), so the true SO⇄PO
-   attribution was never recorded and cannot be safely inferred. The map shows
-   these as "Not linked from this SO" so the office can reconcile by hand without
-   the graph ever asserting a guess as fact.
-
-   Registered BEFORE the '/:type/:id' catch-all so 'candidate-pos' is not parsed
-   as a NodeType. Company-scoped both ends: gated on SO ownership, and the PO
-   read itself is scopeToCompany'd. */
 documentFlow.get('/candidate-pos/:soDocNo', async (c) => {
   const sb = c.get('supabase');
   const soDocNo = c.req.param('soDocNo');
   const cid = activeCompanyId(c);
 
-  // Ownership gate — never resolve candidates for an SO another company owns.
   if (cid != null) {
     const { data: so } = await sb.from('mfg_sales_orders')
       .select('doc_no').eq('doc_no', soDocNo).eq('company_id', cid).maybeSingle();
     if (!so) return c.json({ candidates: [] });
   }
 
-  // The SO's own item codes (doc_no already company-verified above).
   const { data: soItems } = await sb.from('mfg_sales_order_items')
     .select('item_code').eq('doc_no', soDocNo);
   const codes = uniq((soItems ?? []).map((r: any) => r.item_code));
   if (codes.length === 0) return c.json({ candidates: [] });
 
-  // UNLINKED PO lines (so_item_id NULL) carrying any of those codes.
   const { data: poItems, error: poErr } = await pgrestIn(sb.from('purchase_order_items')
     .select('purchase_order_id'), 'item_code', codes)
     .is('so_item_id', null);
@@ -517,12 +439,6 @@ documentFlow.get('/candidate-pos/:soDocNo', async (c) => {
   const poIds = uniq((poItems ?? []).map((r: any) => r.purchase_order_id));
   if (poIds.length === 0) return c.json({ candidates: [] });
 
-  /* Live (non-CANCELLED) POs only, company-scoped, newest first. CHUNKED: the
-     read above collects EVERY unlinked PO line carrying one of this order's item
-     codes, with no date or status bound, so `poIds` grows with the whole PO
-     history of a common SKU rather than with this one order. The `.sort()` below
-     is a total order over the merged rows, so batching cannot reshuffle the
-     candidate list. */
   type CandidatePoRow = { id: string; po_number: string; status: string | null; po_date: string | null };
   const { data: pos } = await chunkIn<CandidatePoRow>(poIds, (batch, from, to) => scopeToCompany(
     sb.from('purchase_orders')
@@ -547,22 +463,11 @@ documentFlow.get('/:type/:id', async (c) => {
     return c.json({ error: 'bad_type' }, 400);
   }
 
-  // Multi-company: the graph is isolated to the ACTIVE company. Resolved once
-  // here and threaded into both the consignment builder and the SO-root filter.
   const cid = activeCompanyId(c);
 
-  /* Every id-list read below goes through here: batched by URL bytes AND paged
-     past the 1000-row cap (chunkIn). A failed batch is logged and listed in the
-     response's `degraded` array (an API diagnostic; the UI does not show it yet).
-     `readRes` also returns the error, for callers that must not act on a failed
-     read; `readIn` is the data-only form. Callers `.order('id')` + `.range`. */
   const degraded: string[] = [];
   const readRes: ReadRes = async (label, ids, make) => {
     let { data, error } = await chunkIn<any>(ids, make);
-    /* chunkIn stops at the first failed batch and drops the rest, so a failure
-       leaves a PARTIAL set. One retry of the whole list covers a transient
-       failure; if it still fails the caller gets `error` and must not derive
-       coverage from the partial rows. */
     if (error) ({ data, error } = await chunkIn<any>(ids, make));
     if (error) { degraded.push(label); console.error(`[document-flow] ${label} read failed:`, error.message); }
     return { data, error };
@@ -570,20 +475,12 @@ documentFlow.get('/:type/:id', async (c) => {
   const readIn = async <T = any>(label: string, ids: readonly string[], make: (b: string[], from: number, to: number) => PromiseLike<any>): Promise<T[]> =>
     (await readRes<T>(label, ids, make)).data;
 
-  // Consignment docs form their own self-contained family graph.
   if (CONSIGNMENT_TYPES.includes(type)) {
     return c.json({ ...(await buildConsignmentFlow(sb, c, type, id, cid ?? null)), degraded });
   }
 
   let rootSos = await resolveRootSos(sb, c, type, id, readRes);
 
-  // The ENTIRE relationship graph descends from these root SOs (every downstream
-  // read is bounded by `.in('doc_no', rootSos)` or by SO-item ids derived from
-  // them). Filter the roots to the SOs the active company owns, so a caller in
-  // company A can never trace / leak company B's document family. If none of the
-  // roots belong to the active company, the graph collapses to the orphan branch
-  // below (just the anchor the caller already named). No-op when the active
-  // company is unresolved (pre-migration / cold-start).
   if (cid != null && rootSos.length > 0) {
     const { data: owned } = await sb
       .from('mfg_sales_orders')
@@ -596,15 +493,11 @@ documentFlow.get('/:type/:id', async (c) => {
   const anchorKey = keyOf(type, id);
   const nodes = new Map<string, FlowNode>();
   const edges: FlowEdge[] = [];
-  // Default 'chain' — every edge below is an execution FK except the SO ▶ PO
-  // raise-link, whose one callsite stamps 'provenance' explicitly.
   const addEdge = (from: string, to: string, kind: EdgeKind, linkage: EdgeLinkage = 'chain') => {
     if (nodes.has(from) && nodes.has(to)) edges.push({ from, to, kind, linkage });
   };
 
   if (rootSos.length === 0) {
-    // Orphan document with no resolvable SO — still show it alone so the map
-    // is never blank. (Rare: an ad-hoc invoice with no SO/DO link.)
     nodes.set(anchorKey, { key: anchorKey, type, id, label: id, status: null, isAnchor: true });
 
     /* …except the PURCHASE side (owner 2026-07-27): a stock buy / unlinked PO is
@@ -621,8 +514,6 @@ documentFlow.get('/:type/:id', async (c) => {
        coverage; PI/PR edges default 'full' (coverage colouring matters on the
        receipt hop — billing splits on a stock buy are cosmetic). */
     let poAmendments: Array<{ id: string; poId: string; poNumber: string; amendmentNo: number | string; status: string | null; createdAt: string | null }> = [];
-    // The PO that heads this orphan purchase subtree: the anchor PO itself, or
-    // the parent PO of an orphan GRN.
     const expandPoId =
       type === 'po'
         ? id
@@ -641,9 +532,6 @@ documentFlow.get('/:type/:id', async (c) => {
       for (const l of poLines) poItemQty.set(l.id, { poId: expandPoId, qty: Number(l.qty ?? 0) });
       const poItemIds = [...poItemQty.keys()];
 
-      /* GRNs reached by this PO's LINES (a supplier multi-receive headers one PO
-         but receives many) ∪ the header FK, so a cross-PO receipt shows and a
-         receipt-less header GRN still does. Mirrors the main builder's section 6. */
       const grnLinesRes = await readRes('orphan grn_items', poItemIds, (b, f, t) =>
         scopeToCompany(sb.from('grn_items').select('id, grn_id, purchase_order_item_id, qty:qty_accepted').in('purchase_order_item_id', b), c).order('id').range(f, t));
       const grnLines = grnLinesRes.data;
@@ -673,8 +561,6 @@ documentFlow.get('/:type/:id', async (c) => {
         addEdge(poKey, keyOf('grn', g.id), 'full');
       }
       if (grnIds.length) {
-        /* Multi-GRN PIs — same union as the main builder: a PI reaches this
-           family through its LINES even when its header names another note. */
         const myGrnItems = await readIn('orphan grn_items(by grn)', grnIds, (b, f, t) =>
           scopeToCompany(sb.from('grn_items').select('id, grn_id').in('grn_id', b), c).order('id').range(f, t));
         const myGrnItemIds = (myGrnItems as Array<{ id: string }>).map((r) => r.id);
@@ -702,7 +588,6 @@ documentFlow.get('/:type/:id', async (c) => {
           if (notes?.size) for (const gid of notes) addEdge(keyOf('grn', gid), k, 'full');
           else if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
         }
-        // Returns: line link UNION header FK, same as the main builder's section 9.
         const prLineLinks = await readIn('orphan purchase_return_items', myGrnItemIds, (b, f, t) =>
           scopeToCompany(sb.from('purchase_return_items').select('id, purchase_return_id, grn_item_id').in('grn_item_id', b), c).order('id').range(f, t));
         const notesByPr = new Map<string, Set<string>>();
@@ -726,8 +611,6 @@ documentFlow.get('/:type/:id', async (c) => {
           else if (p.grn_id) addEdge(keyOf('grn', p.grn_id), k, 'full');
         }
       }
-      // PO amendments still branch off an orphan PO (same shape as section 11).
-      // Only for a PO anchor: the GRN map has no amendments row.
       if (type === 'po') {
         const { data: poAmendRows } = await sb.from('po_amendments')
           .select('id, po_id, po_number, amendment_no, status, created_at')
@@ -746,9 +629,6 @@ documentFlow.get('/:type/:id', async (c) => {
     return c.json({ nodes: [...nodes.values()], edges, rootSos, amendments: [], poAmendments, degraded });
   }
 
-  // ── 1. SO headers + lines ───────────────────────────────────────────────
-  /* The sales-chain reads below answer 500 when they fail. Drawing the map
-     without them would show an order with no delivery, invoice or payment. */
   const { data: soHeaders, error: soHeadersErr } = await sb.from('mfg_sales_orders').select('doc_no, status').in('doc_no', rootSos);
   if (soHeadersErr) return c.json(readFailure('document_flow', soHeadersErr), 500);
   for (const s of soHeaders as any[]) {
@@ -757,15 +637,14 @@ documentFlow.get('/:type/:id', async (c) => {
   }
   const { data: soLines, error: soLinesErr } = await sb.from('mfg_sales_order_items').select('id, doc_no, qty').in('doc_no', rootSos);
   if (soLinesErr) return c.json(readFailure('document_flow', soLinesErr), 500);
-  const soItemQty = new Map<string, number>();   // soItemId → qty
-  const soItemToDoc = new Map<string, string>(); // soItemId → SO doc_no
+  const soItemQty = new Map<string, number>();
+  const soItemToDoc = new Map<string, string>();
   for (const l of soLines as any[]) {
     soItemQty.set(l.id, Number(l.qty ?? 0));
     soItemToDoc.set(l.id, l.doc_no);
   }
   const soItemIds = [...soItemQty.keys()];
 
-  // ── 2. DOs (sales chain) ────────────────────────────────────────────────
   const doLinesBySoItem = soItemIds.length
     ? (await sb.from('delivery_order_items').select('id, delivery_order_id, so_item_id, qty').in('so_item_id', soItemIds)).data ?? []
     : [];
@@ -783,9 +662,8 @@ documentFlow.get('/:type/:id', async (c) => {
     if (moreErr) return c.json(readFailure('document_flow', moreErr), 500);
     for (const d of more as any[]) doHeaderById.set(d.id, d);
   }
-  // do line id → { doId, qty, soItemId } ; and per-DO coverage vs SO
   const doItemMeta = new Map<string, { doId: string; qty: number; soItemId: string | null }>();
-  const soToDo = new Map<string, { childQty: number; parentItems: Set<string> }>(); // `${soDocNo}|${doId}`
+  const soToDo = new Map<string, { childQty: number; parentItems: Set<string> }>();
   for (const l of (doLinesBySoItem) as any[]) {
     doItemMeta.set(l.id, { doId: l.delivery_order_id, qty: Number(l.qty ?? 0), soItemId: l.so_item_id ?? null });
     const soDoc = l.so_item_id ? soItemToDoc.get(l.so_item_id) : undefined;
@@ -800,7 +678,6 @@ documentFlow.get('/:type/:id', async (c) => {
     const k = keyOf('do', d.id);
     nodes.set(k, { key: k, type: 'do', id: d.id, label: d.do_number ?? d.id, status: d.status ?? null, isAnchor: k === anchorKey });
   }
-  // SO → DO edges
   for (const d of doHeaderById.values()) {
     const soDoc = d.so_doc_no && rootSos.includes(d.so_doc_no) ? d.so_doc_no : rootSos.find((s) => soToDo.has(`${s}|${d.id}`));
     if (!soDoc) continue;
@@ -809,7 +686,6 @@ documentFlow.get('/:type/:id', async (c) => {
     addEdge(keyOf('so', soDoc), keyOf('do', d.id), agg ? cover(agg.childQty, parentQty) : 'full');
   }
 
-  // ── 3. Sales Invoices ───────────────────────────────────────────────────
   const doItemIds = [...doItemMeta.keys()];
   const siByHeaderDo = doIds.length
     ? (await sb.from('sales_invoices').select('id, invoice_number, status, so_doc_no, delivery_order_id').in('delivery_order_id', doIds)).data ?? []
@@ -821,7 +697,6 @@ documentFlow.get('/:type/:id', async (c) => {
     : [];
   const siById = new Map<string, any>();
   for (const s of [...(siByHeaderDo as any[]), ...(siBySoDoc as any[])]) siById.set(s.id, s);
-  // pull SIs reachable only through line links
   const lineSiIds = uniq((siLineLinks as any[]).map((l) => l.sales_invoice_id)).filter((sid) => !siById.has(sid));
   if (lineSiIds.length) {
     const { data: more, error: moreErr } = await sb.from('sales_invoices').select('id, invoice_number, status, so_doc_no, delivery_order_id').in('id', lineSiIds);
@@ -832,7 +707,6 @@ documentFlow.get('/:type/:id', async (c) => {
     const k = keyOf('si', s.id);
     nodes.set(k, { key: k, type: 'si', id: s.id, label: s.invoice_number ?? s.id, status: s.status ?? null, isAnchor: k === anchorKey });
   }
-  // DO → SI coverage from line links: `${doId}|${siId}`
   const doToSi = new Map<string, { childQty: number; parentItems: Set<string> }>();
   for (const l of (siLineLinks as any[])) {
     const dm = l.do_item_id ? doItemMeta.get(l.do_item_id) : undefined;
@@ -856,13 +730,11 @@ documentFlow.get('/:type/:id', async (c) => {
         linked = true;
       }
     }
-    // SI tied straight to the SO (no DO in between)
     if (!linked && s.so_doc_no && rootSos.includes(s.so_doc_no)) {
       addEdge(keyOf('so', s.so_doc_no), keyOf('si', s.id), 'full');
     }
   }
 
-  // ── 4. AR Payments ──────────────────────────────────────────────────────
   const siIds = [...siById.keys()];
   if (siIds.length) {
     const { data: pays, error: paysErr } = await sb.from('sales_invoice_payments')
@@ -876,10 +748,6 @@ documentFlow.get('/:type/:id', async (c) => {
     }
   }
 
-  // ── 8. Delivery Returns (sales chain) ───────────────────────────────────
-  // A Delivery Return reverses goods on a Delivery Order. It hangs off the DO,
-  // mirroring how a GRN hangs off its PO. Coverage compares returned qty to the
-  // DO line qty (a full return greys out blue, a partial one red).
   if (doIds.length) {
     const { data: drByHeader, error: drByHeaderErr } = await sb.from('delivery_returns')
       .select('id, return_number, status, delivery_order_id').in('delivery_order_id', doIds);
@@ -888,7 +756,7 @@ documentFlow.get('/:type/:id', async (c) => {
     const drLineLinks = drIds.length
       ? (await sb.from('delivery_return_items').select('delivery_return_id, do_item_id, qty_returned').in('delivery_return_id', drIds)).data ?? []
       : [];
-    const doToDr = new Map<string, { childQty: number; parentItems: Set<string> }>(); // `${doId}|${drId}`
+    const doToDr = new Map<string, { childQty: number; parentItems: Set<string> }>();
     for (const l of (drLineLinks as any[])) {
       const dm = l.do_item_id ? doItemMeta.get(l.do_item_id) : undefined;
       if (!dm) continue;
@@ -909,36 +777,9 @@ documentFlow.get('/:type/:id', async (c) => {
     }
   }
 
-  // ── 5. POs (purchase chain) ─────────────────────────────────────────────
-  // Two linkage sources, both real:
-  //   (a) so_item_id — the MRP-linked flow (2026-07-09 onward). Per-item, exact.
-  //   (b) the PO's "From SOs: …" note — how a PO records its source SO(s) at
-  //       creation. It is the ONLY link for POs raised before so_item_id existed
-  //       (a shared stock buy stamps every SO it was raised for), and it is an
-  //       authoritative record, not a guess — so note-linked POs are surfaced as
-  //       REAL nodes, and their GRN/PI chain expands (grn_items line link ∪ the
-  //       header FK) below exactly like a so_item_id-linked PO's does.
   const poItemLinks = await readIn('purchase_order_items(by so item)', soItemIds, (b, f, t) =>
     sb.from('purchase_order_items').select('id, purchase_order_id, so_item_id, qty').in('so_item_id', b).order('id').range(f, t));
 
-  /* (b) Note-recorded links. Notes exist in BOTH shapes and both are real:
-     the writer stamps the SO doc number VERBATIM (mfg-purchase-orders.ts:
-     `From SOs: ${docNos.join(', ')}`), so a 2990 PO raised in Houzs records
-     "2990-SO-2607-016"; but the 2990 IMPORT left its historical notes naming
-     the PRE-IMPORT number "SO-2606-033", because migrate-2990-into-houzs.mjs
-     prefixed doc-number columns and not free text inside `notes`.
-     repair-2990-doc-refs.mjs corrects those it can PROVE, and deliberately
-     leaves the ambiguous ones alone — so both shapes will coexist permanently
-     and this matcher has to accept either.
-
-     Matching only the prefix-stripped token (which is all this did) breaks on a
-     prefixed note: noteMentionsToken forbids an adjacent doc-number character,
-     and the "-" of "2990-" is one, so "SO-2607-016" does NOT match inside
-     "2990-SO-2607-016". Try the FULL doc number first, then the bare tail.
-
-     Both are safe against the colliding-tail hazard for the same reason as
-     before: the scan is `.eq('company_id', cid)`, so a bare token can only ever
-     match a note on a PO in the SAME company as the root SO. */
   const bareTokens = rootSos.map((d) => stripCompanyPrefix(d)).filter(Boolean);
   const noteEdges: Array<{ soDoc: string; poId: string }> = [];
   const notePoIds: string[] = [];
@@ -961,22 +802,10 @@ documentFlow.get('/:type/:id', async (c) => {
     }
   }
 
-  /* FK-over-note (clobber-residue guard). A PO that carries ANY so_item_id line
-     is a modern, FK-linked purchase; its "From SOs: …" note is legacy free text,
-     authoritative only for pre-so_item_id POs with no hard link at all. When a
-     reused SO doc_no lingers in such a note (a rebuilt SO taking over a number a
-     since-renumbered order once held), the token match wrongly drags that PO's
-     whole received chain onto the SO now holding the number. So drop the note
-     edges for any PO that has a hard so_item_id link — the poItemLinks above are
-     its real provenance. Bounded by notePoIds (POs whose note already matched a
-     root SO), so this adds one small read only when notes matched at all. */
   if (notePoIds.length) {
     const fk = await readRes<{ purchase_order_id: string }>('purchase_order_items(fk-over-note)', uniq(notePoIds), (b, f, t) =>
       sb.from('purchase_order_items').select('id, purchase_order_id').in('purchase_order_id', b)
         .not('so_item_id', 'is', null).order('id').range(f, t));
-    /* On a read failure leave the note edges untouched rather than guess — the
-       map is advisory and this FK-over-note guard is an enhancement, not a
-       correctness gate. */
     if (!fk.error) {
       const fkLinkedPoIds = new Set(fk.data.map((r) => r.purchase_order_id));
       if (fkLinkedPoIds.size) {
@@ -997,8 +826,7 @@ documentFlow.get('/:type/:id', async (c) => {
       const k = keyOf('po', p.id);
       nodes.set(k, { key: k, type: 'po', id: p.id, label: p.po_number ?? p.id, status: p.status ?? null, isAnchor: k === anchorKey });
     }
-    // SO → PO: a purchase raised against the SO is a value transfer.
-    const poToSo = new Map<string, Set<string>>(); // poId → soDocNos
+    const poToSo = new Map<string, Set<string>>();
     for (const l of poItemLinks) {
       const soDoc = l.so_item_id ? soItemToDoc.get(l.so_item_id) : undefined;
       if (!soDoc) continue;
@@ -1011,16 +839,9 @@ documentFlow.get('/:type/:id', async (c) => {
       set.add(soDoc);
       poToSo.set(poId, set);
     }
-    // The SO ▶ PO raise-link is PROVENANCE, not execution ("soft until DO,
-    // hard from DO"): it records why we bought and binds nothing downstream.
     for (const [poId, soDocs] of poToSo) for (const soDoc of soDocs) addEdge(keyOf('so', soDoc), keyOf('po', poId), 'value', 'provenance');
   }
 
-  // ── 6. GRNs ─────────────────────────────────────────────────────────────
-  /* Discover over ALL lines of every PO in the graph, not just the SO-linked
-     ones: a note-linked PO contributes no so_item_id line, and a supplier
-     multi-receive headers one PO while receiving many, so both the header FK and
-     the grn_items line link are real and only their UNION is complete. */
   const allPoItemRows = await readIn('purchase_order_items', poIds, (b, f, t) =>
     sb.from('purchase_order_items').select('id, purchase_order_id, qty').in('purchase_order_id', b).order('id').range(f, t));
   const poItemQtyAll = new Map<string, { poId: string; qty: number }>();
@@ -1032,8 +853,6 @@ documentFlow.get('/:type/:id', async (c) => {
     sb.from('grns').select('id, grn_number, status, purchase_order_id').in('purchase_order_id', b).order('id').range(f, t));
   const grnById = new Map<string, any>();
   for (const g of grnByHeader) grnById.set(g.id, g);
-  // A GRN reached only by line link (its header names another PO) still needs
-  // its header row for the node label/status.
   const grnLineLinks = grnLineRes.data;
   const missingGrnIds = uniq(grnLineLinks.map((l) => l.grn_id)).filter((gid) => !grnById.has(gid));
   for (const g of await readIn('grns(by line)', missingGrnIds, (b, f, t) =>
@@ -1047,9 +866,6 @@ documentFlow.get('/:type/:id', async (c) => {
     const k = keyOf('grn', g.id);
     nodes.set(k, { key: k, type: 'grn', id: g.id, label: g.grn_number ?? g.id, status: g.status ?? null, isAnchor: k === anchorKey });
   }
-  /* PO ▸ GRN edges from the line link — one per PO whose line this GRN received,
-     each with its own coverage. The header FK adds a fallback edge only for a GRN
-     that recorded no receiving line (nothing to key a line edge off). */
   const grnEdged = new Set<string>();
   for (const [k, cov] of poGrnCoverage) {
     const [poId, grnId] = k.split('|');
@@ -1063,7 +879,6 @@ documentFlow.get('/:type/:id', async (c) => {
     addEdge(keyOf('po', g.purchase_order_id), keyOf('grn', g.id), 'full');
   }
 
-  // ── 7. Purchase Invoices ────────────────────────────────────────────────
   const grnIds = [...grnById.keys()];
   const grnItemIds = [...grnItemMeta.keys()];
   if (grnIds.length) {
@@ -1096,10 +911,6 @@ documentFlow.get('/:type/:id', async (c) => {
     for (const p of pis) {
       const k = keyOf('pi', p.id);
       nodes.set(k, { key: k, type: 'pi', id: p.id, label: p.invoice_number ?? p.id, status: p.status ?? null, isAnchor: k === anchorKey });
-      /* One edge per NOTE this PI actually bills (from the line aggregation),
-         so a 3-note invoice draws three GRN→PI edges, each with its own
-         coverage. The header FK only supplies a fallback edge when the PI has
-         no line links at all. */
       const billed = [...grnToPi.entries()].filter(([key]) => key.endsWith(`|${p.id}`));
       if (billed.length) {
         for (const [key, agg] of billed) {
@@ -1113,10 +924,6 @@ documentFlow.get('/:type/:id', async (c) => {
     }
   }
 
-  // ── 9. Purchase Returns (purchase chain) ────────────────────────────────
-  // A Purchase Return reverses goods on a Goods Receipt. It hangs off the GRN,
-  // mirroring how a Delivery Return hangs off its DO. Coverage compares returned
-  // qty to the GRN line qty.
   if (grnIds.length) {
     /* A return raised from the PO (Raise Return, ?poId=) draws lines from
        several receipts and leaves the header grn_id NULL, so the header FK
@@ -1134,7 +941,7 @@ documentFlow.get('/:type/:id', async (c) => {
     const prIds = uniq(prs.map((p: any) => p.id));
     const prLineLinks = await readIn('purchase_return_items', prIds, (b, f, t) =>
       sb.from('purchase_return_items').select('id, purchase_return_id, grn_item_id, qty_returned').in('purchase_return_id', b).order('id').range(f, t));
-    const grnToPr = new Map<string, { childQty: number; parentItems: Set<string> }>(); // `${grnId}|${prId}`
+    const grnToPr = new Map<string, { childQty: number; parentItems: Set<string> }>();
     for (const l of prLineLinks) {
       const gm = l.grn_item_id ? grnItemMeta.get(l.grn_item_id) : undefined;
       if (!gm) continue;
@@ -1160,15 +967,6 @@ documentFlow.get('/:type/:id', async (c) => {
     }
   }
 
-  // ── 10. SO amendments (revision requests) ────────────────────────────────
-  // Amendments hang off the SO by so_doc_no. They are surfaced as a read-only
-  // side list (not graph nodes) so the relationship map can branch them off the
-  // Sales Order, each clickable to /scm/amendments/:id. Company scope is already
-  // enforced: rootSos was filtered to the active company's owned SOs above, so a
-  // join on so_doc_no can only ever reach this company's amendments. PO
-  // amendments do not exist as their own document — a PO revision is the PO leg
-  // of an SO amendment (approve-po → po_revisions) — so there is nothing extra
-  // to surface off the PO.
   const { data: amendRows } = await sb.from('so_amendments')
     .select('id, so_doc_no, amendment_no, status, created_at')
     .in('so_doc_no', rootSos)
@@ -1181,15 +979,6 @@ documentFlow.get('/:type/:id', async (c) => {
     createdAt: a.created_at ?? null,
   }));
 
-  // ── 11. PO amendments (revision requests) ────────────────────────────────
-  // The PO-side sibling of the SO amendment side list above (mig 0192). A PO
-  // amendment IS its own document now (po_amendments) — not the PO leg of an SO
-  // amendment — so it branches off the Purchase Order node(s), each clickable to
-  // /scm/po-amendments/:id. Keyed by po_id against the PO nodes already in the
-  // graph, which were themselves gathered from company-scoped reads, so this can
-  // only ever reach this company's amendments (same scoping argument as the SO
-  // block). Returned as a SEPARATE `poAmendments` array so the SO amendment
-  // shape is untouched.
   const poIdsInGraph = [...nodes.values()].filter((n) => n.type === 'po').map((n) => n.id);
   let poAmendments: Array<{ id: string; poId: string; poNumber: string; amendmentNo: number | string; status: string | null; createdAt: string | null }> = [];
   if (poIdsInGraph.length > 0) {

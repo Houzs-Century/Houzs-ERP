@@ -1,7 +1,3 @@
-/* The shared visible-only poll (lib/visiblePoll.ts). Pinned: a hidden tab is
-   never polled; returning to it refetches once; however many readers register
-   one key, a due key costs one request; a key refreshed by someone else in the
-   meantime is not fetched again; a disabled query is not woken. */
 
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -42,15 +38,15 @@ describe("visible-only shared poll", () => {
   test("a due key is fetched once per tick, however many readers registered it", async () => {
     const { client, fn, unsubscribe } = setup();
     await settle();
-    expect(fn).toHaveBeenCalledTimes(1); // the mount's own first read
+    expect(fn).toHaveBeenCalledTimes(1);
     const offs = [registerVisiblePoll(KEY, 60_000, client), registerVisiblePoll(KEY, 60_000, client)];
     const loadedAt = client.getQueryState(KEY)!.dataUpdatedAt;
 
-    pollTick(loadedAt + 30_000); // not due
+    pollTick(loadedAt + 30_000);
     await settle();
     expect(fn).toHaveBeenCalledTimes(1);
 
-    pollTick(loadedAt + 60_000); // due: one request for both readers
+    pollTick(loadedAt + 60_000);
     await settle();
     expect(fn).toHaveBeenCalledTimes(2);
     offs.forEach((off) => off());
@@ -121,7 +117,7 @@ describe("visible-only shared poll", () => {
       const off = registerVisiblePoll(KEY, 60_000, client);
       expect(setSpy).toHaveBeenCalledWith(expect.any(Function), POLL_TICK_MS);
       off();
-      off(); // twice is harmless
+      off();
       expect(clearSpy).toHaveBeenCalledTimes(1);
       expect(fn).not.toHaveBeenCalled();
       unsubscribe();

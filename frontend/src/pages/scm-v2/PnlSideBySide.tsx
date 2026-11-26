@@ -40,7 +40,6 @@ import { monthName, monthsSpanned, type StatementColumn, type StatementLine } fr
 import { LevelTool } from './reports/statementTools';
 import { useReportRange } from './reports/useReportRange';
 
-/** Each view's column: its name, what it reads, its mark. */
 const VIEW_COLUMN: Record<PnlView, { label: string; sub: string; mark: NonNullable<StatementColumn['mark']> }> = {
   actual: { label: 'Actual', sub: 'by sales invoice', mark: 'petrol' },
   performance: { label: 'Performance', sub: 'by sales order', mark: 'brass' },
@@ -59,7 +58,6 @@ export const MONTHS_AT_MOST = 12;
 /** A period the table reads: the whole range (no key), or by month the Total or one month. */
 export type SideBySidePeriod = { key: string | null; label: string; sub?: string; from: string; to: string };
 
-/** "Oct 2026", or "Sep 2026 – Nov 2026". */
 const monthsLabel = (from: string, to: string): string =>
   (from.slice(0, 7) === to.slice(0, 7) ? monthName(from) : `${monthName(from)} – ${monthName(to)}`);
 
@@ -80,7 +78,6 @@ export function monthPeriods(from: string, to: string, today: string): SideBySid
   return [{ key: 'total', label: 'Total', sub: `${n} months`, from: months[n - 1]!, to: monthEnd(months[0]!) }, ...each];
 }
 
-/** A column's key: the view's (or difference's) own over the whole range, `<period>:<it>` by month. */
 const keyIn = (period: string | null, key: string): string => (period ? `${period}:${key}` : key);
 
 /** The differences a set of views shows: each less the Forecast where it is picked, else Performance less Actual. */
@@ -139,7 +136,6 @@ export const PnlSideBySideTab = () => {
   const r = useReportRange();
   const [params, setParams] = useSearchParams();
   const reports = useVisibleReports();
-  /* The views named, each only where the reader may open it. */
   const views = useMemo(() => pnlViewsOf(params.get('views')).filter((v) => {
     const choice = PNL_CHOICES.find((c) => c.family === 'overall' && c.view === v);
     return choice != null && reports.some((x) => x.id === choice.report);
@@ -154,14 +150,12 @@ export const PnlSideBySideTab = () => {
   const [showPct, setShowPct] = useState(true);
   const tree = useReportTree(level);
 
-  /* Whole months: the Forecast is kept by month. */
   const from = r.usable ? monthStart(r.from) : monthStart(r.today);
   const to = r.usable ? monthEnd(r.to) : monthEnd(r.today);
   const periods = useMemo(
     () => (show === 'month' ? monthPeriods(from, to, r.today) : [{ key: null, label: monthsLabel(from, to), from, to }]),
     [show, from, to, r.today],
   );
-  /* What the table covers: the first period is the whole of it (the range, the Total, or the one month). */
   const span = periods[0]!;
   const period = monthsLabel(span.from, span.to);
   const partMonths = r.usable && (r.from !== from || r.to !== to);
@@ -172,7 +166,6 @@ export const PnlSideBySideTab = () => {
 
   const q = usePnlViews(periods, enough);
   const reads = q.complete ? periods.map((p, i) => ({ period: p.key, label: p.label, data: q.data[i]! })) : [];
-  /* The Forecast where any period has one; a month without one is said below. */
   const sides = views.filter((v) => v !== 'forecast' || reads.some((x) => x.data.forecast != null));
   const columns = sideBySideColumns(sides, periods);
   const lines = reads.length > 0 && sides.length > 0 ? sideBySideLines(reads, sides) : [];

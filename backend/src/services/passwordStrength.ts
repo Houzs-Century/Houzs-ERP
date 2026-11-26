@@ -1,20 +1,3 @@
-// ---------------------------------------------------------------------------
-// Password strength validator — shared rule set for every screen that sets a
-// password (accept-invite, reset, change-password, bootstrap).
-//
-// Ported from the HOOKKA ERP sibling project (same owner). Runs on BOTH the
-// frontend (PasswordStrengthMeter) and the backend (auth routes) so the rule
-// never drifts between client and server.
-//
-// KEEP IN SYNC: backend/src/services/passwordStrength.ts and
-// frontend/src/lib/passwordStrength.ts are intentional duplicates — the two
-// packages share no build graph, so a change to one MUST be copied to the
-// other.
-//
-// Deliberately zero dependencies — runs in the Workers runtime and the
-// browser without extra bundle weight; the common-passwords list is inlined.
-// Returns the FIRST violation so the user fixes one thing at a time.
-// ---------------------------------------------------------------------------
 
 export type PasswordStrengthResult = {
   ok: boolean;
@@ -22,13 +5,6 @@ export type PasswordStrengthResult = {
   score: 0 | 1 | 2 | 3 | 4;
 };
 
-// ---------------------------------------------------------------------------
-// Top common passwords (lowercase). Sources: SecLists rockyou top-200,
-// NCSC top-100, plus a few project-specific obvious ones ("houzs",
-// "century"). Lowercase-compared, so "Houzs" / "HOUZS" also get rejected.
-// Keep this list tight — it's a guard against the worst offenders, not a
-// pretend-zxcvbn. zxcvbn-style scoring would need a dictionary 100x bigger.
-// ---------------------------------------------------------------------------
 const COMMON_PASSWORDS: ReadonlySet<string> = new Set([
   "123456", "password", "12345678", "qwerty", "123456789", "12345",
   "1234", "111111", "1234567", "dragon", "123123", "baseball", "abc123",
@@ -79,28 +55,10 @@ const UPPER_REGEX = /[A-Z]/;
 const LOWER_REGEX = /[a-z]/;
 const DIGIT_REGEX = /[0-9]/;
 
-// ---------------------------------------------------------------------------
-// validatePasswordStrength — single source of truth for "is this password
-// strong enough to land in users.passwordHash". Returns first violation so
-// the UI guides the user to fix one rule at a time. `email` also blocks
-// passwords that contain the local-part (the bit before @) of the owner's
-// email — that's the most common "set password = my username" trap.
-//
-// `email` is REQUIRED (pass null/undefined where the caller truly has none).
-// It used to be optional, and an optional argument on a GATE is a rule that
-// applies only where someone remembered it: omitting it silently dropped the
-// username-as-password check, with no compile error and nothing failing. Every
-// caller does have an address in hand — the sign-up form, the invite row, the
-// reset token's user, the profile's own user — so the required form costs
-// nothing and makes the one path that genuinely lacks one say so out loud
-// (optional-param-noop sweep 2026-08-13).
-// ---------------------------------------------------------------------------
 export function validatePasswordStrength(
   pw: string,
   email: string | null | undefined,
 ): PasswordStrengthResult {
-  // Length is the single most-correlated factor with crack-time, so it's
-  // first. 12 is the NIST 2024 minimum for human-chosen passwords.
   if (pw.length < 12) {
     return { ok: false, error: "Password must be at least 12 characters", score: 0 };
   }
@@ -117,10 +75,6 @@ export function validatePasswordStrength(
     return { ok: false, error: "Add at least one symbol like !@#$", score: 0 };
   }
 
-  // Common-password check. Compare lowercase so "Password1!" still gets
-  // caught via the base word. We check the raw lowercase form against the
-  // dictionary — adding numbers/symbols around a dictionary word is still
-  // dictionary-derived but we accept that trade-off to keep the list small.
   const lower = pw.toLowerCase();
   if (COMMON_PASSWORDS.has(lower)) {
     return {
@@ -130,10 +84,6 @@ export function validatePasswordStrength(
     };
   }
 
-  // Email local-part check. If the owner's email is weisiang329@gmail.com,
-  // reject "Weisiang329-Strong!" — that's just username-as-password with
-  // window dressing. Only meaningful if local-part has at least 3 chars,
-  // otherwise we'd reject anything containing "a" or "x".
   if (email) {
     const at = email.indexOf("@");
     const local = (at === -1 ? email : email.slice(0, at)).toLowerCase();
@@ -146,15 +96,6 @@ export function validatePasswordStrength(
     }
   }
 
-  // ---------------------------------------------------------------------
-  // Scoring (only reached once all hard rules pass).
-  //   1 = passes minimum bar (12 chars + all 4 char types)
-  //   2 = + length ≥ 16
-  //   3 = + length ≥ 20
-  //   4 = + length ≥ 24 (excellent — passphrase territory)
-  // Caller (PasswordStrengthMeter) uses this to colour the bar so the user
-  // gets positive feedback for going beyond the minimum.
-  // ---------------------------------------------------------------------
   let score: 1 | 2 | 3 | 4 = 1;
   if (pw.length >= 16) score = 2;
   if (pw.length >= 20) score = 3;

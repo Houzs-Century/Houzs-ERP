@@ -39,7 +39,6 @@ describe("DataTable freeze up to a column", () => {
     fireEvent.click(screen.getByRole("button", { name: "Freeze up to here" }));
     expect(frozen()).toEqual(["a", "b", "c", "d", "e", "f"]);
 
-    // Choosing an earlier column narrows the frozen run.
     fireEvent.contextMenu(screen.getByRole("columnheader", { name: /Col C/ }));
     fireEvent.click(screen.getByRole("button", { name: "Freeze up to here" }));
     expect(frozen()).toEqual(["a", "b", "c"]);

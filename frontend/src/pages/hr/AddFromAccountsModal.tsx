@@ -1,10 +1,3 @@
-/* Employee Master > Add from ERP accounts (option 1). Tick the staff who
- * already have an ERP account and have no employee record yet; one click makes
- * a row for each, carrying the name, phone, department and position from the
- * account. Pay basis stays the monthly default — HR sets salary and statutory
- * per person afterwards — and the Outsourced toggle only switches the OSC
- * number series. Accounts already linked are hidden; punching in needs the
- * link, so this is the fast way from an empty list to a full one. */
 import { useEffect, useMemo, useState } from "react";
 import { Search, UserPlus } from "lucide-react";
 import { ModalOverlay } from "../../components/scm-v2/DocumentRelationshipMapModal";
@@ -55,8 +48,6 @@ export function AddFromAccountsModal({ open, onClose, onDone }: { open: boolean;
       return n;
     });
 
-  // Group the list by the account's department, so HR can scan and tick a whole
-  // department at once. Departments alphabetical; the no-department bucket last.
   const groups = useMemo(() => {
     const byDept = new Map<string, ErpAccount[]>();
     for (const a of filtered) {
@@ -86,8 +77,6 @@ export function AddFromAccountsModal({ open, onClose, onDone }: { open: boolean;
       if (added > 0) {
         toast.success(skipped > 0 ? `Added ${added}, skipped ${skipped} (already had a record)` : `Added ${added} ${added === 1 ? "employee" : "employees"}`);
         onDone();
-        // Refresh the account list so the ones just added drop out, and clear
-        // the ticks — HR can keep picking the rest without reopening.
         setPicked(new Set());
         options.reload();
       } else {

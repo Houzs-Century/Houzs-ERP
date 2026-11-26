@@ -14,7 +14,6 @@ const card: RateCardSpec = {
     { id: NEAR, name: 'Marudi / Subis', towns: ['MARUDI', 'SUBIS'] },
   ],
   rules: [
-    /* The card's own: the city ladder. */
     { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountSen: 10_000 },
     { ruleType: 'POSITIONAL_TIER', tierPosition: 2, amountSen: 0 },
     { ruleType: 'POSITIONAL_TIER', tierPosition: 3, amountSen: 3_000 },
@@ -22,13 +21,11 @@ const card: RateCardSpec = {
     { ruleType: 'SOFA_BRACKET', bracketMin: 4, bracketMax: null, amountSen: 14_000 },
     { ruleType: 'DISPOSE', amountSen: 5_000 },
     { ruleType: 'OUTSTATION', zone: 'LABUAN', amountSen: 6_000 },
-    /* The far area's own ladder and sofas. */
     { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountSen: 30_000, areaId: FAR },
     { ruleType: 'POSITIONAL_TIER', tierPosition: 2, amountSen: 0, areaId: FAR },
     { ruleType: 'POSITIONAL_TIER', tierPosition: 3, amountSen: 6_000, areaId: FAR },
     { ruleType: 'SOFA_BRACKET', bracketMin: 1, bracketMax: 3, amountSen: 35_000, areaId: FAR },
     { ruleType: 'SOFA_BRACKET', bracketMin: 4, bracketMax: null, amountSen: 40_000, areaId: FAR },
-    /* The near area: a dearer first unit than the city, cheaper than the far one. */
     { ruleType: 'POSITIONAL_TIER', tierPosition: 1, amountSen: 20_000, areaId: NEAR },
   ],
 };

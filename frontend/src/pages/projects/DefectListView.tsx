@@ -21,8 +21,6 @@ import {
   type DefectActionTone,
 } from "./defectReviewer";
 
-/** Outline-button Tailwind for a defect action tone (the list only shows idle
- *  buttons — the editor replaces them once one is picked). */
 function defectListBtn(tone: DefectActionTone): string {
   switch (tone) {
     case "done":
@@ -33,8 +31,6 @@ function defectListBtn(tone: DefectActionTone): string {
       return "border-amber-300 bg-surface text-amber-600 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40";
   }
 }
-/** Badge Tailwind for a stored status: resolved green, in-progress/fresh amber,
- *  escalated rose. */
 function defectListBadge(status: string | null): string {
   const stage = defectStage(status);
   if (stage === "resolved") return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
@@ -102,8 +98,6 @@ interface ProjectGroup {
   rows: DefectRow[];
 }
 
-/** Group the flat feed by project, preserving the server's ordering (most
- *  recent event first, newest photo first within it). */
 function groupByProject(rows: DefectRow[]): ProjectGroup[] {
   const order: number[] = [];
   const by = new Map<number, ProjectGroup>();
@@ -131,8 +125,6 @@ function groupByProject(rows: DefectRow[]): ProjectGroup[] {
   return order.map((id) => by.get(id)!);
 }
 
-// A lazily-fetched thumbnail (same auth'd blob fetch the full viewer uses).
-// Revoked on unmount; a non-image or a failed fetch leaves a hatched box.
 function DefectThumb({
   r2Key,
   contentType,
@@ -199,7 +191,6 @@ export function DefectListView() {
   const toast = useToast();
   const [showAll, setShowAll] = useState(false);
   const [lightbox, setLightbox] = useState<number | null>(null);
-  // One action editor open at a time, keyed by attachment id.
   const [draft, setDraft] = useState<{ attId: number; status: string } | null>(null);
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
@@ -351,7 +342,6 @@ export function DefectListView() {
                         onOpen={() => setLightbox(idx)}
                       />
                       <div className="min-w-0 flex-1">
-                        {/* Model / Reason the uploader recorded. */}
                         {(model || reason) && (
                           <div className="rounded-md border-l-[3px] border-amber-400 bg-surface-2 px-2.5 py-1.5 text-[11.5px] leading-snug text-ink-secondary">
                             {model && (
@@ -383,10 +373,6 @@ export function DefectListView() {
                           </div>
                         )}
 
-                        {/* Action buttons — same gate and route as the project
-                            detail card. Fresh → reviewer (Done Clean / Exchange /
-                            Service); escalated → purchaser (In Progress / Done).
-                            Every button opens the remark editor before it saves. */}
                         {((stage === "fresh" && canReview) || (stage === "purchaser" && canPurchase)) &&
                           !editing && (
                             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">

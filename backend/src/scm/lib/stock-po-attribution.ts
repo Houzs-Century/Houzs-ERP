@@ -54,7 +54,6 @@ export function attributeStockPos(receipts: StockReceipt[], outs: StockOut[]) {
     }
     if (need > 0) fromOlderStock += need;
   }
-  /* Per unit, so a line of 4 weighs four times a line of 1. */
   const perUnit = (pick: (m: (typeof matches)[number]) => number | null, ms: typeof matches) =>
     median(ms.flatMap((m) => { const v = pick(m); return v == null ? [] : Array<number>(m.qty).fill(v); }));
   const summary = (ms: typeof matches) => ({

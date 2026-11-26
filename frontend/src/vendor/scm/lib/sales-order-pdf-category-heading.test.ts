@@ -33,7 +33,6 @@ afterEach(() => {
 });
 
 async function printedText(groups: string[]): Promise<string[]> {
-  /* Plain ASCII, no variants, no logo: no font fetch and no network. */
   setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
   const [{ jsPDF }, { default: autoTable }, { renderSalesOrderInto }] = await Promise.all([
     import('jspdf'),

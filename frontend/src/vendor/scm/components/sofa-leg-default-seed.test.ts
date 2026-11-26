@@ -38,9 +38,6 @@ const page = (f: string) => read(`../../../pages/scm-v2/${f}`);
 
 const CARD = read('./SoLineCard.tsx');
 
-/** A document that SPECIFIES the sofa. The key it writes is the one the
- *  purchase order — and then the lot — inherits, so seeding is consistent all
- *  the way down. */
 const MAY_SEED = [
   'SalesOrderNew.tsx',
   'SalesOrderDetail.tsx',
@@ -48,8 +45,6 @@ const MAY_SEED = [
   'ConsignmentOrderDetail.tsx',
 ];
 
-/** A document that FULFILS one. The goods were keyed when they were bought;
- *  anything added here can only disagree with them. */
 const MAY_NOT_SEED = [
   'DeliveryOrderNewV2.tsx',
   'DeliveryReturnNew.tsx',
@@ -66,10 +61,8 @@ const seedProps = (src: string) => src.match(/seedSofaLegDefault=\{(true|false)\
 describe('the sofa Leg Height default is a per-document decision', () => {
   test('the card gates the seed on the prop, not on the category alone', () => {
     expect(CARD).toContain('seedSofaLegDefault: boolean;');
-    // A Model's own leg list does not hide the standing Default: stock is held under it.
     expect(CARD).toContain('allowOpts?.leg_heights, defaultSofaLegValue(maint))');
     expect(CARD).toMatch(/if \(seedSofaLegDefault && category === 'sofa'/);
-    // No default value: a caller that says nothing must not compile.
     expect(CARD).not.toMatch(/seedSofaLegDefault\s*=\s*(true|false)\s*,/);
   });
 
@@ -87,8 +80,6 @@ describe('the sofa Leg Height default is a per-document decision', () => {
   });
 
   test('the seed re-fires when the answer changes', () => {
-    // Without it in the dependency list the effect keeps the first answer, which
-    // is the shape of a prop that reads as wired and is not.
     expect(CARD).toMatch(/draft\.itemCode, maint, seedSofaLegDefault\]/);
   });
 
@@ -111,11 +102,9 @@ describe('the sofa Leg Height default is a per-document decision', () => {
   }
 
   test('every render site in the app is one of the two lists', () => {
-    // A twelfth page rendering the card must make this decision explicitly
-    // rather than inherit whichever list happened to be edited last.
     const listed = new Set([...MAY_SEED, ...MAY_NOT_SEED]);
     for (const f of listed) expect(renderCount(page(f))).toBeGreaterThan(0);
     const total = [...listed].reduce((n, f) => n + renderCount(page(f)), 0);
-    expect(total).toBe(14); // 15 until the Consignment Return detail lost its free add-line card (note_link_required)
+    expect(total).toBe(14);
   });
 });

@@ -1,28 +1,3 @@
-// ----------------------------------------------------------------------------
-// DeliveryOrderFromSo — LINE-LEVEL, QUANTITY-BASED Sales Order → Delivery Order
-// picker.
-//
-// Commander 2026-05-30 rewrite: partial-delivery model, mirroring the PO's
-// line-level from-SO picker (pages/PurchaseOrderFromSo.tsx). Instead of ticking
-// whole Sales Orders, the operator picks individual SO LINES, each with a qty
-// 1..remaining. An SO line can be split across SEVERAL Delivery Orders until its
-// remaining (qty − delivered + returned, derived LIVE by the server) reaches 0:
-//   - Partially delivered (remaining > 0) → the line is still pickable.
-//   - Fully delivered (remaining == 0) → the line drops out of the picker.
-//   - Cancelling a DO, deleting a DO line, or processing a Delivery Return
-//     RAISES remaining again automatically (the server re-derives it).
-//
-// A customer-lock keeps the merge clean: once one line is ticked, lines of a
-// DIFFERENT customer grey out — a DO ships to ONE customer.
-//
-// On "Continue" the picked lines are carried into the normal New Delivery Order
-// form (prefilled, reviewable) — NOTHING is created or shipped yet. The operator
-// reviews/edits and clicks "Create DO" there to actually ship + deduct stock.
-// This mirrors the PO picker (PurchaseOrderFromSo), which also stashes its picks
-// and hands them to the New PO form rather than auto-creating.
-//
-// Routing: /scm/delivery-orders/from-so → /scm/delivery-orders/new.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -42,8 +17,6 @@ import { soRefOfCamelStamp } from '../../lib/so-ref-search';
 import { fmtMoneySen, fmtQty } from '@2990s/shared';
 import { lineDiscountShare } from '../../vendor/shared/line-discount-share';
 
-/* A pick carries its share of the SO line's discount (never the whole discount
-   on each partial delivery), so Line Value here is what the DO will hold. */
 const pickDiscount = (r: DeliverableSoLine, pickQty: number): number =>
   lineDiscountShare(r.discountSen, r.qty, r.qty - r.remaining, pickQty);
 
@@ -53,7 +26,6 @@ const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, cu
 
 const STORAGE_KEY = 'pr-g.do-from-so-lines.layout.v1';
 
-/* Compact pill input — mirrors the PO picker's qty input. */
 const QTY_INPUT: CSSProperties = {
   height: 28,
   border: '1px solid var(--line)',
@@ -64,9 +36,6 @@ const QTY_INPUT: CSSProperties = {
   color: 'var(--c-ink)',
 };
 
-/* One distinct customer key per SO line — match the server's same-customer
-   rule: debtor_code when present, else fall back to debtor_name. The lock greys
-   out any line whose key differs from the first ticked one. */
 const custKey = (l: DeliverableSoLine): string =>
   (l.debtorCode && l.debtorCode.trim())
     ? `code:${l.debtorCode.trim().toUpperCase()}`
@@ -78,21 +47,12 @@ export const DeliveryOrderFromSo = () => {
   const navigate = useNavigate();
   const linesQ = useDeliverableSoLines();
 
-  /* "Deliver" on a Sales Order row lands here with ?soDocNo=<doc no> so the
-     operator sees the order they were just looking at, not every open SO in the
-     company. The parameter was being constructed by the caller and dropped here
-     until 2026-08-16. The key is the DOC NUMBER, not an id — deliverable-so-lines
-     returns docNo and no order id, and the parameter is named for what it
-     carries. No parameter → the full picker (the list toolbar's "From Sales
-     Order" button). */
   const [searchParams] = useSearchParams();
   const scope = useMemo(
     () => readConvertScope('soToDo', searchParams, []),
     [searchParams],
   );
 
-  // Map<soItemId, { picked, qty }>. Defaults: picked = false; when ticked,
-  // qty defaults to the line's remaining.
   const [picks, setPicks] = useState<Record<string, Pick>>({});
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
 
@@ -108,38 +68,22 @@ export const DeliveryOrderFromSo = () => {
     return m;
   }, [rows]);
 
-  /* ONE SALES ORDER IS ONE CUSTOMER — resolve the lock key per DOC, not per line.
-     mfg_sales_order_items carries its own debtor_code/debtor_name copy and those
-     copies DRIFT: on 2990-SO-2606-034 the two sofa lines say "The Wei chin", the
-     delivery line says "Teh Wei chin" and the disposal line says nothing, while
-     the SO header says "Teh Wei chin" for all four. Keying the lock off the line
-     copy therefore split ONE order across three customers — ticking a sofa greyed
-     out the other half of the same order, and Select all could only ever reach 2
-     of 4 lines (Nico, 2026-08-03).
-     The backend now stamps the header's debtor on every line, which fixes this at
-     the source; keying per doc here means the picker is also right against data
-     that has already drifted, and stays right afterwards (once every line of a
-     doc agrees, first-non-empty IS that agreed value). */
   const docCustKey = useMemo(() => {
     const m = new Map<string, { key: string; label: string }>();
     for (const r of rows) {
       if (m.has(r.docNo)) continue;
       const code = (r.debtorCode ?? '').trim();
       const name = (r.debtorName ?? '').trim();
-      if (!code && !name) continue; // a blank line can't name the order's customer
+      if (!code && !name) continue;
       m.set(r.docNo, { key: custKey(r), label: name || code });
     }
     return m;
   }, [rows]);
 
-  /* The line's effective customer: its ORDER's, falling back to its own copy for
-     an order whose every line is blank. */
   const keyOf = (r: DeliverableSoLine): string => docCustKey.get(r.docNo)?.key ?? custKey(r);
   const labelOf = (r: DeliverableSoLine): string =>
     docCustKey.get(r.docNo)?.label ?? r.debtorName ?? r.debtorCode ?? '(none)';
 
-  /* The customer locked in by the current picks — the key of the first picked
-     line. Null when nothing is picked (every line is selectable). */
   const lockedCustomer = useMemo(() => {
     for (const [id, v] of Object.entries(picks)) {
       if (!v.picked) continue;
@@ -160,16 +104,9 @@ export const DeliveryOrderFromSo = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- labelOf derives from docCustKey, listed
   }, [picks, rowById, docCustKey]);
 
-  // A row is LOCKED when a different customer is already picked.
   const isRowLocked = (r: DeliverableSoLine): boolean =>
     Boolean(lockedCustomer && keyOf(r) !== lockedCustomer && !picks[r.soItemId]?.picked);
 
-  /* Scoped entry pre-ticks the order's remaining lines at full quantity, so the
-     screen is a ready-to-review draft rather than a filtered list to re-tick by
-     hand. Copies GrnFromPo, the one convert that already worked. Nothing ships
-     and no stock moves here — Continue only carries the picks to the New DO
-     form. Lines whose stock is not READY stay unticked (BUG-59, Azza: deliver
-     the ready lines now, the rest on a later DO). */
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current) return;
@@ -180,8 +117,6 @@ export const DeliveryOrderFromSo = () => {
     const first = mine[0];
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mine[0] is typed non-optional without noUncheckedIndexedAccess; an empty scope match is real
     if (!first) return;
-    // Honour the one-customer-per-DO lock: tick only the first line's customer,
-    // even if the scope somehow spans two.
     const lockTo = keyOf(first);
     setPicks(() => {
       const next: Record<string, Pick> = {};
@@ -195,7 +130,7 @@ export const DeliveryOrderFromSo = () => {
   }, [rows, linesQ.isLoading, scope.keys, docCustKey]);
 
   const togglePick = (r: DeliverableSoLine) => {
-    if (isRowLocked(r)) return; // can't tick a different customer
+    if (isRowLocked(r)) return;
     const turningOn = !picks[r.soItemId]?.picked;
     setPicks((s) => ({
       ...s,
@@ -210,13 +145,6 @@ export const DeliveryOrderFromSo = () => {
     setPicks((s) => ({ ...s, [r.soItemId]: { picked: true, qty } }));
   };
 
-  /* Select-all acts on WHAT THE OPERATOR SEES.
-     Until 2026-08-03 it walked `rows` — the whole 175-line dataset — and seeded
-     the customer lock from `rows[0]`, the first row of the UNFILTERED list. So
-     searching "2606-034" and hitting Select all silently ticked a completely
-     different customer's lines and carried SO 2606-002 into the new DO (Nico,
-     2026-08-03). Both the header checkbox and this button now operate on the
-     post-search / post-filter rows the grid hands back. */
   const [visibleRows, setVisibleRows] = useState<DeliverableSoLine[]>([]);
 
   const selectableVisibleKeys = useMemo(
@@ -225,10 +153,6 @@ export const DeliveryOrderFromSo = () => {
     [visibleRows, picks, lockedCustomer],
   );
 
-  /* Tick/untick the given (visible, unlocked) keys. Select respects the lock: it
-     only adds lines of the locked customer, or — when nothing is picked yet — of
-     the FIRST VISIBLE row's customer, so the result is always a valid
-     single-customer set. */
   const toggleKeys = (keys: string[], allSelected: boolean) => {
     setPicks((s) => {
       const next = { ...s };
@@ -253,18 +177,12 @@ export const DeliveryOrderFromSo = () => {
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
-  /* Ticked rows for the grid's checkbox column — same rule Continue applies, so
-     a row typed down to qty 0 reads as unticked. */
   const pickedKeys = useMemo(
     () => new Set(Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0).map(([id]) => id)),
     [picks],
   );
 
   const columns = useMemo<GridColumn<DeliverableSoLine>[]>(() => [
-    /* The per-row tick lives in the grid's first-class `selectable` column, so
-       the header carries a real select-all checkbox scoped to the filtered
-       rows. Don't re-add a hand-rolled `pick` column here — that header can
-       only hold a plain string label. */
     {
       key: 'docNo', label: 'SO No', width: 140, sortable: true, groupable: true,
       accessor: (r) => <span className={styles.codeCell}>{r.docNo}</span>,
@@ -346,8 +264,6 @@ export const DeliveryOrderFromSo = () => {
             value={on ? p!.qty : ''}
             placeholder={String(r.remaining)}
             disabled={locked}
-            /* Always editable: typing a qty auto-selects the row (no need to
-               tick the checkbox first). */
             onClick={(e) => e.stopPropagation()}
             onChange={(e) =>
               setQty(r, Math.min(r.remaining, Math.max(0, Number(e.target.value) || 0)))}
@@ -382,10 +298,6 @@ export const DeliveryOrderFromSo = () => {
       setDialog({ title: 'Nothing picked', body: 'Tick at least one Sales Order line to deliver first.' });
       return;
     }
-    /* Carry the picked lines into the normal New Delivery Order form (prefilled,
-       reviewable) — NOTHING is created or shipped here. The operator reviews the
-       draft and clicks Create on the next screen. Mirrors the PO picker, which
-       also stashes picks and navigates to the New PO form. */
     const stash = picked
       .map(([soItemId, v]) => {
         const r = rowById.get(soItemId);
@@ -409,9 +321,6 @@ export const DeliveryOrderFromSo = () => {
       setDialog({ title: 'Nothing picked', body: 'Tick at least one Sales Order line to deliver first.' });
       return;
     }
-    /* Header/address prefill mirrors the same-customer rule: use the SO of the
-       sorted-first picked line. Each line keeps its own soItemId, so multiple
-       same-customer SOs still link back correctly. */
     const firstDocNo = stash.map((s) => s.docNo).sort()[0] ?? '';
     if (!writeScmHandoff('doFromSoPicks', stash)) {
       setDialog({ title: 'Unable to continue', body: 'This browser could not safely store your picked lines. Your selection is still here; free some browser storage and try again.' });

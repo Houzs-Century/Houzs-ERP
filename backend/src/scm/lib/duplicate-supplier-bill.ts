@@ -1,12 +1,3 @@
-/* One supplier bill is owed once. A second live purchase invoice (or AP
-   invoice) carrying the same supplier's bill number is the same debt booked
-   twice, and nothing stopped it: the scan queue only FLAGGED it, and the New
-   forms did not look at all.
-
-   The key is the scan queue's own (pi-scan-check.ts refKey): whitespace out,
-   upper case, so "inv 001" and "INV001" are one bill. CANCELLED rows are not
-   live and never block. AP invoices compare within their own doc_kind, so a
-   supplier's debit note numbered like one of its invoices is not refused. */
 
 export const billRefKey = (s: unknown): string =>
   typeof s === 'string' ? s.replace(/\s+/g, '').toUpperCase() : '';
@@ -25,9 +16,6 @@ export async function findDuplicateSupplierBill(
 ): Promise<{ ok: true; duplicate: DuplicateBill | null } | { ok: false; reason: string }> {
   const key = billRefKey(q.ref);
   if (!key || !q.supplierId) return { ok: true, duplicate: null };
-  /* Narrowed in the database by an ilike that allows anything between the
-     key's characters (so stored spacing cannot hide a match), then decided
-     exactly here on the normalised key. */
   const pattern = `%${[...key].map((ch) => (/[%_\\]/.test(ch) ? `\\${ch}` : ch)).join('%')}%`;
   const cols = table === 'ap_invoices' ? 'id, invoice_number, status, supplier_invoice_ref, doc_kind' : 'id, invoice_number, status, supplier_invoice_ref';
   const { data, error } = await sb.from(table).select(cols)

@@ -1,5 +1,3 @@
-/* Sister review P15: the PO list's Item Code column showed "—" for a line with
- * no supplier SKU. It shows the supplier's code when there is one, else ours. */
 import { describe, expect, it } from "vitest";
 import { poLineColumns, type PoGridRow } from "./po-list-line-columns";
 import type { PoListLine } from "../../vendor/scm/lib/po-line-export-columns";

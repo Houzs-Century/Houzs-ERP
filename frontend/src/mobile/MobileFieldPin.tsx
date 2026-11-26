@@ -12,9 +12,6 @@ import {
   type FieldPinStatus,
 } from "../lib/fieldPin";
 
-/* Crew PIN sign-in on the phone member screen — the desktop FieldPinCard's
- * twin, against the same endpoints and the same shared rules (lib/fieldPin).
- * Rendered by MemberAccountActions, which already gates on users.manage. */
 export function MobileFieldPin({ userId, memberName }: { userId: number; memberName: string }) {
   const confirm = useConfirm();
   const prompt = usePrompt();

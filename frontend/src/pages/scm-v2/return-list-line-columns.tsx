@@ -1,20 +1,3 @@
-/* The Purchase Returns and Delivery Returns grids' AutoCount columns (owner
- * 2026-09-15: the list's default columns are AutoCount's Detail Listing
- * columns in AutoCount's order, and the ONE Export writes the visible ones,
- * one row per line).
- *
- * Which columns, in which order, under which label, and which are shown by
- * default is the contract in vendor/scm/lib/return-line-export-columns.ts —
- * AutoCount's own grids, read from the program. This module only turns that
- * contract plus a page's value functions into DataTable columns.
- *
- * A DOCUMENT column shows and exports one value per return (repeated on every
- * line of the file). A LINE column shows a compact value on the return's row —
- * the single value or the first and "+N" more; quantities and amounts show
- * their sum — lists every line's value in its funnel, and exports each line's
- * own value — the shared components/dataTableLineCells.tsx cells every list
- * that exports by line uses. Money is RINGGIT in the file and on screen; the
- * server sends sen and the page's value functions convert (senToRinggit). */
 
 import type { ReactNode } from "react";
 import { lineSumColumn, lineTextColumn } from "../../components/dataTableLineCells";
@@ -25,13 +8,8 @@ import type { ExportCell } from "../../components/dataTableLineExport";
 import type { ReturnLineColumn } from "../../vendor/scm/lib/return-line-export-columns";
 
 export type ReturnColumnValues<R, L> = {
-  /** A document column's value (money in ringgit). */
   doc?: (row: R) => ExportCell;
-  /** A line column's value for one line (money in ringgit). A line column reads
-   *  only its line — the shared line cells pass no row — so a page that needs a
-   *  document fact on a line carries it on the line it hands the grid. */
   line?: (line: L) => ExportCell;
-  /** Replaces the generic cell. */
   render?: (row: R) => ReactNode;
   width?: string;
   mono?: boolean;
@@ -91,7 +69,6 @@ export function returnGridColumns<R, L>(
     const lineBase = { key: spec.key, label: spec.label, width: base.width, defaultHidden: base.defaultHidden, linesOf };
     let column: Column<R, L>;
     if (spec.format === "money" || spec.format === "number") {
-      /* A quantity or an amount: the row shows the sum, the file each line's. */
       column = lineSumColumn<R, L>({
         ...lineBase,
         pick: (l) => {
@@ -112,7 +89,6 @@ export function returnGridColumns<R, L>(
         format: spec.format === "rate" ? (x) => rate(Number(x)) : spec.format === "date" ? (x) => fmtDate(x) : undefined,
         mono: v.mono,
       });
-      /* The file keeps the typed value: a unit price stays a NUMBER (a rate). */
       column.lineValue = (_r: R, l: L) => pick(l);
       column.exportFormat = spec.format;
     }

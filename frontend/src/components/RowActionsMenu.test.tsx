@@ -19,8 +19,6 @@ import { RowActionsMenu } from "./RowActionsMenu";
 
 const ITEMS = [{ icon: Trash2, label: "Remove", onClick: () => {}, danger: true }];
 
-/** Render inside a clipping ancestor whose left edge is `clipLeft`, with the
- *  trigger's right edge at `triggerRight`. */
 function renderAt(clipLeft: number, triggerRight: number) {
   render(
     <div style={{ overflowX: "hidden" }} data-testid="clipper">
@@ -32,11 +30,6 @@ function renderAt(clipLeft: number, triggerRight: number) {
     left: clipLeft, right: 1200, top: 0, bottom: 40, width: 1200 - clipLeft, height: 40, x: clipLeft, y: 0,
     toJSON: () => ({}),
   } as DOMRect);
-  // getComputedStyle in jsdom does report the inline overflowX, so the walk
-  // finds this node; only the rect needs stubbing. The wrapper is the
-  // component's own `relative` div — grab it by structure, NOT by a loose
-  // selector: an unstubbed rect reads (0,0), which flips, so a mis-targeted
-  // stub makes the flip case pass for the wrong reason.
   const wrap = clipper.firstElementChild as HTMLElement;
   vi.spyOn(wrap, "getBoundingClientRect").mockReturnValue({
     left: triggerRight - 28, right: triggerRight, top: 0, bottom: 28, width: 28, height: 28,
@@ -52,8 +45,6 @@ afterEach(() => {
 
 describe("RowActionsMenu", () => {
   it("flips to open RIGHTWARD when the clipping ancestor would cut the panel", async () => {
-    // Content starts at 270 (the sidebar ends there); trigger sits at 354, so
-    // only 84px of room on the left and the panel is 176px wide.
     const trigger = renderAt(270, 354);
     fireEvent.click(trigger);
 
@@ -64,7 +55,6 @@ describe("RowActionsMenu", () => {
   });
 
   it("keeps the default right-aligned panel when there IS room", async () => {
-    // Same clipper, but the trigger is far from the left edge.
     const trigger = renderAt(270, 900);
     fireEvent.click(trigger);
 

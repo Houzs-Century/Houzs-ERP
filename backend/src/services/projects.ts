@@ -21,15 +21,10 @@ export function initialsLikes(word: string): string[] {
   return [`${body}%`, `% ${body}%`];
 }
 export { deriveProjectCode, deriveProjectName };
-// Re-exported from here so projects.earliestLorryDate.test.ts still resolves it.
 export { earliestLorryDate };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
 export async function uniqueProjectCode(env: Env, base: string): Promise<string> {
-  // Avoid LIKE here — D1's pattern-complexity guard has been observed
-  // to reject even short LIKE patterns ("LIKE or GLOB pattern too
-  // complex"), and a plain prefix comparison via substr() is both
-  // immune to that and indexable.
   const prefix = `${base}-`;
   const rows = await env.DB.prepare(
     `SELECT code FROM projects
@@ -45,7 +40,6 @@ export async function uniqueProjectCode(env: Env, base: string): Promise<string>
   return `${base}-${n}`;
 }
 
-// ── Activity log ──────────────────────────────────────────────
 
 export async function logProjectActivity(
   env: Env,
@@ -64,9 +58,6 @@ export async function logProjectActivity(
     .run();
 }
 
-/** "Name (#id)" for an activity-trail endpoint, or null for unassigned.
- *  Deliberately NOT `?? ""` — an unassigned PIC and a user we failed to read
- *  are different facts, and the trail must not render the second as the first. */
 async function describeUser(env: Env, userId: number | null): Promise<string | null> {
   if (userId == null) return null;
   const row = await env.DB.prepare(`SELECT name, email FROM users WHERE id = ?`)
@@ -76,11 +67,6 @@ async function describeUser(env: Env, userId: number | null): Promise<string | n
   return label ? `${label} (#${userId})` : `#${userId}`;
 }
 
-// ── Crew membership ───────────────────────────────────────────
-// Returns the phase(s) on which `userId` is crewed for `projectId`.
-// Empty array = not on the crew. Used by the Driver App project
-// endpoints (row-level gate) and by the phase-photo upload guard so
-// a setup-only helper can't upload to dismantle.
 export async function getUserPhasesOnProject(
   env: Env,
   projectId: number,
@@ -135,7 +121,6 @@ export async function getUserPhasesOnProject(
   return phases;
 }
 
-// ── Create ────────────────────────────────────────────────────
 
 export interface CreateProjectInput {
   name: string;
@@ -149,10 +134,6 @@ export interface CreateProjectInput {
   notion_url?: string | null;
   pic_id?: number | null;
   created_by: number;
-  /** Multi-company (mig-pg 0093) — the ACTIVE company from the request
-   *  (activeCompanyId(c)). Column + bind are appended ONLY when resolved so
-   *  the pre-migration window / D1 test mirror inserts unchanged; the PG
-   *  DEFAULT (base company) covers unstamped inserts. */
   company_id?: number;
 }
 
@@ -164,10 +145,6 @@ export async function createProject(env: Env, input: CreateProjectInput) {
   const anchor = input.start_date ? new Date(input.start_date) : now;
   const year = anchor.getFullYear();
   const month = anchor.getMonth() + 1;
-  // Resolve event-type slug from the id so the derive helpers can
-  // force the organizer slot to "SOLO" for solo events (matches the
-  // frontend's auto-fill). Missing or unknown ids fall through as
-  // null — derive helpers treat that as a non-solo event.
   let eventTypeSlug: string | null = null;
   if (input.event_type_id != null) {
     const et = await env.DB.prepare(
@@ -182,13 +159,8 @@ export async function createProject(env: Env, input: CreateProjectInput) {
      Pinang'/'Kuala Lumpur'. Foreign state names (China provinces) pass
      through unchanged. */
   input.state = canonicalizeMyState(input.state ?? null);
-  // Fold showroom-venue aliases (e.g. "PJ Showroom") to the canonical "2990s PJ"
-  // at the write front door so every surface that later reads this row agrees.
   input.venue = canonicalizeVenue(input.venue ?? null);
 
-  // Derive code from identity fields. Throws if state/venue/brand are
-  // missing; route layer converts to a 400. Organizer null OR
-  // event_type=solo → "SOLO".
   const baseCode = deriveProjectCode({
     year,
     month,
@@ -200,12 +172,7 @@ export async function createProject(env: Env, input: CreateProjectInput) {
   });
   const code = await uniqueProjectCode(env, baseCode);
 
-  // Default the PIC to the creator so a sales rep who creates their
-  // own project immediately sees it under the scoped filter. Admins
-  // creating on someone else's behalf can override via input.pic_id.
   const picId = input.pic_id ?? input.created_by ?? null;
-  // Auto-derive name when caller doesn't supply one. Keeps the "+ New
-  // Project" form simple — boss just picks state/brand/organizer/venue.
   const name =
     input.name?.trim() ||
     deriveProjectName({
@@ -215,10 +182,6 @@ export async function createProject(env: Env, input: CreateProjectInput) {
       venue: input.venue,
       event_type_slug: eventTypeSlug,
     });
-  // Multi-company: stamp the active company (sales.ts idiom — column + bind
-  // appended only when resolved). Child rows (finance / cloned checklist)
-  // inherit the PG DEFAULT and are always read through project_id, so the
-  // project row is the single source of company truth.
   const stampCo = input.company_id != null;
   const r = await env.DB.prepare(
     `INSERT INTO projects (
@@ -246,14 +209,12 @@ export async function createProject(env: Env, input: CreateProjectInput) {
     .run();
   const projectId = r.meta.last_row_id as number;
 
-  // Seed finance row (so 1:1 always exists; UI edits update in place)
   await env.DB.prepare(
     `INSERT INTO project_finance (project_id) VALUES (?)`
   )
     .bind(projectId)
     .run();
 
-  // If event type has a default template, clone its items now.
   if (input.event_type_id) {
     await instantiateChecklistFromEventType(env, projectId, input.event_type_id, input.start_date ?? null);
   }
@@ -263,14 +224,6 @@ export async function createProject(env: Env, input: CreateProjectInput) {
   return { id: projectId, code };
 }
 
-// Clone checklist template items into project_checklist, resolving
-// due_offset_days against the project's start_date if present.
-//
-// Mig 050: template sections are cloned to per-project sections first,
-// then template_items.section_id is mapped to the new project section
-// id when inserting tasks. Template items with `requires_review = 1`
-// translate to `required_perm = 'projects.approve'` on the cloned task,
-// reusing the existing review pipeline (mig 024).
 export async function instantiateChecklistFromEventType(
   env: Env,
   projectId: number,
@@ -285,8 +238,6 @@ export async function instantiateChecklistFromEventType(
   const templateId = et?.default_template_id;
   if (!templateId) return;
 
-  // 1. Clone sections, keeping a map from template section id → new
-  //    project section id so we can translate item.section_id below.
   const tplSections = await env.DB.prepare(
     `SELECT id, name, sort_order, display_mode
        FROM project_checklist_template_sections
@@ -317,9 +268,6 @@ export async function instantiateChecklistFromEventType(
     sectionIdMap.set(s.id, ins.meta.last_row_id as number);
   }
 
-  // 2. Clone items. requires_review = 1 → required_perm = projects.approve
-  //    (unless the template already specifies a custom perm). Section_id
-  //    maps via sectionIdMap; unmapped sections fall through as null.
   const items = await env.DB.prepare(
     `SELECT seq, title, description, required_perm, role_label, crew_visible,
             due_offset_days, section_id, requires_review, pill_kind, pill_value
@@ -351,9 +299,6 @@ export async function instantiateChecklistFromEventType(
     const requiredPerm =
       item.required_perm ??
       (item.requires_review ? "projects.approve" : null);
-    // Seed status: pill rows (payment/deposit) and OPERATION-section items
-    // clone in as 'na' (off the progress math, never shown as pending);
-    // everything else starts 'pending'.
     const isOperation =
       item.section_id != null && operationSectionIds.has(item.section_id);
     const seedStatus = item.pill_kind || isOperation ? "na" : "pending";
@@ -390,7 +335,6 @@ function resolveDueDate(startDate: string | null, offsetDays: number | null): st
   return d.toISOString().slice(0, 10);
 }
 
-// ── Patch ─────────────────────────────────────────────────────
 
 const PATCH_FIELDS = [
   "name", "stage", "status",
@@ -400,14 +344,10 @@ const PATCH_FIELDS = [
   "booth_no", "size_sqm",
   "notion_url", "notes",
   "pic_id",
-  // Logistics schedule (Notion parity)
   "setup_start_at", "setup_end_at",
   "dismantle_start_at", "dismantle_end_at",
   "setup_driver_user_id", "setup_lorry_id",
   "dismantle_driver_user_id", "dismantle_lorry_id",
-  // Phase helper crew (mig 083) — mirrors trips.helper_1_id / helper_2_id /
-  // helper_outsourced per phase so the trip-link auto-copy can fill the
-  // trip's empty crew slots from the project's planned crew.
   "setup_helper_1_id", "setup_helper_2_id", "setup_helper_outsourced",
   "dismantle_helper_1_id", "dismantle_helper_2_id", "dismantle_helper_outsourced",
   // Phase crew editor (mig 0015) — JSON: drivers/helpers (name+phone),
@@ -418,18 +358,9 @@ const PATCH_FIELDS = [
   // Schedule Reference remark (mig 0218, owner 2026-07-23): free-text
   // setup/dismantle times for solo events that have no handbook screenshot.
   "schedule_remark",
-  // Banner
   "banner_message", "banner_tone",
 ] as const;
 
-// Canonical list of Malaysian states used by the picker.  Kept as a
-// JS constant rather than a DB enum so we can add a state without a
-// migration. Free-text writes still land (backward-compatible with
-// legacy rows), but the UI surfaces this list for new entries.
-// 13 negeri + 3 federal territories (Wilayah Persekutuan) — ALL CAPS
-// to match the canonical form used across the data. Cities (IPOH,
-// SEREMBAN, KUANTAN, etc.) get rolled up to their state at write
-// time and during data backfills.
 export const MALAYSIA_STATES = [
   "JOHOR", "KEDAH", "KELANTAN", "KL", "LABUAN", "MELAKA", "NEGERI SEMBILAN",
   "PAHANG", "PENANG", "PERAK", "PERLIS", "PUTRAJAYA", "SABAH", "SARAWAK",
@@ -446,17 +377,8 @@ export async function patchProject(
   body: Record<string, any>,
   userId: number
 ): Promise<{ ok: boolean; shifted_tasks: number; delta_days: number }> {
-  // Capture current stage + start_date in one read so we can both log the
-  // stage transition and shift checklist due_dates by the start_date delta
-  // without a second SELECT.
   const wantStageOrDate =
     "stage" in body || "start_date" in body || "end_date" in body;
-  // pic_id joins the same pre-read because a PIC (re)assignment must land in
-  // the activity trail with its from → to, exactly like a stage change and
-  // like the sales_attendee_add / _remove entries its sibling endpoints
-  // already write. It had no entry at all: the PIC dropdown saves through this
-  // PATCH, so "who handed this project to whom, and when" was the one
-  // assignment the project's own history could not answer.
   const wantPic = "pic_id" in body;
   let prevStage: string | null = null;
   let prevStart: string | null = null;
@@ -479,7 +401,6 @@ export async function patchProject(
     prevPic = row?.pic_id ?? null;
   }
 
-  // end_date >= start_date when both are set after the patch.
   const nextStart =
     "start_date" in body ? (body.start_date as string | null) : prevStart;
   const nextEnd =
@@ -488,14 +409,9 @@ export async function patchProject(
     throw new Error("end_date must be on or after start_date");
   }
 
-  /* Mig 0175 — canonicalize MY state on the way in. Any PATCH that sends
-     'PENANG'/'KL'/'W.P. Kuala Lumpur' is rewritten to the canonical form
-     ('Pulau Pinang'/'Kuala Lumpur') the SCM surfaces use, so cross-module
-     bucketing stops splitting the same physical state. */
   if ("state" in body) {
     body.state = canonicalizeMyState(body.state as string | null);
   }
-  // Fold showroom-venue aliases to canonical on edit too (front door, same as create).
   if ("venue" in body) {
     body.venue = canonicalizeVenue(body.venue as string | null);
   }
@@ -509,10 +425,6 @@ export async function patchProject(
     if (synced) body.name = synced;
   }
 
-  // Keep the project-level window date in step with the per-lorry dates the
-  // crew editor now owns. Only override when at least one lorry carries a date,
-  // so editing a legacy project's crew (lorries saved before per-lorry dates
-  // existed) never silently wipes its existing setup_start_at / dismantle_start_at.
   if ("setup_crew" in body) {
     const d = earliestLorryDate(body.setup_crew);
     if (d) body.setup_start_at = d;
@@ -544,10 +456,6 @@ export async function patchProject(
     await logProjectActivity(env, id, "stage_change", prevStage, body.stage, null, userId);
   }
 
-  // PIC (re)assignment — logged only on an ACTUAL change so a redundant
-  // same-value save doesn't pad the trail. Names are resolved for both ends so
-  // the entry stays readable after a user is renamed or deactivated; the id is
-  // kept alongside because a name is not an identity.
   const nextPic = wantPic ? ((body.pic_id as number | null) ?? null) : prevPic;
   if (wantPic && nextPic !== prevPic) {
     await logProjectActivity(
@@ -561,12 +469,6 @@ export async function patchProject(
     );
   }
 
-  // Re-derive checklist due_dates from the new start_date and each
-  // task's due_offset_days (the offset configured in Project
-  // Maintenance, persisted onto the row at template-instantiation
-  // time and on every manual due_date edit). Stock-transfer mirror
-  // tasks (notes LIKE 'auto:%') are skipped — their due_date follows
-  // the transferred_at field, not the project schedule.
   let shifted = 0;
   let deltaDays = 0;
   if (
@@ -603,17 +505,10 @@ async function redateChecklistFromOffsets(
   projectId: number,
   nextStart: string
 ): Promise<{ shifted: number; deltaDays: number }> {
-  // Normalise to YYYY-MM-DD so the SQLite `date(...)` builtin gets a
-  // clean anchor regardless of any stray time/zone bits a legacy row
-  // might carry.
   const nextDay = String(nextStart).slice(0, 10);
   if (isNaN(new Date(nextDay + "T00:00:00Z").getTime())) {
     return { shifted: 0, deltaDays: 0 };
   }
-  // For each task with a known offset, due_date = nextDay + offset.
-  // Skip auto-mirror rows (notes='auto:stock_transfer=<id>' etc.) and
-  // already-completed work — completed tasks keep their original due
-  // date for audit. Manual tasks without an offset are left alone.
   const r = await env.DB.prepare(
     `UPDATE project_checklist
         SET due_date = to_char((?::date + due_offset_days), 'YYYY-MM-DD'),
@@ -629,17 +524,11 @@ async function redateChecklistFromOffsets(
   console.log(
     `[redateChecklistFromOffsets] project=${projectId} anchor=${nextDay} shifted=${shifted}`
   );
-  // deltaDays kept on the return for the toast — leave at 0 since
-  // we re-derive absolute dates rather than applying a single delta.
   return { shifted, deltaDays: 0 };
 }
 
-// ── Detail ────────────────────────────────────────────────────
 
 export async function getProjectDetail(env: Env, id: number, companyId?: number) {
-  // Multi-company: a detail fetch can only resolve within the active company —
-  // a cross-company id answers null (the route 404s). Predicate skipped when
-  // the company context is unresolved (pre-migration / D1 test mirror).
   const coSql = companyId != null ? " AND p.company_id = ?" : "";
   const project = await env.DB.prepare(
     `SELECT p.*,
@@ -684,8 +573,6 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
     .first<any>();
   if (!project) return null;
 
-  /* Every read below needs only the project id, so they go to the database
-     together: one after another they were ~15 round trips per page open. */
   const [finance, checklist, sections, attachments, activity, team, trips,
     defects, salesReports, stockTransfers, salesAttendees, ledgerLines] = await Promise.all([
     env.DB.prepare(
@@ -711,7 +598,6 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
     )
       .bind(id)
       .all(),
-    // Project-level attachments: legacy (panel removed in mig 050), kept so an old client doesn't 500.
     env.DB.prepare(
       `SELECT a.*, u.name as uploader_name
          FROM project_attachments a
@@ -801,8 +687,6 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
     listLedgerLines(env, id),
   ]);
 
-  /* Three independent chains, run together: the task attachments and their
-     action log, the checklist comments, and the finance ledger -> P&L. */
   const checklistItemIds = (checklist.results ?? []).map((r: any) => r.id);
   const inList = (ids: unknown[]) => ids.map(() => "?").join(",");
   const [{ taskAttachments, attachmentActions }, comments, { financeLines, books, pnl }] = await Promise.all([
@@ -834,7 +718,6 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
         .all();
       return { taskAttachments: rows, attachmentActions: acts.results ?? none };
     })(),
-    // Checklist comments - attached to the item rows client-side via item_id.
     (async () => {
       if (!checklistItemIds.length) return [];
       const c = await env.DB.prepare(
@@ -858,11 +741,9 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
       return { ...fl, pnl: p };
     })(),
   ]);
-  /* The P&L's three-layer forecast and the last event's Expo Map (eventForecastLoad.ts). */
   const layered = await loadDetailLayers(env, { ...project, id, company_id: project.company_id ?? companyId ?? null }, pnl, books.rows,
     { checklist: checklist.results, sections: sections.results, attachments: taskAttachments }, LEDGER_COST_CATEGORIES);
 
-  // Progress: % of non-NA items done or approved. Trip & finance excluded.
   const counts = {
     total: (checklist.results ?? []).length,
     done: (checklist.results ?? []).filter((r: any) => checklistRowDone(r)).length,
@@ -871,7 +752,6 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
   const denom = counts.total - counts.na;
   const progress_pct = denom > 0 ? Math.round((counts.done / denom) * 100) : 0;
 
-  // Duration (days) — inclusive of both start and end date.
   let duration_days: number | null = null;
   if (project.start_date && project.end_date) {
     const s = new Date(project.start_date);
@@ -881,10 +761,6 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
     }
   }
 
-  // Stage progress (mig 050) — one entry per section with done /
-  // total / na counts. The UI replaces the percentage bar with this.
-  // Sections that don't have any tasks yet are still returned (count
-  // 0) so admins see them as empty stages.
   const sectionList = (sections.results ?? []) as Array<{
     id: number;
     name: string;
@@ -907,7 +783,6 @@ export async function getProjectDetail(env: Env, id: number, companyId?: number)
       complete: complete ? 1 : 0,
     };
   });
-  // Uncategorised bucket — tasks without a section_id.
   const uncatItems = (checklist.results ?? []).filter(
     (r: any) => r.section_id == null
   );
@@ -983,10 +858,6 @@ export function stripSensitiveChecklist<
   const checklist_attachments = (detail.checklist_attachments ?? []).filter(
     (a: any) => !removedIds.has(a.item_id)
   );
-  // A section that held a sensitive item and now has NO remaining items is
-  // dropped entirely — otherwise the gated user sees an empty section header
-  // (e.g. an orphan "CONTRACT" stage) that hints a hidden row exists.
-  // Sections that were already empty, or still hold other items, are kept.
   const remainingSectionIds = new Set(
     checklist.map((it: any) => it.section_id).filter((s: any) => s != null)
   );
@@ -998,9 +869,6 @@ export function stripSensitiveChecklist<
   const sections = (detail.sections ?? []).filter(
     (s: any) => !emptiedSectionIds.has(s.id)
   );
-  // Recompute the affected section-progress rows so the count doesn't leak
-  // that a hidden item exists; drop the row outright for an emptied section.
-  // Uncategorised tasks (section_id null) roll up to the id-0 bucket.
   const section_progress = (detail.section_progress ?? [])
     .filter((sp: any) => !emptiedSectionIds.has(sp.id))
     .map((sp: any) => {
@@ -1061,13 +929,6 @@ export function stripSetupDismantle<
   // DOCUMENT rows below stay role-filtered.
   const project = detail.project;
 
-  // Document rows are identified by their cloned section NAME. Owner
-  // 2026-07-16: the sales PIC's OWN deliverables — the rows badged
-  // "SALES PIC" (Setup Image / Defect List) — stay
-  // on the wire for the stripped caller (this strip only ever runs for
-  // sales-role callers); the DRIVER / PURCHASER document rows and the crew
-  // editor stay hidden. A Setup & Dismantle section is dropped outright
-  // only when nothing under it survives.
   const sdSectionIds = new Set(
     (detail.sections ?? [])
       .filter((s: any) => isSetupDismantleSection(s))
@@ -1093,7 +954,6 @@ export function stripSetupDismantle<
 
   const base = detail.project ? { ...detail, project } : detail;
   if (removedSectionIds.size === 0 && removedItemIds.size === 0) {
-    // No document rows to strip — return only the crew-NULLed copy.
     return base;
   }
 
@@ -1106,7 +966,6 @@ export function stripSetupDismantle<
   const checklist_attachments = (detail.checklist_attachments ?? []).filter(
     (a: any) => !removedItemIds.has(a.item_id)
   );
-  // Drop action-timeline rows whose attachment was stripped with its item.
   const removedAttIds = new Set(
     (detail.checklist_attachments ?? [])
       .filter((a: any) => removedItemIds.has(a.item_id))
@@ -1118,9 +977,6 @@ export function stripSetupDismantle<
   const sections = (detail.sections ?? []).filter(
     (s: any) => !removedSectionIds.has(s.id)
   );
-  // section_progress rows key off the section id (0 sentinel = uncategorised).
-  // Drop rows for fully-removed sections; recompute counts for sections that
-  // keep their SALES PIC rows so the totals don't leak the hidden items.
   const section_progress = (detail.section_progress ?? [])
     .filter((sp: any) => !removedSectionIds.has(sp.id))
     .map((sp: any) => {
@@ -1149,19 +1005,12 @@ export function stripSetupDismantle<
   };
 }
 
-// ── List ──────────────────────────────────────────────────────
 
 export interface ListProjectsFilters {
   /** Fill the finance columns from the event page's P&L (services/eventPnlBatch.ts) —
    *  set by the route for a caller who may see finance (owner 2026-10-19, ledger item 5). */
   with_pnl?: boolean;
   stage?: string;
-  /** Date-derived event phase for the field/sales slim filter bar (owner
-   *  2026-07-21). The `stage` enum is unmaintained (never reaches
-   *  'dismantle'), so Setup/Dismantle filter on the event dates instead:
-   *  "setup" = event not finished yet (build-up ahead / running);
-   *  "dismantle" = event has ended but isn't closed (teardown pending).
-   *  Cancelled events are excluded from both. */
   phase?: "setup" | "dismantle";
   brand?: string;
   organizer?: string;
@@ -1170,17 +1019,12 @@ export interface ListProjectsFilters {
   /** Year(s) on start_date. `number` for legacy single-value callers, or a
    *  comma-separated string for the multi-select picker (owner 2026-08-07). */
   year?: number | string;
-  /** Month(s) 1-12 on start_date. Single number or comma-separated list. */
   month?: number | string;
   /** Date range (owner 2026-08-11, ISO YYYY-MM-DD) — keep events overlapping
    *  [from, to]. Replaces the year/month dropdowns in the UI. Either may be blank. */
   from?: string;
   to?: string;
   state?: string;
-  /** Active tasklist section name (mig 050). When set, the list only
-   *  returns projects whose lowest-sort_order section with open tasks
-   *  matches. Special values: "__done" = all sections complete; "__none"
-   *  = project has no sections defined. */
   section?: string;
   /** Checklist TASK titles that must still be OUTSTANDING — COMMA-SEPARATED,
    *  multi-select since 2026-08-07 (owner: "make it can click multiple choice.
@@ -1192,38 +1036,16 @@ export interface ListProjectsFilters {
    *  ticked task. Exact title match (the picker feeds canonical template
    *  titles, none of which contain a comma or '='). */
   task_pending?: string;
-  /** Project status filter (mig 088 palette): "confirmed" | "pending" |
-   *  "cancelled". Pushed server-side so the list stays paginated even while
-   *  a status pill is active (was previously filtered client-side over a
-   *  fetch-all page). Additive / backward-compatible — unset ⇒ all statuses. */
   status?: string;
-  /** When true, drop projects whose every section is complete (the
-   *  same predicate `section === "__done"` matches positively). Used
-   *  by the list page's "Hide completed" toggle. Independent of
-   *  `section` — if the section filter is `__done`, this is ignored
-   *  so the user can explicitly view the completed bucket. */
   exclude_done?: boolean;
   page?: number;
   per_page?: number;
   include_archived?: boolean;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
-  /** "My pending tasks" filter (role-based). When set, only return
-   *  projects that have at least one PENDING checklist item with this
-   *  role_label (e.g. "BD", "PURCHASER", "DRIVER", "SALES PIC",
-   *  "LOGISTIC"). */
   pending_label?: string;
-  /** Same as pending_label but matches the checklist item TITLE instead
-   *  of the role chip — used for roles tied to a specific document
-   *  (e.g. Management → "Agreement / Quotation"). */
   pending_title?: string;
-  /** Logistic "pending" = the Setup & Dismantle section hasn't been
-   *  arranged yet (no setup time scheduled). LOGISTIC isn't a checklist
-   *  item, so it gets its own predicate. */
   pending_logistic?: boolean;
-  /** Approver "pending" = the project has a due checklist item whose
-   *  required_perm is one of these (e.g. Stock Approver → stock_transfer.approve).
-   *  Used for directors/admins who only chase what they must approve. */
   pending_approve?: string[];
   /** Sales Director staging (owner 2026-07-21, tightened 2026-07-23). Their
    *  pending = whichever of these apply, OR-combined: stock-out awaiting
@@ -1238,15 +1060,8 @@ export interface ListProjectsFilters {
    *  director's My Pending shows just their own queue. Empty/absent = every
    *  brand, which keeps the existing unrestricted approvers unchanged. */
   approver_brands?: string[];
-  /** Sales-attending "pending" = the project has no sales attendees assigned
-   *  yet (Sales PIC + directors). Standalone predicate (not a checklist item). */
   pending_sales_attending?: boolean;
-  /** Agreement/Quotation on its own timeline (Super Admin / weisiang). */
   pending_agreement?: boolean;
-  /** Defect clean-or-replace review (Storekeeper Supervisor / Shukor, owner
-   *  2026-08-07): projects with >=1 live defect-list attachment whose LATEST
-   *  timeline entry is neither 'done' nor 'replace' — i.e. a fresh upload the
-   *  reviewer has not triaged yet. Not a checklist item; own predicate. */
   pending_defect_review?: boolean;
   /** Two-warehouse defect-review split (owner 2026-08-11). The canonical states
    *  that route to Nancy (Ops Exec); Shukor takes everything else. With
@@ -1254,9 +1069,6 @@ export interface ListProjectsFilters {
    *  in this list (Shukor); without it, only those in the list (Nancy). */
   pending_defect_review_states?: string[];
   pending_defect_review_exclude?: boolean;
-  /** Multi-company (mig-pg 0093): the ACTIVE company (activeCompanyId(c)).
-   *  When set the list is isolated to that company; undefined (company
-   *  context unresolved — pre-migration / D1 test mirror) = no predicate. */
   company_id?: number;
   /** "Assigned to me" (drivers/helpers, owner 2026-07-16): only projects
    *  where this user is on the setup/dismantle crew — matched via the FK
@@ -1271,19 +1083,10 @@ export interface ListProjectsFilters {
    *  (label 'DRIVER'), and in My Pending mode for every role-label lane
    *  (owner 2026-07-22); whitelist-validated before interpolation. */
   pending_titles_label?: string;
-  /** Logistic pending is derived from the project row (stock-out state +
-   *  setup/dismantle time+crew), not a checklist item — when set,
-   *  my_pending_titles carries the matching arrangement step instead. */
   pending_titles_logistic?: boolean;
-  /** Defect-review pending is derived from the attachment timeline, not a
-   *  checklist item — when set, my_pending_titles carries a "Review Defect
-   *  Items" chip (every row in this lane is here because of a fresh defect). */
   pending_titles_defect_review?: boolean;
 }
 
-// Allow-listed sort columns for the project list. The default (when
-// sort_by is unset) keeps the "nulls last, newest start_date first"
-// behaviour the dashboard relies on.
 const PROJECT_SORT_MAP: Record<string, string> = {
   code: "p.code",
   name: "p.name",
@@ -1304,11 +1107,6 @@ const PROJECT_SORT_MAP: Record<string, string> = {
   created_by_name: "cb.name",
 };
 
-/** Split a filter value that may be a COMMA-SEPARATED multi-select list (owner
- *  2026-08-07). Accepts the number|string the filters already carry, trims,
- *  drops blanks, and de-dupes — so `IN (…)` never gets an empty or repeated
- *  placeholder. A single value yields a one-element list, which keeps every
- *  pre-existing single-select caller behaving identically. */
 function csvList(v: string | number | null | undefined): string[] {
   if (v == null) return [];
   return [...new Set(String(v).split(",").map((s) => s.trim()).filter(Boolean))];
@@ -1318,7 +1116,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   const where: string[] = [];
   const binds: any[] = [];
   if (!f.include_archived) where.push("p.archived_at IS NULL");
-  // Multi-company: PER-COMPANY isolation on the active company.
   if (f.company_id != null) {
     where.push("p.company_id = ?");
     binds.push(f.company_id);
@@ -1337,13 +1134,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // `stage` enum for the field/sales slim bar. Same date idiom the pending
   // lanes use (substr(...,1,10) vs a YYYY-MM-DD MYT string).
   if (f.phase === "setup") {
-    // Event not finished yet → build-up is ahead or it's currently running.
     where.push(
       "substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ? AND COALESCE(p.status,'') <> 'cancelled'"
     );
     binds.push(todayMyt());
   } else if (f.phase === "dismantle") {
-    // Event has ended but isn't closed (not marked completed) → teardown pending.
     where.push(
       "substr(COALESCE(p.end_date, p.start_date), 1, 10) < ? AND COALESCE(p.stage,'') <> 'completed' AND COALESCE(p.status,'') <> 'cancelled'"
     );
@@ -1364,8 +1159,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     where.push("p.event_type_id = ?");
     binds.push(f.event_type_id);
   }
-  // Year / month are numeric lists. Non-numeric or out-of-range entries are
-  // dropped rather than bound, so a hand-edited URL can't inject nonsense.
   const yearList = csvList(f.year).filter((y) => /^\d{4}$/.test(y));
   if (yearList.length) {
     where.push(`strftime('%Y', p.start_date) IN (${yearList.map(() => "?").join(",")})`);
@@ -1395,10 +1188,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     where.push("p.state = ?");
     binds.push(f.state);
   }
-  // "Assigned to me" (drivers/helpers): the FK driver/helper columns OR the
-  // crew-editor JSON. The JSON stores people as {"name":"X","phone":…} (some
-  // legacy imports as {"name" : "X"}), and names come from the users master,
-  // so a lowercase '"<name>"' containment match is an exact-name match.
   if (f.assigned_user_id != null) {
     const arms = [
       "p.setup_driver_user_id = ?",
@@ -1434,27 +1223,13 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // lane's own binds.
   const dueToday = todayMyt();
   const DUE_GATE = `substr(COALESCE(pc.due_date, p.start_date), 1, 10) <= ?`;
-  // Interpolated (like APPROVER_BRAND_GATE) so the fixed bind order of the
-  // lanes below is untouched; a compile-time date literal, never user input.
   const MY_PENDING_EPOCH = "2026-08-01";
-  // A caller's "My Pending" can have SEVERAL sources; a project qualifies if
-  // ANY match, so the lanes below OR together (each caller sets only a few).
   const pendingOr: string[] = [];
   const pendingBinds: any[] = [];
-  // Staffing lanes only start once the CONTRACT section is cleared (owner
-  // 2026-07-23: "pending contract should not appear" — while contract docs are
-  // open the project is BD's pending, and far-future imports would otherwise
-  // flood the directors with 100+ rows). No CONTRACT section at all counts as
-  // cleared, so template variants without one still surface.
   const CONTRACT_CLEAR = `NOT EXISTS (SELECT 1 FROM project_checklist cc
         JOIN project_checklist_sections cs ON cs.id = cc.section_id
         WHERE cc.project_id = p.id AND cs.name = 'CONTRACT'
           AND cc.status NOT IN ('done', 'na'))`;
-  // Sales Attending is a "pending" reminder only for events that HAVEN'T ended
-  // yet (upcoming or currently running), are past CONTRACT, and have no reps
-  // assigned — otherwise it floods with the whole historical backlog.
-  // Timeline-gated per "pending follows the timeline". Binds one `?`
-  // (dueToday) each time it's used.
   const SALES_ATTENDING_EMPTY = `(substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?
         AND ${CONTRACT_CLEAR}
         AND NOT EXISTS (SELECT 1 FROM project_sales_attendees sa WHERE sa.project_id = p.id))`;
@@ -1487,12 +1262,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
                 WHERE pc.project_id = p.id AND pc.title = 'Agreement / Quotation'
                   AND pc.status = 'pending'
                   AND pc.review_status IN ('pending_review', 'amended') AND ${DUE_GATE})`;
-  // A submitted doc is the APPROVER's pending, not the submitter's (owner
-  // 2026-07-21, Sim/Purchaser report): while it awaits review
-  // ('pending_review', or 'amended' after a rejection round) the role/title
-  // lanes stop counting it — the director lanes above chase it instead. A
-  // rejection ('rejected') hands it back to the submitter's lane. Approval
-  // sets status='done', which already drops it everywhere. No binds.
   const NOT_IN_REVIEW = `COALESCE(pc.review_status, '') NOT IN ('pending_review', 'amended')`;
   if (f.pending_label === "PURCHASER") {
     // Purchaser staging:
@@ -1605,11 +1374,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     pendingBinds.push(f.pending_title, dueToday);
   }
   if (f.pending_approve && f.pending_approve.length) {
-    // Approver lane: projects with a DUE item whose required_perm is one the
-    // caller holds AND which has actually been SUBMITTED for review (owner
-    // 2026-07-23, weisiang report). Gate on review_status, not a bare
-    // status='pending' — an item nobody has uploaded yet is the submitter's
-    // pending, not the approver's; it only reaches the approver on submit.
     const ph = f.pending_approve.map(() => "?").join(",");
     pendingOr.push(
       `EXISTS (SELECT 1 FROM project_checklist pc
@@ -1621,11 +1385,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     pendingBinds.push(...f.pending_approve, dueToday);
   }
   if (f.pending_logistic) {
-    // Logistic work is staged:
-    //   - SETUP is due once "Stock Out Transfer Record" is completed
-    //     (done/approved) but the setup time+crew aren't filled yet.
-    //   - DISMANTLE is due once setup is arranged but the dismantle
-    //     time+crew aren't filled yet.
     pendingOr.push(`(
       (
         EXISTS (SELECT 1 FROM project_checklist pc
@@ -1667,9 +1426,7 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     if (f.pending_director.sales_attending) { pendingOr.push(SALES_ATTENDING_EMPTY); pendingBinds.push(dueToday); }
     if (f.pending_director.sales_pic) { pendingOr.push(SALES_PIC_EMPTY); pendingBinds.push(dueToday); }
   }
-  // Sales Attending not yet assigned (Sales PIC).
   if (f.pending_sales_attending) { pendingOr.push(SALES_ATTENDING_EMPTY); pendingBinds.push(dueToday); }
-  // Agreement / Quotation on its own timeline (Super Admin / weisiang).
   if (f.pending_agreement) { pendingOr.push(AGREEMENT_PENDING); pendingBinds.push(dueToday); }
   if (pendingOr.length) {
     // Only CONFIRMED events generate anyone's pending work (owner 2026-08-17:
@@ -1693,8 +1450,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     where.push(`(${pendingOr.join("\n      OR ")})`);
     binds.push(...pendingBinds);
   }
-  // "Completed project" predicate — reused by both the positive
-  // (section=__done) filter and the negative (exclude_done) toggle.
   const SECTION_DONE_PREDICATE = `(
     EXISTS (SELECT 1 FROM project_checklist_sections s WHERE s.project_id = p.id)
     AND NOT EXISTS (
@@ -1774,14 +1529,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     binds.push(...taskPendingList);
   }
   if (f.search) {
-    // Restore mobile client-search coverage lost when the PMS list moved to
-    // server pagination: brand + PIC name were previously searchable
-    // client-side. `brand` is a plain column; PIC name resolves via a
-    // correlated subquery to users (mirroring the `pic.name` display join at
-    // the SELECT) so it also works inside the COUNT(*) query, which does NOT
-    // join users. Additive — keeps code/name/venue/organizer.
-    // Each word on its own, in any order and any field: "mle dataran" (owner
-    // 2026-11-04). A short word also reads as the venue's initials: "sccc".
     for (const word of String(f.search).trim().split(/\s+/).filter(Boolean)) {
       const like = `%${word}%`;
       const initials = initialsLikes(word);
@@ -1808,10 +1555,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     .bind(...binds)
     .first<{ count: number }>();
 
-  // Build ORDER BY: explicit sort overrides the default. My Pending is a
-  // work queue, so it follows the timeline — soonest event first (owner
-  // 2026-07-23: "all pending task appear follow by timeline"); everywhere
-  // else keeps the "nulls last, newest start_date first" dashboard default.
   const sortExpr = f.sort_by ? PROJECT_SORT_MAP[f.sort_by] : null;
   const sortDir = f.sort_dir === "asc" ? "ASC" : "DESC";
   const orderBy = sortExpr
@@ -1824,10 +1567,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
          CASE WHEN p.start_date IS NULL THEN 1 ELSE 0 END,
          p.start_date DESC, p.id DESC`;
 
-  // Crew "My events" cards: the caller's own open role tasks, due-gated with
-  // the same MYT rule as the my_pending lanes. Interpolated (no bind juggling
-  // in the SELECT list) — label is whitelist-validated, dueToday is our own
-  // YYYY-MM-DD string.
   const ptl =
     f.pending_titles_label && /^[A-Z ]{2,20}$/.test(f.pending_titles_label)
       ? f.pending_titles_label
@@ -1914,7 +1653,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
               WHERE tp2.project_id = p.id
                 AND tp2.title IN (${taskPendingList.map(() => "?").join(",")})) as task_pending_map`
     : "";
-  // SELECT-list binds come BEFORE the WHERE binds in prepare() order.
   const taskPendingBinds = taskPendingList.length ? [...taskPendingList] : [];
 
   // Part 3 of the Status-filter rework (owner 2026-08-14): when a REAL section
@@ -2042,7 +1780,6 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   };
 }
 
-// ── Finance ───────────────────────────────────────────────────
 
 const FINANCE_FIELDS = [
   "rental", "contractor_cost", "license_fee",
@@ -2089,7 +1826,6 @@ export async function patchFinance(
   return r.meta.changes > 0;
 }
 
-// ── Checklist ─────────────────────────────────────────────────
 
 export interface CreateChecklistItemInput {
   project_id: number;
@@ -2107,7 +1843,6 @@ export async function createChecklistItem(
   input: CreateChecklistItemInput,
   userId: number
 ) {
-  // Pick the next seq if not provided — append to end.
   let seq = input.seq ?? null;
   if (seq == null) {
     const row = await env.DB.prepare(
@@ -2118,9 +1853,6 @@ export async function createChecklistItem(
       .first<{ next_seq: number }>();
     seq = row?.next_seq ?? 10;
   }
-  // Compute the offset relative to the project's start_date, so a
-  // later project-level start_date change keeps this task at the
-  // same relative position in the schedule.
   let dueOffsetDays: number | null = null;
   if (input.due_date) {
     const proj = await env.DB.prepare(
@@ -2183,9 +1915,6 @@ export async function patchChecklistItem(
     }
   }
 
-  // When the user moves a task's due_date by hand, re-anchor the
-  // task's offset to the project's current start_date so a future
-  // project-level start_date change preserves this manual shift.
   if ("due_date" in body) {
     const row = await env.DB.prepare(
       `SELECT c.project_id, p.start_date
@@ -2234,9 +1963,6 @@ export async function setChecklistStatus(
   if (!item) return false;
 
   if (status === "done" || status === "na") {
-    // Completing an item (done/N/A) clears any review flag so it leaves the
-    // approver's queue (loadReviewQueue filters on review_status, not status).
-    // A manual tick is not an approval, so clear to NULL, not 'approved'.
     await env.DB.prepare(
       `UPDATE project_checklist
           SET status = ?,
@@ -2250,7 +1976,6 @@ export async function setChecklistStatus(
       .bind(status, status, userId, status, itemId)
       .run();
   } else {
-    // pending / blocked: not a completion, so review state is left untouched.
     await env.DB.prepare(
       `UPDATE project_checklist
           SET status = ?,
@@ -2275,17 +2000,11 @@ export async function setChecklistStatus(
   return true;
 }
 
-// ── Checklist review loop ────────────────────────────────────
-// Rejection/amendment flow mirrors what the Notion page captured as
-// free-text activity ("Design Reject — reason — Design Amended —
-// Design Approved"). Each transition records a row in
-// project_checklist_comments so the item has a traceable review
-// history.
 
 export async function addChecklistComment(
   env: Env,
   itemId: number,
-  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove", // upload/remove written as raw SQL by routes/projects.ts, bypassing here; mirror in pages/Projects.tsx, guarded by tests/checklistCommentKinds.test.ts
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove",
   body: string | null,
   userId: number
 ) {
@@ -2370,7 +2089,6 @@ export async function approveChecklistItem(env: Env, itemId: number, userId: num
   await addChecklistComment(env, itemId, "approve", null, userId);
 }
 
-// ── Defects ──────────────────────────────────────────────────
 
 export interface CreateDefectInput {
   project_id: number;
@@ -2453,7 +2171,6 @@ export async function archiveDefect(env: Env, id: number) {
     .run();
 }
 
-// ── Sales reports ────────────────────────────────────────────
 
 export interface CreateSalesReportInput {
   project_id: number;
@@ -2491,9 +2208,6 @@ export async function createSalesReport(
     )
     .run();
 
-  // Opt-in roll-up into project_finance.total_sales. Summing all
-  // non-archived sales_amounts is safer than incrementing — multiple
-  // reports can be edited/deleted and we want finance to stay consistent.
   if (options?.syncToFinance) {
     await syncSalesTotalFromReports(env, input.project_id);
   }
@@ -2543,37 +2257,18 @@ export async function syncSalesTotalFromReports(env: Env, projectId: number) {
     .run();
 }
 
-// ── Finance ledger ───────────────────────────────────────────
-// New model: project_finance_lines holds individual income/cost line
-// items. project_finance stays as a rollup cache (summed per canonical
-// category) so existing list queries keep working. Every ledger write
-// triggers a resync.
 
-// Categories the UI surfaces in its picker. Any string is accepted on
-// write (forward-compatible with "cleaning fee", "insurance" etc.).
-// The first eight (rental, cogs, setup, transport, commission,
-// merchandise, contractor, license) are the ones surfaced as
-// dedicated columns in the Finance List view + per-project breakdown
-// stat strip; the rest roll up into "Others".
-// 2026-05-08 — boss's Financial Snapshot model split COGS into
-// product sub-categories and transport into rate-driven fee + actual
-// logistics cost. Legacy `cogs` and `transport` slugs are kept so
-// existing rows still display; new lines should pick from the
-// sub-categories below.
 export const LEDGER_COST_CATEGORIES = [
-  // Rental + COGS family
   "rental",
-  "cogs",                       // legacy bucket — kept for old rows
+  "cogs",
   "cogs_matt_sofa",
   "cogs_bedframe",
   "cogs_accessories",
-  // Operations
   "setup",
-  "transport",                  // legacy bucket — kept for old rows
-  "transport_fee",              // % of sales, auto-applied by rate engine
-  "transport_setup_dismantle",  // actual logistics cost
+  "transport",
+  "transport_fee",
+  "transport_setup_dismantle",
   "commission", "merchandise",
-  // Misc
   "contractor", "license", "deposit", "permit",
   "accommodation", "staffing", "marketing", "misc",
 ] as const;
@@ -2604,9 +2299,6 @@ export async function createLedgerLine(
     throw new Error("amount must be a non-negative number");
   }
   if (!input.category.trim()) throw new Error("category required");
-  // Stamp company_id from the parent project (mig 0170). Subquery keeps this
-  // atomic — if the project doesn't exist the FK below fails before the
-  // subquery lands, so we never orphan a line under a null company.
   const r = await env.DB.prepare(
     `INSERT INTO project_finance_lines
        (project_id, kind, category, description, amount, occurred_at,
@@ -2629,9 +2321,6 @@ export async function createLedgerLine(
       input.project_id
     )
     .run();
-  // Auto cost-line engine (mig 063) runs after non-auto writes only.
-  // Its own writes are tagged `auto_source` and don't traverse this
-  // function, so the guard is mostly for symmetry with patch/archive.
   await recomputeAutoCostLines(env, input.project_id, userId);
   await syncFinanceRollup(env, input.project_id);
   await logProjectActivity(
@@ -2663,8 +2352,6 @@ export async function patchLedgerLine(
     .bind(lineId)
     .first<{ project_id: number; auto_source: string | null }>();
   if (!line) return false;
-  // Auto-generated rows are owned by the cost-rate engine — refuse
-  // user edits so the next recompute doesn't silently overwrite them.
   if (line.auto_source) return false;
 
   const sets: string[] = [];
@@ -2696,8 +2383,6 @@ export async function archiveLedgerLine(env: Env, lineId: number, userId: number
     .bind(lineId)
     .first<{ project_id: number; auto_source: string | null }>();
   if (!line) return false;
-  // Auto rows are managed by the cost-rate engine — refuse user
-  // deletes; users edit the rate card instead.
   if (line.auto_source) return false;
   await env.DB.prepare(
     `UPDATE project_finance_lines SET archived_at = datetime('now') WHERE id = ?`
@@ -2710,9 +2395,6 @@ export async function archiveLedgerLine(env: Env, lineId: number, userId: number
   return true;
 }
 
-// Rebuild project_finance from the current line set. Called after any
-// ledger mutation. total_sales stays in sync via this path too — when
-// a sales-report line lands, its amount rolls into finance.total_sales.
 export async function syncFinanceRollup(env: Env, projectId: number) {
   const sums = await env.DB.prepare(
     `SELECT kind, category, COALESCE(SUM(amount), 0) as total
@@ -2749,7 +2431,6 @@ export async function syncFinanceRollup(env: Env, projectId: number) {
           out.deposit_paid += row.total;
           break;
         default:
-          // Everything else bucketed into misc so the rollup stays balanced.
           out.misc_cost += row.total;
       }
     } else if (row.kind === "income") {
@@ -2768,8 +2449,6 @@ export async function syncFinanceRollup(env: Env, projectId: number) {
     }
   }
 
-  // Also roll in any project_sales_reports entries — they predate the
-  // ledger and users may keep entering sales via that flow.
   const reportSum = await env.DB.prepare(
     `SELECT COALESCE(SUM(sales_amount), 0) as total
        FROM project_sales_reports
@@ -2777,22 +2456,11 @@ export async function syncFinanceRollup(env: Env, projectId: number) {
   )
     .bind(projectId)
     .first<{ total: number }>();
-  // If reports exist, they supersede the "sales" category in lines
-  // (which was only seeded from legacy total_sales as a historical anchor).
-  // Otherwise fall back to the ledger-derived sum.
   const reportTotal = reportSum?.total ?? 0;
   if (reportTotal > 0) {
-    // Keep the larger of the two — a defensive max avoids double-counting
-    // during the window where an admin is transitioning from reports
-    // into ledger entries.
     out.total_sales = Math.max(out.total_sales, reportTotal);
   }
 
-  // Roll in sales_entries (mig 041, the rep-facing flow that replaced
-  // the file-upload sales-reports section in mig 051). Drafts count too
-  // — what dispatchers / Sales Director care about is "sales taken on
-  // the floor", not just AutoCount-pushed ones. Voided + archived rows
-  // are excluded.
   const entriesSum = await env.DB.prepare(
     `SELECT COALESCE(SUM(amount), 0) as total
        FROM sales_entries
@@ -2803,8 +2471,6 @@ export async function syncFinanceRollup(env: Env, projectId: number) {
     .bind(projectId)
     .first<{ total: number }>();
   const entriesTotal = entriesSum?.total ?? 0;
-  // Add to whatever's already there. Reports and entries are distinct
-  // record sets — a project can have both during the migration window.
   out.total_sales += entriesTotal;
 
   // A project whose sales were only ever keyed as the quick lump-sum Total
@@ -2843,11 +2509,6 @@ export async function syncFinanceRollup(env: Env, projectId: number) {
     .run();
 }
 
-// ── Payment workflow ─────────────────────────────────────────
-// Dedicated from finance ledger because "did we pay the organizer"
-// is a different question from "what did it cost". A case can have
-// a full ledger and still be blocked because the security deposit
-// payment isn't recorded yet.
 
 export async function setPaymentStatus(
   env: Env,
@@ -2886,7 +2547,6 @@ export async function setPaymentStatus(
   await logProjectActivity(env, projectId, "payment_status", null, status, opts.notes ?? null, userId);
 }
 
-// ── Stock transfers ──────────────────────────────────────────
 
 export interface CreateStockTransferInput {
   project_id: number;
@@ -2903,21 +2563,6 @@ export async function createStockTransfer(
   input: CreateStockTransferInput,
   userId: number
 ) {
-  // A transfer with no date DEFAULTS to today; it is never refused. Both the
-  // mirror task's due_date and its title come from this one field, so a blank
-  // one used to produce a `due_date NULL` row titled bare "Stock OUT" —
-  // invisible to the tasklist's date column, the Gantt and every due-date
-  // rollup, and permanently so, because redateChecklistFromOffsets skips
-  // `notes LIKE 'auto:%'` rows on purpose (their date follows the transfer,
-  // not the project schedule).
-  //
-  // Default-never-refuse is the owner's standing rule for this system — the
-  // same shape the PO expected-date and the journal entry-date already use.
-  // todayMyt() and NOT toISOString(): Workers run in UTC, so before 08:00 MYT
-  // a raw UTC slice files the transfer under YESTERDAY, every morning shift.
-  //
-  // DATE-ONLY on purpose. We know the day; we do not know the time, and a
-  // silently invented 00:00 is a worse answer than an honest date.
   const transferredAt = input.transferred_at?.trim() || todayMyt();
   const r = await env.DB.prepare(
     `INSERT INTO project_stock_transfers
@@ -2936,9 +2581,6 @@ export async function createStockTransfer(
     )
     .run();
   const transferId = r.meta.last_row_id as number;
-  // Surface the transfer in the tasklist so it's visible alongside other
-  // project work. Linked back via notes marker so confirm/archive can
-  // toggle the matching task's status.
   await syncStockTransferTask(env, {
     transferId,
     projectId: input.project_id,
@@ -2959,10 +2601,6 @@ export async function createStockTransfer(
   return { id: transferId };
 }
 
-// ── Stock transfer ↔ tasklist mirror ─────────────────────────
-// Each non-archived stock transfer surfaces as one project_checklist row
-// so admins can see it in the Tasklist alongside everything else. The
-// link is by notes marker `auto:stock_transfer=<id>` (no schema change).
 const STOCK_TRANSFER_TASK_MARKER = "auto:stock_transfer=";
 
 function stockTransferTaskTitle(direction: string, transferredAt: string | null) {
@@ -3100,7 +2738,6 @@ export async function archiveStockTransfer(env: Env, transferId: number) {
   await deleteStockTransferTask(env, transferId);
 }
 
-// ── Internal (existing) ──────────────────────────────────────
 
 export async function listLedgerLines(env: Env, projectId: number) {
   const rows = await env.DB.prepare(
@@ -3125,9 +2762,6 @@ export async function deleteChecklistItem(env: Env, itemId: number, userId: numb
     .bind(itemId)
     .first<{ project_id: number; title: string }>();
   if (!item) return false;
-  // Child FKs (project_checklist_attachments.item_id, project_checklist_comments.item_id)
-  // were ON DELETE CASCADE but the D1->PG load dropped them to NO ACTION, so a bare
-  // delete throws once a task has any attachment or comment. Clear children first.
   await env.DB.prepare(`DELETE FROM project_checklist_attachments WHERE item_id = ?`).bind(itemId).run();
   await env.DB.prepare(`DELETE FROM project_checklist_comments WHERE item_id = ?`).bind(itemId).run();
   await env.DB.prepare(`DELETE FROM project_checklist WHERE id = ?`).bind(itemId).run();

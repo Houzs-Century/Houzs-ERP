@@ -15,7 +15,6 @@ export interface AssrOrderDo {
 
 export interface OrderDelivery {
   doNo: string | null;
-  /** yyyy-mm-dd of the most recent delivery among the order's DOs. */
   deliveryDate: string | null;
 }
 

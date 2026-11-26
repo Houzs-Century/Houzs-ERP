@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// eventPnlInputs.ts — what eventPnl.ts needs that the event page did not read:
-// the Sales Orders opened at the fair (their total and their cost buckets) and
-// the brand's rate card. The finance lines and the books are already read by
-// services/projectFinanceLines.ts and are passed in.
-//
-// The orders are read through env.DB (the event page's own connection, which
-// reaches the scm schema — scm/lib/event-books.ts reads the GL the same way).
-// Cancelled orders are not sales; drafts count, as on the Sales Orders block
-// beside the P&L ("Opened" — routes/project-sales-orders.ts), so the two never
-// disagree about how much was opened. The order's total is the same rule that
-// block prints (scm/shared/so-outstanding.ts::soDisplayTotalSen).
-//
-// Best-effort: an unreadable order list or rate card yields NO P&L rather than
-// one built on a guess — the page then shows its typed figures as before.
-// ----------------------------------------------------------------------------
 
 import type { Env } from "../types";
 import { soDisplayTotalSen, soPaidInputsOf } from "../scm/shared/so-outstanding";
@@ -41,7 +25,6 @@ export async function loadFairSoTotalsMany(env: Env, projectIds: readonly number
     const id = n(r.project_id);
     const t = out.get(id) ?? { count: 0, salesRm: 0, serviceRm: 0, serviceCostRm: 0, costRm: { mattSofa: 0, bedframe: 0, accessories: 0, others: 0 } };
     t.count += 1;
-    /* The goods only: the service lines are Service revenue (eventPnl.ts). */
     t.salesRm += (soDisplayTotalSen(soPaidInputsOf({ local_total_sen: n(r.local_total_sen), total_revenue_sen: n(r.total_revenue_sen) }, 0, false)) - n(r.service_sen)) / 100;
     t.serviceRm += n(r.service_sen) / 100;
     t.serviceCostRm += n(r.service_cost_sen) / 100;

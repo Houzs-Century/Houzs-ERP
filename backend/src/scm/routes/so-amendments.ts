@@ -1,21 +1,3 @@
-// /so-amendments — SO amendment / revision workflow (port of 2990 so-amendments.ts).
-//
-// An amendment lets a salesperson change a PROCESSING-LOCKED Sales Order through a
-// supplier-confirmed, two-gate state machine (REQUESTED → SUPPLIER_PENDING →
-// SO_APPROVED → PO_APPROVED → SENT / REJECTED). The pure state machine + transition
-// guards live in ../shared (so-amendment.ts) — this router imports canTransition /
-// nextStatus, it does NOT redefine them.
-//
-// The CREATE endpoint (POST /mfg-sales-orders/:docNo/amendments) is NOT here: it
-// lives on the mfgSalesOrders router so its URL nests under the SO mount and it can
-// reuse that file's private SO guards (soProcessingLocked / soHasDownstream). This
-// module carries list + detail + supplier-confirm + approve-so / approve-po / send
-// / reject.
-//
-// Houzs gate adaptation: 2990's scm.staff.role gates are DEAD here (the SCM bridge
-// pins every caller to one super_admin row — see scm/middleware/auth.ts), so every
-// gate is `hasHouzsPerm(c, '<flat key>')` against the REAL Houzs caller. Audit rows
-// route through recordSoAudit (resolves the NOT-NULL mfg_so_audit_log.company_id).
 
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -59,18 +41,10 @@ import { scheduleStockAllocationAfterCommand } from '../lib/stock-allocation-job
 export const soAmendments = new Hono<{ Bindings: Env; Variables: Variables }>();
 soAmendments.use('*', supabaseAuth);
 
-/* Real-caller display name for audit attribution (the scm.staff `user.id` is the
-   pinned system row; user_metadata.name is the real Houzs caller). */
 function actorName(user: { user_metadata?: { name?: string } } | undefined): string | null {
   return user?.user_metadata?.name ?? null;
 }
 
-/* The gate columns (supplier_confirmed_by / so_approved_by / po_approved_by)
-   are scm.staff FKs the UI renders as "who did this". `user.id` is the bridge's
-   pinned system row shared by EVERY caller, so stamping it made all three read
-   as one system identity — the same defect the salesperson_id / requested_by
-   stamps carried. Resolve the caller's real mig-0066 staff row; fall back to
-   the pinned row when the sync row is missing so the FK stays valid. */
 async function gateActorStaffId(
   sb: any,
   houzsUserId: number | null | undefined,
@@ -85,24 +59,18 @@ type AmendmentForWrite = {
   amendment_no?: string | null;
   status: AmendStatus;
   version: number;
-  /* Two-lane rework (2026-07-27): 'LINES' | 'DELIVERY' on post-rework rows,
-     NULL on legacy rows — which keep the original supplier-confirmed two-gate
-     chain and its original keys. */
   lane?: string | null;
   reason?: string | null;
   apply_lease_token?: string | null;
   apply_lease_expires_at?: string | null;
   /* Needed by the approve-time date-pair re-check (owner 2026-07-28). */
   header_changes?: Record<string, unknown> | null;
-  /* scm.staff uuid of whoever raised it — the audience of the approved /
-     rejected notice (services/amendmentNotify.ts). */
   requested_by?: string | null;
   lane_flag_note?: string | null;
   purchaser_ok_at?: string | null;
   po_date_override_by?: string | null;
 };
 
-/** Lane of a loaded row — narrowed to the known lane values, else legacy. */
 const laneOf = (a: AmendmentForWrite): AmendmentLane | null =>
   a.lane === 'LINES' || a.lane === 'DELIVERY' || a.lane === 'PRICE' || a.lane === 'LINE_ADDREMOVE' ? a.lane : null;
 
@@ -123,11 +91,6 @@ async function resolvedAmendmentAudience(
     sb.from('mfg_sales_orders').select('salesperson_id').eq('doc_no', amendment.so_doc_no),
     c,
   ).maybeSingle();
-  /* A FAILED read is not "this order has no salesperson" — supabase-js does not
-     throw, so an unbound error would silently narrow the audience to one person
-     and look exactly like an order sold by nobody. Say so, and still tell the
-     REQUESTER: their id comes off the amendment row we already hold, so the
-     half of the audience this read cannot reach is the only half we lose. */
   if (soErr) {
     console.error(
       `[amendment-notify] salesperson lookup failed for ${amendment.so_doc_no}: ${soErr.message}`,
@@ -144,44 +107,19 @@ async function resolvedAmendmentAudience(
   };
 }
 
-/* The refusal every legacy-only gate answers when pointed at a lane row. */
 const NOT_IN_LANE_FLOW = (what: string) => ({
   error: 'not_in_lane_flow',
   reason: `This amendment uses the two-lane flow — ${what}`,
 });
-/* The refusal the lane-only flag answers when pointed at a legacy row. */
 const LEGACY_HAS_NO_DESK = {
   error: 'legacy_amendment',
   reason: 'This amendment predates the two-desk flow, so there is no other desk to pass it to.',
 };
 type AmendmentWriteLoad =
-  // A Houzs-NATIVE amendment: apply locally, exactly as before.
   | { ok: true; mirrored: false; amendment: AmendmentForWrite }
-  // A MIRRORED (2990-) amendment: the intent is dispatched as a command to
-  // 2990's own API, never applied here (see dispatchMirroredCommand).
   | { ok: true; mirrored: true; amendment: AmendmentForWrite }
   | { ok: false; reason: 'not_found' };
 
-/* ── loadAmendmentForWrite — the guard load every mutation gate shares ──────
-   The list (GET /) and detail (GET /:id) reads above are company-scoped; the
-   five mutation gates below used to load with a bare `.eq('id', id)`, so a
-   caller whose active company was HOUZS could drive a 2990 amendment through
-   its whole state machine by id alone. approve-so / approve-po are not status
-   flips — they re-derive the SO's lines and the bound PO's lines and totals —
-   so the unscoped load handed one company's user a financial rewrite of the
-   other's document. Scope the mutation the way the reads are scoped, and 404
-   rather than 403 so an out-of-company id is indistinguishable from a
-   nonexistent one (the convention soDocOutOfScope already set).
-
-   Second axis: a MIRRORED (2990-) amendment is NOT applied here. Houzs is not
-   the writer of 2990's records — applySoAmendment would rewrite a mirrored SO
-   that the next 2990 drain silently reverts (F2). Previously this refused with
-   409 MIRRORED_SO_READONLY. Now the refusal is REPLACED by intent-dispatch
-   (design §3.2/D2): the gate hands the action to dispatchMirroredCommand, which
-   calls 2990's OWN API so 2990 applies it with 2990's logic, and the result
-   flows back down the existing mirror. When the feature is dark (flag off /
-   bridge unconfigured), dispatchMirroredCommand restores the exact 409 refusal —
-   so read-only-in-Houzs stays the default until the command channel is enabled. */
 async function loadAmendmentForWrite(
   sb: any,
   id: string,
@@ -195,24 +133,9 @@ async function loadAmendmentForWrite(
   ).maybeSingle();
   if (!data) return { ok: false, reason: 'not_found' };
   const amendment = data as AmendmentForWrite;
-  // Flip-gated (task #15): post-flip (HOUZS_OWNS_2990) a 2990- SO is native to
-  // Houzs, so it is no longer "mirrored" — every downstream `loaded.mirrored`
-  // gate lets the amendment apply LOCALLY instead of refusing / dispatching to
-  // the (retired) 2990.
   return { ok: true, mirrored: isMirroredDocNo(amendment.so_doc_no) && !houzsOwns2990(c.env), amendment };
 }
 
-/* ── dispatchMirroredCommand — turn an approve/reject INTENT on a 2990
-   amendment into a command, instead of a local write (design §3.2/D2).
-
-   Enqueue-then-drain, so the user is never blocked on a cross-system call: we
-   write the durable sync_command row, fire ONE inline attempt on waitUntil, and
-   return 202. The state change appears when the existing mirror delivers 2990's
-   new status back down. A failed dispatch stays retryable and the every-5-min cron drain
-   finishes it — nothing is fire-and-forget.
-
-   Ships dark: with the flag off OR the bridge unconfigured, the mirrored
-   amendment is refused read-only exactly as it was before this build. */
 async function dispatchMirroredCommand(
   c: Context<any>,
   sb: any,
@@ -221,13 +144,10 @@ async function dispatchMirroredCommand(
   payload: Record<string, unknown>,
 ) {
   if (!(await commandsEnabled(sb))) {
-    // Feature dark — mirrored amendments remain read-only in Houzs.
     return c.json(MIRRORED_SO_READONLY, 409);
   }
   const cfg = readBridgeCommandConfig(c.env);
   if (!cfg.ok) {
-    // The bridge is not set up, so this could never be delivered. Refuse rather
-    // than queue a command that can only ever fail — and say so plainly.
     return c.json({
       error: 'bridge_not_configured',
       message: 'The connection to 2990 is not set up yet, so this change cannot be sent to 2990. Nothing was queued.',
@@ -238,13 +158,9 @@ async function dispatchMirroredCommand(
   let enq;
   try {
     enq = await enqueueAmendmentCommand(sb, {
-      // The mirrored row's id IS 2990's uuid (D4, verbatim) — it addresses the
-      // right 2990 row with no translation.
       entityKey: amendment.id,
       action,
       payload,
-      // The REAL Houzs caller — the authoritative approver (§3.5, requirement 3).
-      // NEVER the pinned SCM system `user` (the pos-cart leak #633 class).
       requestedBy: c.get('houzsUser')?.id ?? null,
       companyId: activeCompanyId(c) ?? null,
     });
@@ -255,13 +171,8 @@ async function dispatchMirroredCommand(
     }, 500);
   }
 
-  // One inline, non-blocking attempt for the happy path (sub-second). Only when
-  // still PENDING — a duplicate decision that is already in-flight or resolved
-  // (idempotency key) must not be re-fired.
   if (enq.row.status === 'PENDING') {
     const dispatch = () => {
-      // The command adapter is valid only until commit. Use the request's
-      // normal service client after the durable enqueue and audit commit.
       const p = dispatchOne(c.get('supabase'), cfg.config, enq.row);
       try { c.executionCtx.waitUntil(p); } catch { void p; }
       return Promise.resolve();
@@ -270,9 +181,6 @@ async function dispatchMirroredCommand(
     else dispatch();
   }
 
-  // Houzs-side audit of WHO dispatched — the real caller by name (requirement 3).
-  // The authoritative id is sync_command.requested_by; the name is snapshotted
-  // here. actorId is left null so nothing implies the pinned system row acted.
   await recordSoAudit(sb, {
     docNo: amendment.so_doc_no,
     action: `AMENDMENT_CMD_${action.toUpperCase().replace(/-/g, '_')}`,
@@ -289,25 +197,12 @@ async function dispatchMirroredCommand(
   }, 202);
 }
 
-/* ── GET / — amendment list (newest first) ─────────────────────────────────
-   .limit(500) bounds the result so PostgREST's default 1000-row cap can't
-   silently truncate — matches the SO/DO/GRN list convention.
-
-   Row-level scope — a scoped caller sees what they or their downline raised,
-   and what was raised on an order they or their downline own or were shared
-   (salesScope.soOwnedInScope; an order open to all does NOT count, DEV-40). View-all
-   callers (directors / office / `*`) are unrestricted (resolveSalesScopeIds →
-   null). The scoped path reads the company's whole queue and caps AFTER the
-   filter: capping first hid a rep's older requests behind 500 newer ones they
-   could not see. */
 const AMENDMENT_LIST_COLS = 'id, so_doc_no, amendment_no, status, lane, reason, lane_flag_note, requested_by, created_at, updated_at';
 const AMENDMENT_LIST_CAP = 500;
 
 soAmendments.get('/', async (c) => {
   const sb = c.get('supabase');
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
-  // scopeToCompany: isolate the list to the active company (mig 0080 company_id);
-  // no-op pre-activation so single-company Houzs is unchanged.
   const { data, error } = scopeIds
     ? await paginateAll((from, to) => scopeToCompany(sb.from('so_amendments').select(AMENDMENT_LIST_COLS), c)
       .order('created_at', { ascending: false })
@@ -441,8 +336,6 @@ soAmendments.get('/pending-count', async (c) => {
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.LINES)) lanes.push('LINES');
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.DELIVERY)) lanes.push('DELIVERY');
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.PRICE)) lanes.push('PRICE');
-  // LINE_ADDREMOVE reuses the Sales Director's price key, so the same holder sees
-  // both — count it as its own lane so the badge is not under-stated.
   if (holdsHouzsPermLiterally(c, LANE_APPROVE_KEY.LINE_ADDREMOVE)) lanes.push('LINE_ADDREMOVE');
   const legacy = holdsHouzsPermLiterally(c, 'scm.amendment.approve_so');
   /* Cancellations sit in this queue too since owner 2026-09-24 (「当有 SO request
@@ -456,14 +349,6 @@ soAmendments.get('/pending-count', async (c) => {
   let cancellations = 0;
   if (lanes.length > 0 || legacy) {
     try {
-      /* Every OPEN amendment for the company, then split by lane in JS.
-         Deliberately not an `.or('lane.in.(…),lane.is.null')`: `lane` is nullable,
-         so the legacy half cannot ride the same `.in()`, and the two-predicate OR
-         is PostgREST filter-grammar that reads as a string and fails as a string.
-         The set it walks is BOUNDED and small by construction — the partial unique
-         indexes (uq_so_amendment_open_legacy / uq_so_amendment_open_lane, mig 0215)
-         allow at most one open row per SO per lane, and prod carries a handful.
-         A count that is easy to read beats a filter that is clever to write. */
       const { data, error } = await scopeToCompany(
         sb.from('so_amendments').select('id, lane').eq('status', 'REQUESTED'),
         c,
@@ -480,9 +365,6 @@ soAmendments.get('/pending-count', async (c) => {
   }
   if (cancelKeys.length > 0) {
     try {
-      /* Only the two statuses that are still waiting for a signature — an
-         APPROVED request waits for the cancel to be RUN, not signed, and would
-         make the badge a number its reader cannot clear by approving. */
       const { data, error } = await scopeToCompany(
         sb.from(CANCEL_REQUESTS_TABLE)
           .select('doc_type, status, requested_by, l1_by')
@@ -505,15 +387,6 @@ soAmendments.get('/pending-count', async (c) => {
   return c.json({ count: amendments + cancellations, amendments, cancellations });
 });
 
-/* ── GET /command-diag — the owner's dry-run for the write-back channel ─────
-   Cannot be verified without a live 2990 bridge account, so this is how the
-   owner checks it once the account exists (same idea as the mirror probes). It
-   reports: the DB kill-switch state, which bridge secrets are set, and — with
-   ?probe=true — an end-to-end read-only check (sign in as the bridge user, then
-   GET 2990's amendment list with that JWT). It NEVER dispatches a command and
-   NEVER mutates anything on either side. Registered BEFORE GET /:id so the
-   static path wins over the :id param. Gated to scm.config.write (owner-level),
-   like maintenance-push/diff, because it exercises the 2990 connection. */
 soAmendments.get('/command-diag', async (c) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: 'forbidden', message: 'You do not have permission to view the 2990 connection diagnostics.' }, 403);
@@ -536,41 +409,21 @@ soAmendments.get('/command-diag', async (c) => {
   return c.json({ ...base, probe });
 });
 
-/* ── GET /:id — amendment detail ───────────────────────────────────────────
-   Returns: the amendment row + its so_amendment_lines + the SO header summary
-   (doc_no, status, revision) + a light bound-PO summary (po_number, status). */
 soAmendments.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
 
   const [amdRes, lineRes] = await Promise.all([
-    // scopeToCompany: detail read isolated to the active company (mig 0080); no-op pre-activation.
     scopeToCompany(sb.from('so_amendments')
       .select('id, so_doc_no, amendment_no, status, lane, reason, lane_flag_note, requested_by, ' +
         'supplier_confirmed_by, supplier_confirmation_ref, supplier_confirmation_note, ' +
         'supplier_confirmation_attachment_key, so_approved_by, so_approved_at, ' +
         'po_approved_by, po_approved_at, sent_at, created_at, updated_at, ' +
-      // mig 0149 — how the amendment was CLOSED (rejected by an approver vs
-      // withdrawn by its requester) and WHY, plus the in-place-edit counter.
-      // Without rejection_reason the requester could not see why their request
-      // was refused without someone opening the SO's history drawer for them.
       'rejected_by, rejected_at, rejection_reason, resolution, edited_at, edit_count, ' +
-        // BUG-101 — the Purchaser's OK on a Delivery Date brought forward.
         'purchaser_ok_by, purchaser_ok_at, po_date_override_by, ' +
-        // mig 0119 — the HEADER half of the request (Delivery Date / Processing
-        // Date / State / Postcode) + its before-snapshot. NULL on a line-only
-        // amendment. Without these the approver could not SEE a requested date
-        // change, only line diffs.
         'header_changes, old_header_snapshot')
       .eq('id', id), c).maybeSingle(),
     sb.from('so_amendment_lines')
       .select('id, amendment_id, sales_order_item_id, change_type, new_item_code, ' +
-        // mig 0280 — new_remark is the free-text instruction the requester typed
-        // onto the line. Omitting it here would leave the approver signing off a
-        // line whose whole point (a service line's job description) is invisible.
-        /* mig 0317 — new_discount_sen. The write path shipped WITHOUT this read:
-           the card computed every stored line as delta-free and told the
-           approver "No line changes recorded" about a money change it was
-           holding. A channel is not done until every reader returns it. */
         'new_variants, new_qty, new_unit_price_sen, new_remark, new_discount_sen, old_snapshot')
       .eq('amendment_id', id),
   ]);
@@ -580,18 +433,12 @@ soAmendments.get('/:id', async (c) => {
   const amendment = amdRes.data as unknown as { so_doc_no: string; requested_by?: string | null } & Record<string, unknown>;
   const lines = (lineRes.data ?? []) as unknown as Array<Record<string, unknown>>;
 
-  // SO header summary — doc_no, status, revision (+ ownership for the scope
-  // check below).
   const { data: soRow } = await scopeToCompany(sb.from('mfg_sales_orders')
     .select('doc_no, status, revision, salesperson_id, access_staff_ids, customer_delivery_date')
     .eq('doc_no', amendment.so_doc_no), c).maybeSingle();
   const salesOrder = (soRow ?? null) as
     { doc_no: string; status: string; revision: number; salesperson_id?: number | string | null; access_staff_ids?: string[] | null; customer_delivery_date?: string | null } | null;
 
-  /* Row-level scope — the list's rule (GET / above): a scoped caller opens only
-     what they or their downline raised, or what sits on an order they or their
-     downline own or were shared. Anything else 404s, indistinguishable from a
-     nonexistent id. */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
   if (scopeIds
     && !(amendment.requested_by != null && scopeIds.includes(amendment.requested_by))
@@ -599,8 +446,6 @@ soAmendments.get('/:id', async (c) => {
     return c.json({ error: 'not_found' }, 404);
   }
 
-  /* Light bound-PO summary — the PO(s) whose lines were derived from this SO's
-     lines (purchase_order_items.so_item_id → mfg_sales_order_items.id). */
   let purchaseOrders: Array<{ id: string; po_number: string; status: string }> = [];
   const { data: soItemRows } = await sb.from('mfg_sales_order_items')
     .select('id').eq('doc_no', amendment.so_doc_no);
@@ -617,10 +462,6 @@ soAmendments.get('/:id', async (c) => {
     }
   }
 
-  /* Two-lane rework — the follow-up PO Amendments this amendment auto-raised
-     when its LINES lane applied. A REJECTED follow-up is the "PO not followed
-     up" flag the SO/amendment detail surfaces; an APPROVED one is the
-     purchaser's second signature done. Empty for DELIVERY-lane + legacy rows. */
   let poFollowUps: Array<Record<string, unknown>> = [];
   {
     const { data: fuRows } = await sb.from('po_amendments')
@@ -630,17 +471,10 @@ soAmendments.get('/:id', async (c) => {
     poFollowUps = (fuRows ?? []) as Array<Record<string, unknown>>;
   }
 
-  /* Whether the caller raised this amendment, decided here because only the
-     server can: requested_by is a scm.staff uuid and the browser's scm-auth
-     bridge has no staff id, so the page's own compare was always false and the
-     requester never saw Withdraw (BUG-53 follow-up, HC-SO-011143/A1). Same
-     identity rule PATCH /:id/withdraw enforces. */
   const callerStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id);
   const viewerIsRequester = callerStaffId != null && amendment.requested_by != null
     && callerStaffId === amendment.requested_by;
 
-  /* BUG-101 — does this Logistic request wait on a Purchaser's OK? Judged
-     against the order as it stands, exactly as the approve gate judges it. */
   const requestedDeliv = canonicaliseSoHeaderChanges(
     (amendment.header_changes ?? null) as Record<string, unknown> | null,
   )?.['customerDeliveryDate'];
@@ -654,13 +488,7 @@ soAmendments.get('/:id', async (c) => {
   return c.json({ amendment, lines, salesOrder, purchaseOrders, poFollowUps, viewerIsRequester, purchaserOkRequired });
 });
 
-/* ── PATCH /:id/supplier-confirm ───────────────────────────────────────────
-   Record the supplier's acknowledgement of the requested change. Body:
-   { ref, note?, attachmentKey? }. Gated to scm.amendment.supplier_confirm.
-   Transition REQUESTED → SUPPLIER_PENDING via the shared state machine. */
 soAmendments.patch('/:id/supplier-confirm', async (c) => {
-  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
-  // unresolvable company is a condition to surface, never one to guess past.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
@@ -686,9 +514,6 @@ soAmendments.patch('/:id/supplier-confirm', async (c) => {
   }
   const { amendment } = loaded;
 
-  /* Two-lane rework: there is NO supplier-confirmation gate on a lane row —
-     the purchaser checks with the supplier BEFORE signing (their signature is
-     the confirmation). Only legacy (lane NULL) rows keep this step. */
   if (laneOf(amendment)) {
     return c.json(NOT_IN_LANE_FLOW('there is no supplier-confirmation step. Approve or reject it directly.'), 409);
   }
@@ -712,9 +537,6 @@ soAmendments.patch('/:id/supplier-confirm', async (c) => {
     supplier_confirmation_attachment_key: body.attachmentKey ?? null,
     updated_at:                           new Date().toISOString(),
   }).eq('id', id)
-    /* loadAmendmentForWrite already scoped the LOAD; the predicate is repeated on
-       the WRITE because nothing re-checks between two PostgREST round trips - the
-       SCM client is service-role, so RLS never sees this statement. */
     .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
@@ -735,22 +557,9 @@ soAmendments.patch('/:id/supplier-confirm', async (c) => {
   return c.json({ amendment: updated });
 });
 
-/* ── PATCH /:id/approve-so ─────────────────────────────────────────────────
-   The first hard gate. Guard the transition (SUPPLIER_PENDING / REQUESTED →
-   SO_APPROVED — the light no-supplier path may skip supplier-confirm), then
-   RE-DERIVE the SO: snapshot the current version to so_revisions, apply the line
-   diffs to mfg_sales_order_items, RE-RUN the honest-pricing recompute
-   (applySoAmendment), bump mfg_sales_orders.revision, and audit.
-
-   If the SO has NO bound PO this is the TERMINAL step — the amendment rests at
-   SO_APPROVED. */
 export async function approveSoCommandHandler(c: any, sb: any, lap: (step: string) => void = () => {}): Promise<Response> {
   const id = c.req.param('id'); const user = c.get('user');
 
-  /* Two-lane rework: the gate key depends on WHICH row this is, so load first.
-     LINES → scm.amendment.approve_lines (purchasing), DELIVERY →
-     scm.amendment.approve_delivery (logistics), legacy NULL-lane rows keep the
-     original scm.amendment.approve_so. */
   const loaded = await loadAmendmentForWrite(sb, id, c);
   lap('load');
   if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
@@ -788,13 +597,6 @@ export async function approveSoCommandHandler(c: any, sb: any, lap: (step: strin
      Re-validate against the SO's CURRENT other date at the moment of
      approval: the last write that can still say no. Fail-open on a missing SO
      row — the apply path right below owns that refusal. */
-  /* CANONICALISE FIRST. `canonicaliseSoHeaderChanges` was imported into this
-     file and never called: every `'processingDate' in headerChanges` test below
-     read the RAW stored jsonb, so a Processing-Date amendment submitted under
-     the pre-rename key (`internalExpectedDd`) walked past this whole block —
-     the date-order re-check, the pair re-check and the deposit / completeness
-     gate — and was applied by so-revision.ts, which DOES canonicalise. The gate
-     and the write must read the same shape or the gate is decoration. */
   const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   if (headerChanges && ('processingDate' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
     const { data: soDates } = await sb.from('mfg_sales_orders')
@@ -812,36 +614,18 @@ export async function approveSoCommandHandler(c: any, sb: any, lap: (step: strin
     const nextProc = 'processingDate' in headerChanges
       ? ymd(headerChanges['processingDate'])
       : ymd(cur.processing_date);
-    /* Judged AFTER the removal cascade applySoAmendment performs, so a Processing
-       Date removal filed before 2026-09-30 (its Delivery Date half split onto the
-       other desk) can still be approved instead of refused as "one date left". */
     const effective = withProcessingRemovalCascade(headerChanges, {
       processingDate: cur.processing_date, deliveryDate: cur.customer_delivery_date,
     });
     const nextDeliv = 'customerDeliveryDate' in effective
       ? ymd(effective['customerDeliveryDate'])
       : ymd(cur.customer_delivery_date);
-    /* THE PAIR RE-CHECK, which this path did not have. The submit-time XOR
-       (mfg-sales-orders.ts, amendment_dates_xor) validates the COMBINED request,
-       and the two-lane split then turns a both-dates reschedule into two
-       one-signature documents — so by the time this half is approved the SO's
-       other date may have been cleared, or the sibling lane rejected, and
-       applying this one alone leaves the order holding exactly one date. Nothing
-       downstream re-checks it: applySoAmendment writes what it is given. Same
-       predicate as every other write path; the CURRENT stored pair is the
-       original, so approving an amendment that changes neither date on a legacy
-       unpaired order is still allowed. */
     const stalePair = soDatePairRefusal({
       nextProc, nextDeliv,
       origProc: ymd(cur.processing_date),
       origDeliv: ymd(cur.customer_delivery_date),
     });
     if (stalePair) {
-      /* `message` is the sentence the operator SEES: authed-fetch's hygiene
-         filter only renders a candidate under 200 characters, and `reason`
-         below is longer than that — so until 2026-09-04 this refusal rendered
-         as the generic "clashes with something already in the system". Keep
-         `message` short; `reason` carries the full explanation for logs. */
       return c.json({
         error: 'amendment_dates_pair_stale',
         message:
@@ -868,12 +652,7 @@ export async function approveSoCommandHandler(c: any, sb: any, lap: (step: strin
       }, 409);
     }
 
-    /* BUG-101 — the last write that can still say no, for requests raised
-       before the rule or before the PO: a live PO freezes the Processing Date,
-       and a Delivery Date brought forward waits for the Purchaser's OK. */
     const origProc = ymd(cur.processing_date);
-    /* The exception travels on the row: the requester who held the override key
-       stamped it, so the Purchaser approving does not need the key too. */
     const poDateOverridden = Boolean(amendment.po_date_override_by) || hasHouzsPerm(c, PROCESSING_DATE_PO_OVERRIDE_KEY);
     const procMoves = 'processingDate' in headerChanges && origProc !== '' && nextProc !== origProc && !poDateOverridden;
     const delivForward = lane === 'DELIVERY' && 'customerDeliveryDate' in headerChanges
@@ -886,22 +665,6 @@ export async function approveSoCommandHandler(c: any, sb: any, lap: (step: strin
       return c.json(PURCHASER_OK_REQUIRED, 409);
     }
 
-    /* ── The gate this path used to skip entirely (2026-07-31) ───────────────
-       Approving an amendment can SET processing_date through
-       header_changes, and until now the only thing checked here was the date
-       ORDER above. So an order could acquire a Processing Date — production's
-       go-ahead — with no deposit and no delivery address, simply by routing the
-       change through the amendment queue instead of the SO screen. That is how
-       10 HOUZS orders came to hold a Processing Date at 0% paid.
-
-       Same predicate the SO create + edit paths run (collectProcessingGateProblems),
-       so the three cannot drift, and deliberately in the SAME block as the
-       date-pair re-check: its comment already calls this "the last write that
-       can still say no", which is exactly what this is.
-
-       Only when the amendment SETS a non-empty date. Clearing it, or an
-       amendment that touches only the delivery date, is untouched — a gate that
-       blocks REMOVING a date would trap an order it was meant to protect. */
     if (nextProc !== '' && 'processingDate' in headerChanges) {
       const soRow = (soDates ?? {}) as {
         debtor_name?: string | null; address1?: string | null;
@@ -918,10 +681,6 @@ export async function approveSoCommandHandler(c: any, sb: any, lap: (step: strin
         procDate: nextProc,
         delivDate: nextDeliv || null,
         todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
-        /* The date already exists on the order or in this amendment; the
-           past-date rules are the submit path's business, not the approver's —
-           passing the effective values as their own originals grandfathers them
-           so approving a legitimately-old reschedule cannot be blocked here. */
         origProcDate: nextProc,
         origDelivDate: nextDeliv || null,
         completeness: {
@@ -941,10 +700,6 @@ export async function approveSoCommandHandler(c: any, sb: any, lap: (step: strin
   }
 
   lap('date-gates');
-  /* Claim BOTH the amendment and its SO before the first apply write. The
-     version predicates detect conflicts while runScmPgCommand keeps the claim,
-     snapshot, line mutations, totals, audit, and final status in one database
-     transaction. */
   const applyToken = crypto.randomUUID();
   const applyVersion = Number(amendment.version ?? 1);
   const claimNow = new Date().toISOString();
@@ -997,9 +752,6 @@ export async function approveSoCommandHandler(c: any, sb: any, lap: (step: strin
   }
   lap('claim');
 
-  /* Apply the revision. A hard failure leaves the amendment status unchanged (we
-     only advance status AFTER a clean apply) so the operator can retry — the
-     snapshot upsert is idempotent on (so_doc_no, revision). */
   let applied: { soDocNo: string; revision: number; addedLineIds: string[] };
   try {
     /* The sixth argument is this gate's RECEIPT, and it is what lets the apply
@@ -1094,17 +846,6 @@ export async function approveSoCommandHandler(c: any, sb: any, lap: (step: strin
   }
 
   lap('po-follow-ups');
-  /* ERP -> AutoCount edit. THE SANCTIONED WAY TO CHANGE A CONFIRMED SO, and
-     until now the one that told AutoCount nothing. applySoAmendment rewrites the
-     header and the lines of an SO that is already PROCESSING-locked — which is
-     precisely the SO most likely to exist in the account book — so the amendment
-     path is where the two sides drifted furthest, fastest, and most officially.
-
-     Queued AFTER the amendment's own status flip won its optimistic-lock race
-     (`updated` is null on a loser, and that branch returned above), so exactly
-     one edit is queued per applied amendment. Queued outside runScmPgCommand for
-     the same reason queueAcSoEditAfter is: a write-back must never be able to
-     roll back a revision the operator has already been told succeeded. */
   await enqueueEdit(sb, {
     companyId: activeCompanyId(c),
     docType: 'SO',
@@ -1141,9 +882,6 @@ export async function approveSoCommandHandler(c: any, sb: any, lap: (step: strin
         requesterUserId: audience.requesterUserId,
         salespersonUserId: audience.salespersonUserId,
       });
-      /* The LINES lane's second signature: each follow-up is a fresh to-do on
-         the purchaser's desk that nobody asked for by hand, so it is exactly
-         the kind of row that used to sit unseen. */
       for (const f of followUps) {
         await notifyPoAmendmentRaised(c.env, {
           amendmentNo: f.amendmentNo,
@@ -1176,14 +914,6 @@ soAmendments.patch('/:id/approve-so', (c) => {
     .finally(() => lap('commit-and-notices'));
 });
 
-/* ── PATCH /:id/approve-po ─────────────────────────────────────────────────
-   The second hard gate. Guard the transition (SO_APPROVED → PO_APPROVED), then
-   RE-DERIVE the bound PO(s): reviseBoundPo snapshots each live bound PO to
-   po_revisions, re-derives its lines from the NOW-REVISED SO lines, recomputes
-   totals, bumps purchase_orders.revision, and audits.
-
-   Received floor: reviseBoundPo throws a ReceivedFloorError BEFORE mutating if
-   any revised qty would drop below that PO line's already-received_qty → 409. */
 export async function approvePoCommandHandler(c: any, sb: any) {
   const id = c.req.param('id'); const user = c.get('user');
 
@@ -1199,7 +929,6 @@ export async function approvePoCommandHandler(c: any, sb: any) {
   if (loaded.mirrored) return dispatchMirroredCommand(c, sb, loaded.amendment, 'approve-po', {});
   const { amendment } = loaded;
 
-  /* Two-lane rework: a lane row's PO leg lives in PO Amendments. */
   if (laneOf(amendment)) {
     return c.json(NOT_IN_LANE_FLOW('the PO side is confirmed in PO Amendments, not here.'), 409);
   }
@@ -1279,9 +1008,6 @@ export async function approvePoCommandHandler(c: any, sb: any) {
     fieldChanges: [
       { field: 'amendment_status', from: amendment.status, to },
       { field: 'pos_revised', to: revised.perPo.map((p) => p.poNumber).join(', ') || 'none' },
-      /* Anything that needed a human hand (an already-received removed line left
-         in place, an added item with no open PO, an emptied PO) is recorded on
-         the SO's own audit trail so it is visible later, not just in the toast. */
       ...(revised.warnings.length ? [{ field: 'needs_attention', to: revised.warnings.join(' | ') }] : []),
     ],
     note: revised.perPo.length
@@ -1297,15 +1023,7 @@ soAmendments.patch('/:id/approve-po', (c) => {
   return runScmPgCommand(c, (sb) => approvePoCommandHandler(c, sb));
 });
 
-/* ── PATCH /:id/send ───────────────────────────────────────────────────────
-   The terminal happy-path step. Guard the transition (PO_APPROVED → SENT), then
-   stamp sent_at. Houzs has NO server-side PO-PDF / doc-email path (the PO PDF is
-   produced client-side in the SPA), so the actual Revised-PO delivery is
-   performed by the frontend once this gate flips to SENT. Gated to
-   scm.amendment.approve_po (same purchasing gate as approve-po). */
 soAmendments.patch('/:id/send', async (c) => {
-  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
-  // unresolvable company is a condition to surface, never one to guess past.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
@@ -1322,8 +1040,6 @@ soAmendments.patch('/:id/send', async (c) => {
   if (loaded.mirrored) return dispatchMirroredCommand(c, sb, loaded.amendment, 'send', {});
   const { amendment } = loaded;
 
-  /* Two-lane rework: a lane row never reaches PO_APPROVED — sending the
-     revised PO happens off the PO itself once its follow-up is confirmed. */
   if (laneOf(amendment)) {
     return c.json(NOT_IN_LANE_FLOW('print and send the revised PO from the Purchase Order after confirming its follow-up amendment.'), 409);
   }
@@ -1344,9 +1060,6 @@ soAmendments.patch('/:id/send', async (c) => {
     sent_at:    new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }).eq('id', id)
-    /* loadAmendmentForWrite already scoped the LOAD; the predicate is repeated on
-       the WRITE because nothing re-checks between two PostgREST round trips - the
-       SCM client is service-role, so RLS never sees this statement. */
     .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
@@ -1386,14 +1099,12 @@ soAmendments.patch('/:id/send', async (c) => {
    is precisely the competing-documents problem the edit/withdraw work exists to
    end. */
 soAmendments.patch('/:id/reject', async (c) => {
-  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
-  // unresolvable company is a condition to surface, never one to guess past.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   let body: { reason?: string } = {};
-  try { body = (await c.req.json()) as typeof body; } catch { /* validated below */ }
+  try { body = (await c.req.json()) as typeof body; } catch { }
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
   if (!reason) {
     return c.json({
@@ -1402,9 +1113,6 @@ soAmendments.patch('/:id/reject', async (c) => {
     }, 400);
   }
 
-  /* Two-lane rework: the reject key follows the row's lane (its own approver
-     refuses it); legacy rows keep the original purchasing gate. Loaded first
-     because the key depends on the row. */
   const loaded = await loadAmendmentForWrite(sb, id, c);
   if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
   const lane = laneOf(loaded.amendment);
@@ -1444,7 +1152,7 @@ soAmendments.patch('/:id/reject', async (c) => {
     rejected_at:      new Date().toISOString(),
     updated_at:       new Date().toISOString(),
   }).eq('id', id)
-    .eq('company_id', co.companyId) // see the note on the supplier-confirm write
+    .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, so_doc_no, amendment_no, status, resolution, rejection_reason, version')
@@ -1580,7 +1288,7 @@ soAmendments.patch('/:id/flag-lane', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   let body: { note?: string } = {};
-  try { body = (await c.req.json()) as typeof body; } catch { /* validated below */ }
+  try { body = (await c.req.json()) as typeof body; } catch { }
   const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : '';
   if (!note) {
     return c.json({
@@ -1689,7 +1397,7 @@ soAmendments.patch('/:id/lane', async (c) => {
     return c.json({ error: 'forbidden', message: 'Only a super admin can change who approves an amendment.' }, 403);
   }
   let body: { lane?: string; note?: string } = {};
-  try { body = (await c.req.json()) as typeof body; } catch { /* validated below */ }
+  try { body = (await c.req.json()) as typeof body; } catch { }
   const toLane = body.lane === 'LINES' || body.lane === 'DELIVERY' || body.lane === 'PRICE' ? body.lane : null;
   if (!toLane) return c.json({ error: 'bad_lane', message: 'Choose Purchaser, Logistic or Sales Director.' }, 400);
   const note = typeof body.note === 'string' ? body.note.trim().slice(0, 500) : '';
@@ -1767,14 +1475,12 @@ soAmendments.patch('/:id/lane', async (c) => {
    immediately. resolution = 'WITHDRAWN' (mig 0149) is what tells a reader the
    two apart. REQUESTED only — see the state machine's note. */
 soAmendments.patch('/:id/withdraw', async (c) => {
-  // WRITE: the company must RESOLVE. companyScope.ts's strict rule - an
-  // unresolvable company is a condition to surface, never one to guess past.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   let body: { reason?: string } = {};
-  try { body = (await c.req.json()) as typeof body; } catch { /* reason is optional here */ }
+  try { body = (await c.req.json()) as typeof body; } catch { }
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
 
   const loaded = await loadAmendmentForWrite(sb, id, c);
@@ -1784,17 +1490,11 @@ soAmendments.patch('/:id/withdraw', async (c) => {
   }
   const { amendment } = loaded;
 
-  /* Only the person who raised it, or someone who could have rejected it
-     anyway. Checked against the caller's REAL scm.staff uuid — the bridge pins
-     user.id to one shared system row, so comparing that would let ANY caller
-     withdraw ANY amendment. */
   const callerStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id);
   const { data: ownerRow } = await sb.from('so_amendments')
     .select('requested_by').eq('id', id).maybeSingle();
   const requestedBy = (ownerRow as { requested_by?: string | null } | null)?.requested_by ?? null;
   const isRequester = callerStaffId != null && requestedBy != null && callerStaffId === requestedBy;
-  /* Two-lane rework: the "someone who could reject it anyway" fallback follows
-     the row's lane key; legacy rows keep the original purchasing gate. */
   const withdrawLane = laneOf(amendment);
   const withdrawFallbackKey = withdrawLane ? LANE_APPROVE_KEY[withdrawLane] : 'scm.amendment.approve_po';
   if (!isRequester && !hasHouzsPerm(c, withdrawFallbackKey)) {
@@ -1825,7 +1525,7 @@ soAmendments.patch('/:id/withdraw', async (c) => {
     rejected_at:      new Date().toISOString(),
     updated_at:       new Date().toISOString(),
   }).eq('id', id)
-    .eq('company_id', co.companyId) // see the note on the supplier-confirm write
+    .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
     .select('id, so_doc_no, amendment_no, status, resolution, rejection_reason, version')

@@ -53,7 +53,6 @@ type Refusal = { status: ContentfulStatusCode; body: Record<string, unknown> };
 /** Who may change the cash book: its starts, receipts and ticks. */
 export const canWriteCashbook = (c: Ctx): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: 'forbidden', message: "You don't have permission to change the Daily Bank cash book." };
-/** RM 10 billion: past this a figure is a typing slip, not a bank balance. */
 const MAX_SEN = 1_000_000_000_000;
 const NOTE_MAX = 300;
 
@@ -81,7 +80,6 @@ async function readJson(c: Ctx): Promise<Record<string, unknown> | null> {
   } catch { return null; }
 }
 
-/** The permission, then the company: what every write needs first. */
 function writeGate(c: Ctx): { companyId: number } | { resp: Response } {
   if (!canWriteCashbook(c)) return { resp: c.json(NO_PERM, 403) };
   const co = requireActiveCompanyId(c);
@@ -89,7 +87,6 @@ function writeGate(c: Ctx): { companyId: number } | { resp: Response } {
   return { companyId: co.companyId };
 }
 
-/** An active money account of this company — the only kind the board carries. */
 async function moneyAccount(sb: Sb, companyId: number, code: string): Promise<{ ok: true; name: string } | ({ ok: false } & Refusal)> {
   const { data, error } = await sb.from('accounts').select('account_code, account_name')
     .eq('company_id', companyId).eq('account_code', code).eq('acc_money', true).eq('is_active', true).maybeSingle();
@@ -116,8 +113,6 @@ const auditReady = async (sb: Sb, entityType: EntityType, entityId: string | nul
 export type ReceiptMethod = { key: string; label: string };
 const FIXED_METHODS: ReceiptMethod[] = [{ key: 'online', label: 'Online' }, { key: 'cash', label: 'Cash' }, { key: 'cheque', label: 'Cheque' }];
 
-/** The grid's columns: Online, Cash, Cheque, then each card terminal Settlement Setup
-    keeps active for the company (its acquirer code), in code order. */
 async function methodsOf(sb: Sb, companyId: number): Promise<{ ok: true; methods: ReceiptMethod[] } | ({ ok: false } & Refusal)> {
   const { data, error } = await sb.from('acc_acquirers').select('code').eq('company_id', companyId).eq('is_active', true).order('code');
   if (error) return { ok: false, status: 500, body: { error: 'load_failed', reason: error.message } };
@@ -128,8 +123,6 @@ async function methodsOf(sb: Sb, companyId: number): Promise<{ ok: true; methods
 /** What a grid receipt says on the board: its method in words. */
 export const methodNote = (m: ReceiptMethod): string => (m.key.startsWith('card:') ? `${m.label} card` : m.label);
 
-/** A method from its key, for one a day already holds: a terminal turned off in
-    Settlement Setup later keeps its column on that day, to be read, changed or cleared. */
 function methodFromKey(key: string): ReceiptMethod | null {
   const fixed = FIXED_METHODS.find((m) => m.key === key);
   if (fixed) return fixed;
@@ -144,7 +137,6 @@ const withHeld = (methods: ReceiptMethod[], held: Iterable<string>): ReceiptMeth
   return out;
 };
 
-/* ── GET /daily-bank/cashbook?date= ─────────────────────────────────────────── */
 export const cashbookGet = async (c: Ctx): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -182,7 +174,6 @@ export const cashbookGet = async (c: Ctx): Promise<Response> => {
       createdBy: (r.created_by as string | null) ?? null, createdAt: (r.created_at as string | null) ?? null,
       updatedBy: (r.updated_by as string | null) ?? null, updatedAt: (r.updated_at as string | null) ?? null,
       deletedBy: (r.deleted_by as string | null) ?? null, deletedAt: (r.deleted_at as string | null) ?? null,
-      /* On the cash-book board only while its account's start is on or before it. */
       counted: r.deleted_at == null && start != null && start.date <= date,
     };
   });
@@ -194,7 +185,6 @@ export const cashbookGet = async (c: Ctx): Promise<Response> => {
   });
 };
 
-/* ── PUT /daily-bank/starts/:accountCode { startDate, balanceSen, note? } ───── */
 export const cashbookStartPut = async (c: Ctx): Promise<Response> => {
   const g = writeGate(c);
   if ('resp' in g) return g.resp;
@@ -238,7 +228,6 @@ export const cashbookStartPut = async (c: Ctx): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/* ── DELETE /daily-bank/starts/:accountCode ─────────────────────────────────── */
 export const cashbookStartDelete = async (c: Ctx): Promise<Response> => {
   const g = writeGate(c);
   if ('resp' in g) return g.resp;
@@ -262,13 +251,10 @@ export const cashbookStartDelete = async (c: Ctx): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/* ── the receipt rules ──────────────────────────────────────────────────────── */
 
 type ReceiptFields = { account_code: string; receipt_date: string; amount_sen: number; note: string };
 
-/** The four fields as typed, checked for shape. */
 function receiptShape(body: Record<string, unknown>, base: ReceiptFields | null): { ok: true; r: ReceiptFields } | ({ ok: false } & Refusal) {
-  /* An edit keeps what it does not name; a new receipt names all four. */
   const kept = (k: string): boolean => base != null && body[k] === undefined;
   const account = base && kept('accountCode') ? base.account_code : String(body.accountCode ?? '').trim();
   const date = base && kept('date') ? base.receipt_date : calendarDay(body.date);
@@ -283,8 +269,6 @@ function receiptShape(body: Record<string, unknown>, base: ReceiptFields | null)
   return { ok: true, r: { account_code: account, receipt_date: date, amount_sen: amount, note } };
 }
 
-/** A receipt counts only inside its account's cash book: a money account, with a
-    start on or before the day, and a day that has happened. */
 async function receiptAllowed(sb: Sb, companyId: number, r: ReceiptFields): Promise<{ ok: true; name: string } | ({ ok: false } & Refusal)> {
   const acct = await moneyAccount(sb, companyId, r.account_code);
   if (!acct.ok) return acct;
@@ -316,7 +300,6 @@ async function receiptById(sb: Sb, companyId: number, id: string): Promise<{ ok:
     .select('id, account_code, receipt_date, amount_sen, note, deleted_at')
     .eq('company_id', companyId).eq('id', id).maybeSingle();
   const notHere: Refusal = { status: 404, body: { error: 'not_found', message: 'That receipt is not in the company you are working in.' } };
-  /* 22P02: not a uuid at all — no such receipt, not a server fault. */
   if (error) return String((error as { code?: string }).code ?? '') === '22P02' ? { ok: false, ...notHere } : { ok: false, status: 500, body: { error: 'load_failed', reason: error.message } };
   if (!data) return { ok: false, ...notHere };
   const r = data as Record<string, unknown>;
@@ -326,7 +309,6 @@ async function receiptById(sb: Sb, companyId: number, id: string): Promise<{ ok:
   } };
 }
 
-/* ── POST /daily-bank/receipts { accountCode, date, amountSen, note } ──────── */
 export const cashbookReceiptCreate = async (c: Ctx): Promise<Response> => {
   const g = writeGate(c);
   if ('resp' in g) return g.resp;
@@ -350,7 +332,6 @@ export const cashbookReceiptCreate = async (c: Ctx): Promise<Response> => {
   return c.json({ ok: true, id }, 201);
 };
 
-/* ── PATCH /daily-bank/receipts/:id { accountCode?, date?, amountSen?, note? } ─ */
 export const cashbookReceiptUpdate = async (c: Ctx): Promise<Response> => {
   const g = writeGate(c);
   if ('resp' in g) return g.resp;
@@ -381,7 +362,6 @@ export const cashbookReceiptUpdate = async (c: Ctx): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/* ── DELETE /daily-bank/receipts/:id ────────────────────────────────────────── */
 export const cashbookReceiptDelete = async (c: Ctx): Promise<Response> => {
   const g = writeGate(c);
   if ('resp' in g) return g.resp;
@@ -442,7 +422,6 @@ export const cashbookReceiptsDayPut = async (c: Ctx): Promise<Response> => {
   if (st.error) return c.json({ error: 'load_failed', reason: st.error.message }, 500);
   if (acc.error) return c.json({ error: 'load_failed', reason: acc.error.message }, 500);
   const money = new Set((acc.data as Array<{ account_code: string }>).map((a) => String(a.account_code)));
-  /* The banks on the cash book this day: a money account whose start is on or before it. */
   const open = new Set((st.data as Array<{ account_code: string; start_date: string }>)
     .filter((s) => money.has(String(s.account_code)) && String(s.start_date).slice(0, 10) <= date)
     .map((s) => String(s.account_code)));
@@ -477,8 +456,6 @@ export const cashbookReceiptsDayPut = async (c: Ctx): Promise<Response> => {
 
   const by = who(c);
   const done = { created: 0, updated: 0, deleted: 0 };
-  /* Applied one cell at a time: a failure part-way leaves the earlier cells saved and
-     on the trail, and says so — the page re-reads the day. */
   const stopped = (reason: string, status: 409 | 500) => c.json({
     error: status === 409 ? 'conflict' : 'save_failed',
     message: `Stopped part-way (${done.created + done.updated + done.deleted} of ${plan.length} saved): ${reason} The table now shows what is saved.`,
@@ -535,7 +512,6 @@ export const cashbookReceiptsDayPut = async (c: Ctx): Promise<Response> => {
 type SkipVoucher = CashbookPayout & { status: string };
 
 const notHereVoucher: Refusal = { status: 404, body: { error: 'not_found', message: 'That voucher is not in the company you are working in.' } };
-/* 22P02: not a uuid at all — no such voucher, not a server fault. */
 const readFailed = (error: { code?: string; message: string }): Refusal =>
   (String(error.code ?? '') === '22P02' ? notHereVoucher : { status: 500, body: { error: 'load_failed', reason: error.message } });
 
@@ -554,7 +530,6 @@ async function voucherOf(sb: Sb, companyId: number, pvId: string): Promise<{ ok:
   } };
 }
 
-/** The voucher's tick that still counts, if any. */
 async function liveSkipOf(sb: Sb, companyId: number, pvId: string): Promise<{ ok: true; id: string | null } | ({ ok: false } & Refusal)> {
   const { data, error } = await sb.from('acc_daily_bank_voucher_skips').select('id')
     .eq('company_id', companyId).eq('pv_id', pvId).is('unticked_at', null).maybeSingle();
@@ -562,11 +537,9 @@ async function liveSkipOf(sb: Sb, companyId: number, pvId: string): Promise<{ ok
   return { ok: true, id: data ? String((data as { id: unknown }).id) : null };
 }
 
-/** The tick on the trail as one field: is the voucher taken off the cash book. */
 const deductedChange = (deducted: boolean): FieldChange[] =>
   compactChanges([fieldChange('deducted', deducted ? 'No' : 'Yes', deducted ? 'Yes' : 'No')]);
 
-/* ── PUT /daily-bank/skips/:pvId — already in the starting balance, don't deduct ─ */
 export const cashbookSkipPut = async (c: Ctx): Promise<Response> => {
   const g = writeGate(c);
   if ('resp' in g) return g.resp;
@@ -604,7 +577,6 @@ export const cashbookSkipPut = async (c: Ctx): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/* ── DELETE /daily-bank/skips/:pvId — deduct it again ─────────────────────────── */
 export const cashbookSkipDelete = async (c: Ctx): Promise<Response> => {
   const g = writeGate(c);
   if ('resp' in g) return g.resp;

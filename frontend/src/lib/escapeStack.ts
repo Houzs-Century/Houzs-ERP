@@ -1,9 +1,5 @@
 import { useEffect, useRef } from "react";
 
-// Every open dialog used to put its own Esc listener on window, so one Esc
-// closed every layer at once: dismissing a confirm raised from an AP invoice
-// popup also closed the popup and threw away what was typed. Layers now
-// register here and only the newest one hears Esc.
 
 type Layer = { close: () => void };
 
@@ -39,8 +35,6 @@ export function escapeLayerCount(): number {
   return layers.length;
 }
 
-// `active` is required: a dialog that stays mounted while closed must say so,
-// or it would swallow Esc for the layer beneath it.
 export function useEscapeLayer(onEscape: () => void, active: boolean): void {
   const ref = useRef(onEscape);
   useEffect(() => {

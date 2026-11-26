@@ -1,12 +1,3 @@
-/* Money in › Credit / debit notes (the owner's Claude Design, batch 5 step 7):
-   a customer's credit and debit notes, an other debtor's credit note and an
-   other debtor's debit note (a bill of its own kind) on one list — All · Credit
-   notes · Debit notes with counts, status chips, what an other debtor's credit
-   knocked off, the row's next step, Post to ledger one by one or as a batch
-   (the first refusal stops it), Cancel asked inline, and the note form in
-   place of the list (CreditNotes.tsx's NoteForm, inline) with Copy as new.
-   The server half is backend/tests/creditNotes.test.ts and
-   otherDebtorCreditNote.test.ts. */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -16,7 +7,6 @@ import type { CreditNote } from '../../../vendor/scm/lib/credit-note-queries';
 
 const TODAY = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
-/* ── What the server answers (ONE stable object per read, as react-query hands back) ── */
 const note = (over: Partial<CreditNote>): CreditNote => ({
   id: 'n1', note_number: 'HC-CN-2611-001', kind: 'CN', party_type: 'CUSTOMER', party_code: '300-C001', party_name: 'TAN MEI LING',
   supplier_id: null, debtor_id: null, so_doc_no: 'HC-SO-2611-004', sales_invoice_id: null, ap_invoice_id: null, purchase_invoice_id: null,
@@ -75,7 +65,6 @@ vi.mock('../../../vendor/scm/lib/credit-note-queries', async (importOriginal) =>
   usePostCreditNote: () => ({ mutateAsync: postAsync, mutate: vi.fn(), isPending: false, isError: false, isSuccess: false, error: null }),
   useCancelCreditNote: () => ({ mutate: cancelMutate, isPending: false, isError: false, error: null }),
   useUploadCreditNoteFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  /* The customer's open invoices (the knock-off table; noteKnockOff.test.tsx covers it). */
   usePartyKnockOff: () => ({ data: { rows: [] }, isLoading: false, isError: false, error: null }),
 }));
 vi.mock('../../../vendor/scm/lib/ar-invoice-queries', () => ({

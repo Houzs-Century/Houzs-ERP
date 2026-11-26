@@ -63,7 +63,6 @@ export function NewProjectSheet({
   const venues = venuesQ.data?.data ?? [];
   const eventTypeSlug = eventTypes.find((t) => String(t.id) === eventTypeId)?.slug ?? null;
   const isSolo = (eventTypeSlug ?? "").toLowerCase() === "solo";
-  // State is NOT typed — it rides on the chosen venue, same as desktop.
   const stateName = venues.find((v) => v.name === venueName)?.state ?? "";
   const derivedName = composeDefaultProjectName({
     state: stateName, brand, organizer, venue: venueName, event_type_slug: eventTypeSlug,
@@ -71,8 +70,6 @@ export function NewProjectSheet({
   const dateInvalid = !!(startDate && endDate && endDate < startDate);
 
   const submit = async () => {
-    // Same guards as the desktop panel, so the failure is explained here
-    // instead of coming back as a 400 from the code generator.
     if (!brand) { await notify({ title: "Brand is required", body: "Pick the brand this event runs under.", tone: "error" }); return; }
     if (!venueName.trim()) { await notify({ title: "Venue is required", body: "Pick the venue — the event name and code are built from it.", tone: "error" }); return; }
     if (!stateName.trim()) { await notify({ title: "This venue has no state", body: "Open Project Maintenance → Venues on a PC and set the venue's state first.", tone: "error" }); return; }
@@ -155,10 +152,6 @@ export function NewProjectSheet({
               </select>
             </div>
           )}
-          {/* DateField, not a native <input type="date">: the native control
-              renders in the viewer's OS locale, which is exactly what the
-              repo's one-date-format rule exists to prevent. It keeps the value
-              canonical ISO and displays dd/mm/yyyy. */}
           <div style={{ display: "flex", gap: 9 }}>
             <div style={{ flex: 1 }}>
               <label style={labelStyle}>Start date</label>
@@ -170,7 +163,6 @@ export function NewProjectSheet({
             </div>
           </div>
           {dateInvalid && <div style={{ fontSize: 11.5, color: "var(--hz-c-err)" }}>End date must be on or after the start date.</div>}
-          {/* The name is composed, never typed — show what will be saved. */}
           <div style={{ border: "1px dashed var(--hz-c-border)", borderRadius: 10, padding: "9px 11px", background: "var(--hz-dk-surface-2, #faf9f5)" }}>
             <div style={labelStyle}>Event name</div>
             <div style={{ fontSize: 12.5, fontWeight: 700, color: derivedName ? "var(--ink)" : "var(--hz-c-ink-soft)", lineHeight: 1.35 }}>

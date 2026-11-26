@@ -1,18 +1,11 @@
-// Variant summary — Commander 2026-05-28.
-// Pure helper that merges a SO/PO line's variant object into ONE human-readable
-// string in HOOKKA style, e.g.
-//   `PC151-01 / DIVAN 10" + NO LEG / GAP 14" / T.Heights 24"`
-// Same code runs on POS, Backend, and Workers (no DOM, no module state).
 
 import { isFreeItemLine } from './free-item-campaign';
 
-/** Coerce a single variant value to a trimmed display string ('' when empty). */
 const str = (v: unknown): string => {
   if (v == null) return '';
   return String(v).trim();
 };
 
-/** Normalise variants.specials (string[] | string) → trimmed non-empty list. */
 const specialsList = (v: unknown): string[] => {
   if (Array.isArray(v)) return v.map((x) => str(x)).filter(Boolean);
   const s = str(v);
@@ -66,7 +59,6 @@ const SPECIAL_ID = (s: string): string =>
 const SPECIAL_PARTS = (s: string): string[] =>
   s.toUpperCase().replace(/NILON/g, 'NYLON').split(/[^A-Z0-9]+/).filter(Boolean);
 
-/** Can `target` be built by concatenating ALL of `parts` in some order? */
 const isReordering = (target: string, parts: string[]): boolean => {
   if (parts.length < 2 || !target) return false;
   if (parts.join('').length !== target.length) return false;
@@ -108,7 +100,7 @@ export function foldRedundantSpecials(list: string[]): string[] {
     (b.id.length !== a.id.length ? b.id.length > a.id.length : (b.n !== a.n ? b.n > a.n : b.i < a.i));
   return info
     .filter((a) => {
-      if (!a.id || a.n !== 1) return true; // only a glued/fragmentary entry is hideable
+      if (!a.id || a.n !== 1) return true;
       return !info.some((b) => b !== a && b.id
         && (b.id === a.id || b.id.includes(a.id) || isReordering(a.id, SPECIAL_PARTS(b.v)))
         && richer(b, a));
@@ -159,15 +151,6 @@ export function isKivColourCode(code: unknown): boolean {
   return /(?:^|[\s_-])(?:KIV|TBC)$/i.test(str(code));
 }
 
-/**
- * The live name of a colour whose fabric row has been superseded.
- *
- * MODULE SCOPE AND EXPORTED because the sales-order line is not the only
- * renderer of a colour. `composeSofaDesc2` builds a sofa's Desc2 by its own
- * path, and while this helper lived inside buildVariantSummary the sofa path
- * kept writing the obituary — which is why the three documents this comment
- * names were still refused after the fix that was supposed to clear them.
- */
 /* A SUPERSEDED FABRIC ROW CARRIES ITS OWN OBITUARY, and it is not a
    specification. The fabric library renumbered itself on 2026-08-11 and left
    each old row in place with `[superseded by X on 2026-08-11]` written into
@@ -186,22 +169,14 @@ export function isKivColourCode(code: unknown): boolean {
    text agree with the book more often. That matters because
    autocount-line-keys.ts matches this string against the book's own Desc2 to
    tell one line from another. */
-/* The successor is OPTIONAL in the pattern on purpose: a note that names no
-   replacement is still bookkeeping and still must not travel. It is stripped,
-   leaving the dead code, which is at least a code. */
 const SUPERSEDED_NOTE = /\s*\[\s*superseded\s+by\b\s*([^\]]*?)(?:\s+on\s+\d{4}-\d{2}-\d{2})?\s*\]/i;
 export function liveColour(v: string): string {
   const m = SUPERSEDED_NOTE.exec(v);
   if (!m) return v;
-  /* The group always participates when the pattern matches — it is not
-     optional — so a `??` here is dead and the linter is right to say so. */
   const successor = m[1].trim();
   return successor || v.replace(SUPERSEDED_NOTE, '').trim();
 }
 
-/* The line's internal fabric code: SO/PO/DO/SI store it as fabricCode, the
-   GRN / PI / PR / Stock-Adjustment editors as fabricColor, POS as colorCode /
-   colourCode. */
 const FABRIC_CODE_KEYS = ['fabricCode', 'colorCode', 'colourCode', 'fabricColor'] as const;
 export function fabricCodeOf(v: Record<string, unknown>): string {
   for (const k of FABRIC_CODE_KEYS) {
@@ -211,10 +186,6 @@ export function fabricCodeOf(v: Record<string, unknown>): string {
   return '';
 }
 
-/* fabricSupplierCode is a display stamp that rides on variants, so editors save
-   it with the line. It is trusted only for the fabric it was looked up for
-   (fabricSupplierCodeOf): after an SO amendment from EZ-002 to EZ-011 the saved
-   M2402-4 must not print (2990-0067). Stamp with withFabricSupplierCode. */
 export function trustedFabricSupplierCode(v: Record<string, unknown>): string {
   const fc = fabricCodeOf(v);
   return fc && str(v.fabricSupplierCodeOf) === fc ? str(v.fabricSupplierCode) : '';
@@ -224,17 +195,13 @@ export function withFabricSupplierCode(v: Record<string, unknown>, supplierCode:
   return { ...v, fabricSupplierCode: supplierCode, fabricSupplierCodeOf: fabricCodeOf(v) };
 }
 
-/* The stamp is display only: spec compares and audit diffs drop it. */
 export function withoutFabricSupplierCode(v: Record<string, unknown>): Record<string, unknown> {
   const { fabricSupplierCode: _code, fabricSupplierCodeOf: _of, ...rest } = v;
   return rest;
 }
 
-/* Words that label a colour rather than name one: "Col : cove 13", "Fabric : Cove-03". */
 const COLOUR_LABEL_WORD = /^(?:COL|COLOU?R|CLR|FABRIC|FAB|CODE)$/;
 
-/* Upper-cased word tokens, split at letter/digit boundaries and with leading
-   zeros dropped, so "cove 13", "Cove-13" and "COVE-013" read as one colour. */
 function colourTokens(text: string): string[] {
   return text.toUpperCase()
     .replace(/([A-Z])(?=\d)|(\d)(?=[A-Z])/g, '$1$2 ')
@@ -243,7 +210,6 @@ function colourTokens(text: string): string[] {
     .map((t) => (/^\d+$/.test(t) ? String(Number(t)) : t));
 }
 
-/** True when every non-label word of `note` already appears in `printed`. */
 function noteOnlyRestates(note: string, printed: string): boolean {
   const have = new Set(colourTokens(printed));
   const words = colourTokens(note).filter((t) => !COLOUR_LABEL_WORD.test(t));
@@ -266,9 +232,6 @@ function noteOnlyRestates(note: string, printed: string): boolean {
 export function buildVariantSummary(
   itemGroup: string | null | undefined,
   variants: Record<string, unknown> | null | undefined,
-  /* labelled — prefix the fabric segment with "Fabric: " on supplier-facing
-     docs (PO / GRN / PI). Seat/Leg/Divan/Gap already carry inline labels; the
-     fabric code was the only bare segment. Default off → POS/SO unchanged. */
   opts?: { labelled?: boolean },
 ): string {
   if (!variants || typeof variants !== 'object') return '';
@@ -301,29 +264,10 @@ export function buildVariantSummary(
   // So the parts are composed BARE (the original dedupe rules all hold) and
   // the parens are appended to the finished segment below.
   const fabricParts = [fabricCodeRaw, str(variants.colorCode), str(variants.colourLabel)].map(liveColour);
-  // Dedupe — when the colour label/code is just the fabric code again (e.g.
-  // BF-07 whose colour label is also "BF-07"), don't repeat it ("BF-07 BF-07").
-  // GRN / PI / PR / Stock-Adjustment editors store the fabric under fabricColor;
-  // fall back to it when the SO-style keys are empty so received lines still show
-  // their fabric in the Description 2 summary.
-  // Colour KIV (Loo 2026-06-12): the customer committed to a fabric SERIES
-  // (variants.fabricId/fabricLabel — its tier add-on is already charged) but
-  // confirms the colour later, so there's no fabricCode yet. Surface the
-  // series + the open colour so the doc line reads the true state.
-  // Drop a bare part that a RICHER part already leads with (at a token
-  // boundary), so an enriched fabric code "BF-12 (PC151-12)" doesn't get the
-  // bare colour label "BF-12" repeated after it → "BF-12 (PC151-12) BF-12"
-  // (Commander 2026-06-19). Exact repeats still drop via the Set.
   const presentFabric = fabricParts.filter(Boolean);
   const dedupedFabric = presentFabric.filter((p, i) =>
     !presentFabric.some((q, j) => j !== i && q !== p && (
-      // a richer part LEADS with the bare part — "BF-12 (PC151-12)" vs "BF-12"
       q.startsWith(`${p} `) || q.startsWith(`${p}(`)
-      // Houzs 2026-06-23 — or a richer part already ENDS with it: the fabric code
-      // contains the colour ("A201-7-LIGHT BROWN" + derived colour "BROWN") → drop
-      // the redundant trailing colour so the line shows just the code, not
-      // "A201-7-LIGHT BROWN BROWN". A genuinely separate colour ("BF-01" + "Sand")
-      // is NOT a trailing token of the code, so it still shows.
       || q.endsWith(` ${p}`)
     )),
   );
@@ -338,17 +282,9 @@ export function buildVariantSummary(
   }
   if (fabric) segments.push(opts?.labelled ? `Fabric: ${fabric}` : fabric);
 
-  // 2026-06-04 — POS handover sofa lines carry the leg pick as sofaLegHeight
-  // (PR #473) and the seat pick as depth; Backend-keyed lines use legHeight /
-  // seatHeight. Same axes, two vocabularies (see so-variant-rule) — read both
-  // so POS-created SO/GRN/PO lines show their SEAT / LEG segments too.
   const leg = (str(variants.legHeight) || str(variants.sofaLegHeight)).toUpperCase();
 
   if (isBedframe) {
-    // BEDFRAME: DIVAN {divan} + LEG {leg} / GAP {gap} / T.Heights {total}.
-    // The leg carries an explicit "LEG" label so it isn't misread as part of
-    // the divan figure (was "DIVAN 10\" + 1\"" → now "DIVAN 10\" + LEG 1\"");
-    // "No Leg" reads as-is without the redundant prefix (Loo, 2026-06-03).
     const divan = str(variants.divanHeight);
     const legLabel = leg ? (/^NO\s*LEG$/.test(leg) ? leg : `LEG ${leg}`) : '';
     if (divan || legLabel) {
@@ -360,10 +296,6 @@ export function buildVariantSummary(
     const total = str(variants.totalHeight);
     if (total) segments.push(`T.Heights ${total}`);
   } else {
-    // SOFA: SEAT {seat} / LEG {LEG}
-    // Commander 2026-05-29: use the SAME ` / ` delimiter as every other segment
-    // so the summary reads with ONE consistent separator (was mixing ` / ` with
-    // a ` · ` inside the seat·leg token → "BF-01 / SEAT 24 · LEG 6\"").
     const seat = str(variants.seatHeight) || str(variants.depth);
     if (seat) segments.push(`SEAT ${seat}`);
     if (leg)  segments.push(`LEG ${leg}`);
@@ -404,18 +336,6 @@ export function buildVariantSummary(
     const chosen = choicesMap ? specialsList(choicesMap[code]) : [];
     return chosen.length ? `${code} (${chosen.join(', ')})` : code;
   });
-  // Loo 2026-06-13 — the POS product-page "special add-on" (note + extra charge,
-  // variants.extraAddonNote + extraAddonAmountRM) is a FREE-TEXT Special Add-on.
-  // Its NOTE renders in the same SPECIAL segment as the picked add-ons so
-  // Description 2 reads them together. The item remark (variants.remark) is a
-  // SEPARATE field and does NOT belong here — it prints as its own "Remark:"
-  // line off the mfg_sales_order_items.remark column.
-  //
-  // Loo 2026-06-15 — the add-on AMOUNT is no longer surfaced here. It is already
-  // folded into the line's selling price (POS submit + recompute extraSen fold),
-  // so printing "(+RM…)" double-shows money that's already in the product amount.
-  // The SPECIAL segment keeps the note label ("Extra add-on" by default) so the
-  // add-on stays visible — only the RM figure is dropped.
   const extraRM = Math.round(Number(variants.extraAddonAmountRM ?? 0));
   const noteText = str(variants.extraAddonNote);
   /* A note that only restates the printed colour is not a second instruction
@@ -431,11 +351,6 @@ export function buildVariantSummary(
   }
   if (specialBits.length) segments.push(`SPECIAL: ${specialBits.join(' + ')}`);
 
-  // Free Item Campaign (migration 0176, 2026-06-17) — a line made free by a
-  // campaign carries variants.freeItem.campaignId (stamped server-side). Surface
-  // the campaign name so every customer doc reads "FREE · <campaign name>" or
-  // simply "FREE" when the campaign name is blank. This segment prints LAST so
-  // existing SEAT/LEG/SPECIAL segments remain unchanged.
   if (isFreeItemLine(variants)) {
     const freeItem = variants.freeItem as { campaignName?: unknown } | undefined;
     const name = str(freeItem?.campaignName);

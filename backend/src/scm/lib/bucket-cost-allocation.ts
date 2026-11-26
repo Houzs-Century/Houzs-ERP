@@ -28,16 +28,12 @@
 // ----------------------------------------------------------------------------
 
 export interface BucketLine {
-  /** Caller's line id. Returned untouched as the map key. */
   id: string;
-  /** This line's quantity out of the bucket. Non-positive lines get 0. */
   qty: number;
 }
 
 export interface AllocatedCost {
-  /** This line's share of the bucket, in sen. The shares sum to `netCost`. */
   lineCostSen: number;
-  /** Derived, for display and for the ship-cost freeze: round(share / qty). */
   unitCostSen: number;
 }
 
@@ -69,9 +65,6 @@ export function allocateBucketCost(
   const lastId = positive[positive.length - 1]!.id;
   for (const l of positive) {
     const qty = Number(l.qty);
-    /* The last line takes what is left rather than its own rounded share, so
-       the column sums to netCostSen exactly. Rounding every line independently
-       leaves a remainder of up to (lines - 1) sen unaccounted for. */
     const share = l.id === lastId
       ? netCostSen - allocated
       : Math.round((netCostSen * qty) / totalQty);

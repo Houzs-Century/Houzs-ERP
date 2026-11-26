@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// Shared per-category badge swatches (HOUZS-pattern groupChip equivalent).
-//
-// Extracted 2026-05-27 from SoLineCard.tsx so both the SO Listing pages
-// (MfgSalesOrdersList, SalesOrderDetailListing) and the line-card editor
-// render the same orange/green/amber/grey pill set for item_group values.
-//
-// Commander reference shots (HOUZS SO Detail Listing) put a coloured pill
-// under "Item Group": SOFA → orange, MATTRESS → warm amber, BEDFRAME → green,
-// ACC → muted grey, OTHERS → muted grey-on-cream. Keep the swatches aligned
-// with 2990's brand tokens so a token retune (e.g. festive-a → new amber)
-// propagates everywhere automatically.
-// ----------------------------------------------------------------------------
 
 import type { CSSProperties, ReactNode } from 'react';
 import { MFG_CATEGORY_LABELS } from '../../shared/product-categories';
@@ -21,13 +8,6 @@ export type CategoryBadgeSpec = {
   label: string;
 };
 
-/** Lookup table keyed by lowercase item_group. Unknown groups fall back to
- *  the OTHERS swatch via the helper below. */
-/** The OTHERS swatch is always present — typed as a non-undefined fallback
- *  for the case-insensitive lookup below (the tsconfig sets
- *  `noUncheckedIndexedAccess`, so `CATEGORY_BADGE[key]` is
- *  `CategoryBadgeSpec | undefined`). Pulling OTHERS out as a named const
- *  also keeps the badge palette declared in a single place. */
 const OTHERS_BADGE: CategoryBadgeSpec = {
   bg: 'rgba(34, 31, 32, 0.06)', fg: 'var(--fg-muted)', label: 'OTHERS',
 };
@@ -41,9 +21,6 @@ export const CATEGORY_BADGE: Record<string, CategoryBadgeSpec> = {
   mattress:  { bg: 'rgba(199, 127, 62, 0.16)', fg: 'var(--c-festive-a, #C77F3E)',    label: 'MATTRESS' },
   accessory: { bg: 'rgba(34, 31, 32, 0.10)',   fg: 'var(--fg-muted)',                label: 'ACC' },
   others:    OTHERS_BADGE,
-  /* SO-SKU spec P2 — SERVICE lines (delivery fee / dispose / lift) are
-     first-class SO lines now; muted slate keeps them visually quiet next to
-     the goods categories. */
   service:   { bg: 'rgba(90, 96, 102, 0.12)',  fg: 'var(--fg-muted)',                label: 'SERVICE' },
 };
 
@@ -81,10 +58,6 @@ export const ItemGroupPill = ({ group }: { group: string | null | undefined }): 
   );
 };
 
-/* ── Branding swatches (HOUZS pattern) ────────────────────────────────────
-   Houzs paints AKEMI + ZANOTTI purple, everything else muted grey. Keep
-   the swatches as a thin overlay on the 2990 token palette so the list
-   reads consistently with the brand work in the SoLineCard area. */
 
 const BRAND_BADGE_DEFAULT: CategoryBadgeSpec = {
   bg: 'rgba(34, 31, 32, 0.06)',

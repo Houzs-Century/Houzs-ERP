@@ -108,9 +108,6 @@ export function MobileFabricPicker({ itemCode, fabricSeries, current, onPick, on
   );
 }
 
-/* FabricField — a tappable read-only row that opens the searchable FabricPicker
-   modal (native <select> with 700+ options is unusable per owner). Shows the
-   picked fabric code (+ colour label) or a "Select fabric" placeholder. */
 export function FabricField({ value, colourLabel, invalid, onOpen }: {
   value: string; colourLabel: string; invalid: boolean; onOpen: () => void;
 }) {

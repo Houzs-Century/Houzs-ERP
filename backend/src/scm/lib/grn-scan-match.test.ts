@@ -1,7 +1,3 @@
-// Unit tests for the GR scan matcher — the safety-critical core that decides
-// which open PO line(s) a scanned delivery order clears. The invariant under
-// test: a scanned line becomes a `pick` ONLY when it resolves to EXACTLY ONE
-// open PO line; zero or many leave it UNMATCHED, and nothing is ever guessed.
 import { describe, expect, test } from 'vitest';
 import {
   describeUnmatchedScanLines,
@@ -64,7 +60,7 @@ describe('matchGrnScanToPoLines', () => {
     );
     expect(res.picks).toEqual([{ poItemId: 'pi-1', qty: 3 }]);
     expect(res.unmatched).toHaveLength(0);
-    expect(res.poNumberMatched).toBe(false); // PO-010070 != HC-PO-2609-166
+    expect(res.poNumberMatched).toBe(false);
     expect(res.matchedPoNumbers).toEqual(['HC-PO-2609-166']);
   });
 
@@ -112,8 +108,6 @@ describe('matchGrnScanToPoLines', () => {
       [],
       'sup-1',
     );
-    // Two POs carry the same item code, but the scanned PO No pins it to one —
-    // so it is UNAMBIGUOUS, not a many-match.
     expect(res.poNumberMatched).toBe(true);
     expect(res.matchedPoNumberValue).toBe('HC-PO-2609-166');
     expect(res.picks).toEqual([{ poItemId: 'pi-A', qty: 1 }]);
@@ -145,8 +139,6 @@ describe('matchGrnScanToPoLines', () => {
 
   test('a fully-received PO line (zero remaining) is not picked', () => {
     const res = matchGrnScanToPoLines(null, [scan({ itemCode: '9050-2B(RHF)', qty: 1 })], [line({ remaining: 0 })], [], 'sup-1');
-    // remaining 0 is excluded by the loader in production; the matcher guards it too.
-    // With no in-scope line, this is a no_open_po_line miss.
     expect(res.picks).toEqual([]);
     expect(res.unmatched[0].line.itemCode).toBe('9050-2B(RHF)');
   });
@@ -180,14 +172,10 @@ describe('matchGrnScanToPoLines', () => {
       bindings,
       'sup-1',
     );
-    // Both item codes resolve, so the scanned line hits TWO open lines -> ambiguous.
     expect(res.picks).toEqual([]);
     expect(res.unmatched[0].reason).toBe('ambiguous');
   });
 
-  // Regression: a Hookka delivery order with 6 lines where only 1 item code hit
-  // any open PO line company-wide became a GRN against the wrong PO, and once
-  // posted it flipped that PO's sales order to READY.
   test('one stray hit out of six lines becomes a draft flagged as a weak match', () => {
     const res = matchGrnScanToPoLines(
       'PO-010070',
@@ -272,11 +260,6 @@ describe('matchGrnScanToPoLines', () => {
   });
 });
 
-// DO-2609-097 (Hookka, 2026-09-30): one delivery order, no header P.O., each row
-// printing its own PO. Row 1 is a fair/service item whose PO (ART-HOK-002) is not
-// ours. The old read dropped the per-row POs, item-matched row 1 onto a
-// customer's ELEPHANE line on HC-PO-2609-263, and received none of the five
-// JAGER rows. Shapes copied from production.
 describe('matchGrnScanToPoLines — a PO number printed per row', () => {
   const hookkaOpen: OpenPoLine[] = [
     line({ poItemId: 'pi-263-K', poNumber: 'HC-PO-2609-263', itemCode: 'ELEPHANE-(K)', supplierSku: 'HOK-2003-(K)', remaining: 1 }),
@@ -419,8 +402,6 @@ describe('resolvePrintedPo: suppliers print our PO without the company prefix', 
 });
 
 describe('a delivery order that names its PO but describes the items differently', () => {
-  // Dorsettloft DO-2610-009: rows print "PO-010080" (our HC-PO-010080) and
-  // describe sets ("3SEATER (2+1)") that are not our PO line codes.
   const po010080: OpenPoLine[] = [
     line({ poItemId: 'pi-2A', poNumber: 'HC-PO-010080', itemCode: '9058-2A(LHF)', supplierSku: 'DSL-9058 SOFA 2A(LHF)', remaining: 1 }),
     line({ poItemId: 'pi-1A', poNumber: 'HC-PO-010080', itemCode: '9058-1A(RHF)', supplierSku: 'DSL-9058 SOFA 1A(RHF)', remaining: 1 }),
@@ -452,7 +433,6 @@ describe('a delivery order that names its PO but describes the items differently
   });
 
   test('no draft from two named POs when the delivery order qty is not what they owe', () => {
-    // 1 listed against HC-PO-010080 (owes 3), 1 against HC-PO-2610-001 (owes 4).
     const lines = [do009[0], scan({ itemCode: 'Y', qty: 1, poNo: 'PO-2610-001' })];
     const res = matchGrnScanToPoLines(null, lines, po010080, [], 'sup-1');
     expect(res.poFallback).toBeNull();
@@ -472,8 +452,6 @@ describe('a delivery order that names its PO but describes the items differently
 });
 
 describe('a delivery order whose POs are marked Received says so', () => {
-  // NB Furniture NBF2610-095: received by hand on HC-GRN-2610-011, so its POs
-  // are no longer open. Nothing is drafted; each row says why.
   const allPos = [
     { poNumber: 'HC-PO-2609-223', status: 'RECEIVED' },
     { poNumber: 'HC-PO-2609-251', status: 'RECEIVED' },
@@ -497,10 +475,6 @@ describe('a delivery order whose POs are marked Received says so', () => {
   });
 });
 
-// NB Furniture NBF2610-256 (2026-10-07) printed our POs with the ship-to
-// location in place of "HC-PO": SRW-2610-021 is HC-PO-2610-021 into SRW
-// WAREHOUSE, KL-2609-352 is HC-PO-2609-352 into KL WAREHOUSE. Every row was
-// refused as "not one of our POs" although supplier, items and qty all agreed.
 describe('a PO printed with the ship-to location in front (NBF2610-256)', () => {
   const open: OpenPoLine[] = [
     line({ poItemId: 'pi-cody', poNumber: 'HC-PO-2610-021', itemCode: 'CODY-(Q)', supplierSku: 'NB-KHJ57(Q)', remaining: 1, locationCode: 'SRW WAREHOUSE' }),
@@ -549,9 +523,6 @@ describe('a PO printed with the ship-to location in front (NBF2610-256)', () => 
   });
 });
 
-// BUG-108 (2026-10-12, Sim): DO-2610/034 printed "PO-HC-PO-2609-169", our whole
-// number behind a "PO-" label. Neither exact nor tail matched, so the slip was
-// refused as "not one of our POs".
 describe('our whole PO number printed behind a label (DO-2610/034)', () => {
   const open: OpenPoLine[] = [
     line({ poItemId: 'pi-9050', poNumber: 'HC-PO-2609-169', itemCode: '9050-1EPL+1B', remaining: 1 }),
@@ -585,9 +556,6 @@ describe('our whole PO number printed behind a label (DO-2610/034)', () => {
   });
 });
 
-// DEV-68 (2026-10-12, Sim): Hookka DO-2610-030 row "JAGER (Q) PC151-01 / GAP 11""
-// was left off GRN HC-GRN-2610-067 as "more than one PO line fits": PO
-// HC-PO-2609-320 holds HOK-1013-(Q) twice, fabric PC151-01 and PC151-02.
 describe('same item code on several PO lines: the printed spec breaks the tie (DO-2610-030)', () => {
   const jager = (poItemId: string, poNumber: string, description2: string) =>
     line({ poItemId, poNumber, supplierId: 'sup-hok', itemCode: 'HOK-1013-(Q)', remaining: 1, description2 });
@@ -595,7 +563,6 @@ describe('same item code on several PO lines: the printed spec breaks the tie (D
   const b320 = jager('pi-320b', 'HC-PO-2609-320', 'PC151-02 / DIVAN 8" + LEG 2" / GAP 11" / T.Heights 21"');
   const l319 = jager('pi-319', 'HC-PO-2609-319', 'PC151-01 / DIVAN 8" + LEG 2" / GAP 10" / T.Heights 20" / SPECIAL: HB Fully Cover');
   const l321 = jager('pi-321', 'HC-PO-2609-321', 'PC151-01 / DIVAN 8" + NO LEG / GAP 8" / T.Heights 16"');
-  // As the scan read it (GRN 2610-067 note): item name in front, "2" LEG" word order.
   const row = '1013-(Q) JAGER BEDFRAME (5FT) (152X190CM) PC151-01 / DIVAN 8" + 2" LEG / GAP 11" / T.Heights 21"';
 
   test('anchored to PO 320: the PC151-01 line, not PC151-02', () => {
@@ -629,7 +596,6 @@ describe('same item code on several PO lines: the printed spec breaks the tie (D
 describe("a named PO whose delivery order prints the supplier's own codes (DGSN26002266)", () => {
   const mk = (n: number, itemCode: string, materialName: string): OpenPoLine =>
     line({ poItemId: `pi-${n}`, poNumber: 'HC-PO-2610-084', itemCode, materialName, remaining: 1 });
-  // HC-PO-2610-084 as read from production on 2026-10-19.
   const open: OpenPoLine[] = [
     mk(1, 'AKEMI ULTIMATE MATT (K)', 'AKEMI ULTIMATE MATTRESS (183X190X36CM)'),
     mk(2, 'HAPPI SLEEP SOLITUDE MATT (Q)', 'HAPPI SLEEP SOLITUDE MATTRESS (152X190CM)'),
@@ -647,7 +613,6 @@ describe("a named PO whose delivery order prints the supplier's own codes (DGSN2
     mk(14, 'AKEMI IMMORTAL MATT (K)', 'AKEMI IMMORTAL MATTRESS (183X190X36CM)'),
     mk(15, 'AKEMI BASTION MATT (Q)', 'AKEMI BASTION MATTRESS (152X190X25CM)'),
   ];
-  // DGSN26002266 as read by the scanner (scm.grns.notes on HC-GRN-2610-134).
   const do266 = [
     scan({ itemCode: 'T1MAMWA0MK', description: 'Mattress Akemi Medi+Health Bulwark K King 183x190x36cm', qty: 1 }),
     scan({ itemCode: 'T1MAMWA0MK', description: 'Seremban Akemi Solo Aeon Sereman 2 14/4-26/4/26 Mattress Akemi Medi+Health Bulwark K King 183x190x36cm', qty: 1 }),
@@ -743,7 +708,6 @@ describe('nameMatchItem', () => {
 // SET, "DSL8030(35") - 2 + L" x1 with our SO number, while HC-PO-2610-080 holds
 // the set as two pieces raised for that SO. 1 listed vs 2 owed refused the scan.
 describe('a set row naming our SO number (DO-2610-046)', () => {
-  // HC-PO-2610-080 as read from production on 2026-10-20.
   const po080: OpenPoLine[] = [
     line({ poItemId: 'pi-2a', poNumber: 'HC-PO-2610-080', itemCode: '8030-2A(LHF)', materialName: 'SOFA SOFFIO 2A(LHF)', remaining: 1, soDocNo: 'HC-SO-013339' }),
     line({ poItemId: 'pi-l', poNumber: 'HC-PO-2610-080', itemCode: '8030-L(RHF)', materialName: 'SOFA SOFFIO L(RHF)', remaining: 1, soDocNo: 'HC-SO-013339' }),
@@ -771,8 +735,6 @@ describe('a set row naming our SO number (DO-2610-046)', () => {
   });
 });
 
-// The earlier Dorsettloft DO-2610-009: three set rows printing "*SO-011717"
-// (no company prefix) on HC-PO-010080, whose four pieces were raised for it.
 describe('set rows of one SO split by the model number they print (DO-2610-009)', () => {
   const po: OpenPoLine[] = [
     line({ poItemId: 'pi-2A', poNumber: 'HC-PO-010080', itemCode: '9058-2A(LHF)', remaining: 1, soDocNo: 'HC-SO-011717' }),
@@ -836,8 +798,6 @@ describe('supplierOfPrintedPo', () => {
   });
 });
 
-// Our own PO scanned (2990-PO-2609-046): every row prints the supplier's code, which
-// the PO line carries, though our code says BANGGAU.
 describe('a row printing the supplier SKU of the PO line', () => {
   test('lands on that line of that PO', () => {
     const po = [
@@ -849,9 +809,6 @@ describe('a row printing the supplier SKU of the PO line', () => {
   });
 });
 
-// Dorsettloft DO-2610-01 (2026-11-04): one "2 + L" row, our SO in the new numbering,
-// our PO in Remark 1, their own "S/O 1878" in the header. We call the model BANGGAU;
-// only the supplier's code holds 8075.
 describe('a set row in the new SO numbering (DO-2610-01)', () => {
   const piece = (poItemId: string, poNumber: string, itemCode: string, supplierSku: string, soDocNo: string) =>
     line({ poItemId, poNumber, itemCode, supplierSku, soDocNo, remaining: 1 });
@@ -887,9 +844,6 @@ describe('a set row in the new SO numbering (DO-2610-01)', () => {
   });
 });
 
-// Hookka DO-2610-079 (2026-10-20): four square pillows printed "PO: PO-010086",
-// which is OHANA STUDIO's PO (its 4 free-gift pillows still owed). The scan
-// rightly refused; the note only said "on hold or under another supplier".
 describe("a row naming another supplier's PO says whose it is (DO-2610-079)", () => {
   const allPos = [{ poNumber: 'HC-PO-010086', status: 'PARTIALLY_RECEIVED', supplierId: 'ohana', supplierName: 'OHANA STUDIO MARKETING SDN. BHD.', onHold: false }];
   const open = [
@@ -911,9 +865,6 @@ describe("a row naming another supplier's PO says whose it is (DO-2610-079)", ()
   });
 });
 
-// DIGLANT DGSN26002263 (2026-10-19) printed "HC-SRW-PO-2610-091": our number
-// with the ship-to location inside it. Not recognised, and the note did not
-// say that PO was already received.
 describe('our PO number with the location inside it (DGSN26002263)', () => {
   test('splits out the location', () => {
     expect(splitInnerLocation('HC-SRW-PO-2610-091')).toEqual({ location: 'SRW', po: 'HC-PO-2610-091' });

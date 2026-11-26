@@ -1,6 +1,3 @@
-/* The POS Admin menu's reads and writes (GET/PUT/POST/PATCH /api/pos-admin/*),
- * typed once here for every tab. Money is integer sen on the wire; the tabs
- * show RM. */
 import { api } from "../../api/client";
 import { useQuery, type QueryState } from "../../hooks/useQuery";
 import { normalizePosSettings, type PosSettings, type PosSettingsGroup } from "../../vendor/shared/pos-settings";
@@ -96,7 +93,6 @@ export type PosEvent = {
   event_type_slug: string | null;
   event_type_name: string | null;
   type_label: string;
-  /** Where the fair is in time; `linked` says whether POS knows it. */
   status: "COMING" | "ON GOING" | "DONE";
   linked: boolean;
   link: PosEventLink | null;
@@ -120,7 +116,6 @@ export type PosTerminal = {
   app_version: string | null;
   status: string;
   active: boolean;
-  /** A device that lost this terminal and waits for an approval to get it back. */
   reconnect: { device_name: string | null; requested_at: string } | null;
 };
 
@@ -177,7 +172,6 @@ export const toSen = (rmText: string): number | null => {
   return rmText.trim() === "" || !Number.isFinite(n) ? null : Math.round(n * 100);
 };
 
-/* ── Sync Status (E7) and Import backup (E8) ──────────────────────────── */
 
 export type SyncStatusWord = "SYNCED" | "PENDING" | "PENDING > 3D" | "DATA LOST" | "INACTIVE" | "NOT PREPARED";
 
@@ -215,7 +209,6 @@ export type BackupPreview = {
 };
 export type BackupImportResult = { ok: true; accepted: number; updated: number; rejected: { uuid: string; reason?: string }[]; skipped: BackupSummary };
 
-/* ── Sales Report (E6) ───────────────────────────────────────────────── */
 
 export type ReportFilter = { project_id: number | null; from: string; to: string; terminal: string; salesman: string; status: string };
 

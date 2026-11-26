@@ -17,34 +17,10 @@ interface Props {
 }
 
 export function Layout({ children }: Props) {
-  // Desktop collapse — only used at lg+. Mobile no longer has a
-  // drawer-opening hamburger; the bottom rail's centre Menu disc
-  // covers nav, so the top bar is just brand + chrome.
   const [collapsed, setCollapsed] = useState(false);
 
-  // Fetch the company identity once here (Layout wraps every authed page). This
-  // primes the module-level branding cache that the pure jspdf PDF libs read,
-  // so any document generated from inside the app carries the live letterhead.
   useBranding();
 
-  // Warm the few route chunks the office opens most, once per session, while
-  // the browser is idle — Layout wraps every authed page, so this is the one
-  // place that mounts once and outlives every navigation. Without it the first
-  // click into each of the 113 lazy routes waits out a chunk download before
-  // the page can start fetching its data. Self-throttling and failure-proof;
-  // see lib/prefetch-routes.
-  //
-  // Imported dynamically, not statically: the route map holds an import() per
-  // route, so a static import drags the whole table into the initial bundle —
-  // which pushed initial JS to 131.5/130 KB gzip and failed the budget gate.
-  // Nothing here is needed before first paint, so the table rides in its own
-  // chunk, fetched on the same idle tick that uses it.
-  //
-  // AFTER the landing page's own chunks, not alongside them: each warmed route
-  // pulls its whole dependency list in parallel, and on a cold load that raced
-  // the page the user is opening for the same bandwidth (Hookka's /m preload
-  // lesson; requestIdleCallback alone did not prevent it, the main thread is
-  // idle while chunks download).
   useEffect(() => {
     void whenPageChunksSettled()
       .then(() => import("../lib/prefetch-routes"))
@@ -67,57 +43,27 @@ export function Layout({ children }: Props) {
       />
 
       <main className="paper-grain thin-scroll flex-1 min-w-0 overflow-y-auto overflow-x-hidden">
-        {/* Mobile top bar — brand + topbar chrome only. Hidden on lg+. */}
         <MobileTopBar />
 
-        {/* Desktop top chrome — ONE 52px bar (2b): workspace tabs inline +
-            search / company / bell / avatar. No breadcrumb, no second row.
-            Every lg+ sticky below parks at top-[52px]: PageHeader here,
-            DetailLayout, the two SCM V2 doc bars. Hidden below lg. */}
         <TopNavbar />
 
         {writesDisabled && <ReadOnlyBanner />}
 
-        {/* Bottom padding clears the mobile tab rail (h-14 + safe area)
-            AND the floating chat FAB which sits above the rail at
-            bottom-20 + safe area + h-12. Total clearance: 160 + safe
-            area for mobile/sm, normal for lg+ where the rail is hidden
-            and the FAB tucks into the corner.
-            The Guard provider wraps both PullToRefresh and children so
-            pages with unsaved Panel state can call
-            `usePullToRefreshBlock(true)` to block accidental F5. */}
         <PullToRefreshGuardProvider>
-          {/* lg:pt-2 (was lg:py-10) is the 2b "dead band" fix — the tall empty
-              gap between the chrome and the PageHeader is gone; the header's
-              own pt supplies the breathing room. Bottom padding unchanged. */}
           <PullToRefresh className="w-full px-3 pt-6 pb-[calc(10rem+env(safe-area-inset-bottom))] sm:px-4 sm:pt-8 lg:px-4 lg:pt-2 lg:pb-10 animate-rise">
             {children}
           </PullToRefresh>
         </PullToRefreshGuardProvider>
       </main>
 
-      {/* Mobile bottom tab rail — visible below lg, sits above the
-          Floating Chat FAB which auto-clears it on mobile. The centre
-          "Menu" tab opens its own bottom-sheet modal (no longer
-          delegates to the Sidebar drawer), so onOpenDrawer is gone. */}
       <MobileTabBar />
     </div>
   );
 }
 
-/**
- * Mobile-only top bar. Brand mark on the left + PointsChip + collapsed
- * search on the right. Hidden on lg+. Navigation is handled exclusively
- * by the bottom rail's centre Menu disc — no hamburger here.
- */
 function MobileTopBar() {
   return (
     <div className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border bg-surface/95 px-4 backdrop-blur-sm lg:hidden">
-      {/* Phone: shrink the wordmark so the top bar reads as chrome, not a
-          brochure header (owner: logo too big on phone). Steps back up to the
-          original size at sm+ (tablet). h-5≈20px → h-7≈28px. CompanyMark:
-          HOUZS keeps the bundled wordmark; other companies get their uploaded
-          logo or a text lockup. */}
       <CompanyMark
         variant="wordmark"
         imgClassName="h-5 w-auto max-w-[104px] object-contain sm:h-7 sm:max-w-[140px]"
@@ -125,21 +71,12 @@ function MobileTopBar() {
       />
       <div className="ml-auto flex min-w-0 items-center gap-1.5">
         <GlobalSearchTrigger collapsed />
-        {/* Same control as the lg+ bar. This bar is what a PHONE on the 2990
-            host gets (AuthGate builds the mobile product for HOUZS only), so
-            without it that whole company would have no refresh on a phone. */}
         <RefreshButton />
       </div>
     </div>
   );
 }
 
-/**
- * Persistent banner shown whenever the worker reports that outbound
- * writes to AutoCount are disabled. Sticky at the top of the main
- * scroll area so it's always visible no matter which tab the user is
- * on.
- */
 function ReadOnlyBanner() {
   return (
     <div className="sticky top-14 z-10 border-b border-warning-text/30 bg-warning-bg/95 backdrop-blur-sm lg:top-0">
@@ -164,25 +101,11 @@ function ReadOnlyBanner() {
 interface PageHeaderProps {
   title: string;
   description?: string;
-  /** Always-rendered ReactNode (status pill, filter strip, bespoke chrome).
-   *  Same shape as before — pages that don't opt into the new split keep working. */
   actions?: ReactNode;
-  /** Primary CTA — always visible. Sits at the right edge of the action row.
-   *  On mobile this is the only inline action besides the optional kebab. */
   primaryAction?: ReactNode;
-  /** Secondary actions. On `sm+` they render as a row of compact buttons.
-   *  On `<sm` they collapse into a single kebab so the header stays one-row. */
   secondaryActions?: MenuItem[];
-  /** Optional small label rendered above the title — e.g. section name. */
   eyebrow?: string;
-  /** Optional metadata rendered after the eyebrow with a · separator — the 2b
-   *  record count ("128 orders"). Mono like the eyebrow, muted so the brass
-   *  label keeps the emphasis. Ignored when `eyebrow` is unset. */
   eyebrowMeta?: ReactNode;
-  /** Tightens the header's bottom margin/padding for dense pages (e.g. the
-   *  Calendar, where the grid should sit high). Default keeps the roomy
-   *  spacing every other page uses. NOTE: `dense` is SPACING ONLY — it does
-   *  not touch the title size. See `titleSize` for that. */
   dense?: boolean;
   /** Title scale. Default = the roomy 19/26/28 brochure h1 every list and
    *  landing page uses.
@@ -232,31 +155,14 @@ export function PageHeader({
   const hasActions = !!actions || !!primaryAction || hasSecondary;
 
   const navigate = useNavigate();
-  // Opt-in back affordance (see the `back` prop doc) — detail-type pages only.
   const showBack = back === true || typeof back === "string";
   async function goBack() {
-    // The gate runs FIRST and can cancel — see the `beforeBack` prop doc.
     if (beforeBack && !(await beforeBack())) return;
     if (typeof back === "string") navigate(back);
     else if (window.history.length > 1) navigate(-1);
     else navigate("/");
   }
 
-  /* Publish where this pinned header ENDS, as `--page-header-offset` on <html>.
-     Anything that scrolls a target into view has to clear it, and until now each
-     page guessed: SO Maintenance hardcoded `scroll-margin-top: 96px` on its three
-     section anchors while the real bottom edge is ~155 px on desktop (48 px
-     sticky top + ~107 px of eyebrow + title + description + padding). So every
-     section-jump pill scrolled its heading to 96 px — 59 px UNDERNEATH the
-     header — and the operator saw the header sitting on top of the first rows of
-     the list, cutting them in half. That is the bug, and a bigger constant would
-     only move the guess: the height changes with the breakpoint, with the title
-     wrapping, and with whether an action rail wrapped to its own row.
-
-     Measured instead. `offsetHeight` is layout height (unaffected by scroll
-     position, unlike getBoundingClientRect().top on a sticky element) and the
-     resolved `top` is read from the cascade, so this stays correct across the
-     top-14/lg:top-12 switch without duplicating those numbers here. */
   const hostRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = hostRef.current;
@@ -269,8 +175,6 @@ export function PageHeader({
     publish();
     const ro = new ResizeObserver(publish);
     ro.observe(el);
-    // The sticky `top` is breakpoint-dependent, and a resize that changes only
-    // the breakpoint may not change our own box — observe the viewport too.
     window.addEventListener("resize", publish);
     return () => {
       ro.disconnect();
@@ -298,28 +202,12 @@ export function PageHeader({
              does the visual separation from below.
            · bg-bg/95 + backdrop-blur keeps the header legible over any
              content that would otherwise show through. */
-        /* 2026-07-19 (fix/so-maintenance-403) — the sticky offsets were
-           DESKTOP-ONLY correct. Below lg the chrome above us is MobileTopBar
-           (`sticky top-0 z-20 h-14`, 56 px), not TopNavbar (`sticky top-0 z-40
-           h-12`, 48 px). Parking at top-12 on every breakpoint left this header
-           8 px INSIDE the mobile app bar, and z-20 TIED with it — a tie the
-           later-painted element wins, so the pinned page header covered the
-           bottom edge of the app bar on every tablet/narrow-desktop page.
-           `top-14 lg:top-…` parks flush under whichever bar is actually there,
-           and `z-10 lg:z-20` puts us definitively BELOW the app bar (z-20) while
-           still sitting above page content, which carries no z-index. */
-        /* 2026-07-23 (top-chrome 2b) — the lg chrome is ONE 52px bar
-           (TopNavbar hosting the tab strip inline), so the lg park is
-           top-[52px]. Below lg top-14 (MobileTopBar) is unchanged. */
         (dense
           ? "sticky top-14 lg:top-[52px] z-10 lg:z-20 -mx-3 sm:-mx-4 lg:-mx-4 px-3 sm:px-4 lg:px-4 bg-bg mb-3 flex flex-col gap-2 border-b border-border pt-3 pb-2 sm:mb-4 sm:pt-4 sm:pb-3 md:flex-row md:flex-wrap md:items-end md:justify-between"
           : "sticky top-14 lg:top-[52px] z-10 lg:z-20 -mx-3 sm:-mx-4 lg:-mx-4 px-3 sm:px-4 lg:px-4 bg-bg mb-4 flex flex-col gap-3 border-b border-border pt-3 pb-3 sm:mb-8 sm:pt-4 sm:gap-3 sm:pb-6 md:flex-row md:flex-wrap md:items-end md:justify-between")
       }
       ref={hostRef}
     >
-      {/* md:flex-1 + a basis floor so a wide action rail (md:shrink-0) can
-          never squeeze the title to a per-character column — the rail wraps
-          to its own row instead (container is md:flex-wrap). */}
       <div className="min-w-0 md:flex-1 md:basis-72">
         {showBack && (
           <button
@@ -348,8 +236,6 @@ export function PageHeader({
             )}
           </div>
         )}
-        {/* Two literal class strings, not an interpolated one — Tailwind only
-            emits classes it can see whole in the source. */}
         <h1
           className={
             titleSize === "sm"
@@ -370,11 +256,6 @@ export function PageHeader({
           {/* max-w-full: md:shrink-0 alone let a rail wider than the header run
               off-screen at tablet width instead of wrapping (HC-0149). */}
           {actions}
-          {/* Desktop (sm+): secondary actions render as inline buttons.
-              h-9 matches <Button> — actions / secondary / primaryAction all land
-              in THIS one flex row, so this chrome must share the Button height or
-              the rail renders at two sizes. The 11px uppercase label is what
-              keeps it reading as secondary; the height is not. */}
           {hasSecondary && (
             <div className="hidden items-center gap-1.5 sm:flex sm:gap-2">
               {secondary.map((it, i) => {
@@ -394,8 +275,6 @@ export function PageHeader({
             </div>
           )}
           {primaryAction}
-          {/* Mobile (<sm): secondary actions collapse into a kebab so the
-              header stays one row. Trigger sized to the 44 px touch floor. */}
           {hasSecondary && (
             <div className="sm:hidden">
               <RowActionsMenu items={secondary} title="More actions" size={44} />

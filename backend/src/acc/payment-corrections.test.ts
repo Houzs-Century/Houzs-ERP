@@ -55,7 +55,6 @@ describe('ledgerFieldChange', () => {
       .toEqual([{ field: LEDGER_FIELD, from: null, to: 'JE-100' }]);
   });
 
-  /* An audit row must not claim the books moved when they did not. */
   it('writes nothing when the ledger was not touched', () => {
     expect(ledgerFieldChange({ originalJeNo: null, contraJeNo: null, jeNo: null })).toEqual([]);
   });
@@ -91,9 +90,6 @@ describe('paymentCorrectionsReport', () => {
     });
   });
 
-  /* The one row written before the contra had its own change (2026-09-10,
-     2990-SO-2606-043): `ledger` carried the CONTRA as `from`. It must read as
-     what it is — a reversal with the original unknown — never as an original. */
   it('reads a legacy row, where the contra rode in `from`, as contra-only', () => {
     const { rows } = paymentCorrectionsReport([audit({
       field_changes: [{ field: 'amountSen', from: 30_800, to: 30_700 }, { field: LEDGER_FIELD, from: '2990-JE-2606-0099', to: '2990-JE-2606-0100' }],
@@ -164,10 +160,10 @@ describe('paymentCorrectionsReport', () => {
 
   it('the summary adds up edits, deletes, and the net money moved', () => {
     const { summary } = paymentCorrectionsReport([
-      audit({ id: 'a' }),                                                          // +100
-      audit({ id: 'b', field_changes: [{ field: 'amountSen', from: 240_000, to: 200_000 }] }), // −40,000
-      audit({ id: 'c', field_changes: [{ field: 'method', from: 'cash', to: 'transfer' }] }),  // no amount
-      audit({ id: 'd', action: 'DELETE_PAYMENT', field_changes: [{ field: 'amountSen', from: 50_000, to: null }] }), // −50,000
+      audit({ id: 'a' }),
+      audit({ id: 'b', field_changes: [{ field: 'amountSen', from: 240_000, to: 200_000 }] }),
+      audit({ id: 'c', field_changes: [{ field: 'method', from: 'cash', to: 'transfer' }] }),
+      audit({ id: 'd', action: 'DELETE_PAYMENT', field_changes: [{ field: 'amountSen', from: 50_000, to: null }] }),
     ], customers);
     expect(summary).toEqual({
       corrections: 4, added: 0, edited: 3, deleted: 1, proof: 0,
@@ -226,9 +222,9 @@ describe('the kinds a row can be', () => {
 
   it('the summary adds an add, an edit, a delete and a proof up separately, and nets the money', () => {
     const { summary } = paymentCorrectionsReport([
-      added({ id: 'a' }),                                                                                        // +150,000
-      audit({ id: 'b' }),                                                                                        // +100
-      audit({ id: 'c', action: 'DELETE_PAYMENT', field_changes: [{ field: 'amountSen', from: 50_000, to: null }] }), // −50,000
+      added({ id: 'a' }),
+      audit({ id: 'b' }),
+      audit({ id: 'c', action: 'DELETE_PAYMENT', field_changes: [{ field: 'amountSen', from: 50_000, to: null }] }),
       audit({ id: 'd', field_changes: [{ field: SLIP_FIELD, from: null, to: 'k' }] }),
     ], customers);
     expect(summary).toEqual({
@@ -270,8 +266,6 @@ describe('who first recorded the payment', () => {
     expect(rows[0]).toMatchObject({ recordedBy: 'Rachael', recordedOn: '2026-08-29T06:00:00Z' });
   });
 
-  /* The scan job's ADD row snapshots no actor ("Auto: payment recorded from
-     scanned receipt"); the person is the collector named on the payment. */
   it('an ADD row that names nobody defers to the collector on the payment row, keeping the ADD row\'s day', () => {
     const { rows } = paymentCorrectionsReport([audit()], customers, lookup({
       addsByPayment: new Map([['pay-1', { by: null, on: '2026-08-29T06:00:00Z' }]]),
@@ -292,16 +286,11 @@ describe('who first recorded the payment', () => {
     expect(rows[0]).toMatchObject({ recordedBy: null, recordedOn: null });
   });
 
-  /* The corrections written before payments were tagged — the owner's nine of
-     2026-09-10 to 2026-09-14 — carry no id. The order's own ADD rows are the
-     only trail: one add before the correction is that payment; two adds are
-     told apart by the amount the correction started from; two that cannot be
-     told apart stay blank, because naming the wrong salesperson is worse. */
   it('an untagged correction on an order with exactly one earlier add names that add', () => {
     const { rows } = paymentCorrectionsReport([audit({ payment_id: null })], customers, lookup({
       addsByDoc: new Map([['2990-SO-2606-043', [
         { by: 'Rachael', on: '2026-08-29T06:00:00Z', amountSen: 199_000 },
-        { by: 'Later', on: '2026-09-11T06:00:00Z', amountSen: 10 }, // after the correction: not this one
+        { by: 'Later', on: '2026-09-11T06:00:00Z', amountSen: 10 },
       ]]]),
     }));
     expect(rows[0]).toMatchObject({ recordedBy: 'Rachael', recordedOn: '2026-08-29T06:00:00Z' });

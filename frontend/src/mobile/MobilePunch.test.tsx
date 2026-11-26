@@ -26,8 +26,6 @@ const ME = {
   sites: [SITE],
 };
 
-// watchPosition stub: call the success handler once with a fixed coordinate, or
-// the error handler when `fail` is set.
 let geoCoord: { lat: number; lng: number } | null = { lat: SITE.lat, lng: SITE.lng };
 let geoFail = false;
 beforeEach(() => {
@@ -58,7 +56,7 @@ describe("punch screen — live distance to the site", () => {
   });
 
   it("outside the radius: shows the distance and 'too far'", async () => {
-    geoCoord = { lat: 3.05, lng: 101.75 }; // ~3 km away
+    geoCoord = { lat: 3.05, lng: 101.75 };
     show();
     await waitFor(() => expect(screen.getByText(/too far to clock in/)).toBeTruthy());
     expect(screen.getByText(/from KL WAREHOUSE/)).toBeTruthy();

@@ -26,22 +26,12 @@ import { AMEND_SOURCE, KEY_HOLDER_REASON_REQUIRED, REASON_REQUIRED } from '../..
 
 type HouzsUserSource = Parameters<typeof holdsHouzsPermLiterally>[0];
 
-/** A body reason is capped by its zod schema; a query-borne one (the DELETE)
-    is capped here, the same 500. */
 const MAX_REASON = 500;
 
 export type PaymentReasonRule = {
-  /** The caller's ROLE names the key — the literal reading. */
   keyHolder: boolean;
-  /** A reason is owed on this write. */
   owed: boolean;
-  /** The 400 body to answer with when a reason is owed and none came:
-      the holder's sentence for a holder, the amend sentence otherwise. */
   refusal: typeof KEY_HOLDER_REASON_REQUIRED | typeof REASON_REQUIRED | null;
-  /** What the audit row carries — the amend source and the reason — or
-      nothing, so a same-day fix by a role without the key writes the row it
-      always did. Empty when a reason is owed and missing: `refusal` is
-      answered first. */
   audit: { source: string; note: string } | Record<string, never>;
 };
 

@@ -247,7 +247,9 @@ function scopedTables(text) {
     // ...and does NOT credit a query in a LATER statement
     st("q = scopeToCompany(q, c);\nconst r = sb.from('grns').select('id');") === "" &&
     // ...and an unscoped read contributes nothing
-    st("const { data } = await sb.from('grns').select('id').eq('id', id);") === "";
+    st("const { data } = await sb.from('grns').select('id').eq('id', id);") === "" &&
+    stripComments(["//   /from-ap/*  a path in a line comment", "r.post('/from-ap/:id/read', h);"])[1] === "r.post('/from-ap/:id/read', h);" &&
+    stripComments(["a(); /* x */ b(); // y", "/* open", "still */ c();"]).join("|") === "a();  b(); || c();";
   if (!ok) {
     console.error("check-conversion-guards: internal pattern self-test FAILED - not reporting.");
     process.exit(2);
@@ -261,6 +263,8 @@ function stripComments(lines) {
     if (inBlock) { const e = out.indexOf("*/"); if (e === -1) return ""; out = out.slice(e + 2); inBlock = false; }
     for (;;) {
       const s = out.indexOf("/*");
+      const lineComment = out.indexOf("//");
+      if (lineComment !== -1 && (s === -1 || lineComment < s)) { out = out.slice(0, lineComment); break; }
       if (s === -1) break;
       const e = out.indexOf("*/", s + 2);
       if (e === -1) { out = out.slice(0, s); inBlock = true; break; }

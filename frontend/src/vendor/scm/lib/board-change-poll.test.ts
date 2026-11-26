@@ -51,7 +51,7 @@ describe('refreshChangedRows', () => {
     let release: () => void = () => undefined;
     const m = qc.getMutationCache().build(qc, { networkMode: 'always', mutationFn: () => new Promise<void>((r) => { release = r; }) });
     const running = m.execute({ type: 'so', id: 'SO-2' });
-    await new Promise((r) => setTimeout(r, 0));   // the mutation starts asynchronously
+    await new Promise((r) => setTimeout(r, 0));
     expect([...editingDocs(qc)]).toEqual(['SO-2']);
     refreshChangedRows(qc, { cursor: 5, docs: ['SO-1', 'SO-2'], others: false, full: false });
     expect(rowRefresh).toHaveBeenCalledWith(['SO-1']);
@@ -67,7 +67,7 @@ describe('createBoardRefresher', () => {
     t.r.start();
     await vi.advanceTimersByTimeAsync(BOARD_FULL_REREAD_MS - CHANGE_POLL_MS);
     expect(t.fullReread).not.toHaveBeenCalled();
-    expect(t.fetchChanges).toHaveBeenCalledTimes(BOARD_FULL_REREAD_MS / CHANGE_POLL_MS); // start + 9 ticks
+    expect(t.fetchChanges).toHaveBeenCalledTimes(BOARD_FULL_REREAD_MS / CHANGE_POLL_MS);
     await vi.advanceTimersByTimeAsync(CHANGE_POLL_MS);
     expect(t.fullReread).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(BOARD_FULL_REREAD_MS);
@@ -110,7 +110,7 @@ describe('createBoardRefresher', () => {
       .mockResolvedValueOnce({ cursor: 12, docs: [], others: false, full: true });
     t.r.start();
     await vi.advanceTimersByTimeAsync(CHANGE_POLL_MS);
-    expect(t.fullReread).not.toHaveBeenCalled(); // `full` answered; waiting its spread
+    expect(t.fullReread).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(19_000);
     expect(t.fullReread).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1_000);
@@ -186,7 +186,7 @@ describe('createBoardRefresher', () => {
     expect(t.fetchChanges).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(t.fullReread).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(30_000); // 5 min of visible time
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(t.fullReread).toHaveBeenCalledTimes(1);
     t.r.stop();
   });
@@ -208,10 +208,9 @@ describe('createBoardRefresher', () => {
     const t = rig({ server: counts(6), loaded: counts(5) });
     t.r.start();
     await vi.advanceTimersByTimeAsync(BOARD_FULL_REREAD_MS * 2);
-    expect(t.fullReread).toHaveBeenCalledTimes(2);   // the 5 and 10 min re-reads
+    expect(t.fullReread).toHaveBeenCalledTimes(2);
     expect(t.fetchCounts).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(COUNTS_CHECK_MS - BOARD_FULL_REREAD_MS * 2 + CHANGE_POLL_MS);
-    // at 15:00 the scheduled re-read runs, at 15:30 the counts check
     expect(t.fetchCounts).toHaveBeenCalledTimes(1);
     expect(t.fullReread).toHaveBeenCalledTimes(4);
     t.r.stop();
@@ -224,7 +223,7 @@ describe('createBoardRefresher', () => {
       t.r.start();
       await vi.advanceTimersByTimeAsync(COUNTS_CHECK_MS + CHANGE_POLL_MS);
       expect(t.fetchCounts).toHaveBeenCalledTimes(1);
-      expect(t.fullReread).toHaveBeenCalledTimes(3); // only the 5, 10 and 15 min re-reads
+      expect(t.fullReread).toHaveBeenCalledTimes(3);
       t.r.stop();
     }
   });

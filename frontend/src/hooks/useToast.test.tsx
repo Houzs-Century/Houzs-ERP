@@ -1,6 +1,3 @@
-/* A toast's dismiss timer must not outlive the provider: one firing after a
-   test file's environment is torn down crashed the run with "window is not
-   defined" (Receipts.test.tsx, Deploy 2026-11-08). */
 import { act, render } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { ToastProvider, useToast } from './useToast';

@@ -21,8 +21,6 @@ const requirePerm = (c: Ctx): boolean => hasHouzsPerm(c, 'scm.payment_voucher.po
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Orders that never became orders, or were taken back, are not collection —
-    the sales side's one reading, shared with the deposit invoice. */
 const NOT_AN_ORDER = SO_NOT_AN_ORDER;
 /** Delivered or beyond: the balance stage by STATUS. An order with a live
     sales invoice is at the balance stage whatever its status says, and its
@@ -45,7 +43,6 @@ export type CollectionOrder = {
   docNo: string; soDate: string; status: string; customer: string | null;
   totalSen: number; depositSen: number; balancePaidSen: number; collectedSen: number; outstandingSen: number;
   depositPct: number; balanceDueSen: number; balancePct: number; delivered: boolean; belowThreshold: boolean;
-  /** The live sales invoice on the order, when one exists, and what was billed (the invoice's total, else the order's). */
   invoiceNumber: string | null; billedSen: number;
 };
 export type CollectionRow = {
@@ -79,14 +76,10 @@ export const collectionReport = async (c: Ctx): Promise<Response> => {
       .eq('company_id', companyId).gte('so_date', from).lte('so_date', to)
       .order('so_date').order('doc_no').range(f, t));
   if (sos.error) return c.json({ error: 'load_failed', reason: String((sos.error as { message?: string }).message ?? sos.error) }, 500);
-  /* Status is an enum the fake client cannot be trusted to compare; the
-     filter is in code so both readers agree. */
   const orders = ((sos.data ?? []) as SoRow[])
     .filter((s) => !NOT_AN_ORDER.has(String(s.status)))
     .filter((s) => onlySalesperson == null || String(s.salesperson_id ?? '') === onlySalesperson);
 
-  /* The payments on those orders, in chunks — a quarter is a few hundred
-     orders and PostgREST's `in` list has a length limit. */
   const paid = new Map<string, { deposit: number; balance: number }>();
   const docs = orders.map((s) => s.doc_no);
   for (let i = 0; i < docs.length; i += 150) {
@@ -104,8 +97,6 @@ export const collectionReport = async (c: Ctx): Promise<Response> => {
     }
   }
 
-  /* The final invoice, when one exists: several live invoices on one order
-     add up; the first number is the one named. */
   const invoiceOf = new Map<string, { number: string; totalSen: number }>();
   for (let i = 0; i < docs.length; i += 150) {
     const chunk = docs.slice(i, i + 150);
@@ -124,7 +115,6 @@ export const collectionReport = async (c: Ctx): Promise<Response> => {
     }
   }
 
-  /* Who sold it: the staff row by id, else the agent text, else unassigned. */
   const staffIds = [...new Set(orders.map((s) => s.salesperson_id).filter((x): x is string => typeof x === 'string' && x !== ''))];
   const nameOf = new Map<string, string>();
   for (let i = 0; i < staffIds.length; i += 150) {

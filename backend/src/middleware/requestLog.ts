@@ -2,18 +2,6 @@ import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
 import { dbTotals, stepTimingEntries, withStepTiming, type StepMark } from "../lib/step-timing";
 
-// One structured access-log line per request + a request id echoed back in the
-// `X-Request-Id` header. Turns `wrangler tail` into a greppable log and lets a
-// user quote the id when reporting an issue. Complements the slow-query log
-// (d1-compat) already shipped. Cheap; mount outermost so it times the whole
-// chain and sees the final status + (for authed routes) the resolved user.
-//
-// Error AGGREGATION is deliberately not done here — it belongs in `onError`,
-// which is the only place that sees the thrown error itself rather than just
-// the status this middleware records. That SENTRY_DSN-gated hook now exists:
-// index.ts calls services/errorTracking.ts from onError, and it is inert until
-// the secret is set. This middleware stays what it always was — one access-log
-// line and the request id that the error report quotes back.
 
 const SAFE_REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$/;
 
@@ -28,9 +16,6 @@ export function normalizeRequestId(candidate: string | undefined): string {
 }
 
 export const requestLog: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-  // Never put an arbitrary caller-controlled value into logs or Analytics
-  // Engine indexes. Besides cardinality abuse, whitespace/control characters
-  // can forge log lines and make an incident trail ambiguous.
   const id = normalizeRequestId(c.req.header("X-Request-Id"));
   c.header("X-Request-Id", id);
   c.set("requestId", id);
@@ -38,27 +23,16 @@ export const requestLog: MiddlewareHandler<{ Bindings: Env }> = async (c, next) 
   const marks: StepMark[] = [];
   await withStepTiming(marks, () => next());
   const ms = Date.now() - t0;
-  // Snapshot now: work handed to waitUntil keeps adding marks after the response.
   const db = dbTotals(marks);
-  // Worker time vs. the browser's wait, plus each timed() step (lib/step-timing.ts).
   try {
     c.res.headers.set("Server-Timing", [`app;dur=${ms}`, ...stepTimingEntries(marks)].join(", "));
   } catch {
-    /* an immutable passthrough response keeps its own headers */
   }
   const path = new URL(c.req.url).pathname;
-  if (path === "/health") return; // skip keep-alive noise
+  if (path === "/health") return;
   const uid = c.get("user")?.id ?? "-";
   console.log(`[req] ${c.req.method} ${path} ${c.res.status} ${ms}ms id=${id} user=${uid}`);
 
-  // Analytics Engine timing point for System Health (phase 2). Guarded so it's
-  // a no-op when the binding is absent. Route uses the matched Hono pattern
-  // (e.g. /api/users/:id) to keep AE index cardinality low; falls back to the
-  // raw path. blob/double layout MUST match the read SQL in routes/systemHealth
-  // (blob1=kind, blob2=route, blob3=status, blob4=reqId, blob5=method,
-  // blob6=company id or ""; double1=dur_ms, double2=db_ms, double3=db_count).
-  // db_ms / db_count are this request's database round trips (dbTotals) up to
-  // the response; scripts/lib/slow-routes.mjs reads them.
   try {
     const route = c.req.routePath || path;
     const status = c.res.status;
@@ -69,6 +43,5 @@ export const requestLog: MiddlewareHandler<{ Bindings: Env }> = async (c, next) 
       doubles: [ms, db.ms, db.n],
     });
   } catch {
-    /* never let observability break a request */
   }
 };

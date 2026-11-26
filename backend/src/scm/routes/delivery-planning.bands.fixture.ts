@@ -1,13 +1,9 @@
-// TEST HELPER ONLY: one fixed Delivery Planning world for delivery-planning.bands.test.ts
-// (open and delivered orders in every date band, both sides of today, band edges,
-// an amended date, an undated order, another company, a driver's own jobs, ASSR, DP
-// and project rows) and a request runner. Today is fixed at 2026-11-10 (Malaysia).
 import { Hono, type ExecutionContext } from 'hono';
 
 import { fakeSb, type Row } from '../lib/fake-postgrest';
 import type { Env, Variables } from '../env';
 
-export const FIXED_NOW = new Date('2026-11-10T04:00:00Z'); // 12:00 Malaysia
+export const FIXED_NOW = new Date('2026-11-10T04:00:00Z');
 
 const so = (docNo: string, status: string, date: string, extra: Row = {}): Row => ({
   doc_no: docNo, company_id: 1, debtor_code: 'C1', debtor_name: `Customer ${docNo}`, status, delivery_state: null,
@@ -16,7 +12,6 @@ const so = (docNo: string, status: string, date: string, extra: Row = {}): Row =
 });
 const line = (docNo: string): Row => ({
   id: `li-${docNo}`, doc_no: docNo, item_code: 'SOFA-1', item_group: 'SOFA', qty: 1, cancelled: false,
-  // Not ready: SO-OPEN-1 (10 days out) is Pending Delivery, SO-OPEN-2 (2 days) is Overdue.
   stock_status: docNo === 'SO-OPEN-1' || docNo === 'SO-OPEN-2' ? 'PENDING' : 'READY', line_no: 1, created_at: '2026-01-01T00:00:00.000Z',
 });
 const dO = (id: string, docNo: string, status: string, deliveredAt: string | null, driverId: string | null = null): Row => ({
@@ -32,21 +27,21 @@ export function fixtureTables(): Record<string, Row[]> {
     mfg_sales_orders: [
       so('SO-OPEN-1', 'CONFIRMED', '2026-11-20'),
       so('SO-OPEN-2', 'CONFIRMED', '2026-11-12'),
-      so('SO-OPEN-OLD', 'CONFIRMED', '2025-02-01'),             // open, whatever its date: main board
+      so('SO-OPEN-OLD', 'CONFIRMED', '2025-02-01'),
       so('SO-DEL-RECENT', 'DELIVERED', '2026-11-05'),
-      so('SO-DEL-15', 'DELIVERED', '2026-10-20'),               // DO 2026-10-25 17:30 UTC = 10-26 Malaysia: main
-      so('SO-DEL-16', 'DELIVERED', '2026-10-20'),               // DO 2026-10-25 Malaysia: band 16-30
+      so('SO-DEL-15', 'DELIVERED', '2026-10-20'),
+      so('SO-DEL-16', 'DELIVERED', '2026-10-20'),
       so('SO-DEL-45', 'DELIVERED', '2026-09-26'),
       so('SO-DEL-75', 'DELIVERED', '2026-08-27'),
       so('SO-DEL-OLD', 'DELIVERED', '2025-06-01'),
-      so('SO-DEL-LATE', 'DELIVERED', '2025-01-10'),             // old date, delivered 2026-11-08: main
-      so('SO-DEL-NODO', 'DELIVERED', '2025-03-01'),             // no DO at all: by its own date, over 90
-      so('SO-DEL-AMENDED', 'DELIVERED', '2025-03-01', { amended_delivery_date: '2026-09-20' }), // band 31-60
-      so('SO-EDGE-15', 'CONFIRMED', '2026-10-26'),              // exactly 15 days ago: band 1
-      so('SO-EDGE-16F', 'CONFIRMED', '2026-11-26'),             // 16 days ahead: band 2
-      so('SO-FAR', 'CONFIRMED', '2027-03-01'),                  // over 90 days ahead: band 5
-      so('SO-NODATE', 'CONFIRMED', '2026-11-01', { customer_delivery_date: null }), // processing date only: band 5
-      so('SO-AMEND-NEAR', 'CONFIRMED', '2025-01-01', { amended_delivery_date: '2026-11-11' }), // amended wins: band 1
+      so('SO-DEL-LATE', 'DELIVERED', '2025-01-10'),
+      so('SO-DEL-NODO', 'DELIVERED', '2025-03-01'),
+      so('SO-DEL-AMENDED', 'DELIVERED', '2025-03-01', { amended_delivery_date: '2026-09-20' }),
+      so('SO-EDGE-15', 'CONFIRMED', '2026-10-26'),
+      so('SO-EDGE-16F', 'CONFIRMED', '2026-11-26'),
+      so('SO-FAR', 'CONFIRMED', '2027-03-01'),
+      so('SO-NODATE', 'CONFIRMED', '2026-11-01', { customer_delivery_date: null }),
+      so('SO-AMEND-NEAR', 'CONFIRMED', '2025-01-01', { amended_delivery_date: '2026-11-11' }),
       so('SO-CO2-DEL', 'DELIVERED', '2025-05-05', { company_id: 2 }),
       so('SO-CO2-OPEN', 'CONFIRMED', '2026-11-15', { company_id: 2 }),
     ],

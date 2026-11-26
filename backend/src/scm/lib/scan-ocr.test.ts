@@ -1,4 +1,3 @@
-// scan-ocr — the SO scan model setting, and the request fields each model accepts.
 import { describe, expect, test } from 'vitest';
 import { CLAUDE_MODEL, modelRequestFields, scanSoModel } from './scan-ocr';
 

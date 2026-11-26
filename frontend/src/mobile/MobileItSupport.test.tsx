@@ -38,7 +38,6 @@ beforeEach(() => {
 });
 afterEach(() => cleanup());
 
-/** The screen inside a query client, which carries the Profile tab's IT Support count. */
 function show(onBack: () => void = () => {}) {
   const qc = new QueryClient();
   vi.spyOn(qc, "invalidateQueries");
@@ -131,7 +130,6 @@ describe("IT Support on a phone — report, reply, confirm", () => {
     expect(api.postForm).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByPlaceholderText("The delivery order will not save"), { target: { value: "Cannot print DO" } });
-    // No page to go by on a phone: "Not sure" until they pick one.
     const module = screen.getByLabelText("Which part of the system") as HTMLSelectElement;
     expect(module.value).toBe("");
     fireEvent.change(module, { target: { value: "Supply Chain · Sales Order" } });
@@ -154,7 +152,6 @@ describe("IT Support on a phone — report, reply, confirm", () => {
     const qc = show();
     fireEvent.click(await screen.findByText("Delivery order will not save"));
     await screen.findByText("Which lorry was it?");
-    // Opening it marked it seen on the hub: the Profile count is read again.
     expect(qc.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["it-support", "unread-count"] });
     expect(screen.getByText(/Something is not working · High · Handled by Samuel/)).toBeTruthy();
 

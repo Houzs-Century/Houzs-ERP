@@ -1,21 +1,3 @@
-// ---------------------------------------------------------------------------
-// delivery-message-kinds.ts — the message TYPES the Delivery Planning board can
-// send through Houzs Connect, and what each one needs from the ERP.
-//
-// Every kind names ONE Connect automation (matched by exact name — a mismatch
-// fires nothing) and the extra contact attributes its template reads beyond the
-// shared bundle (full_name / ref_N / delivery_date_N / brand_N / order_total /
-// callback_url / amount / per-company blocks — see services/connect.ts). The
-// attribute keys are Connect's, read off the flow definitions in houzs-connect
-// src/lib/automation/flows/*.ts; renaming one here blanks a template variable.
-//
-// Two kinds take OPERATOR input because the ERP does not hold the data yet
-// (checked in prod 2026-10-05: 0 of 516 September DOs carry a driver or a time
-// range, no trip stops): Driver Info (driver / lorry / time picked in the modal)
-// and Postpone (reason + proposed date). A kind whose data is missing for an
-// order SKIPS that order with a reason the operator sees — it never sends a
-// template with a blank variable.
-// ---------------------------------------------------------------------------
 
 export const MESSAGE_KINDS = [
   'delivery',
@@ -27,7 +9,6 @@ export const MESSAGE_KINDS = [
   'delivery_completed',
   'balance_reminder',
   'postpone',
-  // One-way production-delay heads-up (apology only; no new date, not an opener).
   'overdue_order',
   'postage',
   // East Malaysia (Sabah / Sarawak) sea-freight touchpoints (owner 2026-11-20):
@@ -115,7 +96,6 @@ export interface DriverInfoInput {
   driverContact: string;
   driverIc: string;
   carPlate: string;
-  /** Free text the template prints after "Time:" — "10am–1pm". */
   deliveryTime: string;
 }
 
@@ -129,13 +109,7 @@ export interface KindSoRow {
   delivery_address1?: unknown; delivery_address2?: unknown; delivery_address3?: unknown; delivery_address4?: unknown;
   address1?: unknown; address2?: unknown; address3?: unknown; address4?: unknown;
   postcode?: unknown; city?: unknown; customer_state?: unknown;
-  // Postpone reads these straight off the board: the staff-picked Amend Reason
-  // and the "Delivery Date" (amended_delivery_date) they set as the new date.
   amend_reason?: unknown; amended_delivery_date?: unknown; customer_delivery_date?: unknown;
-  // East Malaysia shipment facts the board holds on the latest live DO
-  // (delivery-planning-fields.ts), merged onto the row by the sender:
-  // consignment_no + eta_arriving_port drive the Shipped message. (Arrived is
-  // an operator-judgment send and reads nothing off the DO.)
   consignment_no?: unknown; eta_arriving_port?: unknown;
 }
 
@@ -158,9 +132,7 @@ export function joinDeliveryAddress(row: KindSoRow): string {
 }
 
 export interface KindAttributesResult {
-  /** Extra attributes for this kind (empty for the plain openers). */
   attributes: Record<string, string>;
-  /** When set, the whole phone group is skipped with this reason. */
   skip?: string;
 }
 
@@ -184,14 +156,10 @@ export function kindAttributes(
     case 'reminder_2':
     case 'reminder_3':
     case 'delivery_completed':
-    // The East Malaysia prep notice is a plain opener: the shared bundle
-    // (buildDeliveryFollowUp) already carries ref_1 / refs_all / callback_url and,
-    // when something is owed, amount + bank_block — all this template reads.
     case 'eastmy_prep':
       return { attributes: {} };
 
     case 'balance_reminder':
-      // The template's whole point is the figure; nothing owed = nothing to say.
       if (owedSen <= 0) return { attributes: {}, skip: 'no_balance' };
       return { attributes: {} };
 
@@ -231,21 +199,12 @@ export function kindAttributes(
     }
 
     case 'overdue_order': {
-      // One-way production-delay heads-up. Its template prints OUR reason as
-      // {{amend_date_reason}} — the board's staff-picked Amend Reason, the same
-      // column Postpone reads. It is NOT an opener, so the send does not reset
-      // the contact (connect.ts CONNECT_RESET_ATTRIBUTES), which means an absent
-      // value would leave a stale reason, or the literal "{amend_date_reason}",
-      // in the customer's message. Skip the group when the reason is blank
-      // rather than send either.
       const reason = clean(first.amend_reason);
       if (!reason) return { attributes: {}, skip: 'overdue_order_needs_reason' };
       return { attributes: { amend_date_reason: reason } };
     }
 
     case 'assr_arrangement':
-      // Not an SO message: an order sent with this kind is skipped, never
-      // handed a Service Case template.
       return { attributes: {}, skip: 'assr_only' };
 
     case 'postage': {
@@ -261,11 +220,6 @@ export function kindAttributes(
     }
 
     case 'eastmy_shipped': {
-      // The consignment (bill-of-lading) number and the ETA at the EM port are
-      // staff-entered on the board's EM columns — the latest live DO's
-      // consignment_no / eta_arriving_port (delivery-planning-fields.ts), merged
-      // onto `first` by the sender. Skip an order missing either rather than send
-      // a Shipped template with a blank consignment or ETA.
       const consignment = clean(first.consignment_no);
       const eta = clean(first.eta_arriving_port).slice(0, 10);
       if (!consignment || !eta) return { attributes: {}, skip: 'eastmy_shipment_fields_required' };

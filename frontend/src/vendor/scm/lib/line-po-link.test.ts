@@ -1,5 +1,3 @@
-/* line-po-link — the one reading of "which PO did this line come from", shared
-   by the desktop grids, the desktop editors and the phone (#26). */
 import { describe, expect, test } from 'vitest';
 import { linePoLink, poDetailHref } from './line-po-link';
 

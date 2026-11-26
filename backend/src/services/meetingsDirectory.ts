@@ -1,12 +1,3 @@
-// meetingsDirectory.ts — this ERP's staff list for the meeting-room hub.
-//
-// Booking a meeting means picking people from every company, including colleagues who
-// have never opened the Meetings page. So once an hour (cron) each company with a hub
-// key sends the hub its whole active staff list: id, name, email, company name and Org
-// Chart department. People left out are switched off there. A user granted no company
-// is sent with every company (the same fail-open the grants read uses for "no rows").
-//
-// No hub address or key: nothing is sent, nothing throws.
 import type { Env } from "../types";
 
 export const MEETINGS_DIRECTORY_JOB = "meetings-directory";

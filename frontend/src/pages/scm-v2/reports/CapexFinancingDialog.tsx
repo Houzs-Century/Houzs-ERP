@@ -68,12 +68,11 @@ const messageOf = (e: unknown): string => {
       const b = JSON.parse(o.body) as { message?: unknown; error?: unknown };
       if (typeof b.message === 'string' && b.message) return b.message;
       if (typeof b.error === 'string' && b.error) return b.error;
-    } catch { /* not JSON */ }
+    } catch { }
   }
   return typeof o.message === 'string' && o.message ? o.message : 'The table was not saved.';
 };
 
-/** An amount in RM, typed free (a minus for money out), read on blur or Enter; Esc reverts; a blank clears it. */
 function AmountCell({ valueSen, label, onCommit, readOnly }: { valueSen: number | null; label: string; onCommit: (sen: number | null) => void; readOnly: boolean }) {
   const [draft, setDraft] = useState(fmtMoneyAtRest(valueSen));
   const [focused, setFocused] = useState(false);

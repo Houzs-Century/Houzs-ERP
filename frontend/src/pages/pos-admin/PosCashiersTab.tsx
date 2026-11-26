@@ -1,8 +1,3 @@
-/* POS Admin > Cashiers (layout E2): the part-timers who log in at the booth
- * with a name tile + PIN. Separate from ERP users: a cashier can never log
- * in to the ERP. ID, name, phone, role (Part-timer / Supervisor), PIN (set /
- * reset, never shown), max manual discount, events assigned (= the login
- * tiles), working hours / rate and bank notes (info only), active. */
 import { useState } from "react";
 import { KeyRound, Plus } from "lucide-react";
 import { api } from "../../api/client";

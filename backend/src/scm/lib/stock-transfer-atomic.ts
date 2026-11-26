@@ -1,27 +1,10 @@
-// ----------------------------------------------------------------------------
-// Stock-transfer atomicity (audit finding R3).
-//
-// The OUT@source + IN@dest for a transfer used to be written as separate,
-// independently-committed PostgREST inserts (supabase-js cannot open a
-// multi-statement transaction), so a crash or a failed IN after the OUT
-// committed DESTROYED stock. The atomic write now lives in the DB function
-// scm.fn_stock_transfer_apply (migration 0192): every line's OUT + IN runs in
-// ONE transaction and rolls back as a unit on any failure.
-//
-// This module carries only the PURE payload builder the route feeds to that
-// RPC — batch resolution stays in the route (it needs the source lots), the
-// transaction lives in Postgres. Kept pure so it is unit-testable without a DB.
-// ----------------------------------------------------------------------------
 
 /** One line as accepted by scm.fn_stock_transfer_apply's p_lines JSONB. */
 export type TransferLinePayload = {
   item_code: string;
   product_name: string | null;
-  /** '' = unclassified/legacy bucket (never null on the wire). */
   variant_key: string;
-  /** Positive count. Lines with qty <= 0 are dropped by the builder. */
   qty: number;
-  /** Source dye-lot to carry across the hop, or null for plain FIFO. */
   batch_no: string | null;
 };
 

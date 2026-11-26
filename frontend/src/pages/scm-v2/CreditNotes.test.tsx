@@ -27,14 +27,12 @@ const NOTES: CreditNote[] = [
     note_date: '2026-09-03', total_sen: 50000, reason: null, notes: null, status: 'POSTED', je_no: '2990-JE-2609-0007',
     created_at: '2026-09-03T00:00:00Z', created_by: 'Chew', posted_at: '2026-09-03T00:00:00Z', cancelled_at: null,
   },
-  /* AutoCount's CN-2609-025: RM 2,000 off Eastern Decorator's exhibition-rental bill (2026-10-28). */
   {
     id: 'n4', note_number: 'HC-OCN-2609-001', kind: 'OCN', party_type: 'ODEBTOR', party_code: null, party_name: 'EASTERN DECORATOR SDN. BHD.', debtor_code: '305-E003',
     supplier_id: null, debtor_id: 'deb-e', so_doc_no: null, sales_invoice_id: null, ap_invoice_id: null, purchase_invoice_id: null, source_doc_no: 'CN-2609-025',
     note_date: '2026-09-02', total_sen: 200_000, reason: 'Discount for exhibition rental — HOMES LIVING 9-12 JUL KLCC', notes: null, status: 'POSTED', je_no: 'HC-JE-2609-0101',
     created_at: '2026-10-29T00:00:00Z', created_by: 'Chew', posted_at: '2026-10-29T00:00:00Z', cancelled_at: null,
   },
-  /* An opening credit (2026-10-29): AutoCount's payment to HOOKKA never knocked off at 31/08. */
   {
     id: 'n5', note_number: 'HC-SCN-2601-010', kind: 'SCN', party_type: 'SUPPLIER', party_code: '400-H003', party_name: 'HOOKKA MANUFACTURING SDN. BHD.',
     supplier_id: 'sup-h', so_doc_no: null, sales_invoice_id: null, ap_invoice_id: null, purchase_invoice_id: null, source_doc_no: null,
@@ -64,19 +62,15 @@ const SCAN = {
   notes: ['SST RM 59.09 is spread over the lines — the purchase was booked with its SST.'],
 };
 const scanMutate = vi.fn(async (_pages: unknown) => SCAN);
-/* Knock off (2026-10-02): the posted supplier note n2 (RM 500.00) has knocked off
-   RM 200.00 — all of PI-004 — and PI-007 still owes RM 400.00. */
 const ALLOCS = [{ id: 'al-1', kind: 'PI', docId: 'pi-1', number: '2990-PI-2609-004', amountSen: 20_000, appliedSen: 20_000, createdAt: '2026-09-03T00:00:00Z', createdBy: 'Chew' }];
 const KO_ROWS = [
   { kind: 'PI', id: 'pi-1', number: '2990-PI-2609-004', invoiceRef: 'INV-70', invoiceDate: '2026-09-02', totalSen: 20_000, owedSen: 20_000, noteSen: 20_000, status: 'PAID' },
   { kind: 'PI', id: 'pi-2', number: '2990-PI-2609-007', invoiceRef: 'INV-77', invoiceDate: '2026-09-05', totalSen: 40_000, owedSen: 40_000, noteSen: 0, status: 'POSTED' },
 ];
-/* Diglant's invoices still owing — the scanned note's table. */
 const SUP_ROWS = [
   { kind: 'PI', id: 'pi-17', number: 'HC-PI-2610-017', invoiceRef: 'DGSIZ26001811', invoiceDate: '2026-09-07', totalSen: 260_000, owedSen: 260_000, noteSen: 0, status: 'POSTED' },
   { kind: 'PI', id: 'pi-18', number: 'HC-PI-2610-018', invoiceRef: 'DGSIZ26001811', invoiceDate: '2026-09-07', totalSen: 130_000, owedSen: 130_000, noteSen: 0, status: 'POSTED' },
 ];
-/* Eastern Decorator's bill still owing — an other-debtor note's table. */
 const ODB_ROWS = [
   { kind: 'ODB', id: 'odb-5', number: 'HC-ODB-2608-005', invoiceRef: null, invoiceDate: '2026-08-05', totalSen: 6_920_000, owedSen: 6_920_000, noteSen: 0, status: 'POSTED' },
 ];
@@ -127,7 +121,6 @@ vi.mock('../../vendor/scm/lib/credit-note-queries', async (importOriginal) => ({
   useUploadCreditNoteFile: () => ({ mutateAsync: uploadMutate, isPending: false }),
   useDeleteCreditNoteFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
-/* The Files card asks the shell's notifier (Scm2990Shell provides it in the app). */
 vi.mock('../../vendor/scm/components/NotifyDialog', async (importOriginal) => ({
   ...(await importOriginal() as object),
   useNotify: () => vi.fn(),
@@ -138,13 +131,11 @@ vi.mock('../../vendor/scm/lib/payment-voucher-queries', async (importOriginal) =
 }));
 vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
   ...(await importOriginal() as object),
-  /* The note form names a customer note's default account from the roles (f1, batch 5 step 7). */
   useAccountRoles: () => ({ data: { roles: { SALES_RETURNS: '510-0000', PURCHASE_RETURNS: '612-0000' }, overridden: {} } }),
   useAccounts: () => ({ data: { accounts: [
     { account_code: '510-0000', account_name: 'RETURN INWARDS', account_type: 'INCOME', parent_code: null, is_active: true },
     { account_code: '520-0000', account_name: 'DISCOUNT ALLOWED', account_type: 'INCOME', parent_code: null, is_active: true },
   ] }, isLoading: false }),
-  /* The Other Debtors registry — a deactivated debtor is not offered. */
   useOtherDebtors: () => ({ data: { debtors: [
     { id: 'deb-e', name: 'EASTERN DECORATOR SDN. BHD.', code: '305-E003', phone: null, notes: null, is_active: true, outstanding_sen: 6_920_000 },
     { id: 'deb-x', name: 'CLOSED TENANT SDN BHD', phone: null, notes: null, is_active: false, outstanding_sen: 0 },
@@ -162,7 +153,6 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   useEventOptions: () => ({ data: [{ id: 2259, name: 'JOHOR [AKEMI] INHOME @ SUTERA MALL', startDate: '2026-10-09', endDate: '2026-10-11' }], isLoading: false }),
 }));
 
-/* The debit-note tabs show the bills pages narrowed to debit notes — their own tests cover them. */
 vi.mock('./ApInvoices', () => ({ ApInvoices: ({ docKind }: { docKind?: string }) => <div>AP invoices page · {docKind}</div> }));
 vi.mock('./ArInvoices', () => ({ ArInvoices: ({ docKind }: { docKind?: string }) => <div>AR invoices page · {docKind}</div> }));
 
@@ -192,7 +182,6 @@ describe('the Credit & Debit Notes page', () => {
     unmount();
     render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
     expect(screen.getByRole('heading', { name: 'Supplier & other creditor CN / DN' })).toBeTruthy();
-    /* One kind on the page — no kind tabs; the real notes first, the opening credits on their own tab; the scan is here. */
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Credit notes', 'Debit notes', 'Opening 31/08']);
     expect(lastList.value).toBe('AP|ALL|ALL|exclude');
     expect(screen.getByLabelText('Supplier credit note pages')).toBeTruthy();
@@ -226,7 +215,6 @@ describe('the Credit & Debit Notes page', () => {
     render(<MemoryRouter><ConfirmProvider><CreditNotes /></ConfirmProvider></MemoryRouter>);
     fireEvent.click(screen.getByText('New note'));
     const dialog = await screen.findByLabelText('Note form');
-    /* A blank account lands on the customer-note default, named (f1, batch 5 step 7). */
     expect(within(dialog).getByPlaceholderText('— Default · 510-0000 RETURN INWARDS —')).toBeTruthy();
     fireEvent.change(within(dialog).getByLabelText('Sales order'), { target: { value: '2990-SO-2607-019' } });
     fireEvent.change(within(dialog).getByLabelText('Reason'), { target: { value: 'Scratched leg' } });
@@ -237,21 +225,17 @@ describe('the Credit & Debit Notes page', () => {
     expect(createMutate.mock.calls[0]?.[0]).toEqual({
       kind: 'CN', noteDate: expect.any(String), reason: 'Scratched leg', sourceDocNo: null, soDocNo: '2990-SO-2607-019',
       lines: [{ description: 'Goodwill', accountCode: null, amountSen: 15000 }],
-      /* A customer's credit note always says its ticks too (2026-11-03) — none ticked is a plan. */
       allocations: [],
-      /* One key per opened form: a second press answers the first note (fix/failed-save-looks-ok). */
       idempotencyKey: expect.any(String),
     });
   });
 
   test('an amount typed with thousands separators is read, never sent as null (G1 #5531 class)', async () => {
-    /* Number("3,500.00") is NaN and JSON sends NaN as null. */
     const body = bodyOf({ kind: 'SCN', noteDate: '2026-11-10', soDocNo: '', partyName: '', supplierId: 'sup-h', sourceDocNo: '', reason: '', lines: [
       { rid: 1, description: '', accountCode: '', amountRm: '3,500.00', projectId: null },
       { rid: 2, description: '', accountCode: '', amountRm: '  ', projectId: null },
     ] });
     expect(body.lines).toEqual([{ description: null, accountCode: null, amountSen: 350000 }]);
-    /* Unreadable: refused with a sentence, never dropped as if blank. */
     const bad = { kind: 'SCN' as const, noteDate: '2026-11-10', soDocNo: '', partyName: '', supplierId: 'sup-h', sourceDocNo: '', reason: '', lines: [{ rid: 1, description: '', accountCode: '', amountRm: '3.500,00', projectId: null }] };
     expect(() => bodyOf(bad)).toThrow(/Line 1/);
 
@@ -272,11 +256,9 @@ describe('the Credit & Debit Notes page', () => {
 
   test('the body of a supplier note carries the supplier, and a typed customer name stands in for an order', () => {
     const scn = bodyOf({ kind: 'SCN', noteDate: '2026-09-03', soDocNo: '', partyName: '', supplierId: 'sup-h', sourceDocNo: 'PRT-2609-003', reason: '', lines: [{ rid: 1, description: '', accountCode: '', amountRm: '500', projectId: null }] });
-    /* A supplier note always says its ticks — none ticked is a plan too. */
     expect(scn).toEqual({ kind: 'SCN', noteDate: '2026-09-03', reason: null, sourceDocNo: 'PRT-2609-003', supplierId: 'sup-h', allocations: [], lines: [{ description: null, accountCode: null, amountSen: 50000 }] });
     const typed = bodyOf({ kind: 'DN', noteDate: '2026-09-03', soDocNo: '', partyName: 'Walk-in Ah Meng', supplierId: '', sourceDocNo: '', reason: 'Late fee', lines: [{ rid: 1, description: 'Late fee', accountCode: '520-0000', amountRm: '20.50', projectId: null }] });
     expect(typed).toMatchObject({ kind: 'DN', partyName: 'Walk-in Ah Meng', lines: [{ description: 'Late fee', accountCode: '520-0000', amountSen: 2050 }] });
-    /* An other debtor's note carries the debtor and its ticks, like a supplier's. */
     const ocn = bodyOf({ kind: 'OCN', noteDate: '2026-09-02', soDocNo: '', partyName: '', supplierId: '', debtorId: 'deb-e', sourceDocNo: 'CN-2609-025', reason: '', lines: [{ rid: 1, description: '', accountCode: '520-0000', amountRm: '2000', projectId: null }] });
     expect(ocn).toEqual({ kind: 'OCN', noteDate: '2026-09-02', reason: null, sourceDocNo: 'CN-2609-025', debtorId: 'deb-e', allocations: [], lines: [{ description: null, accountCode: '520-0000', amountSen: 200000 }] });
   });
@@ -303,7 +285,6 @@ describe('the Credit & Debit Notes page', () => {
     expect((pdfSingle.mock.calls[0]?.[2] as (code: string) => string | null)('510-0000')).toBe('RETURN INWARDS');
     expect(pdfSingle.mock.calls[0]?.[3]).toEqual({ action: 'print', knockedOff: null });
 
-    /* Ticked in the other order; printed in LIST order. */
     fireEvent.click(screen.getByLabelText('Tick 2990-SCN-2609-001'));
     fireEvent.click(screen.getByLabelText('Tick 2990-CN-2609-001'));
     expect(screen.getByText('2 ticked')).toBeTruthy();
@@ -327,7 +308,6 @@ describe('Scan supplier CN', () => {
     const d = await screen.findByLabelText('What the credit note reads');
     expect(within(d).getByText('SST RM 59.09 is spread over the lines — the purchase was booked with its SST.')).toBeTruthy();
     expect(within(d).getByLabelText('The invoice the paper names').textContent).toContain('HC-PI-2610-017 is ticked under Knock off below');
-    /* The knock-off table: the named invoice ticked for the whole credit (RM 650.00 — it owes RM 2,600.00). */
     const ko = screen.getByLabelText("Knock off the supplier's invoices");
     expect((within(ko).getByLabelText('Knock off HC-PI-2610-017') as HTMLInputElement).checked).toBe(true);
     expect((within(ko).getByLabelText('Amount off HC-PI-2610-017') as HTMLInputElement).value).toBe('650.00');
@@ -344,9 +324,6 @@ describe('Scan supplier CN', () => {
     await waitFor(() => expect(uploadMutate).toHaveBeenCalledWith({ noteId: 'n3', file: { name: 'DGPSC26000263.pdf', mime: 'application/pdf', dataBase64: 'b64:DGPSC26000263.pdf' } }));
   });
 
-  /* Symptom: Save & post whose post failed, then Save again, re-sent the create under the same key: the server
-     replayed the first note and the scanned pages were attached a second time; with any field changed it was refused
-     as a reused key. Fix: the form remembers the created note and the next Save updates and posts that one. */
   test('Save & post whose post fails leaves a draft; Save & post again updates and posts that draft, no second create or upload', async () => {
     createMutate.mockClear(); uploadMutate.mockClear(); updateMutate.mockClear(); postMutate.mockClear();
     postMutate.mockImplementationOnce(async () => { throw new Error('ledger busy'); });
@@ -378,7 +355,6 @@ describe('Scan supplier CN', () => {
     expect(screen.getByLabelText('Knock-off total').textContent).toContain('credit left RM 650.00 of RM 650.00');
     fireEvent.click(screen.getByText('Save as draft'));
     await waitFor(() => expect(createMutate).toHaveBeenCalledTimes(1));
-    /* The paper's invoice stays as the note's reference; nothing is knocked off. */
     expect(createMutate.mock.calls[0]![0]).toMatchObject({ purchaseInvoiceId: 'pi-17', allocations: [] });
   });
 
@@ -411,7 +387,6 @@ describe('a posted supplier note\'s knock-off', () => {
 
     fireEvent.click(within(ko).getByLabelText('Knock off 2990-PI-2609-004'));
     fireEvent.click(within(ko).getByLabelText('Knock off 2990-PI-2609-007'));
-    /* PI-007 owes RM 400.00 and the whole RM 500.00 is free — it takes RM 400.00. */
     expect((within(ko).getByLabelText('Amount off 2990-PI-2609-007') as HTMLInputElement).value).toBe('400.00');
     fireEvent.click(screen.getByText('Save knock-off'));
     expect(setMutate).toHaveBeenCalledWith({ noteId: 'n2', targets: [{ kind: 'PI', id: 'pi-2', amountSen: 40_000 }] }, expect.anything());
@@ -424,7 +399,6 @@ describe('a posted supplier note\'s knock-off', () => {
     const ko = await screen.findByLabelText("Knock off the supplier's invoices");
     const amount = within(ko).getByLabelText('Amount off 2990-PI-2609-007');
     fireEvent.focus(amount); fireEvent.change(amount, { target: { value: '450' } }); fireEvent.blur(amount);
-    /* PI-004 keeps RM 200.00 of the RM 500.00 — RM 300.00 is all PI-007 can take. */
     await waitFor(() => expect((within(ko).getByLabelText('Amount off 2990-PI-2609-007') as HTMLInputElement).value).toBe('300.00'));
     expect(screen.getByLabelText('Knock-off total').textContent).toContain('credit left RM 0.00 of RM 500.00');
     fireEvent.click(screen.getByText('Save knock-off'));
@@ -446,19 +420,16 @@ describe("an other debtor's credit note", () => {
     const dialog = await screen.findByLabelText('Note form');
     fireEvent.change(within(dialog).getByLabelText('Kind'), { target: { value: 'OCN' } });
     expect(within(dialog).getByText("Pick the other debtor to see their bills.")).toBeTruthy();
-    /* Only the registry's active debtors are offered. */
     fireEvent.focus(within(dialog).getByRole('combobox', { name: 'Other debtor' }));
     expect(screen.queryByRole('option', { name: 'CLOSED TENANT SDN BHD' })).toBeNull();
     fireEvent.mouseDown(screen.getByRole('option', { name: 'EASTERN DECORATOR SDN. BHD. · 305-E003' }));
     fireEvent.change(within(dialog).getByLabelText('Reference'), { target: { value: 'CN-2609-025' } });
     fireEvent.change(within(dialog).getByLabelText('Line 1 description'), { target: { value: 'Discount for exhibition rental' } });
     fireEvent.change(within(dialog).getByLabelText('Line 1 amount'), { target: { value: '2000' } });
-    /* No account on the line yet — no default for this kind, so Save waits. */
     expect(within(dialog).getByText("Pick an account on every line — an other debtor's credit note has no default account.")).toBeTruthy();
     expect(within(dialog).getByText('Save as draft').closest('button')?.disabled).toBe(true);
     fireEvent.focus(within(dialog).getByPlaceholderText('— pick the account —'));
     fireEvent.mouseDown(screen.getByRole('option', { name: '520-0000 · DISCOUNT ALLOWED' }));
-    /* The debtor's bill, ticked for the whole credit; a bill has no supplier reference. */
     const ko = within(dialog).getByLabelText("Knock off the debtor's bills");
     expect(within(ko).queryByText('Supplier Ref')).toBeNull();
     fireEvent.click(within(ko).getByLabelText('Knock off HC-ODB-2608-005'));
@@ -480,7 +451,6 @@ describe("an other debtor's credit note", () => {
     fireEvent.click(screen.getByText('HC-OCN-2609-001'));
     const dialog = await screen.findByLabelText('Credit or debit note');
     expect(within(dialog).getByText('Other debtor credit note HC-OCN-2609-001')).toBeTruthy();
-    /* The debtor's account code, read off the registry (the note's own party_code stays blank). */
     expect(within(dialog).getByText('· 305-E003')).toBeTruthy();
     const ko = within(dialog).getByLabelText("Knock off the debtor's bills");
     expect((within(ko).getByLabelText('Knock off HC-ODB-2608-005') as HTMLInputElement).checked).toBe(true);
@@ -499,7 +469,6 @@ describe('the debit-note tabs', () => {
     const { unmount } = render(<MemoryRouter><ConfirmProvider><CreditNotes side="AP" /></ConfirmProvider></MemoryRouter>);
     fireEvent.click(screen.getByRole('tab', { name: 'Debit notes' }));
     expect(await screen.findByText('AP invoices page · DN')).toBeTruthy();
-    /* The page's own New note and scan step aside — the bills page raises the debit note. */
     expect(screen.queryByText('New note')).toBeNull();
     expect(screen.queryByLabelText('Supplier credit note pages')).toBeNull();
     expect(screen.queryByLabelText('Note status')).toBeNull();
@@ -511,7 +480,6 @@ describe('the debit-note tabs', () => {
   });
 });
 
-/* A note as its own page (the redesign, batch 4 step 6): the pop-out's parts on a page. */
 const { NotePage } = await import('./NotePage');
 describe('a note as its own page', () => {
   test('the supplier note page shows the note, says its credit is still to use, keeps its buttons and reads its trail', () => {

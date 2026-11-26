@@ -74,7 +74,6 @@ import { describeVouchers, payToFields, payToUpdates, PAY_TO_AUDIT_FIELDS } from
 import { paymentListingHandler } from './payment-vouchers-listing';
 import { remindApproverHandler } from './payment-vouchers-remind';
 import { updatePaymentVoucherTextHandler } from './payment-vouchers-text';
-/* Still importable from here (tests/pvSupplierAdvance.test.ts and older callers). */
 export { listPaymentVouchersHandler };
 import { parseEventId, pvLineEventRefusal } from '../lib/event-tags';
 import { paymentRequestsLinkGuard, linkPaymentRequests } from '../lib/payment-request';
@@ -87,8 +86,6 @@ import { fmtSen } from '../shared/format';
 export const paymentVouchers = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentVouchers.use('*', supabaseAuth);
 
-/* The auditable header fields, camel (API) -> snake (column). Money rides as
-   total_sen: the INTEGER SEN, never a formatted amount. */
 const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ['payeeName', 'payee_name'],
   ['creditAccountCode', 'credit_account_code'],
@@ -105,25 +102,15 @@ const PV_AUDIT_FIELDS: Array<[string, string]> = [
   ...PAY_TO_AUDIT_FIELDS,
 ];
 
-/* The header's columns live with the list (payment-vouchers-list.ts). */
 
 const LINE = 'id, pv_id, line_no, description, debit_account_code, amount_sen, created_at, project_id';
 
-/* Migration 0202 — the PV purpose. Only SUPPLIER_PAYMENT settles AP (its
-   allocations decrement the linked PIs' paid_sen); FREIGHT / OTHER post the GL
-   but touch no PI. Default SUPPLIER_PAYMENT. */
-/* CUSTOMER_REFUND (mig 20260907T1700) is the third document on the same paper — lib/pv-refund.ts. */
 const normalizePurpose = (raw: unknown): 'SUPPLIER_PAYMENT' | 'FREIGHT' | 'OTHER' | 'CUSTOMER_REFUND' => {
   const v = String(raw ?? '').trim().toUpperCase();
   return v === 'FREIGHT' || v === 'OTHER' || v === 'CUSTOMER_REFUND' ? v : 'SUPPLIER_PAYMENT';
 };
 const isRefund = (purpose: unknown): boolean => normalizePurpose(purpose) === 'CUSTOMER_REFUND';
 
-/* FX (migration 0082) — exchange_rate = MYR per 1 unit of the PV currency, and
-   the currency auto-fills its rate from the currency MASTER. normalizeCurrency /
-   normalizeExchangeRate now come from the shared lib/fx (identical behaviour:
-   MYR ⇒ rate 1, a foreign rate must be finite > 0 else 1 — the GL post can never
-   be zeroed). */
 
 /* A NEW voucher is born on the Draft series — {co}Draft-YYMM-NNN — and only
    earns a formal number at CHECKED (GL redesign item 8b, the owner's
@@ -139,12 +126,6 @@ const nextPvDraftNo = async (sb: any, c: any, voucherDate: string): Promise<stri
 
 const isDraftNumber = (no: string | null | undefined): boolean => /-Draft-/.test(String(no ?? ''));
 
-/**
- * The FORMAL number, minted at CHECKED from the credit account's bank letter
- * (scm.acc_bank_letters — the owner's own table) and the company's suffix
- * width. Refuses, with the setup screen named, when the bank has no letter
- * yet: a voucher must never mint into a series nobody configured.
- */
 const mintFormalPvNo = async (
   sb: any,
   c: any,
@@ -183,32 +164,14 @@ const mintFormalPvNo = async (
   return { ok: true, pvNo };
 };
 
-/* ── Money in, from the wire ─────────────────────────────────────────────────
-   Returns the integer sen, or null when the caller sent something that is not a
-   payable amount.
-
-   The previous shape was `Math.max(0, Math.round(Number(x ?? 0)) || 0)`, which
-   is a CLAMP, not a validation: `-500000` and `"abc"` both became a silent `0`.
-   The voucher then saved with a header total short by exactly the rejected
-   line, returned 200, and told the operator it was fine — the same
-   swallow-the-bad-input class HOOKKA hit on its payments route
-   (BUG-2026-05-20-002, negative amount accepted). A supplier payment that is
-   quietly RM 0 is worse than one that is refused, because nobody goes looking
-   for it.
-
-   Sen is an INTEGER by contract, so a fractional input is a unit mistake (RM
-   posted into a sen field) and is refused rather than rounded into a number
-   nobody meant. Rejecting at the boundary matches the house rule the credit /
-   debit-note routes already follow. */
 export function parseAmountSen(raw: unknown): number | null {
   const n = Number(raw ?? 0);
-  if (!Number.isFinite(n)) return null; // NaN / Infinity — never a payment
-  if (!Number.isInteger(n)) return null; // sen is integer; a decimal means RM
-  if (n < 0) return null;                // a refund is a different document
+  if (!Number.isFinite(n)) return null;
+  if (!Number.isInteger(n)) return null;
+  if (n < 0) return null;
   return n;
 }
 
-/* ── Normalise + validate the incoming lines, recompute the header total ──── */
 export function buildLines(
   raw: unknown,
 ): { rows: Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id: number | null }>; total: number } | { error: string } {
@@ -235,7 +198,6 @@ export function buildLines(
   return { rows, total };
 }
 
-/* ── Normalise + validate the incoming PV→PI allocations (migration 0202) ──── */
 export type AllocationRow = { pi_id: string | null; ap_invoice_id: string | null; amount_sen: number };
 export function buildAllocations(
   raw: unknown,
@@ -251,14 +213,11 @@ export function buildAllocations(
        the AP Payment). Naming both, or neither, is refused. */
     const piId = (row.piId as string | undefined)?.trim() || null;
     const apInvoiceId = (row.apInvoiceId as string | undefined)?.trim() || null;
-    /* Same reason as buildLines: a negative allocation used to clamp to 0 and
-       then get skipped by the `<= 0` continue below, so "apply -RM 500 to this
-       PI" silently applied nothing while the voucher still posted. */
     const amount = parseAmountSen(row.amountSen);
     if (!piId && !apInvoiceId) return { error: 'allocation_pi_required' };
     if (piId && apInvoiceId) return { error: 'allocation_two_targets' };
     if (amount === null) return { error: 'allocation_amount_invalid' };
-    if (amount === 0) continue; // an explicit zero settles nothing — drop the row
+    if (amount === 0) continue;
     rows.push({ pi_id: piId, ap_invoice_id: apInvoiceId, amount_sen: amount });
     total += amount;
   }
@@ -268,32 +227,7 @@ export function buildAllocations(
 const piIdsOf = (rows: AllocationRow[]): string[] => rows.flatMap((r) => (r.pi_id ? [r.pi_id] : []));
 const apInvoiceIdsOf = (rows: AllocationRow[]): string[] => rows.flatMap((r) => (r.ap_invoice_id ? [r.ap_invoice_id] : []));
 
-/* settlePiPaidSen moved to lib/pi-settlement, where the clamp that stops two
-   vouchers over-paying one invoice lives next to the SQL function that enforces
-   it. It used to live here as an optimistic loop whose cap (total − paid) was
-   read in the CALLER, one round trip before the write — see the header of
-   src/db/migrations-pg/0147_scm_settle_pi_paid_centi.sql for how that
-   over-pays. */
 
-/* ── The allocation's pi_id is CALLER-SUPPLIED, so it is checked here ────────
-   An allocation row is stamped with the ACTIVE company (stampCompany, below),
-   but `piId` arrives in the request body and nothing verified that the invoice
-   it names is this company's. Post the voucher and settlePiPaidSen moves that
-   invoice's paid_sen and status by id alone — the service-role client bypasses
-   RLS (mig 0061 enabled it with NO policies) — so a company-A voucher marked a
-   company-B supplier invoice PARTIALLY_PAID / PAID, and the FX-adoption branch
-   further down POST /:id/post could then rewrite that invoice's exchange_rate
-   and re-cost the GRN behind it. Company B sees an invoice settle with no
-   voucher of its own to explain it.
-
-   Checked where the id ENTERS, not at post time: nothing has been written yet,
-   so the operator gets a straight refusal instead of a voucher that silently
-   settles nothing. scm.purchase_invoices.company_id is NOT NULL (mig 0083), so
-   this filter is exact — an invoice of this company can never fail it.
-
-   FAILS CLOSED on a read error: absence is what REFUSES here, so folding a blip
-   into "all present" would authorise exactly the write this guard exists to
-   stop. Returns the offending ids. */
 async function allocationPisOutsideCompany(
   sb: any,
   c: any,
@@ -315,9 +249,6 @@ const ALLOCATION_NOT_THIS_COMPANY = (ids: string[]) => ({
   purchaseInvoiceIds: ids.slice(0, 20),
 });
 
-/* The AP-invoice twin of the guard above — same reason, same fail-closed
-   shape: an AP invoice id arrives in the body and settles by id alone. It
-   also refuses a bill that is not live (DRAFT / CANCELLED cannot be paid). */
 async function allocationApInvoicesOutsideCompany(
   sb: any,
   c: any,
@@ -383,21 +314,13 @@ const ALLOCATION_ON_HOLD = (ids: string[]) => ({
 });
 
 
-/* ────────────────────────────────────────────────────────────────────────
-   List / get
-   ──────────────────────────────────────────────────────────────────────── */
 
-/* GET / — the list, its search (?q=) and its stage counts (?counts=1):
-   payment-vouchers-list.ts (the redesign, batch 4). */
 paymentVouchers.get('/', listPaymentVouchersHandler);
 
-/* PV attachments (0352) — the bill lives with its voucher. Registered BEFORE
-   GET /:id so /:id/files never falls into the detail matcher. */
-/* print-bundle sits with the other literal paths, BEFORE '/:id'. */
 paymentVouchers.post('/print-bundle', printPvBundleHandler);
-paymentVouchers.get('/listing', paymentListingHandler); // the Payment listing (payment-vouchers-listing.ts)
-paymentVouchers.get('/refund-source', refundSourceHandler); // the document a Customer Refund refunds (lib/pv-refund.ts)
-paymentVouchers.post('/remind', remindApproverHandler); // Remind approver: a note in the approver's bell, posts nothing (payment-vouchers-remind.ts)
+paymentVouchers.get('/listing', paymentListingHandler);
+paymentVouchers.get('/refund-source', refundSourceHandler);
+paymentVouchers.post('/remind', remindApproverHandler);
 paymentVouchers.post('/:id/files', uploadPvFileHandler);
 paymentVouchers.get('/:id/files', listPvFilesHandler);
 paymentVouchers.get('/:id/files/:fileId', streamPvFileHandler);
@@ -408,16 +331,12 @@ paymentVouchers.get('/:id', async (c) => {
   const [h, i, a] = await Promise.all([
     scopeToCompany(sb.from('payment_vouchers').select(`${HEADER}, ${SUPPLIER_EMBED}`).eq('id', id), c).maybeSingle(),
     scopeToCompany(sb.from('payment_voucher_lines').select(LINE).eq('pv_id', id), c).order('line_no'),
-    /* PV→PI settlement (0202) — the PIs this PV applies to, joined for the PI
-       number + the live total/paid so the detail page can show "Apply to PI". */
     scopeToCompany(sb.from('pv_allocations')
       .select('id, amount_sen, applied_sen, settled_at, pi:purchase_invoices(id, invoice_number, supplier_invoice_ref, currency, total_sen, paid_sen, status), api:ap_invoices(id, invoice_number, supplier_invoice_ref, currency, total_sen, paid_sen, status)')
       .eq('pv_id', id), c),
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
   if (!h.data) return c.json({ error: 'not_found' }, 404);
-  /* Flatten the joined invoice (Supabase returns a to-one FK as an array) —
-     a row settles a purchase invoice OR an AP invoice; `kind` says which. */
   type Inv = { id: string; invoice_number: string; supplier_invoice_ref: string | null; currency: string | null; total_sen: number; paid_sen: number; status: string };
   const allocations = ((a.data ?? []) as Array<{
     id: string; amount_sen: number; applied_sen?: number | null; settled_at?: string | null;
@@ -430,7 +349,6 @@ paymentVouchers.get('/:id', async (c) => {
     return {
       id: row.id,
       amountSen: Number(row.amount_sen ?? 0),
-      /* What the invoice actually took when the voucher posted (the clamp may refuse part); null until settled. */
       appliedSen: row.settled_at ? Number(row.applied_sen ?? 0) : null,
       kind: pi ? 'PI' : api ? 'API' : null,
       piId: pi?.id ?? null,
@@ -443,14 +361,10 @@ paymentVouchers.get('/:id', async (c) => {
       status: inv?.status ?? null,
     };
   });
-  /* The journal its approval posted — the page's books line and Journal fact (the redesign). */
   const jn = await journalNumbers(sb, c, [String((h.data as { pv_number: string }).pv_number)]);
   if (!jn.ok) return c.json({ error: 'load_failed', reason: jn.reason }, 500);
   const described = await describeVouchers(sb, c, [h.data as Record<string, unknown> & { id: string }]);
   if (!described.ok) return c.json({ error: 'load_failed', reason: described.reason }, 500);
-  /* A post or cancel that did not finish: the page offers the button that finishes it. A posted supplier payment
-     with an allocation never settled, or a cancelled voucher still carrying an applied allocation or a journal that
-     was not reversed. */
   const head = h.data as { status?: string; purpose?: string | null; pv_number?: string };
   const rawAllocs = (a.data ?? []) as Array<{ applied_sen?: number | null; settled_at?: string | null }>;
   let unfinished: 'post' | 'cancel' | null = null;
@@ -467,16 +381,7 @@ paymentVouchers.get('/:id', async (c) => {
   return c.json({ paymentVoucher: { ...h.data, ...described.byId.get(id), je_no: jn.byPv.get(String((h.data as { pv_number: string }).pv_number)) ?? null }, lines: i.data ?? [], allocations, unfinished });
 });
 
-/* ────────────────────────────────────────────────────────────────────────
-   Create (DRAFT)
-   ──────────────────────────────────────────────────────────────────────── */
 
-/* Exported for the same reason postPaymentVoucherHandler and
-   cancelPaymentVoucherHandler are: the supabaseAuth bridge cannot run in the
-   vitest harness, so the scope test mounts the handler on a bare Hono app. */
-/* Paid From must be a money account (bank / cash — the acc_money set Daily
-   Bank reads). Returns a Response to send on refusal, null when fine. Fails
-   CLOSED on a read error: an unverifiable account does not get to move money. */
 const requireMoneyAccount = async (c: any, code: string): Promise<Response | null> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -519,9 +424,6 @@ export async function learnVendorMemory(
     payeeName: string | null | undefined;
     purpose: string | null;
     lines: Array<{ line_no: number; debit_account_code: string }>;
-    /* 'AP_INVOICE' (routes/ap-invoices.ts create): the BILL's lines carry the
-       expense account, so the supplier-payment skip below does not apply —
-       the voucher that later pays it is the one with nothing to teach. */
     source?: 'PV' | 'AP_INVOICE';
   },
 ): Promise<void> {
@@ -535,9 +437,6 @@ export async function learnVendorMemory(
   const first = [...input.lines].sort((a, b) => a.line_no - b.line_no)[0];
   if (!first?.debit_account_code) return;
 
-  /* try/catch around BOTH legs, not just bound errors: a client that THROWS
-     (a rejected fetch, a harness without upsert) must be as skippable as one
-     that answers { error } — the voucher this rides on has already saved. */
   try {
     const { data: existing, error: readErr } = await sb
       .from('acc_vendor_memory')
@@ -545,7 +444,7 @@ export async function learnVendorMemory(
       .eq('company_id', coId)
       .eq('vendor_key', key)
       .maybeSingle();
-    if (readErr) return; // best-effort: an unreadable habit is skipped, not raised
+    if (readErr) return;
 
     const { error: writeErr } = await sb.from('acc_vendor_memory').upsert({
       company_id: coId,
@@ -556,17 +455,11 @@ export async function learnVendorMemory(
       times_seen: ((existing as { times_seen?: number } | null)?.times_seen ?? 0) + 1,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'company_id,vendor_key' });
-    if (writeErr) return; // best-effort: the voucher saved; next save teaches again
+    if (writeErr) return;
   } catch {
-    /* best-effort: same rule as the bound errors above. */
   }
 }
 
-/* A supplier payment's OWN AP control (400-0000 or 405-0000 by the
-   supplier's code) and the other one: what the control lock exempts and
-   what the wrong-control door refuses. Nothing when the voucher is not a
-   supplier payment or names no supplier; a supplier we cannot read fails
-   CLOSED (500), the same way requireLeafAccount does. */
 async function supplierOwnControl(
   c: any, purposeRaw: unknown, supplierIdRaw: unknown,
 ): Promise<{ code: string | null; control: string | null; wrong: string | null } | { resp: Response }> {
@@ -608,18 +501,14 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
     if (moneyErr) return moneyErr;
   }
 
-  /* A Customer Refund's one line is composed by the guard (Dr AR for the amount), never taken from the wire. */
   const refund = isRefund(body.purpose) ? await refundCreateGuard(c, body) : null;
   if (refund && !refund.ok) return refund.resp;
   const built = refund && refund.ok ? { rows: refund.rows, total: refund.total } : buildLines(body.lines);
   if ('error' in built) return c.json({ error: built.error }, 400);
-  /* A line debiting the SAME account the voucher pays from would post money
-     into itself — meaningless for an expense and a self-transfer for the
-     internal-transfer shape (GL redesign item 10). Refused at typing time. */
   if (built.rows.some((r) => r.debit_account_code === creditAccountCode)) {
     return c.json({ error: 'same_account', message: 'A line cannot debit the Paid From account itself — pick a different destination.' }, 400);
   }
-  const eventErr = await pvLineEventRefusal(c, body.purpose, built.rows); // lib/event-tags.ts
+  const eventErr = await pvLineEventRefusal(c, body.purpose, built.rows);
   if (eventErr) return eventErr;
   /* 申请付款: the request(s) this voucher answers, still waiting (lib/payment-request.ts). */
   const prq = await paymentRequestsLinkGuard(c, body.paymentRequestIds ?? body.paymentRequestId, { kind: 'PV', body });
@@ -657,22 +546,18 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
     }
   }
 
-  // PV→PI settlement (migration 0202) — optional allocations + purpose.
   const allocBuilt = buildAllocations(body.allocations);
   if ('error' in allocBuilt) return c.json({ error: allocBuilt.error }, 400);
   const purpose = normalizePurpose(body.purpose);
-  // Guard: Σ allocations ≤ PV total (you can't apply more than the voucher pays).
   if (allocBuilt.total > built.total) {
     return c.json({ error: 'allocations_exceed_total', allocated: allocBuilt.total, total: built.total }, 400);
   }
 
-  /* DEV-75: the bank's charge, recorded on the header only — not in total_sen, not on the GL. */
   const bankChargeSen = parseAmountSen(body.bankChargeSen);
   if (bankChargeSen === null) return c.json({ error: 'bank_charge_invalid' }, 400);
 
   const sb = c.get('supabase'); const user = c.get('user');
 
-  // Every applied-to invoice must be THIS company's — see allocationPisOutsideCompany.
   {
     const outside = await allocationPisOutsideCompany(sb, c, piIdsOf(allocBuilt.rows));
     if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
@@ -686,17 +571,11 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
     if (breach) return c.json(breach, breach.error === 'load_failed' ? 500 : 409);
   }
   const currency = normalizeCurrency(body.currency);
-  /* Migration 0082 — the rate auto-fills from the currency MASTER (rate_to_myr)
-     unless the body sends an explicit one; MYR ⇒ 1, a strict no-op. */
   const pvRateRaw = body.exchangeRate !== undefined && body.exchangeRate !== null
     ? body.exchangeRate
     : await masterRateForCurrency(sb, currency);
   const exchangeRate = normalizeExchangeRate(pvRateRaw, currency);
 
-  /* Asked BEFORE the first write, not at the recordEntityAudit call below: that
-     one runs after the voucher exists, where "please try again" would be a lie
-     the operator acts on. Refusing here is the only point at which nothing has
-     yet moved. */
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', action: 'CREATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
@@ -704,7 +583,7 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; pv_number: string }>(
     () => nextPvDraftNo(sb, c, voucherDate),
     (pvNumber) => sb.from('payment_vouchers').insert({
-      company_id:          activeCompanyId(c), // multi-company: stamp the active company
+      company_id:          activeCompanyId(c),
       pv_number:           pvNumber,
       voucher_date:        voucherDate,
       payee_name:          payeeName,
@@ -720,16 +599,13 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
       status:              'DRAFT',
       created_by:          user.id,
       ...(refund && refund.ok ? refund.fields : {}),
-      ...pvBillFields(body, prq.requests.length === 1 ? prq.requests[0] : null), // the bill's own number and date (lib/bill-matches.ts)
+      ...pvBillFields(body, prq.requests.length === 1 ? prq.requests[0] : null),
       ...officialOwedFields(body, officialActor(c)), // 欠正式单 — paid on a proforma (lib/official-doc.ts)
     }).select(HEADER).single(),
   );
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   const h = header as unknown as { id: string; pv_number: string };
   const auditActor = c.get('houzsUser');
-  /* Compensating delete for the failure paths below — scoped like every other
-     PV write when the company is known (it stamped the row one insert ago);
-     the fresh unique id carries the delete either way. */
   const rollbackHeader = () => {
     const del = sb.from('payment_vouchers').delete().eq('id', h.id);
     const coId = activeCompanyId(c);
@@ -740,20 +616,16 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
   const { error: lErr } = await sb.from('payment_voucher_lines').insert(stampCompany(rowsWithId, c));
   if (lErr) { await rollbackHeader(); return c.json({ error: 'lines_insert_failed', reason: lErr.message }, 500); }
 
-  // PV→PI settlement links (0202) — persist the allocations (compensating-delete
-  // the whole PV on failure). They settle paid_sen only on POST, not here.
   if (allocBuilt.rows.length > 0) {
     const allocRows = allocBuilt.rows.map((r) => ({ ...r, pv_id: h.id }));
     const { error: aErr } = await sb.from('pv_allocations').insert(stampCompany(allocRows, c));
     if (aErr) { await rollbackHeader(); return c.json({ error: 'allocations_insert_failed', reason: aErr.message }, 500); }
   }
-  if (prq.requests.length > 0) { /* claimed only if still waiting; else this voucher never stood */
+  if (prq.requests.length > 0) {
     const linked = await linkPaymentRequests(c, prq.requests, { kind: 'PV', id: h.id, number: h.pv_number });
     if (!linked.ok) { await rollbackHeader(); return c.json(linked.body, linked.status); }
   }
 
-  /* Recorded only after every compensating-delete path above is behind us, so
-     the log never claims a voucher that was rolled back. */
   await recordEntityAudit(sb, {
     entityType: 'PAYMENT_VOUCHER',
     entityId: h.id,
@@ -775,20 +647,13 @@ export const createPaymentVoucherCore = async (c: any, body: Record<string, unkn
     ]),
   });
 
-  /* Vendor memory (0341) — after every rollback path, so only a voucher that
-     actually stands teaches. */
   await learnVendorMemory(sb, c, { payeeName, purpose, lines: built.rows });
 
   return c.json({ id: h.id, pvNumber: h.pv_number }, 201);
 };
 paymentVouchers.post('/', createPaymentVoucherHandler);
 
-/* ────────────────────────────────────────────────────────────────────────
-   Update — DRAFT only (a POSTED / CANCELLED voucher is read-only)
-   ──────────────────────────────────────────────────────────────────────── */
 
-/* Exported like post/cancel: the vitest harness mounts it on a bare Hono app
-   (the phase-3 edit gate is proved in tests/pvApproval.test.ts). */
 export const updatePaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -798,16 +663,6 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
 
-  /* The FULL header, not just status: this row is the BEFORE half of every
-     from->to pair recorded at the end of the handler. Reading it here also
-     removes the second round-trip the currency branch used to make. */
-  /* Company scope. This was an unscoped `.eq('id', id)`, so a holder of the
-     cross-company `scm.payment_voucher.write` permission could edit ANOTHER
-     company's DRAFT voucher - payee, amount, currency, lines. The sibling
-     cancel handler in this same file already does exactly this and its comment
-     names the class ('an unscoped load let one company cancel another's
-     voucher'); the PATCH was never aligned. Found 2026-08-13 by a scanner over
-     all 632 SCM handlers, then read here before changing anything. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur } = await scopeToCompanyId(
@@ -818,8 +673,6 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   if ((before as { status: string }).status !== 'DRAFT') {
     return c.json({ error: 'not_editable', message: 'Only a DRAFT voucher can be edited' }, 409);
   }
-  /* Phase 3: a voucher in the approval cycle is frozen — what was approved is
-     what gets paid. Withdraw first; it then needs approval again. */
   const editable = pvCanEdit(before as PvApprovalShape);
   if (!editable.ok) return c.json({ error: editable.error, message: editable.message }, 409);
 
@@ -836,10 +689,6 @@ export const updatePaymentVoucherHandler = async (c: any) => {
     if (moneyErr) return moneyErr;
     updates.credit_account_code = v;
   }
-  /* voucher_date is `date NOT NULL DEFAULT current_date` (mig 0081), and the
-     detail form sends this key on every save — cleared, DateField emits "".
-     NULL would trade one 500 for another, so a blank is refused by NAME here,
-     exactly as payeeName and creditAccountCode above are. */
   if (body.voucherDate !== undefined) {
     const d = dateOrNull(body.voucherDate);
     if (!d) return c.json({ error: 'voucher_date_required' }, 400);
@@ -854,11 +703,8 @@ export const updatePaymentVoucherHandler = async (c: any) => {
     updates.bank_charge_sen = v;
   }
   Object.assign(updates, pvBillUpdates(body), officialOwedUpdates(body, officialActor(c), before));
-  // PV→PI settlement (0202) — purpose is editable while DRAFT.
   if (body.purpose !== undefined) updates.purpose = normalizePurpose(body.purpose);
 
-  // Effective currency = the new currency if set, else the stored one — so the
-  // exchange_rate stays consistent (MYR-only today → 1).
   let effectiveCurrency: string | undefined = body.currency !== undefined ? normalizeCurrency(body.currency) : undefined;
   if (body.currency !== undefined) updates.currency = effectiveCurrency;
   if (body.exchangeRate !== undefined || updates.currency !== undefined) {
@@ -875,7 +721,6 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: id, action: 'UPDATE', companyId: (before.company_id as number | null) ?? null });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  // Lines (optional) — full replace + recompute total when supplied.
   let newTotal: number | undefined;
   let newLines: Array<{ line_no: number; debit_account_code: string }> | undefined;
   if (isRefund(before.purpose) && body.refundAmountSen !== undefined) {
@@ -888,8 +733,6 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   if (body.lines !== undefined) {
     const built = buildLines(body.lines);
     if ('error' in built) return c.json({ error: built.error }, 400);
-    /* Same self-debit door as the create path, against the EFFECTIVE Paid
-       From (the incoming one when this edit changes it, else the stored). */
     const effectiveCredit = updates.credit_account_code != null
       ? String(updates.credit_account_code)
       : String(before.credit_account_code ?? '');
@@ -921,20 +764,13 @@ export const updatePaymentVoucherHandler = async (c: any) => {
     newLines = built.rows;
   }
 
-  // Allocations (optional, 0202) — full replace. Σ ≤ the effective PV total.
   if (body.allocations !== undefined) {
     const allocBuilt = buildAllocations(body.allocations);
     if ('error' in allocBuilt) return c.json({ error: allocBuilt.error }, 400);
-    /* total_sen is NOT NULL on a row we have already read, so this is the real
-       stored total — not a `?? 0` standing in for an unknown one. */
     const total = newTotal ?? Number(before.total_sen);
     if (allocBuilt.total > total) {
       return c.json({ error: 'allocations_exceed_total', allocated: allocBuilt.total, total }, 400);
     }
-    /* Same check as the create path, and it has to be here too: a DRAFT edit is
-       the other door the caller-supplied pi_id comes through, and it REPLACES
-       the whole allocation set. Refused before the delete, so a rejected edit
-       cannot leave the voucher with no allocations at all. */
     {
       const outside = await allocationPisOutsideCompany(sb, c, piIdsOf(allocBuilt.rows));
       if (outside.length > 0) return c.json(ALLOCATION_NOT_THIS_COMPANY(outside), 404);
@@ -957,9 +793,6 @@ export const updatePaymentVoucherHandler = async (c: any) => {
   const { data, error } = await sb.from('payment_vouchers').update(updates).eq('id', id).select(HEADER).single();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
-  /* Diff the NORMALISED values actually written (updates), not the raw body:
-     purpose/currency/exchangeRate are all coerced above, and a log of what the
-     client asked for rather than what was stored is a log of the wrong thing. */
   const auditPatch: Record<string, unknown> = {};
   for (const [camel, snake] of PV_AUDIT_FIELDS) {
     if (updates[snake] !== undefined) auditPatch[camel] = updates[snake];
@@ -975,10 +808,6 @@ export const updatePaymentVoucherHandler = async (c: any) => {
     fieldChanges: diffFields(before, auditPatch, PV_AUDIT_FIELDS),
   });
 
-  /* Vendor memory (0341) — an edit that replaced the lines is the operator
-     CORRECTING the answer (often the account the last prefill got wrong), the
-     strongest signal there is. Effective values, not just the patch: the
-     payee/purpose may be unchanged while the account moved. */
   if (newLines !== undefined) {
     await learnVendorMemory(sb, c, {
       payeeName: (updates.payee_name as string | undefined) ?? ((before.payee_name as string | null) ?? null),
@@ -993,16 +822,7 @@ paymentVouchers.patch('/:id', updatePaymentVoucherHandler);
 
 paymentVouchers.patch('/:id/text', updatePaymentVoucherTextHandler);
 
-/* ────────────────────────────────────────────────────────────────────────
-   POST /:id/post — write the balanced GL entry, flip DRAFT → POSTED
-   ──────────────────────────────────────────────────────────────────────── */
 
-/* Exported for the same reason cancelPaymentVoucherHandler is: the supabaseAuth
-   bridge cannot run in the vitest harness, so the tests mount the handler on a bare
-   Hono app with a fake PostgREST client (precedent: tests/companyScopeHardening.test.ts). */
-/** Best-effort: a voucher is posted whatever its bank line says — a bank read
-    that fails leaves the line for "Match the obvious ones now", and says why
-    in the log. */
 const matchVoucherOnBankBestEffort = async (
   sb: any, companyId: number | null, pvNumber: string | null, creditAccountCode: string | null, actor: string | null,
 ): Promise<void> => {
@@ -1053,17 +873,6 @@ export const postPaymentVoucherHandler = async (c: any) => {
   };
   if (pv.status === 'CANCELLED') return c.json({ error: 'cannot_post', message: 'Voucher is cancelled' }, 409);
 
-  // Idempotency — an ACTIVE (non-reversed) PV JE already exists? (mirror
-  // postPiAccounting). Flip POSTED + echo without re-writing the GL.
-  /* The error is READ, not dropped. This is the idempotency check: if the
-     query fails, `existingRows` is undefined, `?? []` turns that into "no
-     journal entry exists", and the handler goes on to post a SECOND one
-     against the same voucher. A failed read must never read as an absence
-     when the absence is what authorises the write.
-
-     Scoped as well — a pv_number is unique per company, so an unscoped lookup
-     could match the other company's JE and skip a posting that never happened
-     here. */
   const { data: existingRows, error: existingErr } = await scopeToCompanyId(sb.from('journal_entries')
     .select('id, je_no, reversed').eq('source_type', 'PV').eq('source_doc_no', pv.pv_number), co.companyId);
   if (existingErr) {
@@ -1077,19 +886,10 @@ export const postPaymentVoucherHandler = async (c: any) => {
         .eq('id', id), co.companyId).neq('status', 'CANCELLED');
       if (flipErr) return c.json({ error: 'post_failed', message: `The journal is in, but the voucher could not be marked posted: ${flipErr.message}. Press Post again.` }, 500);
     }
-    /* A post that died after its journal resumes here. Every step of finishPostedVoucher is idempotent - each
-       allocation settles once (settled_at), the advance is UNIQUE per voucher, the refund hooks key on the voucher -
-       so pressing Post again finishes what the first press left, instead of answering "already posted" over invoices
-       that were never settled. */
     const finished = await finishPostedVoucher(c, sb, pvRaw as Record<string, unknown>, { id, companyId: pv.company_id ?? null, postedTotalSen: null, refund: isRefund(pv.purpose), supplierPayment: normalizePurpose(pv.purpose) === 'SUPPLIER_PAYMENT', actor: approvalActor(c) });
     return c.json({ ok: true, alreadyPosted: true, jeNo: active.je_no, jeId: active.id, ...finished });
   }
 
-  /* PHASE 3 GATE — the one door money leaves through. Placed AFTER the
-     idempotency echo above: a voucher whose ACTIVE journal entry already
-     exists has already paid, and re-posting it must stay an echo whatever
-     its approval marks say. A fresh post, though, does not start without a
-     recorded yes. */
   const gate = pvCanPost(pv as unknown as PvApprovalShape);
   if (!gate.ok) return c.json({ error: gate.error, message: gate.message }, 409);
 
@@ -1098,17 +898,13 @@ export const postPaymentVoucherHandler = async (c: any) => {
   const lines = (linesRaw ?? []) as Array<{ line_no: number; description: string | null; debit_account_code: string; amount_sen: number; project_id?: number | null }>;
   if (lines.length === 0) return c.json({ error: 'no_lines', message: 'Voucher has no lines to post' }, 400);
 
-  /* FX conversion AT POST TIME (MYR-only today → rate 1). Each Dr leg =
-     round(line.amount * rate); the single Cr leg = Σ of those rounded Dr legs,
-     so the JE balances exactly regardless of per-line rounding. */
   const rawRate = Number(pv.exchange_rate ?? 1);
   const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1;
   const debitLegs = lines.map((l) => ({ ...l, myrSen: Math.round(Number(l.amount_sen) * rate) }));
-  const totalSen = debitLegs.reduce((s, l) => s + l.myrSen, 0);  // MYR amount posted to the GL
+  const totalSen = debitLegs.reduce((s, l) => s + l.myrSen, 0);
   if (totalSen <= 0) return c.json({ error: 'zero_total', message: 'Voucher total is zero' }, 400);
 
   const supplier = pv.supplier ?? { code: null, name: null };
-  // Multi-company (mig 0061/0081): the JE + its lines belong to the PV's company.
   const companyId = pv.company_id ?? null;
   /* The supplier's own AP control, for the rule to stamp the supplier on the
      leg that IS the sub-ledger (owner 2026-09-06: Dr 405-H001 / Cr bank — the
@@ -1117,9 +913,6 @@ export const postPaymentVoucherHandler = async (c: any) => {
     ? (await resolveRoles(sb, companyId))[apControlRole(supplier.code)]
     : null;
 
-  /* DEV-75: the header's Bank Charges ride the same journal (Finance, 2026-10-14:
-     900-B001). Refused rather than posted without the fee when the account is
-     not a usable expense leaf here. */
   const feeSen = Number(pv.bank_charge_sen ?? 0);
   if (feeSen > 0) {
     const okFee = await checkExpenseLeaf(sb, co.companyId, PV_BANK_CHARGE_ACCOUNT, 'a bank charge');
@@ -1129,13 +922,6 @@ export const postPaymentVoucherHandler = async (c: any) => {
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: id, action: 'POST', companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  /* Through the ONE gate (acc/engine). rules.pvLines builds the entry — Dr
-     each expense/charge line, Cr the header's bank/cash/AP account, payee
-     stamped on the credit leg — and the engine owns numbering, validation and
-     the write sequence. The scoped already-posted check above stays as the
-     handler's own guard (it also heals the PV status flag); the engine's
-     internal guard is the second net, and the acc_je_one_active_source index
-     is the third. */
   /* The customer's party code: the debtor code when kept, else the header's
      customer_id — the same rule the payment booked with (owner 2026-09-08). */
   const refundPv = pvRaw as { refund_source_type?: string | null; refund_source_doc_no?: string | null; debtor_code?: string | null; customer_id?: string | null };
@@ -1157,8 +943,6 @@ export const postPaymentVoucherHandler = async (c: any) => {
   }
   const je = { id: r.jeId, je_no: r.jeNo };
 
-  /* Checked, and the posting stops here on a miss: the journal is in, and Post pressed again resumes through the
-     already-posted branch above, which finishes every step below. */
   const { error: flipErr } = await sb.from('payment_vouchers').update({
     status: 'POSTED', posted_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   }).eq('id', id).neq('status', 'CANCELLED');
@@ -1166,10 +950,6 @@ export const postPaymentVoucherHandler = async (c: any) => {
     return c.json({ error: 'post_failed', message: `Journal ${je.je_no} is in, but the voucher could not be marked posted: ${flipErr.message}. Press Post again to finish.` }, 500);
   }
 
-  /* The money-out event. Recorded here rather than after the PI settlement loop
-     below so a settlement hiccup cannot cost us the record that the GL was
-     posted — the JE exists from this point regardless. totalSen is the INTEGER
-     SEN posted to the ledger. */
   await recordEntityAudit(sb, {
     entityType: 'PAYMENT_VOUCHER',
     entityId: id,
@@ -1197,13 +977,6 @@ export const postPaymentVoucherHandler = async (c: any) => {
 };
 paymentVouchers.post('/:id/post', postPaymentVoucherHandler);
 
-/* ────────────────────────────────────────────────────────────────────────
-   Phase 3 — the approval cycle. Markers on the DRAFT, never new statuses
-   (the 0324 lesson); the rules live in lib/pv-approval.ts as a pure table.
-   submit / withdraw need write permission; approve / reject need
-   scm.payment_voucher.approve — a key nobody holds by default except '*'
-   (the owner and IT admin), grantable per position like every other key.
-   ──────────────────────────────────────────────────────────────────────── */
 
 const loadPvForApproval = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
@@ -1247,9 +1020,6 @@ export const submitPaymentVoucherHandler = async (c: any) => {
 };
 paymentVouchers.post('/:id/submit', submitPaymentVoucherHandler);
 
-/* WITHDRAW — the preparer pulls their own voucher back, only BEFORE the
-   first yes; a checked voucher belongs to the checkers and comes back via
-   reject. */
 export const withdrawPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -1287,13 +1057,6 @@ export const checkPaymentVoucherHandler = async (c: any) => {
   const who = approvalActor(c);
   const at = new Date().toISOString();
 
-  /* THE FIRST YES MINTS THE NUMBER (item 8b). A voucher still on the Draft
-     series takes its formal per-bank number here — {co}{letter}PV-YYMM-NNN
-     from the credit account's letter — so the formal sequence is the sequence
-     of vouchers a checker actually accepted. One already carrying a formal
-     number (a reject → re-check round) KEEPS it: the number was minted, and
-     re-minting would burn a slot for the same paper. Collision-retried the
-     way inserts are — the loser of a same-second race re-mints. */
   const oldPvNo = String(pv.pv_number ?? '');
   let newPvNo: string | null = null;
   if (isDraftNumber(oldPvNo)) {
@@ -1370,13 +1133,11 @@ export const rejectPaymentVoucherHandler = async (c: any) => {
   const v = pvCanReject(pv as PvApprovalShape);
   if (!v.ok) return c.json({ error: v.error, message: v.message }, 409);
   let note = '';
-  try { note = String(((await c.req.json()) as { note?: unknown })?.note ?? '').trim(); } catch { /* empty body is a valid no-note reject */ }
+  try { note = String(((await c.req.json()) as { note?: unknown })?.note ?? '').trim(); } catch { }
   const { error } = await scopeToCompanyId(sb.from('payment_vouchers')
     .update({ submitted_at: null, submitted_by: null, checked_at: null, checked_by: null, approved_at: null, approved_by: null, updated_at: new Date().toISOString() })
     .eq('id', id), companyId);
   if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
-  /* The reason lives on the audit trail, where the preparer reads it — a
-     rejected voucher goes back to editable with the WHY on its history. */
   await recordEntityAudit(sb, {
     entityType: 'PAYMENT_VOUCHER', entityId: id, entityDocNo: pv.pv_number,
     action: 'REJECT', actor: c.get('houzsUser'), statusSnapshot: 'DRAFT',
@@ -1386,9 +1147,6 @@ export const rejectPaymentVoucherHandler = async (c: any) => {
 };
 paymentVouchers.post('/:id/reject', rejectPaymentVoucherHandler);
 
-/* ────────────────────────────────────────────────────────────────────────
-   POST /:id/cancel — reverse the JE (if posted), flip → CANCELLED.
-   ──────────────────────────────────────────────────────────────────────── */
 
 export const cancelPaymentVoucherHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.cancel')) {
@@ -1396,16 +1154,9 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   }
   const sb = c.get('supabase'); const id = c.req.param('id');
 
-  /* Scoped before the load: everything downstream keys off what this returns —
-     the GL reversal (by pv_number) and the PV→PI settlement unwind (by pv_id) —
-     so an unscoped load let one company cancel another's voucher AND reverse
-     its ledger entry. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur } = await scopeToCompanyId(
-    /* currency + exchange_rate join the select for the FX-rate retention notice at
-       the end of this handler — the voucher's own rate is what identifies the
-       invoices whose rate it established. */
     sb.from('payment_vouchers').select('id, status, pv_number, purpose, currency, exchange_rate, company_id, total_sen, payee_name, debtor_code').eq('id', id), co.companyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
@@ -1414,19 +1165,11 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
     currency: string | null; exchange_rate: string | number | null; company_id: number | null;
     total_sen: number; payee_name: string; debtor_code?: string | null;
   };
-  /* Already cancelled: finish what an earlier cancel left. This used to echo success, so a cancel whose ledger
-     reversal or invoice unwind had failed could never be completed - the voucher read CANCELLED while its journal
-     stood and its invoices still showed paid. Every step is idempotent, so a cancel that did finish changes nothing. */
   if (head.status === 'CANCELLED') {
     const finished = await finishCancelledVoucher(c, sb, head, { id, companyId: co.companyId, resumed: true, refund: isRefund(head.purpose), supplierPayment: normalizePurpose(head.purpose) === 'SUPPLIER_PAYMENT', actor: approvalActor(c), reverse: reversePvAccounting });
     return c.json({ paymentVoucher: { id, status: 'CANCELLED' }, ...finished });
   }
 
-  /* An advance that has been SPENT pins its voucher: the knock-offs settled
-     real invoices with this voucher's money, and cancelling would reverse a
-     payment whose value is now inside other documents. Un-apply first (not
-     built yet — deliberately: it has not been needed), or leave the voucher
-     standing. An UNSPENT advance cancels fine — the row is removed with it. */
   {
     const { data: adv, error: advErr } = await sb.from('acc_supplier_advances')
       .select('id, applied_sen').eq('pv_id', id).maybeSingle();
@@ -1440,15 +1183,9 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
     }
   }
 
-  /* One probe covers BOTH history rows this handler writes (the CANCEL and the
-     REVERSE): they share a sink, and past this point the flip has happened, so a
-     second check further down could only report a failure it can no longer undo. */
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: id, action: 'CANCEL' });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  /* ATOMIC ACTIVE→CANCELLED — the conditional UPDATE excludes CANCELLED, so two
-     concurrent cancels race and only ONE flips it (the other gets no row back →
-     idempotent no-op). Guarantees the reversal below runs at most once. */
   const { data, error } = await scopeToCompanyId(sb.from('payment_vouchers').update({
     status: 'CANCELLED', updated_at: new Date().toISOString(),
   }).eq('id', id), co.companyId).neq('status', 'CANCELLED').select('id, status, pv_number').maybeSingle();
@@ -1462,16 +1199,12 @@ export const cancelPaymentVoucherHandler = async (c: any) => {
   }
   const cancelled = data as { id: string; status: string; pv_number: string };
 
-  /* The (unspent — the guard above) advance goes with its voucher. */
   const { error: advDelErr } = await sb.from('acc_supplier_advances').delete().eq('pv_id', id).eq('applied_sen', 0);
   if (advDelErr) {
     /* eslint-disable-next-line no-console */
     console.error('[pv-advance] cancelled voucher kept its unspent advance:', cancelled.pv_number, advDelErr.message);
   }
 
-  /* Recorded immediately after the ATOMIC flip won the race, so exactly one
-     CANCEL row is ever written for a voucher — the losing concurrent call
-     early-returned above and never reaches here. */
   await recordEntityAudit(sb, {
     entityType: 'PAYMENT_VOUCHER',
     entityId: id,
@@ -1496,9 +1229,6 @@ paymentVouchers.post('/:id/cancel', cancelPaymentVoucherHandler);
    debited AP when the voucher posted, the invoice already credited AP when it
    posted — this only settles the invoice's paid_sen and burns the advance. */
 
-/* GET /advances/list?supplierId=… — the open advances (remaining > 0),
-   newest first, plus the total still unspent. No supplierId = the company's
-   whole list (the screen's per-supplier ask filters). */
 export const supplierAdvancesHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1521,13 +1251,6 @@ export const supplierAdvancesHandler = async (c: any) => {
 paymentVouchers.get('/advances/list', supplierAdvancesHandler);
 paymentVouchers.get('/reservations/list', pendingReservationsHandler);
 
-/* POST /:id/apply-advance { allocations: [{ piId | apInvoiceId, amountSen }] }
-   — knock the voucher's remaining advance off real invoices, of EITHER kind
-   (an AP invoice since 2026-09-06: the other creditor's prepay had nothing
-   to land on). Gated like posting (it settles invoices); refuses another
-   company's, a held, a draft or a cancelled invoice by name; Σ may not
-   exceed what remains; each settle is DB-clamped exactly like a payment's,
-   and what is recorded is what was APPLIED, never what was asked. */
 export const applyAdvanceHandler = async (c: any) => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -1569,11 +1292,6 @@ export const applyAdvanceHandler = async (c: any) => {
   const held = await allocationPisOnHold(sb, c, piIds);
   if (held.length > 0) return c.json(ALLOCATION_ON_HOLD(held), 409);
 
-  /* One database call does the whole knock-off: lock the advance, re-check what remains, settle each invoice
-     (clamped), write the from-advance allocations already settled, burn the advance by what landed. Before, the
-     invoices were settled first and the burn was a compare-and-set afterwards: two applies at once both settled their
-     invoices, the second burn missed, and one advance paid two sets of invoices. Now the second waits on the lock and
-     is refused when nothing is left. */
   const { data: rows, error: applyErr } = await sb.rpc('apply_supplier_advance', {
     p_pv_id: id,
     p_company_id: co.companyId,
@@ -1613,30 +1331,19 @@ export const applyAdvanceHandler = async (c: any) => {
 };
 paymentVouchers.post('/:id/apply-advance', applyAdvanceHandler);
 
-/* Bill OCR (2026-09-02) — the handler lives in pv-extract.ts; re-exported for its tests. */
 export { extractBillsHandler, splitPdfHandler };
 paymentVouchers.post('/extract', extractBillsHandler);
 paymentVouchers.post('/extract/enqueue', enqueueBillReadsHandler);
 paymentVouchers.get('/extract/jobs', pollBillReadsHandler);
 paymentVouchers.post('/split-pdf', splitPdfHandler);
 
-/* ── reversePvAccounting — contra the active PV JE (mirror reversePiAccounting).
-   Loads the original lines + swaps Dr/Cr so the reversal nets the original to
-   zero, flags the original reversed=true. Idempotent. */
 async function reversePvAccounting(
   sb: any,
   pvNumber: string,
 ): Promise<{ ok: boolean; status: string; jeNo?: string; jeId?: string; reason?: string }> {
-  /* Through the ONE gate (acc/engine). A PV entry's legs are DYNAMIC (the
-     voucher's own debit accounts + chosen credit account), so there is NO
-     canonical fallback: an original with no lines now aborts loudly instead
-     of posting a reversal header with zero lines — which is exactly the
-     defect the previous copy documented against itself. */
   return reverseJournal(sb, {
     sourceType: 'PV',
     sourceDocNo: pvNumber,
     narration: (orig) => `Reversal of ${orig.je_no} — Payment voucher ${pvNumber} cancelled`,
-    // Workers run in UTC: the raw date slice is YESTERDAY before 08:00 MYT —
-    // the engine defaults the contra to todayMyt(), same as SI/PI.
   });
 }

@@ -1,25 +1,4 @@
-// ----------------------------------------------------------------------------
-// service-sku — SERVICE SKU vocabulary + line predicates (single source of truth).
-//
-// P1 of the SO all-charges-as-SKU-lines spec
-// (docs/specs/2026-06-04-so-sku-lines-and-sync-spec.md §4.6/R6, §8 D2+D9).
-// Delivery fees and POS add-ons (dispose / lift) become SERVICE-category SKU
-// lines on Sales Orders. SERVICE lines ride the whole document chain —
-// SO → DO → SI, data AND print (D2 final, Loo 2026-06-05) — but they are NOT
-// goods:
-//   · never allocated stock / never gate SO readiness,
-//   · never produce inventory movements (DO ship-OUT, DR return-IN, resyncs),
-//   · never returnable on a Delivery Return,
-//   · never MRP demand.
-//
-// Every guard imports THESE predicates. Don't re-derive 'SVC-' / 'service'
-// string checks at call sites — vocabulary drift is how the dash-vs-parens
-// compartment-code split happened.
-// ----------------------------------------------------------------------------
 
-/* SKU codes seeded in P2 (§8-D9 — Loo picked the SVC-* prefix). The catalog
-   row (mfg_products) carries category='SERVICE'; SO/DO/SI/DR lines carry
-   item_group='service' (SoLineCard lowercases the product category). */
 export const SVC_DELIVERY = 'SVC-DELIVERY';
 export const SVC_DELIVERY_CROSS = 'SVC-DELIVERY-CROSS';
 export const SVC_DELIVERY_ADD = 'SVC-DELIVERY-ADD';
@@ -27,13 +6,6 @@ export const SVC_DISPOSE_MATTRESS = 'SVC-DISPOSE-MATTRESS';
 export const SVC_DISPOSE_BEDFRAME = 'SVC-DISPOSE-BEDFRAME';
 export const SVC_LIFT_CARRY = 'SVC-LIFT-CARRY';
 
-/* Loo 2026-06-10 — per-floor lift tiers. Each floor 1..5 is its own SKU so a
-   Backend-keyed SO prices itself (pick the floor, qty = pieces carried) and
-   the free band (floors 1–2) still SHOWS on the SO as an RM0 line instead of
-   silently vanishing. The legacy SVC-LIFT-CARRY stays in the catalog for
-   history and as the fallback above the tier ceiling. Seeded by migration
-   0163 — F1/F2 at 0, F3 RM100, F4 RM200, F5 RM300 per item (matches
-   max(floors−2,0) × the addons rate). */
 export const MAX_LIFT_TIER_FLOOR = 5;
 const FLOOR_ORDINALS = ['', '1st', '2nd', '3rd', '4th', '5th'];
 /** Floor 1..MAX_LIFT_TIER_FLOOR → its tier SKU code (SVC-LIFT-CARRY-F3). */
@@ -91,7 +63,6 @@ export function isServiceSkuCode(itemCode: string | null | undefined): boolean {
 export interface ServiceLineSignals {
   itemGroup?: string | null;
   itemCode?: string | null;
-  /** mfg_products.category when the caller has it joined; omit otherwise. */
   category?: string | null;
 }
 

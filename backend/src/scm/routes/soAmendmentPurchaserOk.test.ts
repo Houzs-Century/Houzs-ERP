@@ -38,8 +38,6 @@ const am = (id: string, lane: string, header_changes: Row, extra: Row = {}): Row
   lane_flag_note: null, requested_by: null, header_changes, purchaser_ok_at: null, ...extra,
 });
 
-/* The claim is the first write after the gates: reaching it means every gate
-   said yes. Stopped there, so nothing past the gates needs faking. */
 const gatedSb = {
   ...sb,
   from: (table: string) => {
@@ -60,8 +58,6 @@ function appFor(permissions: string[]) {
   app.use('*', async (c, next) => {
     c.set('companyId', 1);
     c.set('user', { id: 7, email: 'desk@houzs.test', name: 'Desk', permissions } as unknown as User);
-    // approve-so is mounted bare (its real route runs inside runScmPgCommand), so
-    // the Houzs caller the auth middleware would set is set here.
     c.set('houzsUser', { id: 7, name: 'Desk', permissions } as unknown as Variables['houzsUser']);
     await next();
   });
@@ -81,8 +77,8 @@ const PURCHASER = ['scm.amendment.approve_lines'];
 function seed(poStatus: string | null) {
   sb.tables.so_amendments = [
     am('A1', 'LINES', { processingDate: '2026-10-10' }),
-    am('A2', 'DELIVERY', { customerDeliveryDate: '2026-10-15' }),   // brought forward
-    am('A3', 'DELIVERY', { customerDeliveryDate: '2026-10-30' }),   // postponed
+    am('A2', 'DELIVERY', { customerDeliveryDate: '2026-10-15' }),
+    am('A3', 'DELIVERY', { customerDeliveryDate: '2026-10-30' }),
   ];
   sb.tables.mfg_sales_orders = [{
     doc_no: DOC, company_id: 1, processing_date: '2026-09-30', customer_delivery_date: '2026-10-20',

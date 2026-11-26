@@ -1,35 +1,3 @@
-// ----------------------------------------------------------------------------
-// /venues — venue master CRUD for the cutover 2990 POS (GitHub #389).
-//
-// CONTRACT GAP: the 2990 POS (apps/pos queries.ts) calls /api/scm/venues
-// (GET/POST/PATCH/DELETE) as a venue master. Houzs never mounted that route, so
-// the direct call 404'd.
-//
-// SOURCE OF TRUTH — public.project_venues (NOT scm.so_dropdown_options, NOT the
-// empty scm.venues uuid table). The Houzs frontend already re-sourced its venue
-// picker to the Project Maintenance master (see
-// frontend/src/vendor/scm/lib/venues-queries.ts: "Venues are maintained
-// CENTRALLY in Houzs's Project Maintenance / PMS, not in the SCM"), and the SO
-// venue auto-fill (mfg-sales-orders active-venue) reads project_venues too.
-// Adapting /api/scm/venues over the SAME master gives the POS the identical
-// venue list the Houzs UI + PMS see — genuine ONE source of truth. It also
-// mirrors the proven /api/projects/venues handlers (routes/projects.ts).
-//
-// This is the task's "closest faithful version" escape hatch: the 2990 venues
-// table has an `address` column that so_dropdown_options can't hold, and
-// project_venues (INTEGER ids) — not so_dropdown_options — is the actual Houzs
-// venue master the SO flow binds to.
-//
-// SHAPE — mapped onto the 2990 SCM VenueRow contract the vendored consumers
-// expect: { id:string, name, address(=notes), state, active, created_at }.
-//
-// project_venues lives in the PUBLIC schema (unreachable by the scm supabase
-// client), so all queries go through c.env.DB — exactly like the active-venue
-// lookup in mfg-sales-orders.ts. company_2 scoping uses the raw-SQL helpers
-// (activeCompanySql / activeCompanyId) since env.DB can't use scopeToCompany.
-//
-// Mounted at '/venues' in scm/index.ts.
-// ----------------------------------------------------------------------------
 
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
@@ -45,18 +13,13 @@ type VenueRow = {
   name: string;
   address: string | null;
   state: string | null;
-  /* Mig 0178 — Country + Postcode. Optional so older callers still parse. */
   country: string | null;
   postcode: string | null;
-  /* Mig 0182 — City. Optional so older callers still parse. */
   city: string | null;
   active: boolean;
   created_at: string;
 };
 
-// Raw project_venues row → the 2990 SCM VenueRow contract. `notes` is the
-// nearest free-text column to 2990's `address`; id is stringified because the
-// SO pickers compare venue.id === staff.venueId with `===` (venueId is a string).
 function mapVenue(r: Record<string, unknown>): VenueRow {
   const idVal = (r.id ?? null) as number | string | null;
   const activeVal = (r.active ?? 1) as number | boolean;
@@ -65,7 +28,6 @@ function mapVenue(r: Record<string, unknown>): VenueRow {
     name: String(r.name ?? ""),
     address: (r.notes as string | null) ?? null,
     state: (r.state as string | null) ?? null,
-    /* Mig 0178 — Country + Postcode. Mig 0182 — City. */
     country: (r.country as string | null) ?? null,
     postcode: (r.postcode as string | null) ?? null,
     city: (r.city as string | null) ?? null,
@@ -74,17 +36,11 @@ function mapVenue(r: Record<string, unknown>): VenueRow {
   };
 }
 
-// GET / — list venues. Active-only by default; ?includeInactive=1|true for all.
-// Returns the array under both `venues` (2990 SCM route convention) and `data`
-// (Houzs /api/projects/venues convention) so either consumer contract resolves.
 venues.get("/", async (c) => {
-  // POS sends ?active=false to include inactive (2990 contract); the Houzs admin
-  // sends ?includeInactive=1|true. Accept both so the POS can list/reactivate.
   const includeInactiveParam = c.req.query("includeInactive");
   const includeInactive =
     includeInactiveParam === "1" || includeInactiveParam === "true" ||
     c.req.query("active") === "false";
-  // company_2 scope: ` AND company_id = <active>`, or "" (no-op) pre-activation.
   const companyPred = activeCompanySql(c);
   const where = includeInactive
     ? `WHERE 1=1${companyPred}`
@@ -104,10 +60,6 @@ venues.get("/", async (c) => {
   }
 });
 
-// POST / — create a venue. Reactivate-or-insert by case-insensitive name
-// (project_venues.name is UNIQUE COLLATE NOCASE), mirroring /api/projects/venues
-// so the POS's inline "add venue" never trips the unique constraint. Accepts the
-// 2990 `address` field (mapped to `notes`) as well as native `notes`/`state`.
 venues.post("/", async (c) => {
   /* company-scope: the reactivate branch UPDATEs by the id of a row found by the
      lookup above, which carries activeCompanySql(c); the INSERT branch stamps
@@ -126,12 +78,7 @@ venues.post("/", async (c) => {
     (body.notes as string | null | undefined) ??
     (body.address as string | null | undefined) ??
     null;
-  /* Mig 0175 — canonicalize MY state at write so venues stop landing as
-     'PENANG' / 'KL' while SCM stores 'Pulau Pinang' / 'Kuala Lumpur'. */
   const state = canonicalizeMyState((body.state as string | null | undefined) ?? null);
-  /* Mig 0178 — structured address on venue. Country is optional and
-     back-derives from state via frontend cascade; postcode is optional too.
-     Mig 0182 — City (dropdown from my_localities filtered by state). */
   const country = typeof body.country === 'string' && body.country.trim()
     ? body.country.trim() : null;
   const postcode = typeof body.postcode === 'string' && body.postcode.trim()
@@ -148,7 +95,6 @@ venues.post("/", async (c) => {
     .first<Record<string, unknown>>();
 
   if (existing) {
-    // Reactivate + fill state/country/postcode/city/notes when supplied (COALESCE keeps existing).
     await c.env.DB.prepare(
       `UPDATE project_venues
           SET active   = 1,
@@ -175,7 +121,7 @@ venues.post("/", async (c) => {
 
   const houzsUser = c.get("houzsUser");
   const createdBy = houzsUser?.id != null ? Number(houzsUser.id) : null;
-  const companyId = activeCompanyId(c) ?? null; // else the column DEFAULT (HOUZS) applies
+  const companyId = activeCompanyId(c) ?? null;
   const r = await c.env.DB.prepare(
     companyId != null
       ? `INSERT INTO project_venues (name, state, country, postcode, city, notes, created_by, company_id)
@@ -201,7 +147,6 @@ venues.post("/", async (c) => {
   return c.json({ venue: v, id: v.id, name: v.name, state: v.state }, 201);
 });
 
-// PATCH /:id — update name/address(=notes)/state/active.
 venues.patch("/:id", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (Number.isNaN(id)) return c.json({ error: "invalid_id" }, 400);
@@ -219,7 +164,6 @@ venues.patch("/:id", async (c) => {
     sets.push("name = ?");
     binds.push(next);
   }
-  // Accept 2990 `address` or native `notes` for the free-text column.
   if ("address" in body || "notes" in body) {
     const notes =
       (body.notes as string | null | undefined) ??
@@ -230,11 +174,8 @@ venues.patch("/:id", async (c) => {
   }
   if ("state" in body) {
     sets.push("state = ?");
-    /* Mig 0175 — canonicalize on PATCH too. */
     binds.push(canonicalizeMyState((body.state as string | null | undefined) ?? null));
   }
-  /* Mig 0178 — country + postcode. Trim empty to NULL so clearing works.
-     Mig 0182 — city (same clear-on-empty rule). */
   if ("country" in body) {
     const cv = typeof body.country === 'string' ? body.country.trim() : '';
     sets.push("country = ?");
@@ -256,7 +197,6 @@ venues.patch("/:id", async (c) => {
   }
   if (sets.length === 0) return c.json({ ok: true, changed: 0 });
 
-  // company_2 scope: only touch a row in the active company (no-op pre-activation).
   const companyPred = activeCompanySql(c);
   await c.env.DB.prepare(
     `UPDATE project_venues SET ${sets.join(", ")} WHERE id = ?${companyPred}`,
@@ -266,8 +206,6 @@ venues.patch("/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-// DELETE /:id — soft delete (active = 0), mirroring /api/projects/venues so a
-// venue name still referenced by historical SOs keeps rendering.
 venues.delete("/:id", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (Number.isNaN(id)) return c.json({ error: "invalid_id" }, 400);

@@ -17,10 +17,8 @@ import { authedFetch } from './authed-fetch';
 export type PiPoPriceSummary = {
   linesDiffering: number;
   totalDiffSen: number;
-  /** Lines that HAD a PO price to compare (a PO line priced above 0). */
   comparableLines: number;
   lines: number;
-  /** Those comparable lines at the PO's price: qty x PO unit price. */
   poAmountSen: number;
   /** Every PO the invoice's lines bill, each line's own (owner 2026-11-10). */
   poNumbers?: string[];
@@ -33,8 +31,6 @@ export const poPriceMarker = (s: PiPoPriceSummary | undefined): PoPriceMarker | 
   if (s.linesDiffering > 0) {
     return { label: `${s.linesDiffering} ${s.linesDiffering === 1 ? 'line differs' : 'lines differ'}`, tone: 'differs', diffSen: s.totalDiffSen };
   }
-  /* Nothing to compare is its own answer. "Matches PO" on an invoice whose
-     orders never named a price would read as a check that passed. */
   if (s.comparableLines === 0) return { label: 'No PO price', tone: 'none', diffSen: 0 };
   return { label: 'Matches PO', tone: 'matches', diffSen: 0 };
 };

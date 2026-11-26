@@ -124,15 +124,12 @@ describe('pinAssignToDate — the walk is constrained to the confirmed day', () 
     const pinned = pinAssignToDate(r, '2026-08-10');
     expect(pinned.trips).toHaveLength(1);
     expect(pinned.trips[0]).toMatchObject({ key: '2026-08-10|a', date: '2026-08-10' });
-    /* The spilled trip keeps its orders and lands in overflow ON the date. */
     expect(pinned.overflow).toHaveLength(2);
     const spill = pinned.overflow.find((o) => o.orders.includes('SO-2'));
     expect(spill).toMatchObject({ date: '2026-08-10', orders: ['SO-2', 'SO-3'], sets: 4, revenueSen: 900_00 });
     expect(spill?.reason).toContain('own fleet full on 2026-08-10');
-    /* Existing overflow + unassigned are pinned to the confirmed date too. */
     expect(pinned.overflow.find((o) => o.orders.includes('SO-9'))?.date).toBe('2026-08-10');
     expect(pinned.unassigned[0].date).toBe('2026-08-10');
-    /* Nothing anywhere carries another date. */
     for (const t of pinned.trips) expect(t.date).toBe('2026-08-10');
     for (const o of pinned.overflow) expect(o.date).toBe('2026-08-10');
   });
@@ -141,12 +138,10 @@ describe('pinAssignToDate — the walk is constrained to the confirmed day', () 
 describe('the invariant — every proposed stop lands on its order\'s confirmed date', () => {
   test('grouping + per-date pin + merge: each trip\'s date equals every one of its stops\' confirmed dates', () => {
     const orders = [
-      so('SO-1'), so('SO-2'),                                   // confirmed 08-10
-      so('SO-3', { amended_delivery_date: '2026-08-12' }),      // confirmed 08-12
+      so('SO-1'), so('SO-2'),
+      so('SO-3', { amended_delivery_date: '2026-08-12' }),
     ];
     const { groups } = groupByConfirmedDate(orders, ['SO-1', 'SO-2', 'SO-3']);
-    /* Simulate the per-group endpoint calls: the 08-10 packer fits SO-1 on day
-       one but walks SO-2 to the next day; the 08-12 packer fits SO-3. */
     const byDate: Record<string, SequenceAssignResponse> = {
       '2026-08-10': response({
         trips: [
@@ -163,14 +158,11 @@ describe('the invariant — every proposed stop lands on its order\'s confirmed 
     expect(merged).not.toBeNull();
 
     const confirmed = new Map(orders.map((o) => [o.so_doc_no, confirmedDateOf(o)]));
-    /* THE invariant: no trip carries a stop whose confirmed date differs. */
     for (const t of merged!.trips) {
       for (const s of t.stops) expect(t.date).toBe(confirmed.get(s.ref));
     }
-    /* And the spilled order surfaces as overflow ON its confirmed date. */
     const spill = merged!.overflow.find((o) => o.orders.includes('SO-2'));
     expect(spill?.date).toBe(confirmed.get('SO-2'));
-    /* Merge keeps per-date trips apart and sorts by date. */
     expect(merged!.trips.map((t) => t.date)).toEqual(['2026-08-10', '2026-08-12']);
   });
 

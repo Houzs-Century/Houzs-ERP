@@ -53,7 +53,6 @@ const PERF = {
   commission: { code: '900-C003', name: 'COMMISSION ( EVENT )', billSen: 9_000_00, months: ['2026-10'], releaseSen: 4_000_00 },
 } as unknown as PerformanceReport;
 
-/** A node by id anywhere in a tree. */
 const find = (nodes: LaidNode[], id: string): LaidNode | undefined => {
   for (const n of nodes) {
     if (n.id === id) return n;
@@ -83,7 +82,6 @@ describe('the Performance P&L on the P&L’s tree', () => {
     expect(find(sales.children, 'acc:500-0003')).toMatchObject({ amountSen: 50_000_00 });
     const unassigned = find(side.layout.tradingIncome, 'unassigned')!;
     expect(unassigned.children.map((n) => [n.label, n.amountSen])).toEqual([['Dining (no sales account)', 5_000_00]]);
-    /* A group that sold nothing prints nowhere. */
     expect(find(side.layout.tradingIncome, 'acc:group:others')).toBeUndefined();
   });
 
@@ -135,7 +133,6 @@ describe('the Forecast P&L on the P&L’s tree', () => {
       profitBeforeTaxSen: 90_000_00, taxationSen: 3_000_00, netProfitSen: 87_000_00,
     });
     expect(side.taxation.map((l) => [l.code, l.amountSen])).toEqual([['950-0001', 3_000_00]]);
-    /* A row's % is of the forecast's own sales. */
     expect(find(side.layout.costOfSales, 'acc:601-0001')?.pct).toBe(50);
   });
 

@@ -50,17 +50,17 @@ Free(d) ==
     /\ pc'     = [pc EXCEPT ![d] = "idle"]
     /\ target' = [target EXCEPT ![d] = None]
 
-(* mark(), autocount-outbox.ts:1127-1131. Filters on id ONLY: no status    *)
+(* mark(), autocount-outbox.ts:1105-1109. Filters on id ONLY: no status    *)
 (* predicate and no "am I still the holder" predicate, and it clears the   *)
 (* claim on every outcome. attempts is the value read at select + 1        *)
-(* (autocount-outbox.ts:1239).                                             *)
+(* (autocount-outbox.ts:1217).                                             *)
 Mark(d, newStatus) ==
     LET r == target[d] IN
     /\ status'   = [status EXCEPT ![r] = newStatus]
     /\ attempts' = [attempts EXCEPT ![r] = seen[d] + 1]
     /\ claimed'  = [claimed EXCEPT ![r] = FALSE]
 
-(* The drain's SELECT (autocount-outbox.ts:1354-1359) or Send now's read,  *)
+(* The drain's SELECT (autocount-outbox.ts:1332-1337) or Send now's read,  *)
 (* then claimOutboxRow (autocount-claim.ts:48-58): one UPDATE ... WHERE    *)
 (* id AND status='pending' AND claimed_at IS NULL, atomic under the row    *)
 (* lock. The select is folded in because the claim re-checks everything    *)
@@ -77,9 +77,9 @@ Claim(d, r) ==
     /\ UNCHANGED <<status, attempts, posts, crashes>>
 
 (* The host refused, or never got the request: nothing is in the book.     *)
-(* callAcService (autocount-writeback.ts:1404-1458), then dispatchOne's    *)
-(* retry/give-up mark (autocount-outbox.ts:1319-1328; same shape for       *)
-(* ensure_masters at 1847-1855). Retryable or not is the host's choice.    *)
+(* callAcService (autocount-writeback.ts:1384-1453), then dispatchOne's    *)
+(* retry/give-up mark (autocount-outbox.ts:1297-1306; same shape for       *)
+(* ensure_masters at 1227-1233). Retryable or not is the host's choice.    *)
 SendFails(d) ==
     /\ pc[d] = "claimed"
     /\ \E giveUp \in BOOLEAN :
@@ -98,7 +98,7 @@ HostSaves(d) ==
     /\ pc'    = [pc EXCEPT ![d] = "saved"]
     /\ UNCHANGED <<status, claimed, attempts, target, seen, crashes>>
 
-(* The answer arrives: mark sent (autocount-outbox.ts:1268-1275).          *)
+(* The answer arrives: mark sent (autocount-outbox.ts:1246-1254).          *)
 AckSent(d) ==
     /\ pc[d] = "saved"
     /\ Mark(d, "sent")
@@ -106,9 +106,9 @@ AckSent(d) ==
     /\ UNCHANGED <<posts, seen, crashes>>
 
 (* The host saved, but the Worker sees a thrown fetch (always retryable,   *)
-(* autocount-writeback.ts:1414-1424) or a 5xx such as a tunnel timeout,    *)
+(* autocount-writeback.ts:1407-1418) or a 5xx such as a tunnel timeout,    *)
 (* and dispatchOne marks the row pending again (autocount-outbox.ts:       *)
-(* 1920-1929). The next sweep sends it again.                              *)
+(* 1297-1306). The next sweep sends it again.                              *)
 AckLost(d) ==
     /\ ResponseCanBeLost
     /\ pc[d] = "saved"
@@ -119,8 +119,8 @@ AckLost(d) ==
     /\ UNCHANGED <<posts, seen, crashes>>
 
 (* The Worker is killed (ctx.waitUntil is not guaranteed to finish), or    *)
-(* dispatchOne throws (autocount-requeue.ts:1079-1085). mark() never runs, *)
-(* so the claim stays on the row (autocount-outbox.ts:1129).          *)
+(* dispatchOne throws (autocount-requeue.ts:1078-1085). mark() never runs, *)
+(* so the claim stays on the row (autocount-outbox.ts:1107).          *)
 Crash(d) ==
     /\ crashes < MaxCrashes
     /\ pc[d] = "claimed" \/ (pc[d] = "saved" /\ CrashAfterSave)
@@ -129,7 +129,7 @@ Crash(d) ==
     /\ UNCHANGED <<status, claimed, attempts, posts, seen>>
 
 (* releaseExpiredClaims (autocount-claim.ts:79-85), run before every     *)
-(* sweep's select (autocount-outbox.ts:1353). It decides on age alone: it  *)
+(* sweep's select (autocount-outbox.ts:1331). It decides on age alone: it  *)
 (* cannot tell a dead holder from a slow one. Whether a live send can ever *)
 (* be older than the lease is the constant LeaseCanExpireOnLiveSend.       *)
 ReleaseExpired(r) ==

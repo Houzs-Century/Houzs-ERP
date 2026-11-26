@@ -20,14 +20,8 @@
  * change what was ordered after it has been received. That lock is unchanged. */
 import { PO_LOCK_COLS, PO_LOCK_LABELS } from './document-policy';
 
-/* The columns (supplier / currency / purchase location — the GRN's basis) come
-   from the ONE rulebook (document-policy.ts) so this set can't drift from the
-   registry or its siblings. Re-exported here for the route + tests that import it. */
 export const PO_IDENTITY_LOCK_COLS: ReadonlySet<string> = PO_LOCK_COLS;
 
-/** Loose equality mirroring the SO lock's `norm()` — null / undefined / '' all
-    collapse, so a form re-sending a blank field as '' does not read as a change
-    from null. */
 const norm = (v: unknown): string => (v === null || v === undefined ? '' : String(v));
 
 /** The inherited columns this patch genuinely CHANGES (the 409 list). Empty when
@@ -44,11 +38,6 @@ export function changedPoIdentityLockCols(
 /** The 409 body when a header PATCH tries to move an inherited field on a PO
     that already has a GRN. Names the fields and the cancel-to-source remedy. */
 export function poIdentityLockedRefusal(cols: string[]) {
-  /* LABELS from the same rulebook as the COLUMNS (PO_LOCK_COLS, above). Re-typing
-     them here made the label map a second answer to a question document-policy.ts
-     calls "the single source": a column added to the rulebook would read as
-     `purchase_location_id` in this refusal and as "purchase location" in the PCO
-     one, which shares the very same set. */
   const names = cols.map((c) => PO_LOCK_LABELS[c] ?? c);
   return {
     error: 'po_identity_locked',

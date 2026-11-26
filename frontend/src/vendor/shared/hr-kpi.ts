@@ -17,8 +17,8 @@
  * that books the allowance does. */
 
 export const KPI_WEEKS = 4;
-export const KPI_RATING_MIN_X100 = 100; // 1.00
-export const KPI_RATING_MAX_X100 = 500; // 5.00
+export const KPI_RATING_MIN_X100 = 100;
+export const KPI_RATING_MAX_X100 = 500;
 
 export type KpiRole = "SUPERVISOR" | "STAFF";
 
@@ -85,7 +85,6 @@ export function resolveTier(finalX100: number | null, tiers: KpiTierDef[]): KpiT
 }
 
 export type KpiComputed = {
-  /** One score per week, index 0 = week 1; null where the week is not fully rated. */
   weekScores: (number | null)[];
   finalX100: number | null;
   tierLabel: string | null;

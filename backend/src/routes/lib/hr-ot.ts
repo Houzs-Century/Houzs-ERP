@@ -63,26 +63,6 @@ export type AutoOtPlan =
   | { kind: "insert"; startMin: number; endMin: number }
   | { kind: "update"; id: number; startMin: number; endMin: number };
 
-/* What the punch sync should do with the single AUTO claim for an employee-day,
- * given the AUTO claim already there (if any) and whether a human has REPORTED
- * overtime for the same day. Keeps the books to at most one live OT figure per
- * day, so payroll (which sums every confirmed claim) can never double-pay:
- *
- *   - A human-reported claim (pending or confirmed) OWNS the day: the auto
- *     figure stands aside. Any pending auto claim is removed; a reported one is
- *     the precise record of split or outside-shift windows a single punch cannot
- *     show (the case the owner built reporting for).
- *   - A supervisor's decision on the auto claim is final: a confirmed or
- *     rejected auto claim is left as it is, never re-raised or overwritten from a
- *     later re-sync (the sync runs on every punch and page load).
- *   - Otherwise the auto claim tracks the punch: inserted when OT appears,
- *     refreshed while it is still pending, removed when the punch no longer earns
- *     any (a corrected or forgotten punch).
- */
-/* Auto overtime under this many minutes is not worth a claim: a punch-out a few
- * minutes past the shift should not create OT for a supervisor to review (owner
- * 2026-11-24). A worker who really did short OT still reports the exact window,
- * which is not capped. */
 export const MIN_AUTO_OT_MIN = 30;
 
 /* Drivers are paid by trip (Trip Pay), not by the hour, so a driver's punch

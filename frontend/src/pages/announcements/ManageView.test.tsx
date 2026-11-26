@@ -3,11 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import { ManageView, type ManageViewProps } from "./ManageView";
 import type { AcksData, Announcement } from "./announcementModel";
 
-/* ────────────────────────────────────────────────────────────────────────────
-   ManageView — the poster's view (design handoff 2026-09-04, screen 2). Pins
-   the stat strip, the ack-rate column with its thresholds and statuses, the
-   two-level drill-down (notice → department → person) and the two actions.
-   ──────────────────────────────────────────────────────────────────────────── */
 
 function ann(over: Partial<Announcement> & { id: string }): Announcement {
   return {
@@ -93,8 +88,6 @@ describe("ManageView", () => {
     render(<ManageView {...props()} />);
     const stat = (label: string) =>
       String(screen.getByText(label, { selector: "span.font-mono" }).parentElement!.textContent);
-    // warn is pending for me (sop acked); old is archived; live = warn + sop;
-    // avg of 65% and 46% = 56% (rounded); both live rows sit under 70%.
     expect(stat("Awaiting you")).toContain("1");
     expect(stat("Live notices")).toContain("2");
     expect(stat("Avg. ack rate")).toContain("56%");
@@ -180,7 +173,6 @@ describe("ManageView", () => {
       expect(p.onApprove).toHaveBeenCalledWith(expect.objectContaining({ id: "pend" }));
       fireEvent.click(screen.getByRole("button", { name: "Reject…" }));
       expect(p.onReject).toHaveBeenCalledWith(expect.objectContaining({ id: "pend" }));
-      // The approval desk alone gets none of the poster actions.
       expect(screen.queryByRole("button", { name: "Hide" })).toBeNull();
       expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
 

@@ -1,14 +1,3 @@
-/* The status PATCH's optimistic-concurrency payload.
- *
- * `expectedStatus` is the server's CAS on the status column: the backend
- * refuses with 409 `so_version_conflict` when it does not equal the row's
- * CURRENT status. It must therefore carry the status the screen was showing
- * BEFORE the click — never the status being moved to.
- *
- * onMutate paints the target status onto the detail cache, and react-query
- * runs onMutate BEFORE mutationFn, so a mutationFn that reads the status out
- * of that same cache reads its own optimistic write. This pins that it does
- * not. */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
@@ -74,9 +63,6 @@ describe('useUpdateMfgSalesOrderStatus — expectedStatus', () => {
   });
 });
 
-/* The final cancel approval runs THIS mutation, and the server closes the
- * cancellation request (EXECUTED) on it. The order page's cancel card must be
- * refetched, or it keeps offering "Cancel now" on a cancelled order. */
 describe('useUpdateMfgSalesOrderStatus — cancellation card', () => {
   beforeEach(() => authedFetch.mockReset());
 

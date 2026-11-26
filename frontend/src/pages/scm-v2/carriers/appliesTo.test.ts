@@ -68,7 +68,6 @@ describe('Price check job', () => {
     });
     expect(withJob(f, 'DELIVERY', priced)).toMatchObject({ job: 'DELIVERY', count: '1', counts: {} });
     expect(withJob(f, 'SERVICE', priced).counts).toEqual({ SERVICE: '1' });
-    /* A job the card does not price gets no box to fill. */
     expect(withJob(EMPTY_FORM, 'TRANSFER', priced).counts).toEqual({});
   });
 });

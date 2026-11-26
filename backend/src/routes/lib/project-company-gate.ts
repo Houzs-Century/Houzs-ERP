@@ -1,45 +1,8 @@
-// ─────────────────────────────────────────────────────────────────────────
-// project-company-gate.ts — the company boundary for routes/projects.ts.
-//
-// Lives in its own module rather than inside the router for two reasons: the
-// router is over its file-size ceiling, and a boundary rule with its own file
-// is one the next reader can find. Both exports are listed in
-// check-company-scope.mjs's DELEGATION_GUARDS, which is that script's promise
-// that each was opened and read — see the salesDocOutOfScope note there for
-// what an unread entry on that list costs.
-// ─────────────────────────────────────────────────────────────────────────
 import type { Context } from "hono";
 import type { Env } from "../../types";
 import { activeCompanySql } from "../../scm/lib/companyScope";
 
-/* ── THE CHILD-ROW OWNERSHIP GATE ──────────────────────────────────────────
-   One place, because the alternative is thirty hand-written predicates and this
-   file already proved what that produces. Two shapes only, decided by whether
-   the child table got a company_id:
 
-   · OWN — project_checklist, project_checklist_sections,
-     project_checklist_attachments, project_checklist_comments (mig 0093) and
-     project_finance_lines (mig 0170) carry company_id, so the row's own column
-     is the predicate. 0170 deliberately declined a column DEFAULT for exactly
-     this reason ("a default to Houzs would silently re-open the leak").
-   · VIA PARENT — project_stock_transfers, project_defects,
-     project_sales_reports, project_team, project_attachments,
-     project_checklist_attachment_actions have no company_id anywhere in
-     migrations-pg, so the boundary is the parent project, via the same EXISTS
-     form DELETE /phase-photos/:photoId already uses.
-
-   Deliberately NOT covered, and left alone on purpose: project_event_types and
-   project_organizers are SHARED masters with no company_id at all (mig 0292:72
-   says so of event types in as many words). Scoping them would break both
-   companies' pickers, and they carry no customer data.
-
-   DEGRADES, does not fail closed: when activeCompanySql yields "" the companies
-   master is unresolved (pre-migration / D1 test mirror / cold-start) and the
-   install is single-company, so the gate is skipped entirely rather than
-   turning every child row into a 404. Same first branch as every helper in
-   scm/lib/companyScope.ts. */
-
-/** Child tables reachable by their own id, and how each proves its company. */
 const CHILD_COMPANY_SHAPE = {
   project_finance_lines: "own",
   project_checklist: "own",
@@ -69,7 +32,7 @@ export async function refuseForeignChild(
   childId: number | string,
 ): Promise<Response | null> {
   const coSql = activeCompanySql(c);
-  if (!coSql) return null; // unresolved / single-company → degrade, as everywhere
+  if (!coSql) return null;
   const sql =
     CHILD_COMPANY_SHAPE[table] === "own"
       ? `SELECT 1 AS ok FROM ${table} WHERE id = ?${coSql}`
@@ -100,21 +63,6 @@ export async function refuseForeignProject(
   return row ? null : c.json({ error: "Not found" }, 404);
 }
 
-/* ── THE ATTACHMENT-KEY GATE (GET /api/projects/attachments/:key) ──────────
-   That route streams a POD_BUCKET object by its key, and POD_BUCKET is shared:
-   outbound email attachments (mail-outbox/<outboxId>/<n>, every part of it a
-   counter), inbound mail, HR punch selfies, service-case photos, memos, staff
-   files, fleet papers. Before this gate any signed-in user of either company
-   could read any of them by naming the key, past the ownership rule the
-   service-case route enforces on its own copy (assr.ts /attachments). Same bug
-   class Conts fixed in #166 ("any signed-in account could download any stored
-   file by its id").
-
-   A key another module writes is refused outright. A key that names its
-   project (or its checklist item) must be in the caller's company. Any other
-   key is served as before, because project rows written by older code may carry
-   a layout this file has never seen, and refusing those would hide a project's
-   own files. */
 export const FOREIGN_ATTACHMENT_PREFIXES = [
   "mail-outbox/", "mail/", "hr-punch/", "user/", "memos/", "assr/",
   "announcements/", "fleet/", "branding/",

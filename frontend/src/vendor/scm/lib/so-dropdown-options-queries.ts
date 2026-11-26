@@ -1,9 +1,3 @@
-// Vendored VERBATIM (minus the unused supabase import) from
-// apps/backend/src/lib/so-dropdown-options-queries.ts — DB-backed SO dropdowns
-// (customer type / building type / relationship / payment method cascade /
-// venue). authedFetch-based already; the FALLBACK_OPTIONS keep the selects
-// populated even before the API resolves (and when /api/scm/so-dropdown-options
-// isn't mounted yet — flag for backend confirm).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -48,8 +42,6 @@ type GroupedOptions = Record<SoDropdownCategory, SoDropdownOption[]>;
    because both already route through this hook. */
 function useGroupedSoDropdownOptions<T>(select: (all: GroupedOptions) => T) {
   return useQuery({
-    // The ['so-dropdown-options'] prefix is load-bearing: the CRUD mutations
-    // below invalidate on it, and must keep reaching this query.
     queryKey: ['so-dropdown-options', 'all', 'active'],
     staleTime: STALE,
     queryFn: () =>
@@ -59,17 +51,9 @@ function useGroupedSoDropdownOptions<T>(select: (all: GroupedOptions) => T) {
 }
 
 export function useSoDropdownOptions(category: SoDropdownCategory) {
-  /* No `?? []` on the lookup: an absent category means the response did not
-     answer for it, which is NOT "this picklist is empty". Leave it undefined and
-     let optionsOrFallback below make that call — it is the one place that owns
-     the empty-vs-fallback decision, and it already treats a not-yet-loaded query
-     the same way. */
   return useGroupedSoDropdownOptions((all) => all[category]);
 }
 
-/* Every category INCLUDING deactivated rows — the Maintenance page, which has to
-   show an inactive option to flip it back on. Kept on its own cache key so it can
-   never serve those rows to an order form's dropdown. */
 export function useAllSoDropdownOptions() {
   return useQuery({
     queryKey: ['so-dropdown-options', 'all', 'with-inactive'],
@@ -153,23 +137,11 @@ export const FALLBACK_OPTIONS: Record<SoDropdownCategory, SoDropdownOption[]> = 
     { id: 'fallback-rel-colleague', category: 'relationship', value: 'Colleague', label: 'Colleague', sortOrder: 7, active: true },
     { id: 'fallback-rel-other',     category: 'relationship', value: 'Other',     label: 'Other',     sortOrder: 8, active: true },
   ],
-  /* THREE, not four. Mig 0037 DEACTIVATED the L1 'Installment' row — an EPP
-     receipt is Method = Merchant plus an installment_plan tenure — so the API
-     serves three. This list is what every surface shows while that API is
-     loading or empty, and it offered a fourth, retired method the operator
-     could pick and save. The row itself still exists (deactivated) and stays
-     locked by PAYMENT_METHOD_CORE_VALUES, which is why that list is still four:
-     the lock is about what may be DELETED, this is about what may be CHOSEN.
-     Pinned against the migration by so-dropdown-options-queries.test.ts. */
   payment_method: [
     { id: 'fallback-pm-merchant',    category: 'payment_method', value: 'Merchant',    label: 'Merchant',                sortOrder: 1, active: true },
     { id: 'fallback-pm-online',      category: 'payment_method', value: 'Online',      label: 'Bank transfer / DuitNow', sortOrder: 2, active: true },
     { id: 'fallback-pm-cash',        category: 'payment_method', value: 'Cash',        label: 'Cash',                    sortOrder: 3, active: true },
   ],
-  /* The twelve banks mig 0037 seeds, in ITS sort order. This list held nine and
-     was missing Pinelabs / AEON / HSBC — all three appear on real receipts, and
-     an operator on a cold load simply could not choose them. Pinned against the
-     migration by so-dropdown-options-queries.test.ts. */
   payment_merchant: [
     { id: 'fallback-pmer-mbb',        category: 'payment_merchant', value: 'MBB',        label: 'MBB',         sortOrder: 1,  active: true },
     { id: 'fallback-pmer-cimb',       category: 'payment_merchant', value: 'CIMB',       label: 'CIMB',        sortOrder: 2,  active: true },
@@ -209,15 +181,6 @@ export function optionsOrFallback(
   return data;
 }
 
-/* HOUZS ADDITION (not in the 2990 original — keep when re-syncing this file).
-   The Customer Type default for a NEW SO, owned in ONE place so desktop
-   (SalesOrderNew) and mobile (MobileNewSO) can never drift apart. Owner
-   2026-07-16: "customer type default new customer".
-
-   Resolves against the LIVE so_dropdown_options catalog rather than asserting a
-   literal 'NEW' — the option list is maintenance-editable, so we match the real
-   row whose label reads "New Customer" (case-insensitively) and fall back to the
-   first option when the catalog has no such row. Never fabricates a value. */
 export function preferredCustomerTypeValue(opts: SoDropdownOption[]): string {
   const preferred =
     opts.find((o) => o.label.trim().toLowerCase() === 'new customer') ?? opts[0];

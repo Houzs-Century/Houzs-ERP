@@ -41,9 +41,7 @@ export interface ChangeWindow {
 
 /** What the record needs to know of the order. */
 export interface OrderDays {
-  /** The day the order was opened in the ERP (Malaysia). */
   openingDay: string;
-  /** The order date: what rule 1 prices the order on. */
   orderDay: string;
   status: string;
 }
@@ -124,7 +122,6 @@ export async function openChangeWindow(sb: Sb, w: ChangeWindow, changeDay: strin
   return (await findWindow(sb, w)) ?? null;
 }
 
-/** The window's row id: a string, null when there is none, undefined when unread. */
 async function findWindow(sb: Sb, w: ChangeWindow): Promise<string | null | undefined> {
   const { data, error } = await scopeToCompanyId(
     sb.from('so_product_changes').select('id')
@@ -158,7 +155,6 @@ export async function closeChangeWindow(sb: Sb, w: ChangeWindow, id: string, who
   changedBy: string | null;
   approvedBy?: string | null;
   amendmentNo?: string | null;
-  /** Today: an amendment window takes the day its product change was approved. */
   changeDay: string;
 }): Promise<void> {
   const { data, error } = await scopeToCompanyId(

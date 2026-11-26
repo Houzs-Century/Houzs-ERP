@@ -32,9 +32,6 @@ export function EditMemberField({
   return editMemberOffers(write, scoped) ? <div>{children}</div> : null;
 }
 
-/* The save diffs normalised state against the stored member, so a field the
-   caller never saw can still land in the body (a stored alias of "" goes out as
-   null). A scoped caller's body keeps the listed keys only. */
 export function editMemberPatchFor(
   patch: Record<string, unknown>,
   scopedSalesDirector: boolean,

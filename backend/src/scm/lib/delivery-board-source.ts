@@ -1,17 +1,3 @@
-/* Which reads build the Delivery Planning board: the PostgREST reads it has
-   always used, or the two SQL statements in delivery-board-sql.ts.
-
-   DP_BOARD_SOURCE (wrangler.toml [vars], set explicitly there):
-     rest   — the PostgREST reads only. The default, and what any missing or
-              unrecognised value means.
-     shadow — serve the PostgREST result; after the response, rebuild the same
-              orders through SQL and record every difference (doc number + field
-              names) in scm.delivery_board_shadow_runs. Nothing the user sees
-              comes from SQL.
-     sql    — serve from SQL. A failed SQL statement falls back to the PostgREST
-              reads for that request, so the switch can never blank the board.
-   The owner flips rest -> shadow -> sql only after the shadow table counts zero
-   unexplained differences. */
 import type { Sql } from 'postgres';
 import type { Context } from 'hono';
 import { getSql, resolveDatabaseUrl } from '../../db/pg';
@@ -54,8 +40,6 @@ const warnSql = (stage: string, e: unknown) =>
 
 export type BoardHeadOut = { regionCfg: RegionConfig; whRows: Array<{ id: string; code: string | null; name: string | null }>; soRowsRaw: SoHeaderRow[] };
 
-/* Region config, warehouses and the SO headers: one SQL statement, or the
-   original PostgREST reads with their original 500s. */
 export async function loadBoardHead(
   c: BoardCtx,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm service client
@@ -73,18 +57,14 @@ export async function loadBoardHead(
   const regionCfg = await loadRegionConfig(sb); lap('dp-region');
   const { data: whRows, error: whErr } = await sb.from('warehouses').select('id, code, name'); lap('dp-warehouses');
   if (whErr) return { stage: 'warehouses', err: whErr };
-  /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) => bandFilter(onlyDocsFilter(
     scopeToAllowedCompanies(
       sb.from('mfg_sales_orders')
-        /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
-           has no `id` column: selecting it makes PostgREST reject the whole query and
-           the board 500s. Identity here is doc_no; every join below keys on it. */
         .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, sales_exemption_expiry, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .order('customer_delivery_date', { ascending: true, nullsFirst: false })
-        .order('doc_no'), // breaks date ties: pages overlapped, 7 SOs came back twice (2026-10-26)
+        .order('doc_no'),
       c,
     ).range(from, to), onlyDocs), band, today),
   ); lap('dp-so-headers');
@@ -92,8 +72,6 @@ export async function loadBoardHead(
   return { ok: { regionCfg, whRows: whRows ?? [], soRowsRaw: soRowsRaw ?? [] } };
 }
 
-/* The PostgREST per-order reads, kicked off early so they overlap the sub-board
-   reads (as before). Not started on the sql path. */
 export function kickOffRestBoardReads(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm service client
   sb: any,
@@ -105,8 +83,6 @@ export function kickOffRestBoardReads(
   if (source === 'sql') return null;
   return {
     reads: kickOffBoardReads(sb, docNos, display),
-    /* The "PO No." column walks POs per company; wrapped, since it is awaited
-       later — a throw must not float unhandled. */
     poNosByDocP: planningPoNosByDoc(sb, display ? soRows : []).then((r) => ({ ok: r } as const), (e) => ({ err: e } as const)),
   };
 }
@@ -130,10 +106,8 @@ export async function loadBoardMaps(
   return loadSoBoardMapsRest(sb, c, { docNos, soRows, display, reads: rest.reads, poNosByDocP: rest.poNosByDocP, lap });
 }
 
-/* ── Shadow compare ────────────────────────────────────────────────────── */
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
-/** Key-order-free JSON, so { a, b } and { b, a } compare equal (the response is JSON). */
 function canon(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canon).join(',')}]`;
   if (isPlainObject(v)) return `{${Object.keys(v).sort().filter((k) => v[k] !== undefined).map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`;
@@ -179,8 +153,6 @@ export type ShadowInput = {
 
 const MAX_DIFFS = 200;
 
-/* The SQL rebuild of exactly the orders the user was served, compared field by
-   field. Reads only; the one write is the result row. */
 export async function runBoardShadow(sql: Sql, c: BoardCtx, s: ShadowInput): Promise<{ compared: number; diffs: RowDiff[]; error: string | null }> {
   const t0 = Date.now();
   let diffs: RowDiff[] = [];
@@ -217,5 +189,5 @@ export function scheduleBoardShadow(c: BoardCtx, s: ShadowInput): void {
       console.warn(`[delivery-planning] shadow skipped: ${errText(e).slice(0, 160)}`);
     }
   })();
-  try { c.executionCtx.waitUntil(run); } catch { /* no execution context (tests): the promise still runs */ }
+  try { c.executionCtx.waitUntil(run); } catch { }
 }

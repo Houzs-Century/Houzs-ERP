@@ -52,13 +52,13 @@ const ROWS = (): Row[] => [
   am('d1', 'HC-SO-1', 'DELIVERY', { header_changes: { address2: 'Unit 9' } }),
   am('d2', 'HC-SO-2', 'DELIVERY', { status: 'SO_APPROVED', version: 2 }),
   am('g3', 'HC-SO-3', null),
-  am('l4', 'HC-SO-4', 'LINES'),                                   // a goods QTY change
-  am('l5', 'HC-SO-5', 'LINES'),                                   // a service line the rule sent to LINES
+  am('l4', 'HC-SO-4', 'LINES'),
+  am('l5', 'HC-SO-5', 'LINES'),
   am('l6', 'HC-SO-6', 'LINES', { header_changes: { processingDate: '2026-10-01' } }),
   am('d7', 'HC-SO-7', 'DELIVERY'),
-  am('l7', 'HC-SO-7', 'LINES', { amendment_no: 'HC-SO-7/A2' }),   // the target desk is already busy on this order
+  am('l7', 'HC-SO-7', 'LINES', { amendment_no: 'HC-SO-7/A2' }),
   am('l8', 'HC-SO-8', 'LINES', { lane_flag_note: 'came from Logistic' }),
-  am('p9', 'HC-SO-9', 'PRICE'),                                   // a 2990 price-only lane — never handed over
+  am('p9', 'HC-SO-9', 'PRICE'),
   am('l10', 'HC-SO-10', 'LINES'),                                 // HC-0103: only edit-view fills, no real change
 ];
 
@@ -147,7 +147,6 @@ describe('PATCH /so-amendments/:id/flag-lane', () => {
     const body = (await goods.json()) as { error: string; reason: string };
     expect(body.error).toBe('po_must_follow');
     expect(body.reason).toContain('1 product line change');
-    // humanApiError drops a server sentence of 200+ characters for a generic one.
     expect(body.reason.length).toBeLessThan(200);
     expect(row('l4').lane).toBe('LINES');
 

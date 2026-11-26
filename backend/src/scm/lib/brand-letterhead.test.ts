@@ -28,7 +28,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveBrandLetterheadKey, normaliseBrandRows } from './brand-letterhead';
 
-/** HOUZS's pool, exactly the five logo-bearing rows production has. */
 const HOUZS_BRANDS = [
   { name: 'AKEMI', logo_r2_key: 'brands/logo-1-1783145526979.jpg' },
   { name: 'AKEMI C&C', logo_r2_key: null },
@@ -44,7 +43,6 @@ const HOUZS_BRANDS = [
   { name: 'ZANOTTI', logo_r2_key: 'brands/logo-2-1783145516704.png' },
 ];
 
-/** 2990's pool. Seven rows, not one of them with a logo. */
 const B2990_BRANDS = [
   { name: '2990s Mattress', logo_r2_key: null },
   { name: '2990s Sofa', logo_r2_key: null },
@@ -57,10 +55,6 @@ const B2990_BRANDS = [
 
 describe('brand letterhead — the company half of the owner 2026-08-18 sofa rule', () => {
   it('a 2990 SOFA order does NOT print Houzs’s Zanotti logo (the reported defect)', () => {
-    /* The exact shape of 2990-SO-2607-026: a 2990 order with sofa lines. The
-       brand pool handed in is 2990's own, which is what a company-scoped read
-       returns. "2990s Sofa" carries no logo, so the ONLY correct answer is
-       null -> the 2990 HOME SDN. BHD. company letterhead. */
     expect(
       resolveBrandLetterheadKey({
         brands: B2990_BRANDS,
@@ -72,10 +66,6 @@ describe('brand letterhead — the company half of the owner 2026-08-18 sofa rul
   });
 
   it('a 2990 SOFA order still refuses Zanotti even if the pool leaks Houzs rows', () => {
-    /* DEFENCE IN DEPTH, and the half that catches a regression in the READ.
-       Scoping the SQL and resolving the company's own brand are two separate
-       fixes; if the predicate is ever dropped again the rule must still not
-       hand 2990 a Houzs mark. The pool here is deliberately BOTH companies'. */
     expect(
       resolveBrandLetterheadKey({
         brands: [...B2990_BRANDS, ...HOUZS_BRANDS],
@@ -98,10 +88,6 @@ describe('brand letterhead — the company half of the owner 2026-08-18 sofa rul
   });
 
   it('2990 WOULD print its own sofa brand the day that row gets a logo', () => {
-    /* The fix must resolve the company's house brand, not merely suppress
-       Zanotti. Evidence is not a setting: no row was inserted in production to
-       make this pass - the fixture states what happens IF the owner uploads a
-       logo for the row that already exists. */
     expect(
       resolveBrandLetterheadKey({
         brands: B2990_BRANDS.map((b) =>
@@ -115,9 +101,6 @@ describe('brand letterhead — the company half of the owner 2026-08-18 sofa rul
   });
 
   it('an unresolved company code does not fall through to Zanotti', () => {
-    /* activeCompanySql degrades to NO predicate on a genuinely unresolved
-       (legacy / single-company) context, so the pool can be the whole table.
-       The sofa branch must not stamp a house brand it cannot attribute. */
     expect(
       resolveBrandLetterheadKey({
         brands: [...B2990_BRANDS, ...HOUZS_BRANDS],
@@ -138,7 +121,7 @@ describe('brand letterhead — behaviour carried over unchanged', () => {
         firstDescription: 'AKEMI C&C SUPERIOR 6FT',
         companyCode: 'HOUZS',
       }),
-    ).toBeNull(); // 'AKEMI C&C' wins on length and carries NO logo
+    ).toBeNull();
   });
 
   it('falls back to the shorter prefix only when it is the longest MATCH', () => {

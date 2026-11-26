@@ -1,14 +1,3 @@
-// Unit tests for the DO cancel-path add-back ROW BUILDER (buildDoReversalRows).
-//
-// SCOPE + HONEST LIMIT: the AUTHORITATIVE R4 reversal — restoring the DO's
-// ORIGINAL lots at their ORIGINAL per-lot cost, DELETING its
-// inventory_lot_consumptions rows, and the idempotent re-cancel no-op — lives in
-// the SQL function scm.fn_reverse_do_out (migration 0198). That function is NOT
-// exercised here: this repo's suite binds no Postgres, so the trigger/function
-// firing is only provable against a real DB (staging apply, owner-run). These
-// tests pin the PURE JS decisions the route makes AROUND that fn: which buckets
-// the route still writes (none, when the fn handled them) and the legacy
-// average-cost fallback used only when the fn is absent/errors.
 import { describe, expect, test } from 'vitest';
 import { buildDoReversalRows, type DoReversalMovement } from './do-reversal';
 
@@ -58,7 +47,7 @@ describe('buildDoReversalRows — legacy fallback (SQL fn absent / errored)', ()
       movement_type: 'ADJUSTMENT',
       item_code: 'CHAIR-A',
       qty: 4,
-      unit_cost_sen: 250, // round(1000 / 4)
+      unit_cost_sen: 250,
       source_doc_type: 'ADJUSTMENT',
       source_doc_id: 'do-1',
       source_doc_no: 'DO-2607-001',
@@ -77,17 +66,16 @@ describe('buildDoReversalRows — legacy fallback (SQL fn absent / errored)', ()
       item_code: 'SOFA-X',
       batch_no: 'DYE-77',
       qty: 3,
-      unit_cost_sen: 333, // round(999 / 3)
+      unit_cost_sen: 333,
     });
   });
 
   test('average cost rounds (out_total_cost / out_qty)', () => {
     const rows = buildDoReversalRows([out({ qty: 3, total_cost_sen: 1000 })], ctx());
-    expect(rows[0].unit_cost_sen).toBe(333); // round(333.33)
+    expect(rows[0].unit_cost_sen).toBe(333);
   });
 
   test('an edited DO nets OUT minus its own IN deltas per bucket', () => {
-    // shipped 5, then a line edit resynced 2 back (delta IN) -> reverse net 3.
     const rows = buildDoReversalRows(
       [
         out({ qty: 5, total_cost_sen: 1000 }),

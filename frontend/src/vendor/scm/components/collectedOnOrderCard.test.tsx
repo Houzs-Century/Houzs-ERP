@@ -1,11 +1,3 @@
-/* The card that tells the office whether a deposit is already banked.
- *
- * Four states, and two of them look identical if the code is careless: "this
- * order collected nothing" and "we could not read this order". Getting those
- * two confused sends someone to chase money that is already in the drawer,
- * which is the expensive direction — so the refusal case is asserted first and
- * asserted hardest.
- */
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { CollectedOnOrderCard } from './CollectedOnOrderCard';
@@ -67,9 +59,6 @@ describe('CollectedOnOrderCard', () => {
 
   it('formats in the document currency, not a hard-coded MYR', () => {
     card({ payments: [pay({ amount_sen: 100_00 })], currency: 'USD' });
-    /* Two nodes carry it — the summary line and the row — which is itself the
-       assertion: both read the same currency, so a hard-coded MYR anywhere in
-       the card would leave one of them disagreeing with the other. */
     expect(screen.getAllByText('USD 100.00')).toHaveLength(2);
     expect(screen.queryByText(/MYR/)).toBeNull();
   });

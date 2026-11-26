@@ -1,21 +1,3 @@
-// ----------------------------------------------------------------------------
-// acc/control-check — reconciliation layer 1 (brief 3.5): each control account
-// against the documents that are supposed to explain it, named to the doc;
-// money on a document that never reached the ledger; payments that stopped
-// agreeing with their entry. Lifted out of GET /accounting/control-check
-// (accounting.ts) so Self-check's Run again and the nightly run read the same
-// thing the page does (the owner's redesign, batch 6 c2/c3). Reads only.
-//
-// For each control role (AR from SI documents, AP from PI and AP invoices) it
-// reports DRIFT docs (document total != its ACTIVE journal total, including a
-// confirmed doc with NO journal and a journal whose doc is gone) and FOREIGN
-// lines (control-account lines from a source no rule maps there). Sums run over
-// POSTED, non-reversed entries — the same predicate every balance view uses.
-//
-// Each drift row now says who it is with, the document's date, its active
-// entry and the id its page opens by; each unbooked payment its customer and
-// salesperson (batch 6 c2) — read in a handful of company-scoped reads.
-// ----------------------------------------------------------------------------
 
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { safeRate, toMyrSen } from '../scm/lib/fx';
@@ -27,9 +9,7 @@ type Row = Record<string, any>;
 
 export type ControlDrift = {
   docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string;
-  /** The customer or supplier, the document's date, its active entry. */
   party: string | null; date: string | null; jeNo: string | null;
-  /** Which page opens it, and by what id — null when the document is gone. */
   docKind: 'SI' | 'PI' | 'API' | null; docId: string | null;
 };
 export type ControlForeign = { jeNo: string; sourceType: string; debitSen: number; creditSen: number };
@@ -48,7 +28,6 @@ export type ControlCheckResult = { checks: ControlCheckRow[]; payments: ControlC
 const str = (v: unknown): string | null => (v == null || v === '' ? null : String(v));
 const dayOf = (v: unknown): string | null => (v == null || v === '' ? null : String(v).slice(0, 10));
 
-/** Supplier names by id, in the company. */
 async function supplierNames(sb: Db, companyId: number, ids: string[]): Promise<{ ok: true; names: Map<string, string> } | { ok: false; reason: string }> {
   const uniq = [...new Set(ids.filter(Boolean))];
   const rows = await chunkIn<Row>(uniq, (batch, lo, hi) => sb.from('suppliers')
@@ -57,7 +36,6 @@ async function supplierNames(sb: Db, companyId: number, ids: string[]): Promise<
   return { ok: true, names: new Map(rows.data.filter((r) => r.name).map((r) => [String(r.id), String(r.name)])) };
 }
 
-/** Staff names by id (who sold it) — the salesperson's row, else the order's agent text. */
 async function staffNames(sb: Db, ids: string[]): Promise<{ ok: true; names: Map<string, string> } | { ok: false; reason: string }> {
   const uniq = [...new Set(ids.filter(Boolean))];
   const rows = await chunkIn<Row>(uniq, (batch, lo, hi) => sb.from('staff').select('id, name').in('id', batch).order('id').range(lo, hi));
@@ -67,12 +45,6 @@ async function staffNames(sb: Db, ids: string[]): Promise<{ ok: true; names: Map
 
 async function runOne(sb: Db, companyId: number, role: 'AR' | 'AP' | 'AP_OTHER' | 'AR_OTHER', accountCode: string): Promise<ControlCheckRow> {
   const expectedSource = role === 'AR' ? 'SI' : 'PI';
-  /* AP_OTHER (405-0000, the 2026-09-03 split) and AR_OTHER (305-0000, the
-     Other Debtors module): the document↔journal drift walk below is
-     per-DOCUMENT and control-agnostic — the AP arm already covers every PI
-     once, and a debtor bill cannot exist without its journal (the create is
-     atomic). These arms contribute what IS control-specific: the GL balance
-     and any foreign line parked on the control. */
   const docDrift = role !== 'AP_OTHER' && role !== 'AR_OTHER';
 
   const jeByDoc = new Map<string, { jeTotal: number; jeNo: string | null }>();
@@ -134,9 +106,6 @@ async function runOne(sb: Db, companyId: number, role: 'AR' | 'AP' | 'AP_OTHER' 
         jeByDoc.delete(docNo);
         continue;
       }
-      /* A confirmed PI with no active journal IS drift — the AR arm reports
-         the identical shape (found live 2026-08-22: HC-PI-2608-002 and -003).
-         `docTotal > 0` mirrors AR: a zero-value invoice has no journal. */
       const docTotal = toMyrSen(Number(d.total_sen ?? 0), safeRate(d.exchange_rate));
       if (!je) {
         if (docTotal > 0) push(docNo, docTotal, 0, 'document has no active journal', null, facts);
@@ -207,8 +176,6 @@ async function runOne(sb: Db, companyId: number, role: 'AR' | 'AP' | 'AP_OTHER' 
     ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL',
       'DI', 'DI_REVERSAL', 'CN', 'CN_REVERSAL', 'PV', 'PV_REVERSAL', CONVERT_SOURCE, `${CONVERT_SOURCE}_REVERSAL`])
     : role === 'AR_OTHER'
-      /* OCN = a credit note to an other debtor (Cr the other-debtor control),
-         knocked off the debtor's bills — part of the family (2026-10-28). */
       ? new Set(['ODB', 'ODB_REVERSAL', 'ODR', 'ODR_REVERSAL', 'OCN', 'OCN_REVERSAL'])
       /* API = the AP invoice (docs/bugs/0654) and SCN = a supplier's credit
          note (Dr the supplier's AP control, off the invoices it credits since
@@ -224,8 +191,6 @@ async function runOne(sb: Db, companyId: number, role: 'AR' | 'AP' | 'AP_OTHER' 
   return { role, accountCode, glBalanceSen: bal, driftDocs: drift, foreignLines: foreign, ok: drift.length === 0 && foreign.length === 0 };
 }
 
-/** Each unbooked payment's customer and salesperson: the order's (SOPAY), the
-    invoice's (SIPAY — named by its number rather than its id). */
 async function withPeople(sb: Db, companyId: number, rows: UnbookedPayment[]): Promise<{ ok: true; rows: UnbookedRow[] } | { ok: false; reason: string }> {
   const soDocs = [...new Set(rows.filter((r) => r.source === 'SOPAY').map((r) => r.docNo).filter(Boolean))];
   const siIds = [...new Set(rows.filter((r) => r.source === 'SIPAY').map((r) => r.docNo).filter(Boolean))];
@@ -272,7 +237,6 @@ export async function runControlCheck(sb: Db, companyId: number): Promise<Contro
     const named = await withPeople(sb, companyId, unbooked.rows);
     payments = {
       since: unbooked.since,
-      /* A failed name read costs the names, never the finding. */
       rows: named.ok ? named.rows : unbooked.rows.map((r) => ({ ...r, customer: null, salesperson: null })),
       totalSen: unbooked.totalSen,
       ok: unbooked.rows.length === 0 && (unbooked.neverBooked?.count ?? 0) === 0,
@@ -282,8 +246,6 @@ export async function runControlCheck(sb: Db, companyId: number): Promise<Contro
     };
   }
 
-  /* THE FOURTH FINDING: a payment that reached the ledger and then stopped
-     agreeing with it. Reads only. */
   const drift = await paymentEntryDisagreements(sb, companyId);
   const paymentDrift: ControlCheckDrift = drift.ok
     ? { rows: drift.rows, scanned: drift.scanned, ok: drift.rows.length === 0 }

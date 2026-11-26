@@ -1,27 +1,5 @@
-// ----------------------------------------------------------------------------
-// PurchaseOrderFromSo — multi-select SO → PO picker.
-//
-// Commander 2026-05-28 redesign:
-//   - REMOVED the "PO Defaults" card (Expected Delivery + Purchase Location).
-//     Those are NOT asked anymore — the server derives each PO line's
-//     warehouse from the source SO's Sales Location, and each line's delivery
-//     date from the SO line's own delivery date (header expected_at / purchase
-//     location are rolled up from the lines server-side).
-//   - SWAPPED the bespoke card list for the shared <DataGrid> primitive
-//     (same dense ledger look as MfgSalesOrdersList / SalesOrderDetailListing).
-//   - ADDED toolbar filters: a date-range filter that targets SO Date /
-//     Processing Date / Delivery Date, plus a Category filter.
-//
-// Original multi-select + partial-qty behaviour (Commander 2026-05-26) is
-// preserved: tick lines, optionally edit the pick qty, hit "Create POs".
-// Server groups by main supplier and emits one PO per supplier.
-//
-// Routing: /scm/purchase-orders/from-so.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type CSSProperties } from 'react';
-// HOUZS VENDOR — Link + useSearchParams live on 'react-router-dom' in
-// react-router v6 (the version Houzs ships). Only the import specifier changed.
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, X, CheckSquare, Square, Filter } from 'lucide-react';
 import { Button } from '@2990s/design-system';
@@ -47,11 +25,8 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
-/* DataGrid localStorage layout key (commander 2026-05-28). */
 const STORAGE_KEY = 'po-from-so.layout.v1';
 
-/* Houzs-style compact pill controls for the toolbar filters — mirrors the
-   inputs used on the SO list page so the density matches. */
 const FILTER_INPUT: CSSProperties = {
   height: 28,
   border: '1px solid var(--line)',
@@ -62,7 +37,6 @@ const FILTER_INPUT: CSSProperties = {
   color: 'var(--c-ink)',
 };
 
-/** Category filter options. 'all' shows everything; the rest match item_group. */
 const CATEGORY_OPTIONS = [
   { value: 'all',       label: 'All categories' },
   { value: 'sofa',      label: 'Sofa' },
@@ -72,7 +46,6 @@ const CATEGORY_OPTIONS = [
   { value: 'service',   label: 'Service' },
 ] as const;
 
-/** Which date field the range filter targets. */
 const DATE_FIELD_OPTIONS = [
   { value: 'soDate',       label: 'SO Date' },
   { value: 'processing',   label: 'Processing Date' },
@@ -80,11 +53,9 @@ const DATE_FIELD_OPTIONS = [
 ] as const;
 type DateField = typeof DATE_FIELD_OPTIONS[number]['value'];
 
-/** Resolve the date string for a row given the active date-field selector. */
 const rowDateFor = (r: OutstandingSoItem, field: DateField): string | null => {
   if (field === 'soDate')     return r.soDate ?? null;
   if (field === 'processing') return r.processingDate ?? null;
-  // delivery — prefer the SO line's own date, fall back to the SO header date.
   return r.lineDeliveryDate ?? r.deliveryDate ?? null;
 };
 
@@ -94,47 +65,25 @@ export const PurchaseOrderFromSo = () => {
   const navigate = useNavigate();
   const itemsQ   = useOutstandingSoItems();
 
-  /* Commander 2026-05-29 — when opened from a PO ("Transfer from Sales Order" / "Add Line
-     Item"), ?poId scopes this picker to that PO: it locks to the PO's supplier
-     and, on save, APPENDS the picked SO lines to that PO (instead of creating
-     new POs), then returns to the PO. */
   const [searchParams] = useSearchParams();
   const targetPoId = searchParams.get('poId');
   const targetPoQ = usePurchaseOrderDetail(targetPoId);
   const targetPoSupplierCode = targetPoQ.data?.purchaseOrder?.supplier?.code ?? null;
   const targetPoNumber = targetPoQ.data?.purchaseOrder?.po_number ?? null;
   const createPos = useCreatePosFromSoItems();
-  /* One append per mount: only the ?poId branch posts, and it navigates to the
-     PO on success — so this mount IS one intent and a per-mount key is the same
-     shape as every other create form (lib/idempotency.ts). Load-bearing here
-     because onError leaves the operator ON this page with the picks intact and
-     an "Add failed" dialog: if the post actually committed and only the response
-     was lost, the invited re-press must REPLAY, not append the same lines twice.
-     Nothing caps it otherwise — this branch does not send fromMrp, so the server
-     only rejects a re-append once remaining runs out. */
   const idemKey = useIdempotencyKey();
 
-  // Map<soItemId, { picked, qty }>. Defaults: picked = false; when ticked,
-  // qty defaults to remainingQty.
   const [picks, setPicks] = useState<Record<string, Pick>>({});
 
-  // Toolbar filters (commander 2026-05-28).
   const [category, setCategory]   = useState<string>('all');
   const [dateField, setDateField] = useState<DateField>('soDate');
   const [dateFrom, setDateFrom]   = useState<string>('');
   const [dateTo, setDateTo]       = useState<string>('');
 
-  // In-app result dialog (validation only now — the grid feeds the form).
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
 
   const items = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
 
-  /* Commander 2026-05-30 — the New PO form stashes its current draft
-     (poNewDraft) before sending us here. Build a per-soItemId draft qty map so:
-       · lines FULLY consumed by the draft are filtered out (clean),
-       · lines PARTIALLY consumed still show with a "draft already X" tag, and
-         the Pick Qty input is capped at (remaining − draft) so the same SO
-         qty can't be over-picked across draft + new picks. */
   const draftQtyById = useMemo(() => {
     try {
       const d = readScmHandoff<{ lines?: Array<{ soItemId?: string | null; qty?: number }> }>('poNewDraft');
@@ -149,13 +98,9 @@ export const PurchaseOrderFromSo = () => {
   }, []);
   const cameFromNewPage = draftQtyById.size > 0;
 
-  /* Effective remaining for a row, after subtracting what the draft already
-     holds for this same SO line. <=0 → filter out. >0 with draftQty>0 →
-     partially consumed, show with the "draft already X" tag. */
   const effectiveRemaining = (r: OutstandingSoItem): number =>
     r.remainingQty - (draftQtyById.get(r.soItemId) ?? 0);
 
-  // ── Filtered rows fed to the grid ────────────────────────────────────
   const rows = useMemo(() => {
     return items.filter((r) => {
       if (effectiveRemaining(r) <= 0) return false;
@@ -171,11 +116,7 @@ export const PurchaseOrderFromSo = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change
   }, [items, draftQtyById, category, dateField, dateFrom, dateTo]);
 
-  // One supplier per PO (Commander 2026-05-29) — once a bound line is ticked,
-  // lines from other suppliers lock. Unbound ("— none —") lines don't lock.
   const lockedSupplier = useMemo(() => {
-    // In PO-scoped mode the supplier is fixed to the PO's supplier from the
-    // start — every other supplier's lines grey out immediately.
     if (targetPoSupplierCode) return targetPoSupplierCode;
     for (const [id, v] of Object.entries(picks)) {
       if (!v.picked) continue;
@@ -194,11 +135,9 @@ export const PurchaseOrderFromSo = () => {
     Boolean(r.mainSupplierCode && lockedSupplier && r.mainSupplierCode !== lockedSupplier
       && !picks[r.soItemId]?.picked);
 
-  // ── Pick helpers ─────────────────────────────────────────────────────
   const togglePick = (id: string, remaining: number) => {
     const row = items.find((r) => r.soItemId === id);
     if (!row) return;
-    // Block ticking a different bound supplier than the one already locked.
     if (row.mainSupplierCode && lockedSupplier && row.mainSupplierCode !== lockedSupplier
         && !picks[id]?.picked) return;
     const turningOn = !picks[id]?.picked;
@@ -220,8 +159,6 @@ export const PurchaseOrderFromSo = () => {
         const g = (r.itemGroup ?? '').toLowerCase();
         return g === 'sofa' || g === 'accessory';
       });
-      /* The supplier this set rides on = the sofa's bound supplier (first sofa
-         line that has one), else whatever's already locked. */
       const sofaSupplier = members
         .find((r) => (r.itemGroup ?? '').toLowerCase() === 'sofa' && r.mainSupplierCode)?.mainSupplierCode
         ?? row.mainSupplierCode ?? lockedSupplier ?? null;
@@ -233,9 +170,6 @@ export const PurchaseOrderFromSo = () => {
       setPicks((s) => {
         const next = { ...s };
         for (const m of rideOn) {
-          /* Commander 2026-05-30 — when a draft already holds some of this SO
-             line's qty, the bulk-set tick defaults to the EFFECTIVE remaining
-             (remaining − draft) so it can't over-pick across draft + new. */
           const cap = effectiveRemaining(m);
           if (cap <= 0) continue;
           next[m.soItemId] = turningOn
@@ -263,9 +197,6 @@ export const PurchaseOrderFromSo = () => {
   const setQty = (id: string, qty: number) =>
     setPicks((s) => ({ ...s, [id]: { picked: true, qty } }));
 
-  // Select / clear all currently-VISIBLE rows (respects the active filters).
-  // Commander 2026-05-30 — default each row's qty to its EFFECTIVE remaining
-  // (remaining − draftQty) so bulk-select honours the draft too.
   const selectAll = () =>
     setPicks((s) => {
       const next = { ...s };
@@ -282,8 +213,6 @@ export const PurchaseOrderFromSo = () => {
   const picked = Object.entries(picks).filter(([, v]) => v.picked && v.qty > 0);
   const pickedCount = picked.length;
 
-  // ── Columns — memoized on `picks` so the controlled checkbox + qty input
-  //    re-render when pick state changes (DataGrid is React.memo'd). ───────
   const columns = useMemo<GridColumn<OutstandingSoItem>[]>(() => [
     {
       key: 'pick', label: '', width: 40, sortable: false, groupable: false,
@@ -296,7 +225,6 @@ export const PurchaseOrderFromSo = () => {
             checked={on}
             disabled={locked}
             onChange={() => togglePick(r.soItemId, effectiveRemaining(r))}
-            // Stop the row-select click from also firing.
             onClick={(e) => e.stopPropagation()}
             aria-label={`Pick ${r.itemCode}`}
             style={locked ? { cursor: 'not-allowed' } : undefined}
@@ -328,9 +256,6 @@ export const PurchaseOrderFromSo = () => {
       groupValue: (r) => (r.itemGroup ?? '(none)').toUpperCase(),
     },
     {
-      /* Commander 2026-05-28 — the SKU's main supplier (where this line's PO
-         goes). "— none —" means unbound: it can't be converted until assigned
-         a supplier. */
       key: 'mainSupplier', label: 'Main Supplier', width: 200, sortable: true, groupable: true,
       accessor: (r) =>
         r.mainSupplierCode
@@ -386,9 +311,6 @@ export const PurchaseOrderFromSo = () => {
         const p = picks[r.soItemId];
         const on = Boolean(p?.picked);
         const locked = isRowLocked(r);
-        /* Commander 2026-05-30 — cap the input at the EFFECTIVE remaining
-           (remaining − draft) so a partially-consumed SO line can't over-pick
-           across the draft + new picks. */
         const cap = effectiveRemaining(r);
         return (
           <input
@@ -398,8 +320,6 @@ export const PurchaseOrderFromSo = () => {
             value={on ? p!.qty : ''}
             placeholder={String(cap)}
             disabled={locked}
-            /* Commander 2026-05-28 — always editable: typing a qty auto-selects
-               the row (no need to tick the checkbox first). */
             onClick={(e) => e.stopPropagation()}
             onChange={(e) =>
               setQty(r.soItemId, Math.min(cap, Math.max(0, Number(e.target.value) || 0)))}
@@ -409,7 +329,6 @@ export const PurchaseOrderFromSo = () => {
       },
     },
     {
-      /* Commander 2026-05-29 — add Processing Date column. */
       key: 'processingDate', label: 'Processing Date', width: 120, sortable: true,
       accessor: (r) => fmtDateOrDash(r.processingDate ?? null),
       searchValue: (r) => r.processingDate ?? '',
@@ -427,8 +346,6 @@ export const PurchaseOrderFromSo = () => {
       key: 'lineValue', label: 'Line Value', width: 120, align: 'right', sortable: true,
       accessor: (r) => {
         const p = picks[r.soItemId];
-        /* Commander 2026-05-30 — preview value defaults to the EFFECTIVE
-           remaining (after draft) so the muted value matches the cap. */
         const pickQty = p?.picked ? p.qty : effectiveRemaining(r);
         return (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
@@ -443,11 +360,6 @@ export const PurchaseOrderFromSo = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change
   ], [picks, draftQtyById]);
 
-  // ── Add to PO ────────────────────────────────────────────────────────
-  // Commander 2026-05-29 — two modes:
-  //   • PO-scoped (?poId): APPEND the picked lines straight to that PO, then
-  //     return to the PO detail page (Transfer from Sales Order / Add Line Item).
-  //   • Default: stash the picks + feed the New PO form (/scm/purchase-orders/new).
   const onSave = () => {
     if (pickedCount === 0) { setDialog({ title: 'Nothing picked', body: 'Tick at least one SO line first.' }); return; }
 
@@ -457,7 +369,6 @@ export const PurchaseOrderFromSo = () => {
         { picks: picksPayload, targetPoId, idempotencyKey: idemKey },
         {
           onSuccess: (res) => {
-            // Land back on the PO still in Edit mode so the new lines are right there.
             navigate(`/scm/purchase-orders/${res.targetPoId ?? targetPoId}?edit=1`);
           },
           onError: (e) => setDialog({
@@ -482,7 +393,6 @@ export const PurchaseOrderFromSo = () => {
     navigate('/scm/purchase-orders/new');
   };
 
-  // ── Toolbar (filters + select/clear) rendered inside the DataGrid ──────
   const toolbar = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
       <Button variant="ghost" size="sm" onClick={selectAll} disabled={rows.length === 0}>
@@ -496,7 +406,6 @@ export const PurchaseOrderFromSo = () => {
 
       <Filter size={14} strokeWidth={1.75} style={{ color: 'var(--fg-muted)' }} aria-label="Filters" />
 
-      {/* Category filter */}
       <select
         value={category}
         onChange={(e) => setCategory(e.target.value)}
@@ -506,7 +415,6 @@ export const PurchaseOrderFromSo = () => {
         {CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
 
-      {/* Date-range filter — pick which date field + from/to. */}
       <select
         value={dateField}
         onChange={(e) => setDateField(e.target.value as DateField)}
@@ -536,10 +444,6 @@ export const PurchaseOrderFromSo = () => {
 
   return (
     <div className="space-y-4">
-      {/* Explicit back target, not history-back: this picker is reachable from
-          a PO being edited, from New PO, and from the list, and each entry
-          point has its own correct destination (carried over verbatim from the
-          action-rail link this replaced). */}
       <PageHeader
         back={targetPoId ? `/scm/purchase-orders/${targetPoId}?edit=1`
           : cameFromNewPage ? '/scm/purchase-orders/new'
@@ -585,11 +489,7 @@ export const PurchaseOrderFromSo = () => {
         storageKey={STORAGE_KEY}
         rowKey={(r) => r.soItemId}
         searchPlaceholder="Search SO, customer, item…"
-        /* Commander 2026-05-28 — click anywhere on a row to toggle its pick
-           (the checkbox is just a visual). */
         onRowClick={(r) => togglePick(r.soItemId, r.remainingQty)}
-        /* Commander 2026-05-29 — grey out rows whose supplier conflicts with
-           the locked one so the disabled state is obvious. */
         rowStyle={(r) => isRowLocked(r)
           ? { opacity: 0.45, background: 'var(--c-cream)', cursor: 'not-allowed' }
           : undefined}

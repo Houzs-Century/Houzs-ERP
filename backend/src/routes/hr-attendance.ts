@@ -43,7 +43,6 @@ function canManage(c: Ctx): boolean {
   return hasPermission(u.permissions_set ?? u.permissions, "hr.employees.manage");
 }
 
-/* ── attendance ────────────────────────────────────────────────────────── */
 
 hrAttendance.get("/attendance", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -53,8 +52,6 @@ hrAttendance.get("/attendance", async (c) => {
   const db = getDb(c.env);
   const now = new Date();
   await closeForgottenAndSync(db, co.companyId, null, now);
-  // A pinned confirmer (hr-confirmer-scope) sees only their own employees; an
-  // unrestricted reader gets null and the queries stay company-wide.
   const scope = scopedEmployeeIds(c.get("user").id);
   const scopeIds = scope ? [...scope] : null;
   const [rows, employees, rulesFor, sites, shiftRes] = await Promise.all([
@@ -78,8 +75,6 @@ hrAttendance.get("/attendance", async (c) => {
     shiftRulesResolver(db, co.companyId, date, date),
   ]);
   const byEmployee = new Map(rows.map((r) => [r.employee_id, r]));
-  // Header shows the global shift as a reference; each row is judged by that
-  // employee's own group shift (and delivery-day override).
   const rules = rulesFor(date);
   const list = employees
     .filter((e) => e.status === "ACTIVE" || byEmployee.has(e.id))
@@ -137,9 +132,6 @@ hrAttendance.put("/attendance", async (c) => {
   const same = (a: string | null, b: string | null) => (a && b ? asDate(a).getTime() === new Date(b).getTime() : a === b);
   const by = c.get("user").id;
   const now = new Date().toISOString();
-  /* A phone punch HR leaves untouched keeps its source, selfie and GPS; a
-     time HR changes becomes MANUAL, and the evidence of the phone punch it
-     replaced stays on the row for the record. */
   const values = {
     status,
     clock_in_at: inAt,
@@ -153,8 +145,6 @@ hrAttendance.put("/attendance", async (c) => {
   const attendanceId = existing
     ? (await db.update(hr_attendance).set(values).where(eq(hr_attendance.id, existing.id)).returning({ id: hr_attendance.id }))[0].id
     : (await db.insert(hr_attendance).values({ ...values, company_id: co.companyId, employee_id: employeeId, work_date: date }).returning({ id: hr_attendance.id }))[0].id;
-  /* The day's Working Hours follow the corrected punch; a day with no times
-     (leave, absent) loses its AUTO hours and so its dock. HR-typed hours stay. */
   if (inAt && outAt) {
     await syncDayFromPunch(db, co.companyId, attendanceId);
   } else {
@@ -205,7 +195,6 @@ hrAttendance.get("/attendance/:id/photo", async (c) => {
   return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "image/jpeg", "cache-control": "private, max-age=300" } });
 });
 
-/* ── punch sites ───────────────────────────────────────────────────────── */
 
 type SiteInput = { name: string; lat: number; lng: number; radiusM: number; active: boolean };
 

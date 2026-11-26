@@ -152,8 +152,6 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
     }
     setBusy(true);
     try {
-      /* Lines first, then the header — the desktop edit's order. Only the lines
-         still following the header move (the shared cascade). */
       if (form.customerDelDate !== seed.customerDelDate) {
         const rows = (detail?.items ?? []).map((it) => ({
           id: String(it.id ?? ""),
@@ -251,7 +249,6 @@ export function MobileDoHeaderEdit({ id, onBack, onSaved }: {
           onChange={(next) => set(pickCity(locRows, triple, next))}
           options={withCurrent(cities, form.city).map((v) => ({ value: v, label: v }))} />
       ))}
-      {/* `.st-fld` grows (flex: 1) inside this column; the wrapper holds it to its content. */}
       <div style={{ flex: "none", display: "flex", flexDirection: "column" }}>
       <AddressPostcodeField
         country={country}

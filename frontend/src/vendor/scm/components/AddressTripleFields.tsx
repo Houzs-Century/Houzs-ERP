@@ -56,9 +56,7 @@ export const AddressTripleFields = ({
   /** Marks Postcode "Postcode *" - a master address in Malaysia / Singapore
    *  must carry one (owner 2026-11-19); the host's save enforces it. */
   postcodeRequired: boolean;
-  /** The host's Country, when it has one (Warehouse). Empty = derive it. */
   country: string;
-  /** The whole triple, plus the Country of the resulting State (null if unknown). */
   onChange: (next: AddressTriple, derivedCountry: string | null) => void;
   disabled?: boolean;
   classes?: AddressTripleClasses;

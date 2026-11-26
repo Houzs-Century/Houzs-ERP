@@ -53,15 +53,9 @@
 /** One receipt line, as evidence of throughput. */
 export interface ReceiptUnit {
   supplierCode: string;
-  /** item_group. Capacity is per (supplier, category) — owner's ruling: a sofa
-      and a cushion are both "1 unit" but are not the same work, and category is
-      the grain he already thinks and configures in. */
   category: string;
-  /** Receipt date (YYYY-MM-DD) — buckets the week. */
   receivedDate: string;
   qty: number;
-  /** Slip of the PO this receipt belonged to, in days. Positive = late. This is
-      what says whether the week witnessed the ceiling or sat below it. */
   slipDays: number;
 }
 
@@ -69,34 +63,26 @@ export interface ReceiptUnit {
 export interface LoadUnit {
   supplierCode: string;
   category: string;
-  /** The date the supplier is asked to deliver (YYYY-MM-DD). */
   dueDate: string;
-  /** Units still outstanding (qty - received_qty). */
   qty: number;
 }
 
 export interface CapacityEstimate {
   supplierCode: string;
   category: string;
-  /** Demonstrated units per week. */
   unitsPerWeek: number;
   weeksObserved: number;
-  /** Weeks the supplier ran late — the ones that witness the ceiling. */
   weeksAtCeiling: number;
-  /** TRUE when no late week was ever seen, so unitsPerWeek is only a FLOOR:
-      we have seen them do at least this, never what they cannot do. */
   isLowerBound: boolean;
 }
 
 export interface OverloadFinding {
   supplierCode: string;
   category: string;
-  /** Monday of the overloaded week (YYYY-MM-DD). */
   weekStart: string;
   loadUnits: number;
   capacityUnitsPerWeek: number;
   overloadUnits: number;
-  /** Whole weeks the excess slips, at this capacity. */
   expectedSlipWeeks: number;
   capacityIsLowerBound: boolean;
   reason: string;
@@ -111,22 +97,9 @@ export interface SlackFinding {
 }
 
 export interface CapacityConfig {
-  /** Weeks of receipts needed before an estimate is offered at all. */
   minWeeks: number;
-  /** Percentile of the ceiling weeks' receipts to call capacity. NOT the max:
-      one catch-up week after a shutdown is not a sustainable rate.
-
-      Kept at 75 rather than a higher-sounding 90 for a small-sample reason that
-      is easy to get wrong: with nearest-rank, p90 IS the max for any n <= 9
-      (ceil(0.9 * 9) = 9), and minWeeks is 6. A p90 default would therefore have
-      claimed to exclude the freak week while quietly selecting it — the comment
-      would have been false for every supplier with under ten weeks of history,
-      which is all of them at first. p75 excludes the top quarter at n = 6. */
   percentile: number;
-  /** A week witnesses the ceiling when its receipts slipped by at least this
-      many days. 0 would read a comfortably on-time week as flat out. */
   ceilingSlipDays: number;
-  /** Ignore an overload smaller than this — rounding, not a problem. */
   minOverloadUnits: number;
 }
 
@@ -138,15 +111,8 @@ export const DEFAULT_CAPACITY_CONFIG: CapacityConfig = {
 };
 
 const DAY_MS = 86_400_000;
-/** 1970-01-05 was a Monday. Same anchor as po-grouping's merge window, so a
-    capacity week and a mattress merge window are the same seven days. */
 const MONDAY_EPOCH_MS = Date.parse('1970-01-05T00:00:00Z');
 
-/* Composite map keys are NUL-joined, written as the ESCAPE. A supplier code is
-   free text and may contain a space or a dash, so joining on either and
-   splitting it back would silently mis-attribute one supplier's capacity to
-   another — the worst failure available here, because it would still look like
-   a working model. NUL cannot appear in a code. */
 const SEP = '\u0000';
 const pairKey = (supplier: string, category: string) => `${supplier}${SEP}${category}`;
 
@@ -205,9 +171,6 @@ export function estimateCapacity(
     const [supplierCode, category] = k.split(SEP);
 
     const cells = [...weeks.values()];
-    /* The weeks that WITNESS the ceiling: they ran late, so their receipts sit
-       at what the supplier could actually push out. Everything else is a floor.
-       See the header — this is the owner's second sentence, operationalised. */
     const ceilingWeeks = cells.filter((c) => c.maxSlip >= cfg.ceilingSlipDays);
     const basis = ceilingWeeks.length > 0 ? ceilingWeeks : cells;
 
@@ -260,8 +223,6 @@ export function detectOverload(
   for (const [k, loadUnits] of loadByCell) {
     const [supplierCode, category, weekStart] = k.split(SEP);
     const cap = capByPair.get(pairKey(supplierCode, category));
-    /* No estimate, no claim. An agent must not tell the owner a supplier is
-       overloaded when it has never measured what that supplier can do. */
     if (!cap) continue;
 
     const overloadUnits = loadUnits - cap.unitsPerWeek;

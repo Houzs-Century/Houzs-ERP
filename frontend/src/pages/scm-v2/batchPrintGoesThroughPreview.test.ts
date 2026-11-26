@@ -30,7 +30,6 @@ const walk = (dir: string, out: string[] = []): string[] => {
 
 const rel = (p: string) => relative(SRC, p).replace(/\\/g, "/");
 const COMBINED_CALL = /\bgenerateCombined\w*Pdf\(/;
-/* The generators DEFINE these functions; they are not a place a person prints from. */
 const isGenerator = (p: string) => /^vendor\/scm\/lib\/[\w-]+-pdf\.ts$/.test(rel(p));
 
 const batchPrinters = walk(SRC)

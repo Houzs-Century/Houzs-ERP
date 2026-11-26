@@ -13,20 +13,10 @@ export interface UserOptionItem {
   department_name?: string | null;
 }
 
-/* Perf cap — bound the rendered option DOM. The server already caps the
-   typeahead result set (limit 50); this is a belt-and-braces client bound so
-   the dropdown can never balloon. (parity with FabricPicker / MobileSkuPicker.) */
 const RENDER_CAP = 60;
 
-/* How tall the people list wants to be when there is room (what the old
-   `max-h-64` class asked for). lib/anchoredPanel shortens it to the space
-   actually available and flips it above the chips when there is more room
-   there, so the last person on the list is never off the bottom of the
-   window. */
 const MENU_MAX_H = 256;
 
-// Minimum characters before the server typeahead fires. Below this we show a
-// "type to search" prompt instead of hammering the endpoint on every keystroke.
 const MIN_QUERY = 2;
 
 /**
@@ -84,9 +74,7 @@ export function UserMultiSelect({
 }: {
   value: number[];
   onChange: (ids: number[]) => void;
-  /** Resolved objects for the currently-selected ids (for chip display). */
   selectedItems?: UserOptionItem[];
-  /** Narrows pickable typeahead results; does not affect selected chips. */
   filterOption?: (u: UserOptionItem) => boolean;
   max?: number;
   placeholder?: string;
@@ -102,13 +90,7 @@ export function UserMultiSelect({
   const searchActive = trimmed.length >= MIN_QUERY;
   const search = useUsersSearch(query, { enabled: open });
 
-  // Remember every user object we have ever seen for an id — seeded from the
-  // caller's `selectedItems` and topped up from each search result — so a
-  // selected chip always has a label even after the typeahead moves on.
   const [known, setKnown] = useState<Record<number, UserOptionItem>>({});
-  // Value-idempotent merge: callers rebuild `selectedItems` (and the typeahead
-  // rebuilds its rows) on every render, so a reference-only merge would loop.
-  // Bail out returning `prev` when nothing actually changed by value.
   const mergeKnown = (rows: readonly UserOptionItem[] | undefined) => {
     if (!rows?.length) return;
     setKnown((prev) => {
@@ -138,12 +120,8 @@ export function UserMultiSelect({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search.data]);
 
-  // Track the control's viewport position while open so the portalled menu
-  // follows it through scrolling panels and window resizes — shared geometry,
-  // so this menu flips and clamps exactly like every other one here.
   const rect = useAnchoredPanel(controlRef, open, MENU_MAX_H);
 
-  // Close on outside click — the menu lives in a portal, so check both.
   useEffect(() => {
     if (!open) return;
     function onDown(e: MouseEvent) {
@@ -159,8 +137,6 @@ export function UserMultiSelect({
 
   const labelOf = (o: UserOptionItem) => o.name || o.email || `user #${o.id}`;
 
-  // Dropdown options: the server typeahead results, optionally narrowed by
-  // filterOption, then A→Z sorted and capped.
   const options = useMemo(() => {
     if (!searchActive) return [];
     let rows = search.data?.users ?? [];
@@ -170,8 +146,6 @@ export function UserMultiSelect({
     );
   }, [search.data, searchActive, filterOption]);
 
-  // Selected chips — resolved from `known` (never from the live results), so a
-  // selected person absent from the current search is still shown & removable.
   const selected = value.map((id) => known[id] ?? { id, name: null });
   const atMax = max != null && value.length >= max;
 
@@ -197,8 +171,6 @@ export function UserMultiSelect({
       ? createPortal(
           <div
             ref={menuRef}
-            /* zIndex stays this component's own 90 — it is not one of the
-               drawer-backdrop pickers the shared 1000 exists for. */
             style={{ ...anchoredPanelStyle(rect), zIndex: 90 }}
             className="overflow-y-auto rounded-md border border-border bg-surface py-1 shadow-stone"
           >

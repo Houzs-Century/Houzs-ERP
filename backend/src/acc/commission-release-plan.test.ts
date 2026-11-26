@@ -76,7 +76,6 @@ describe('a month the Event Commission report closed', () => {
     expect(l.basis).toBe('close');
     expect(l.note).toBeNull();
     expect(plan.shares.get('bill:2026-10')!.get('SO-3')).toBeUndefined();
-    /* SO-1 whole in October; SO-2 two fifths in November, the rest in December. */
     expect(releasedBy(plan, 'bill:2026-10')).toEqual({ '2026-10': 1_200_00, '2026-11': 240_00, '2026-12': 360_00 });
     expect(l.releasedSen).toBe(1_800_00);
     expect(l.leftSen).toBe(0);
@@ -103,7 +102,6 @@ describe('a month the Event Commission report closed', () => {
   });
 
   test('a bill booked after its month still releases into the months its orders were sold', () => {
-    /* The September bill arrives in October; its ledger line names SEP — the layer is September's. */
     const plan = planCommissionRelease(base({
       prepaid: [{ month: '2026-09', amountSen: 900_00, docNo: 'API-SEP-LATE' }],
       closes: [{ month: '2026-09', perOrder: [['SO-9', 900_00]] }],
@@ -128,7 +126,6 @@ describe('a month the Event Commission report closed', () => {
     }));
     expect(releasedBy(plan, 'bill:2026-10')).toEqual({ '2026-11': 500_00 });
     expect(releasedBy(plan, 'bill:2026-11')).toEqual({ '2026-11': -200_00 });
-    /* The cancelled order nets to nothing; November's cost is the new order's commission. */
     expect(plan.months.find((m) => m.month === '2026-11')!.totalSen).toBe(300_00);
   });
 });
@@ -140,9 +137,9 @@ describe('net sales: a deposit counts once', () => {
       closes: [{ month: '2026-10', perOrder: [['SO-D', 1_000_00]] }],
       orders: [order('SO-D', '2026-10-01', 8_000_00)],
       sales: [
-        sale('SO-D', '2026-10-01', 2_400_00),   // deposit invoice, 30%
-        sale('SO-D', '2026-12-04', 8_000_00),   // the final sales invoice
-        sale('SO-D', '2026-12-04', -2_400_00),  // the credit note closing the deposit invoice
+        sale('SO-D', '2026-10-01', 2_400_00),
+        sale('SO-D', '2026-12-04', 8_000_00),
+        sale('SO-D', '2026-12-04', -2_400_00),
       ],
     }));
     expect(releasedBy(plan, 'bill:2026-10')).toEqual({ '2026-10': 300_00, '2026-12': 700_00 });
@@ -172,7 +169,6 @@ describe('months with no close', () => {
     expect(l.basis).toBe('goods');
     expect(l.orders).toBe(2);
     expect(l.fromMonth).toBe('2026-09');
-    /* SO-A1 was sold in August: its share is released in September, the books' first month. */
     expect(releasedBy(plan, 'bill:2026-08')).toEqual({ '2026-09': 300_00, '2026-10': 100_00 });
   });
 
@@ -220,9 +216,9 @@ describe('the books\' opening balance', () => {
     orders: [
       order('SO-O1', '2026-03-10', 2_000_00),
       order('SO-O2', '2025-11-02', 6_000_00),
-      order('SO-O3', '2026-06-01', 1_000_00),                                                // sold before the books start
-      order('SO-O4', '2026-05-01', 5_000_00, { status: 'CANCELLED', endedOn: '2026-07-01' }), // ended before the books start
-      order('SO-O5', '2026-08-15', 3_000_00),                                                // August: the August bill's
+      order('SO-O3', '2026-06-01', 1_000_00),
+      order('SO-O4', '2026-05-01', 5_000_00, { status: 'CANCELLED', endedOn: '2026-07-01' }),
+      order('SO-O5', '2026-08-15', 3_000_00),
     ],
     sales: [sale('SO-O1', '2026-09-12', 2_000_00), sale('SO-O2', '2026-11-30', 6_000_00), sale('SO-O3', '2026-08-01', 1_000_00)],
     goodsAt: (d) => goods[d] ?? 0,

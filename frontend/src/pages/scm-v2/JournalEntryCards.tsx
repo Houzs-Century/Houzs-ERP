@@ -40,8 +40,6 @@ import { financeDocHref } from './finance/FinanceDocLink';
 import { isManualSource, sourceLabel } from './books/journal-sources';
 import s from './books/Books.module.css';
 
-/* JE status — REVERSED wins over POSTED, then DRAFT. The stored words, for the
-   CSV and the search; the card and the grid print jeStatusTag's. */
 export const jeStatus = (r: JournalEntry): string =>
   r.reversed ? 'REVERSED' : r.posted ? 'POSTED' : 'DRAFT';
 
@@ -55,7 +53,6 @@ export function jeStatusTag(r: Pick<JournalEntry, 'reversed' | 'posted'>): { lab
 export const toneClass = (tone: StatusTone): string =>
   (tone === 'late' ? s.toneLate : tone === 'warn' ? s.toneWarn : tone === 'info' ? s.toneInfo : s.toneCalm);
 
-/* RM string → integer sen; null when the input is not money. */
 export const rmToSen = (raw: string): number | null => {
   const t = raw.trim().replace(/,/g, '');
   if (!t) return 0;
@@ -68,8 +65,6 @@ export const senToRm = (sen: number): string => (sen > 0 ? (sen / 100).toFixed(2
 
 export type DraftLine = {
   accountCode: string; debit: string; credit: string; notes: string;
-  /* Carried by an EDIT only — the form has no party boxes, and a copy drops
-     the party on purpose; an edit must not lose it. */
   partyType?: string | null; partyCode?: string | null; partyName?: string | null;
 };
 const EMPTY_LINE: DraftLine = { accountCode: '', debit: '', credit: '', notes: '' };
@@ -136,12 +131,9 @@ export type JeCardProps = {
   onClose: () => void;
   onCopy?: (seed: DraftSeed, from: string) => void;
   onEdit?: (seed: EditSeed) => void;
-  /** An account clicked: open it in the General ledger. */
   onOpenAccount?: (code: string, entryDate: string) => void;
-  /** A document clicked: open it in its own tab. */
   onOpenDocument?: (path: string) => void;
   onToast?: (text: string) => void;
-  /** What the list already knows of the entry: its journal and references. */
   refs?: EntryRefs | null;
 };
 
@@ -295,11 +287,8 @@ export const JeDetailCard = ({ id, onClose, onCopy, onEdit, onOpenAccount, onOpe
     match rejects. */
 export type BankLineRecord = {
   lineNo: number;
-  /** The line's day (ISO): the entry posts on it. */
   bookedOn: string;
-  /** Signed: positive is money in. */
   amountSen: number;
-  /** The bank account the money moved on — its ledger code. */
   accountCode: string;
   description: string;
   reference: string | null;
@@ -314,7 +303,6 @@ export const bankLegOf = (r: Pick<BankLineRecord, 'amountSen' | 'accountCode' | 
   credit: r.amountSen < 0 ? senToRm(-r.amountSen) : '',
   notes: `Bank line ${r.lineNo}`,
 });
-/** The other side, ready for its account: the same amount the other way. */
 const otherLegOf = (r: Pick<BankLineRecord, 'amountSen'>): DraftLine => ({
   accountCode: '',
   debit: r.amountSen < 0 ? senToRm(-r.amountSen) : '',
@@ -322,28 +310,17 @@ const otherLegOf = (r: Pick<BankLineRecord, 'amountSen'>): DraftLine => ({
   notes: '',
 });
 
-/* One form for a new journal, a copy and an edit. `editing` names the entry
-   being edited: Save then goes to PUT /journal-entries/:id — a posted entry
-   is reversed and the corrected one posted in the same step, a draft is
-   rewritten in place — and the date box opens on the entry's own day. Save &
-   post on a new journal (or a draft) is the create (or the rewrite) and then
-   today's post call; a refused post leaves the draft standing, the server's
-   sentence on screen, and the drawer open on the draft. */
 export type JournalFormProps = {
   initial?: DraftSeed | null;
   editing?: EditSeed | null;
-  /** The entry a copy was made from, named in the banner. */
   copiedFrom?: string | null;
   onCancel: () => void;
-  /** Saved (or posted): the drawer turns to the saved entry's card. */
   onSaved: (id: string) => void;
   onToast?: (text: string) => void;
-  /** Recording a bank line instead of a free journal: see BankLineRecord. */
   record?: BankLineRecord | null;
 };
 
 const todayMyt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
-/** A reason as a sentence of its own: ends with its stop. */
 const asSentence = (t: string): string => (/[.!?]$/.test(t) ? t : `${t}.`);
 
 export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved, onToast, record = null }: JournalFormProps) => {
@@ -356,15 +333,11 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
   const [narration, setNarration] = useState(() => (record
     ? [record.reference, record.description].filter((t): t is string => !!t && t.trim() !== '').join(' · ')
     : initial?.narration ?? ''));
-  /* A recorded bank line keeps the bank's leg apart, fixed; these are the lines the person keys. */
   const [lines, setLines] = useState<DraftLine[]>(() => (record
     ? [otherLegOf(record)]
     : initial && initial.lines.length > 0 ? initial.lines.map((l) => ({ ...l })) : [{ ...EMPTY_LINE }, { ...EMPTY_LINE }]));
   const bankLeg = record ? bankLegOf(record) : null;
   const allLines = bankLeg ? [bankLeg, ...lines] : lines;
-  /* Recording: the draft and the post this form has made, kept across presses —
-     a second press never creates or posts a second journal, it finishes the
-     first (posts the draft, or only asks the match again). */
   const made = useRef<{ id: string; jeNo: string; posted: boolean } | null>(null);
   const busy = useRef(false);
   const [postedNo, setPostedNo] = useState<string | null>(null);
@@ -378,8 +351,6 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
   const postable = useMemo(() => leafAccounts(all), [all]);
   /* Typed to, not scrolled through (owner 2026-09-15: 无法快速打关键字眼找
      account): every word typed must match the code or the name. */
-  /* A recorded bank line's own account is its fixed leg, never the other side:
-     a second line on it would move the bank by other than the line's amount. */
   const fixedBank = record?.accountCode ?? null;
   const options = useMemo(
     () => [...postable].filter((a) => a.account_code !== fixedBank)
@@ -427,7 +398,6 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
       })),
   });
 
-  /* Each hook's own dialog says why a step was refused; the form stays put. */
   const save = async (andPost: boolean) => {
     let saved: JournalEntry;
     try {
@@ -441,14 +411,10 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
     try {
       await postM.mutateAsync(saved.id);
       onToast?.(`Posted ${saved.je_no}`);
-    } catch { /* the draft stands; its card shows it */ }
+    } catch { }
     onSaved(saved.id);
   };
 
-  /* Recording a bank line: ask first, then the draft and today's post, then
-     today's match — each step at most once. A refused post leaves the draft
-     standing (a second press posts that same draft); a refused match after the
-     post is said plainly and leaves the line to match by hand. */
   const recordAndMatch = async () => {
     if (!record || busy.current) return;
     busy.current = true;
@@ -543,7 +509,6 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
           <div className={s.formHead}>
             <span>Account</span><span className={s.right}>Debit (RM)</span><span className={s.right}>Credit (RM)</span><span>Line note</span><span />
           </div>
-          {/* The bank's own leg: the account the money moved on and the line's amount, to the sen — fixed, so the match fits. */}
           {bankLeg && (
             <div data-grid-row className={s.formRow} aria-label="The bank's leg">
               <span className={s.input} title="The bank account this line moved on" style={{ display: 'flex', alignItems: 'center', minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
@@ -592,7 +557,6 @@ export const NewJournalForm = ({ initial, editing, copiedFrom, onCancel, onSaved
           <span className={s.dFootText}>
             {postedNo ? `${postedNo} is posted — Match again asks the match only.` : 'Save & post writes it to the ledger and matches the bank line to it.'}
           </span>
-          {/* Not while a step is running: a Cancel then would not stop the post it seems to stop. */}
           <button type="button" className={`${s.btn} ${s.dBtn}`} disabled={pending} onClick={onCancel}>{postedNo ? 'Close' : 'Cancel'}</button>
           <button type="button" className={`${s.btnSolid} ${s.dBtn}`} disabled={(!canSave && !postedNo) || pending} onClick={() => { void recordAndMatch(); }}>
             {step === 'checking' ? 'Checking…' : step === 'matching' ? 'Matching…' : postM.isPending ? 'Posting…' : createM.isPending || editM.isPending ? 'Saving…' : postedNo ? 'Match again' : 'Save & post'}

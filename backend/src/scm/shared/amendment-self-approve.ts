@@ -40,9 +40,7 @@ export const SELF_APPROVE_LANE: AmendmentLane = 'DELIVERY';
 export const SELF_APPROVE_KEY = LANE_APPROVE_KEY[SELF_APPROVE_LANE];
 
 export type SelfApproveInput = {
-  /** Does the caller hold the lane's approve key (a `*` wildcard counts)? */
   holdsLaneKey: boolean;
-  /** Does THIS lane half change any line — i.e. a service line? */
   hasLineChanges: boolean;
 };
 

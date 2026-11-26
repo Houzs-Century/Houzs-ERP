@@ -27,7 +27,6 @@ const CHART: Row[] = [
   { account_code: '905-0000', account_name: 'Stationery', account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: 2 },
   { account_code: '906-0000', account_name: 'Old fees (off)', account_type: 'EXPENSE', parent_code: null, is_active: false, company_id: 2 },
   { account_code: '310-0010', account_name: 'HLB', account_type: 'ASSET', parent_code: null, is_active: true, company_id: 2 },
-  /* The same code in the OTHER company — must never be reachable from here. */
   { account_code: '907-0000', account_name: 'Theirs', account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: 1 },
 ];
 
@@ -96,8 +95,6 @@ describe('postPayoutCharge', () => {
     expect((await ask(world(), { note: '   ' })).status).toBe('note_required');
   });
 
-  /* THE FOUR REFUSALS the merchant fee account already answers with — the
-     same words, because it is the same question: can the gate post here. */
   it('refuses an account that is not in this company\'s chart, including the other company\'s', async () => {
     expect((await ask(world(), { accountCode: '999-9999' })).status).toBe('bad_account');
     expect((await ask(world(), { accountCode: '907-0000' })).status).toBe('bad_account');

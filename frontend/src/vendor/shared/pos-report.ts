@@ -1,14 +1,3 @@
-/* The one aggregation behind every Houzs POS report: the device's Sales
- * report and thermal Z-report (layout P13), the ERP Sales Report (E6) and
- * the end-of-event summary email. Bills, net sales, by payment method with
- * refunds split out (for tallying with the bank / terminal settlement), by
- * salesman, by day, by item, by terminal, void / return lists, FOC units,
- * top items. Pure; money in sen; test sales are never counted.
- *
- * ONE home. backend/src/scm/shared/pos-report.ts is the original and
- * frontend/src/vendor/shared/pos-report.ts its byte-identical copy
- * (check-shared-mirrors.mjs); the POS app imports the vendored copy.
- */
 import { posReceiptStatusLabel } from "./pos-vocabulary";
 import { guardFormula } from "./csv-guard";
 
@@ -22,7 +11,6 @@ export type ReportSale = {
 
 export type ReportTotals = {
   bills: number; net_sen: number; gross_sen: number; discount_sen: number; sst_sen: number; void_count: number; void_sen: number; return_count: number; return_sen: number; foc_units: number; units: number;
-  /** amount_sen = net received (sales minus refunds). */
   by_method: { method: string; amount_sen: number; sales_sen: number; refund_sen: number }[];
   by_salesman: { salesman: string; bills: number; net_sen: number }[];
   by_day: { day: string; bills: number; net_sen: number; by_method: Record<string, number> }[];
@@ -83,8 +71,6 @@ export function aggregateSales(sales: readonly ReportSale[]): ReportTotals {
 
 /** A ringgit figure as a bare number for a CSV / spreadsheet cell. */
 export const rmCell = (sen: number): string => (sen / 100).toFixed(2);
-/* Salesman names, item descriptions and void reasons are typed at the till, so
-   a text cell goes through the formula guard before it reaches a staff PC. */
 const csvCell = (v: string | number): string => {
   if (typeof v === "number") return String(v);
   const s = guardFormula(v);

@@ -1,41 +1,9 @@
-// A BOUND SKU MUST NEVER READ AS UNBOUND.
-//
-// The MRP page renders "— none —" in the Supplier cell of any shortage row whose
-// SKU carries no bindings (frontend/src/pages/scm-v2/Mrp.tsx:1223), and the
-// convert refuses with `missing_bindings` naming the SKU
-// (mfg-purchase-orders.ts, the `noBinding` guard). Both are correct answers to
-// the question "does this SKU have a supplier?" — and both are wrong answers
-// when the READ that asked it came back short.
-//
-// On 2026-08-16 production held 2,660 supplier_material_bindings rows against
-// PostgREST's 1,000-row response cap. routes/mrp.ts section 5 was taught to
-// chunk its IN-list and page its result. The same question is asked at five
-// other call sites, and TWO of them are the next thing the operator touches
-// after the MRP page: the SO→PO picker's Main Supplier column, and the convert
-// body below. Neither chunked, neither paged, and each ordered only by
-// `is_main_supplier DESC` — so which bindings survived the cap was decided by
-// the arbitrary order of ties, and two identically-bound modules of one sofa
-// could disagree with each other.
-//
-// The fixture is the shape that produces it. The convert reads bindings for the
-// codes IT IS CONVERTING, so the size that matters is the size of the pick — and
-// the pick is "select all, Proceed PO" from the MRP page, which on production
-// spans the whole outstanding book (531 distinct demand codes / 887 binding rows
-// measured 2026-08-16, run 31942066593). Push that past the cap and the sofa
-// modules at the end of it come back as `missing_bindings`: the operator is told
-// three SKUs "aren't bound to a supplier yet" while their bindings sit in the
-// very table the server just read.
 import { describe, expect, test } from 'vitest';
 import { convertSosToPosCore, type PoConvertContext } from './mfg-purchase-orders';
 import { parsePgrestInList } from '../lib/pgrest-in-list';
 
 type Row = Record<string, unknown>;
 
-/* THE FAKE ENFORCES POSTGREST'S REAL ROW CEILING — the point of the harness.
-   A live PostgREST returns at most `max-rows` (1000 on this project) per
-   response, drops the rest, and reports NOTHING. A fake that hands back
-   everything makes an un-paged read look correct here while it is short in
-   production. Same device as mrp.test.ts. */
 const PGRST_MAX_ROWS = 1000;
 
 function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
@@ -63,9 +31,6 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
     ilike() { return this; }
     gte() { return this; }
     lte() { return this; }
-    /* A STABLE sort, so ties keep insertion order. That is the closest a fake
-       gets to "the planner decides", and it makes the pre-fix truncation
-       reproducible instead of flaky. */
     order(col?: string, o?: { ascending?: boolean }) {
       if (col) this.orders.push({ col, asc: o?.ascending !== false });
       return this;
@@ -97,7 +62,7 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
             const cmp = (av == null) ? 1 : (bv == null) ? -1 : av < bv ? -1 : 1;
             return asc ? cmp : -cmp;
           }
-          return a.i - b.i;                       // stable
+          return a.i - b.i;
         })
         .map((x) => x.r);
     }
@@ -122,8 +87,6 @@ const DOC = 'SO-2608-001';
    the three modules under test are picked onto an alternate. */
 const FILLER_DOC = 'SO-2608-002';
 
-/* The three modules of one sofa, the shape the owner reported: same SO, same
-   fabric/seat/leg, one code each. */
 const MODULES = ['9028-1A(LHF)', '9028-1A(RHF)', '9028-1NA'] as const;
 
 const soLine = (id: string, itemCode: string, docNo: string = DOC): Row => ({
@@ -134,10 +97,6 @@ const soLine = (id: string, itemCode: string, docNo: string = DOC): Row => ({
   so: { sales_location: 'KL', customer_delivery_date: '2026-09-30' },
 });
 
-/* THREE bindings per SKU — a main plus two alternates, which is what this
-   catalogue actually looks like (the three modules under report carry five
-   each in production). It is also what makes the ROW count outgrow the LINE
-   count, so this test measures the binding read and not the SO-line read. */
 const ALTERNATES = ['sup-2', 'sup-3'];
 const bindingsFor = (itemCode: string): Row[] => [
   {
@@ -152,12 +111,6 @@ const bindingsFor = (itemCode: string): Row[] => [
   })),
 ];
 
-/**
- * Converts `filler` other bound SO lines PLUS the three sofa modules in one
- * batch — the "select all, Proceed PO" pick. The three sit at the END of the
- * binding table, so once the batch is above the cap they are exactly the rows an
- * un-paged read drops.
- */
 async function convertWithCatalogue(filler: number, pickSupplierId?: string) {
   const captured: Row[] = [];
   const fillerCodes = Array.from({ length: filler }, (_, i) => `FILL-${String(i).padStart(5, '0')}`);
@@ -173,7 +126,6 @@ async function convertWithCatalogue(filler: number, pickSupplierId?: string) {
       { id: SUPPLIER_ID, code: '400-H004', name: 'HOOKKA INDUSTRIES' },
       ...ALTERNATES.map((id, i) => ({ id, code: `400-A00${i}`, name: `ALT ${i}` })),
     ],
-    // Every code in the fixture IS bound. Nothing here is missing data.
     supplier_material_bindings: [
       ...fillerCodes.flatMap(bindingsFor),
       ...MODULES.flatMap(bindingsFor),
@@ -190,8 +142,6 @@ async function convertWithCatalogue(filler: number, pickSupplierId?: string) {
       json: async () => ({
         picks: soLines.map((l) => ({
           soItemId: l.id, qty: 1,
-          /* The MRP page sends a per-line supplierId whenever the operator uses
-             the row's Supplier dropdown — an ALTERNATE, not the main. */
           ...(pickSupplierId && (MODULES as readonly string[]).includes(l.item_code as string)
             ? { supplierId: pickSupplierId }
             : {}),
@@ -216,31 +166,14 @@ describe('SO -> PO convert: a bound SKU past the response cap is still bound', (
     expect(out.status).toBe(201);
     const modules = captured.filter((r) => (MODULES as readonly string[]).includes(r.item_code as string));
     expect(modules).toHaveLength(3);
-    /* `supplier_sku` is the alternate's own code for the SKU, so it names WHICH
-       binding the line was costed and grouped from — the PO line itself carries
-       no supplier_id (that lives on the header it was grouped into). */
     for (const r of modules) expect(r.supplier_sku).toBe(`ALT-${r.item_code}`);
   });
 
-  /* THE ONE THAT FAILS PRE-FIX.
-     `is_main_supplier DESC` is what saved the mains: with 403 codes the 403 main
-     rows all land inside the first page, so nothing is reported "unbound". What
-     falls off the end is the ALTERNATES — and the alternate is precisely what
-     the MRP row's Supplier dropdown sends. `effectiveBindingFor` then finds no
-     `code|supplier` binding, falls back to the SKU's MAIN one, and raises the
-     purchase order against a supplier the operator did not pick, at that
-     supplier's price, reporting nothing. */
   test('the alternate supplier the operator picked survives a pick whose bindings outgrow one page', async () => {
-    /* 403 picked lines x 3 bindings = 1,209 rows against a 1,000-row cap.
-       Production held 2,660 binding rows on 2026-08-16 (887 of them for codes in
-       demand), so this is the smaller end of the real range. The LINE count
-       stays under the cap on purpose: this measures the binding read. */
     const { out, captured } = await convertWithCatalogue(400, 'sup-3');
     expect(out.status, JSON.stringify(out.body)).toBe(201);
     const modules = captured.filter((r) => (MODULES as readonly string[]).includes(r.item_code as string));
     expect(modules).toHaveLength(3);
-    /* Assert the whole per-module outcome, so a failure prints WHICH supplier
-       each module was actually ordered from rather than a bare boolean. */
     expect(
       modules.map((r) => `${r.item_code} ordered from ${r.supplier_sku}`).sort(),
     ).toEqual(MODULES.map((c) => `${c} ordered from ALT-${c}`).sort());

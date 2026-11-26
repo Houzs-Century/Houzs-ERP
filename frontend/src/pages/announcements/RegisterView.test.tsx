@@ -74,15 +74,12 @@ describe("Register mode", () => {
     seed();
     render(<RegisterView docTypes={TYPES} />);
     await waitFor(() => expect(screen.getByText("OPS-MEMO-2609-0001")).toBeTruthy());
-    // The default list asks the server for live rows only.
     expect(apiGet).toHaveBeenCalledWith("/api/memos?includeVoided=0");
     expect(screen.getByText("SOP").getAttribute("title")).toBe("Standard operating procedure");
     expect(screen.getByText(/Voided by Adam/).textContent).toContain("Superseded.");
     fireEvent.click(screen.getByRole("button", { name: /Memo.pdf/ }));
     expect(download).toHaveBeenCalledWith("/api/memos/memo-1/file", "Memo.pdf");
-    // Void… only on the caller's own live document.
     expect(screen.getAllByRole("button", { name: "Void…" })).toHaveLength(1);
-    // The type filter rides the request; ANN is never offered.
     const typeFilter = screen.getByLabelText("Filter by type") as HTMLSelectElement;
     expect([...typeFilter.options].map((o) => o.value)).toEqual(["", "MEMO", "SOP", "WARN"]);
     fireEvent.change(typeFilter, { target: { value: "SOP" } });
@@ -101,7 +98,6 @@ describe("Register mode", () => {
     expect(dept.value).toBe("7");
     const type = screen.getByLabelText("Document type") as HTMLSelectElement;
     expect(type.value).toBe("MEMO");
-    // The next number follows the picked type — a preview, from the server.
     await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-MEMO-2609-0002"));
     fireEvent.change(type, { target: { value: "WARN" } });
     await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-WARN-2609-0001"));
@@ -148,7 +144,6 @@ describe("Register mode", () => {
     fireEvent.change(dept, { target: { value: "9" } });
     expect(screen.getByText(/Canteen has no department code yet/)).toBeTruthy();
     expect(register.disabled).toBe(true);
-    // The manager may void anyone's live document.
     expect(screen.getAllByRole("button", { name: "Void…" })).toHaveLength(1);
   });
 

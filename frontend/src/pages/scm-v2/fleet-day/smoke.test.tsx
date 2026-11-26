@@ -1,7 +1,3 @@
-/* Render smoke tests for the remaining Last Mile board components. They mount
-   inside the real providers with empty/null inputs, which (a) proves each file
-   renders without crashing and (b) keeps every module executed by a test so the
-   frontend coverage ratchet's zero-coverage-files floor does not rise. */
 import { describe, expect, test, vi } from 'vitest';
 import type { ReactElement } from 'react';
 import { render } from '@testing-library/react';
@@ -18,8 +14,6 @@ import { CrewModal } from './CrewModal';
 import { EMPTY_FILTERS } from './vm';
 import type { DayStats } from '../../../vendor/scm/lib/fleet-day-cards';
 
-// OrderDrawer reads useAuth for the "Create service case" gate; this smoke test
-// mounts bare (no AuthProvider), so stub the hook. Other exports stay real.
 vi.mock('../../../auth/AuthContext', async (orig) => ({
   ...(await orig<typeof import('../../../auth/AuthContext')>()),
   useAuth: () => ({ can: () => false, canAny: () => false, canAll: () => false, pageAccess: () => 'none' }),

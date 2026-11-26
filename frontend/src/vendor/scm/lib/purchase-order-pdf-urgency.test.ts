@@ -1,7 +1,4 @@
-// DEV-65 (Sim 2026-10-09): the PO prints "URGENT" when the delivery date is
-// under 2 weeks after the PO date and "TOP URGENT" under 1 week.
 import { describe, expect, it, vi } from 'vitest';
-// The letterhead is fetched for the tab's company before drawing (BUG-111).
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';
 import { poUrgencyLabel } from './purchase-order-pdf';
@@ -77,7 +74,6 @@ describe('poUrgencyLabel', () => {
   });
 
   it('reads a timestamp PO date as its Malaysia calendar day', () => {
-    // 2026-10-08T17:00Z is 2026-10-09 01:00 MYT, printed as 2026/10/09.
     expect(poUrgencyLabel('2026-10-08T17:00:00Z', '2026-10-23')).toBeNull();
   });
 });
@@ -111,7 +107,6 @@ describe('purchase-order-pdf urgency badge', () => {
   });
 });
 
-// 2990-0064 (Sim 2026-11-17): a revised PO (_R1, _R2…) prints "Amended".
 describe('purchase-order-pdf amended note', () => {
   it('prints Amended on a revised PO', async () => {
     const { pdf, raw } = await render(header('2026-10-18', { revision: 2 }));

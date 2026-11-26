@@ -1,30 +1,3 @@
-// sales-doc-relationship-map — the ONE builder for the Delivery Order / Sales
-// Invoice / Delivery Return Relationship Maps, the sales-side siblings of
-// so-relationship-map.ts. Every node is read from the LIVE `/document-flow`
-// graph (the same company-scoped source the Sales Order map, the vendor
-// DocumentFlowModal and the purchase-side maps use) instead of a hand-built
-// literal chain.
-//
-// Why it exists (audit R8): SO / DO / SI / DR detail each rendered a HAND-BUILT
-// `chainNodes` array. That drifted from reality on exactly the nodes an operator
-// most needs:
-//   · DO hard-coded its GRN node to "Not created" forever, even when the SO it
-//     descends from had been fully received on a real GRN.
-//   · SI dropped its AR-payment nodes entirely (the 5-node chain had a dead
-//     "Sales side · no GRN" slot where the payments belong).
-//   · DR hard-coded its Sales Order + Sales Invoice nodes to "Upstream …" text,
-//     so neither was ever clickable nor showed the real document number.
-// so-relationship-map.ts already fixed this for the Sales Order (#600). These
-// hooks bring the same live-graph read to the three remaining sales documents,
-// keeping ONE logic layer (owner rule) rather than four literal chains.
-//
-// Semantics match the SO map: the graph resolves the whole document FAMILY off
-// the anchor's root Sales Order(s), so a node shows every document of its type
-// in that family (one slot, "N documents" when several). Nodes that resolve to a
-// real, openable document navigate to it; the rest say why in-app (owner
-// 2026-07-16: a node that paints Linked must answer when tapped). Consignment
-// anchors keep their existing vendor DocumentFlowModal map — these hooks are the
-// bespoke 5-node canvas the regular DO/SI/DR detail pages render.
 
 import { customerRefOf, type CustomerRefHeader } from '../../lib/customer-ref';
 import { useCallback, useMemo } from 'react';
@@ -39,19 +12,12 @@ import { useDocChoice, type DocChoiceApi } from './doc-choice';
 const flowNodesOf = (data: { nodes: FlowNode[] } | undefined, type: FlowNode['type']) =>
   (data?.nodes ?? []).filter((n) => n.type === type && !n.isAnchor);
 
-/* Shared count/label copy so the three chains read the same way as the SO map:
-   0 → "Not created", 1 → the doc's own label, N → "N <plural>". */
 function docCell(nodes: FlowNode[], plural: string, emptyDoc: string): { doc: string; multiple: boolean } {
   if (nodes.length === 0) return { doc: emptyDoc, multiple: false };
   if (nodes.length === 1) return { doc: nodes[0]!.label, multiple: false };
   return { doc: `${nodes.length} ${plural}`, multiple: true };
 }
 
-/* Procurement guard mirror — /scm/purchase-orders/:id, /scm/grns/:id and
-   /scm/purchase-invoices/:id are each mounted <ScmGuard area="scm.procurement.*">
-   with NO allowSales, so a salesperson who opens a DO through the sales hatch
-   must not be handed a node that navigates straight into <Forbidden>. Same
-   OR-shape as the SO map + the Guards themselves. */
 function useProcurementGates(): ProcurementGates {
   const { can, pageAccess } = useAuth();
   const all = can('scm.access');
@@ -125,7 +91,6 @@ export function buildDoChainNodes(
       meta: 'This document',
       state: 'current',
     },
-    /* Node 3 closes the SALES row. */
     {
       type: 'Sales Invoice',
       doc: si.doc,
@@ -137,8 +102,6 @@ export function buildDoChainNodes(
             : 'Tap to open',
       state: siNodes.length > 0 ? 'done' : 'pending',
     },
-    /* Nodes 4-6 = the PURCHASE row, hanging off the Sales Order because that is
-       where the supplier order is raised from. */
     {
       type: 'Purchase Order',
       doc: po.doc,
@@ -184,15 +147,9 @@ export function buildDoChainNodes(
 export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
   nodes: ChainNode[];
   onNodeClick: (n: ChainNode) => boolean;
-  /* The SO ▼ PO hop is PROVENANCE — "bought for", muted, never an execution
-     binding. Same rule as the SO map: a dash may only ever mean "floating", and
-     this map shows no floating hop (usePoSoCoverage is keyed by purchase doc). */
   pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
   const notify = useNotify();
-  /* Several documents in one slot open a chooser whose every row clicks through
-     (2026-08-03) — naming them and pointing at a list that cannot be searched by
-     this doc no left the operator copying numbers by hand. */
   const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const showCustomerPo = useCustomerPoNotice();
@@ -311,10 +268,6 @@ export function useDoRelationshipMap(header: DoRelationshipHeader | null): {
   return { nodes, onNodeClick, pairing, choice, openChoice, closeChoice, pickChoice };
 }
 
-// ── Sales Invoice chain — Customer PO ▶ Sales Order ▶ Delivery Order ▶
-//    Payments ▶ Sales Invoice (current). The 5-node shape's downstream slot is
-//    the AR payments the live graph carries off this invoice (the hand-built
-//    chain dropped them for a dead "no GRN" tile). ────────────────────────────
 export type SiRelationshipHeader = CustomerRefHeader & {
   id: string;
   invoice_number: string;
@@ -446,9 +399,6 @@ export function useSiRelationshipMap(header: SiRelationshipHeader | null): {
   return { nodes, onNodeClick, choice, openChoice, closeChoice, pickChoice };
 }
 
-// ── Delivery Return chain — Customer PO ▶ Sales Order ▶ Delivery Order ▶
-//    Sales Invoice ▶ Delivery Return (current). The return branches off the DO;
-//    the SO + SI nodes are now the real family documents, not "Upstream …". ────
 export type DrRelationshipHeader = CustomerRefHeader & {
   id: string;
   return_number: string;

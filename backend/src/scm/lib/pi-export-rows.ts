@@ -21,7 +21,6 @@ import { pageWithTruncation } from './outstanding-po-lines';
 import { chunkIn } from './paginate-all';
 import { mapBounded } from './concurrency';
 
-/* How many supplier-binding reads one page runs at once. */
 const BINDINGS_CONCURRENCY = 6;
 import { PI_LIST_SELECT, filterPiList, orderPiList, type PiListFilters } from './pi-list-read';
 import { lineExportDescription2 } from './line-export-description2';
@@ -40,9 +39,6 @@ const LINE_COLS =
 
 export type PiExportLine = {
   id: string;
-  /** The book's Item Description / Item Group / UOM for this line's item
-   *  (services/autocount-book-item.ts), the ERP's own values where the book has
-   *  no item for the code. */
   book_description: string | null;
   book_item_group: string | null;
   book_uom: string | null;
@@ -117,7 +113,6 @@ const text = (v: unknown): string | null => {
   return s === '' ? null : s;
 };
 
-/* The invoice detail page's line order: creation, category rank, sofa build. */
 function inDetailOrder(lines: RawLine[]): RawLine[] {
   const byCreation = [...lines].sort((a, b) => {
     const ac = a.created_at ?? '';
@@ -162,8 +157,6 @@ export async function attachPiLines<H extends HeaderRow>(sbIn: unknown, c: Compa
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<GrnLine>);
   if (grnLines.error) return { error: `goods received lines: ${grnLines.error}` };
 
-  /* Independent lookups run together, in two waves (each wave needs the ids the
-     one before it found); errors are still reported in the old serial order. */
   type Grn = { id: string; grn_number: string | null; warehouse_id: string | null };
   type PoLine = { id: string; purchase_order_id: string | null; so_item_id: string | null };
   const [grns, poLines] = await Promise.all([
@@ -203,9 +196,6 @@ export async function attachPiLines<H extends HeaderRow>(sbIn: unknown, c: Compa
   }
   const bookItem = new Map<string, BookLineItem>();
   try {
-    /* One bindings read per supplier on the page — run BINDINGS_CONCURRENCY at a
-       time instead of one after another (a 50-invoice page can name 20+
-       suppliers). Same reads, same results; only the waiting overlaps. */
     const groups = [...bySupplier];
     const bindingsBySupplier = await mapBounded(groups, BINDINGS_CONCURRENCY, ([supplierId, group]) =>
       bindingsFor(sb as never, companyId, group.map((l) => l.item_code ?? ''), supplierId || null));

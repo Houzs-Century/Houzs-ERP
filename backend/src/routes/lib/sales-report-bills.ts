@@ -12,7 +12,6 @@
 import { extractRefTokens, parseSalesReport, reportDateFor, summaryTotalOf } from "../../scm/shared/sales-report-parse";
 
 export type BillRow = {
-  /** `${source_activity_id}:${line}` — stable for as long as the message is. */
   key: string;
   ref_raw: string;
   ref_token: string;
@@ -41,7 +40,6 @@ export type NoteRow = {
 export type ReportSummary = {
   activity_id: number;
   total_sen: number;
-  /** Sum of the message's day lines; null when it has none. */
   days_sen: number | null;
   created_at: string | null;
 };
@@ -98,8 +96,6 @@ export function collectReport(
     const s = summaryTotalOf(parsed);
     if (s) summary = { activity_id: n.id, total_sen: s.total_sen, days_sen: s.days_sen, created_at: n.created_at };
   }
-  /* A message whose every bill was overtaken by a later message no longer
-     contributes; the chat should not mark it as counted. */
   const bills = [...byToken.values()].sort(
     (a, b) => (b.report_date ?? "").localeCompare(a.report_date ?? "") || a.ref_token.localeCompare(b.ref_token),
   );
@@ -107,9 +103,6 @@ export function collectReport(
   return { bills, report_activity_ids: [...contributing].filter((id) => live.has(id)), summary };
 }
 
-/** A report posted again to fix a typo replaces the first: same day, as many bills,
- *  and at least half of the earlier message's repeat, so the mistyped bill goes with
- *  it. A later message correcting one bill, or of new bills, adds to it. */
 function dropCorrected(byToken: Map<string, BillRow>, tokens: ReadonlySet<string>, reportDate: string | null): void {
   if (reportDate === null) return;
   const bySource = new Map<number, BillRow[]>();
@@ -156,10 +149,7 @@ export type BillMatch = {
   so_project_id: number | null;
   so_salesperson_id: string | null;
   so_amount_sen: number | null;
-  /** The order exists but is linked to ANOTHER event — the rep picked the
-   *  wrong fair and is asked to amend it. */
   other_event: boolean;
-  /** The order exists and is linked to no event at all. */
   unlinked: boolean;
 };
 
@@ -208,13 +198,6 @@ const SAVE_EMAILS = new Set([
   "ummuaimanlm@gmail.com",
 ]);
 
-/* attendeeEmails is REQUIRED (CLAUDE.md: a parameter that decides something is
-   not optional). Pass a lowercased Set of this project's attendee emails when
-   the gate is per-event, or null when the gate is being asked without an event
-   context (e.g. "would this user's chat ever count"). Making it required stops
-   a new caller from forgetting it and silently dropping attendees — which was
-   the bug behind the "No chat report" marker on project overview and the empty
-   SALES REPORT (CHAT) panel on KLCC 31/10. */
 export function canSaveSalesReport(
   user: {
     email?: string | null;
@@ -236,18 +219,10 @@ export function canSaveSalesReport(
   // others — and "Sales Person" is the role name every sales-floor seat holds.
   if (position === "sales director" || role === "sales director") return true;
   if (role === "sales person") return true;
-  // Per-event attendee path — unchanged.
   if (attendeeEmails && email && attendeeEmails.has(email)) return true;
   return false;
 }
 
-/* ── bill ↔ order ──────────────────────────────────────────────────────────
-   The key is the booklet number. A new order carries it in Ref No.
-   (customer_so_no, typed by the rep); an order migrated from AutoCount in
-   `ref`, sometimes two to a field ("HC13503 + ZNT6191"). Both are read as
-   tokens, so "HC13263 share with yuny" still matches HC13263 and HC1326 never
-   does. Cancelled orders are not offered to this index — the route filters
-   them out — because a cancelled order is not an opened bill. */
 
 export function indexOrdersByToken(orders: readonly OrderRow[]): Map<string, OrderRow[]> {
   const index = new Map<string, OrderRow[]>();
@@ -278,13 +253,6 @@ export function orderAmountSen(o: OrderRow): number {
   return rev > 0 ? rev : Number(o.local_total_sen ?? 0);
 }
 
-/** The order a bill is, when one carries its number. When several do (the
- *  same booklet number typed on two orders), the one linked to THIS event
- *  wins, then an unlinked one, then any — so a wrong-fair duplicate can never
- *  hide a right one. Ties break on doc_no so the answer is stable. */
-/** One order, one booklet number that differs from the report by a single letter
- *  of the prefix: the report's ZNF6767 is the order's ZNT6767. Several such orders
- *  name nobody. */
 function typedWrong(token: string, index: Map<string, OrderRow[]>): OrderRow[] {
   const m = /^([A-Z]+)(\d{4,})$/.exec(token);
   if (!m) return [];
@@ -330,11 +298,6 @@ export function matchBill(token: string, projectId: number, index: Map<string, O
   };
 }
 
-/* ── name → attending rep ──────────────────────────────────────────────────
-   The report names people the way the floor does ("Jason", "Mei Ting"); the
-   Sales Attending list carries the rep's full name. Exact first, then the
-   pasted name as the first word(s) of a rep's name, then as a word anywhere
-   in it. Ambiguity resolves to nobody rather than to the wrong person. */
 
 export function personKey(name: string | null | undefined): string {
   return String(name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -365,7 +328,6 @@ export function resolveAttendee(name: string | null | undefined, attendees: read
   return null;
 }
 
-/* ── the numbers ───────────────────────────────────────────────────────────── */
 
 export function matchBills(
   bills: readonly BillRow[],

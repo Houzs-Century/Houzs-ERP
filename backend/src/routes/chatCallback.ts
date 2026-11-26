@@ -68,16 +68,8 @@ import { AssrTapFailed, isAssrLeg, recordAssrChatTap } from "../scm/lib/assr-arr
 
 const app = new Hono<{ Bindings: Env }>();
 
-/** The companies CHAT_CALLBACK_KEY speaks for, first = the number's owner (the
- *  only one for Service Case taps). See the COMPANY note above. */
 const CHAT_KEY_COMPANIES = ["HOUZS", "2990"] as const;
 
-/** Shared-secret guard. Constant-time compare (the key should be 48 random
- *  chars — brute force is hopeless, but the comparison shouldn't leak match
- *  length anyway), a small failure delay, and a per-IP failure limiter so
- *  key-guessing costs real time and eventually 429s. Same shape as
- *  assrFormIntake's badIntakeKey; kept local rather than shared because the
- *  two endpoints must be able to diverge (different key, different company). */
 async function badChatKey(c: any): Promise<Response | null> {
   const provided = c.req.header("X-Chat-Key") || "";
   const expected = c.env.CHAT_CALLBACK_KEY || "";
@@ -88,15 +80,6 @@ async function badChatKey(c: any): Promise<Response | null> {
   return c.json({ error: "unauthorized" }, 401);
 }
 
-/** Resolve a company code to its id. Three-state contract, identical to
- *  assrFormIntake.intakeCompany and scm/lib/companyScope:
- *   · { master: false }            — the companies master is not readable at
- *     all (pre-migration / the D1 test mirror). Single-company install, no
- *     second tenant to leak to, so the caller degrades to no predicate.
- *   · { master: true, id: null }   — the master IS readable and has no row for
- *     this code. That is a MISCONFIGURATION, not a legacy state, and the caller
- *     must REFUSE: falling back to "no predicate" would re-open the hole on the
- *     day someone renames a company code. */
 async function chatCompany(
   db: D1Database,
   code: string,
@@ -112,10 +95,6 @@ async function chatCompany(
   }
 }
 
-/** Trim to a bounded, LIKE-safe token. The callback id is interpolated into an
- *  idempotency LIKE below, so anything that is not [A-Za-z0-9_-] is dropped
- *  rather than escaped — chat's own ids are already in that alphabet, and a
- *  stray % or _ would silently widen the duplicate match. */
 function safeId(raw: unknown): string | null {
   const s = String(raw ?? "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 120);
   return s || null;
@@ -141,11 +120,6 @@ app.post("/", async (c) => {
     return c.json({ error: "not_configured", reason: "Supabase is not configured" }, 503);
   }
 
-  // try/catch rather than `.catch(() => null)`: the same house pattern
-  // scm/routes/delivery-messages.ts uses, and the one check-swallowed-reads
-  // wants — a discarded rejection cannot tell a malformed body from a body
-  // that never arrived. Here both answers really are 400, but the shape has to
-  // be the one that CAN tell, or the next reader copies the one that cannot.
   let body: {
     callback_id?: string;
     event?: string;
@@ -156,15 +130,11 @@ app.post("/", async (c) => {
     reason?: string;
     address?: string;
     note?: string;
-    // Service Case taps only: which leg of the case (`ref`) the message named.
     leg?: string;
-    // event "property": the Property Details form answers.
     house_type?: string;
     delivery_purpose?: string;
     need_disposal?: string;
     disposal_item?: string;
-    // event "eastmy_ack": the East Malaysia prep callback — the customer's
-    // confirmed final-mile delivery details.
     recipient_name?: string;
     recipient_phone?: string;
     delivery_address?: string;
@@ -188,22 +158,10 @@ app.post("/", async (c) => {
 
   const callbackId = safeId(body.callback_id);
   const phone = blastPhone(body.phone);
-  // Dates ride through as the customer's REQUEST, never as a schedule. Kept as
-  // the raw string the flow sent: this row is evidence of what was asked for,
-  // and reformatting it here would quietly lose "2026-09-30" vs "2026/09/30"
-  // information that helps when a mismatch is being chased.
   const requestedDate = String(body.delivery_date ?? "").trim().slice(0, 32) || null;
-  // postage_amend: the address the customer typed, recorded verbatim on the
-  // log row (never written to the order — the Sales Order's address is the
-  // staff's to change).
   const requestedAddress = String(body.address ?? "").trim().slice(0, 300) || null;
   const reason = String(body.reason ?? "").trim().slice(0, 200) || null;
   const note = String(body.note ?? "").trim().slice(0, 500) || null;
-  // event "property": the four Property Details answers, each bounded; null
-  // when this is not a property callback. Connect's interpolator leaves an
-  // UNSET attribute as its literal "{key}" (an answer the customer skipped, e.g.
-  // the disposal item when they said No) — treat that exact shape as blank so
-  // the placeholder never lands in a column.
   const propField = (v: unknown, max: number): string | null => {
     const t = String(v ?? "").trim().slice(0, max);
     return !t || /^\{[a-z0-9_]+\}$/i.test(t) ? null : t;
@@ -214,11 +172,6 @@ app.post("/", async (c) => {
     needDisposal: propField(body.need_disposal, 20),
     disposalItem: propField(body.disposal_item, 200),
   } : null;
-  // event "eastmy_ack": the East Malaysia prep callback. The customer's confirmed
-  // final-mile delivery details are RECORDED on the message-log row (folded into
-  // its note below) and never written onto the Sales Order — the SO's address is
-  // staff's to change (same stance as the postage address). An unset attribute
-  // arrives as Connect's literal "{key}" placeholder, treated as blank by propField.
   const emAckNote = event === "eastmy_ack"
     ? [
         propField(body.recipient_name, 120) && `recipient: ${propField(body.recipient_name, 120)}`,
@@ -230,11 +183,6 @@ app.post("/", async (c) => {
 
   const sb = getSupabaseService(c.env);
 
-  // ── Company scope ───────────────────────────────────────────────────────
-  // Resolved FIRST, before anything reads a row: the key speaks for its
-  // companies and nothing else, so every query below carries their predicate.
-  // A doc of any other company is a REFUSAL to notice, not a row to write. See
-  // the COMPANY note at the top.
   const keyCompanies = await Promise.all(CHAT_KEY_COMPANIES.map((code) => chatCompany(c.env.DB, code)));
   const missing = CHAT_KEY_COMPANIES.find((_, i) => keyCompanies[i].master && keyCompanies[i].id == null);
   if (missing) {
@@ -243,14 +191,6 @@ app.post("/", async (c) => {
   const company = keyCompanies[0];
   const orderCompanyIds = keyCompanies.flatMap((k) => (k.id != null ? [k.id] : []));
 
-  // `ref` is the number the CUSTOMER was shown — delivery-messages sends
-  // COALESCE(linked_ac_docno, doc_no), so for an AutoCount-linked order it is
-  // the AutoCount number, not ours — and `refs` is the whole bundle (the
-  // ERP's `refs_all`): a customer with 2–4 orders gets ONE message, and the
-  // tap answers for all of them. Match either column; each row is then keyed
-  // by OUR doc_no so the board finds it. Refs are interpolated into a
-  // PostgREST `or` filter, where `,` `(` `)` are syntax — anything outside the
-  // document-number alphabet is refused up front rather than escaped.
   if (!DOC_REF_RE.test(ref)) {
     return c.json({ error: "invalid_ref", reason: "ref has characters no document number carries" }, 400);
   }
@@ -287,21 +227,12 @@ app.post("/", async (c) => {
   }
   type SoHit = { doc_no: string; company_id: number | string | null; linked_ac_docno: string | null };
   const hits = (soRows ?? []) as SoHit[];
-  // An exact doc_no hit wins over a linked_ac_docno hit, so a number that is
-  // somehow both is recorded against the order that literally carries it.
   const resolve = (r: string): SoHit | null =>
     hits.find((h) => h.doc_no === r) ?? hits.find((h) => h.linked_ac_docno === r) ?? null;
   const primaryDoc = resolve(ref)?.doc_no;
   if (!primaryDoc) {
-    // Deliberately the same answer for "no such SO" and "not this company's
-    // SO": the caller holds a Houzs credential and must not be able to probe
-    // which doc numbers exist elsewhere.
     return c.json({ error: "unknown_ref", reason: `no order ${ref}` }, 404);
   }
-  // The primary first, then the rest of the bundle; a sibling that does not
-  // resolve is reported, not fatal — the primary order's answer still lands.
-  // Each order is recorded under its OWN company, so a 2990 tap's log row and
-  // idempotency probe sit in 2990.
   const targets: Array<{ customerRef: string; docNo: string; companyId: number | null }> = [];
   const unknown: string[] = [];
   for (const r of refs) {
@@ -312,10 +243,6 @@ app.post("/", async (c) => {
     }
   }
 
-  // ── Record, per order ───────────────────────────────────────────────────
-  // lib/chat-callback-record.ts: idempotency by (callback_id, doc), the
-  // wa_message_log row, then the board's request columns. A log failure is a
-  // 500 — the row IS the record, and a 200 would stop chat retrying.
   const results: ChatTapResult[] = [];
   for (const t of targets) {
     try {
@@ -329,8 +256,6 @@ app.post("/", async (c) => {
         requestedDate,
         reason,
         property,
-        // postage_amend folds the typed address into the note; eastmy_ack folds
-        // the whole confirmed-delivery block (recipient / phone / address / remark).
         note: emAckNote
           ? `${note ?? ""}${note ? " | " : ""}${emAckNote}`
           : requestedAddress ? `${note ?? ""}${note ? " | " : ""}address: ${requestedAddress}` : note,
@@ -356,9 +281,6 @@ app.post("/", async (c) => {
     results,
     ...(unknown.length ? { unknown } : {}),
     recorded: true,
-    // The schedule is untouched — `applied` keeps meaning "delivery date
-    // applied", which this endpoint never does. Each result's `so_request`
-    // says whether that order's request columns were filled.
     applied: false,
   });
 });

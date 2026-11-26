@@ -45,21 +45,16 @@ import { todayMyt } from '../../scm/lib/my-time';
 import { readAgentSetting } from '../agent-console';
 import { resolveStateCode } from './delivery-agent-geo';
 
-// ── Config (app_settings['agents.pms']) ──────────────────────────────────────
 
 export const PMS_AGENT_SETTING_KEY = 'agents.pms';
 
-/** Analytics look-back window when unset (days). Clamped 30..1095. */
 const DEFAULT_ANALYTICS_WINDOW_DAYS = 365;
 const MIN_WINDOW_DAYS = 30;
 const MAX_WINDOW_DAYS = 1095;
 
-/** A dimension whose fill-rate is below this % is flagged `gated`. Clamped 0..100. */
 const DEFAULT_MIN_COVERAGE_PCT = 90;
 
-/** Cap every dimension array so a brief JSON stays bounded. */
 const DIM_CAP = 20;
-/** Cap the salesperson-by-state cross cells. */
 const CROSS_CAP = 15;
 
 interface PmsSettings {
@@ -81,7 +76,6 @@ async function loadPmsSettings(db: D1Database): Promise<PmsSettings> {
   };
 }
 
-// ── Small helpers ────────────────────────────────────────────────────────────
 
 type Row = Record<string, unknown>;
 
@@ -98,12 +92,10 @@ function col(r: Row, camel: string, snake: string): unknown {
 function rm(sen: number): string {
   return `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
-/** marginSen / revenueSen * 100, one decimal place, divide-by-zero guarded. */
 function marginPctOf(revenueSen: number, marginSen: number): number {
   if (revenueSen === 0) return 0;
   return Math.round((marginSen / revenueSen) * 1000) / 10;
 }
-/** Whole days from a YMD/ISO date to todayYmd (>= 0). */
 function daysSinceYmd(fromIso: string, todayYmd: string): number {
   if (!fromIso) return 0;
   const from = new Date(`${fromIso.slice(0, 10)}T00:00:00Z`).getTime();
@@ -112,7 +104,6 @@ function daysSinceYmd(fromIso: string, todayYmd: string): number {
   return Math.max(0, Math.floor((today - from) / 86_400_000));
 }
 
-// ── Public shapes (the integrator consumes these) ────────────────────────────
 
 export type DimRow = {
   label: string;
@@ -124,9 +115,7 @@ export type DimRow = {
 };
 
 export type GatedDim = {
-  /** % of in-window SOs that have this dimension populated. */
   fillRatePct: number;
-  /** true when fillRatePct < minCoveragePct — surface but don't trust. */
   gated: boolean;
   rows: DimRow[];
 };
@@ -151,7 +140,6 @@ export interface PmsBriefData {
   openProposals: { total: number };
 }
 
-// ── Job A source: the SO header (one query, no cross-DB join) ─────────────────
 
 type SoHeader = {
   doc_no: string | null;
@@ -179,7 +167,6 @@ type SoHeader = {
   service_cost_sen: number | null;
 };
 
-/** One SO reduced to its dimensions + headline money (all sen). */
 interface SoFact {
   revenueSen: number;
   costSen: number;
@@ -201,7 +188,7 @@ const NO_VENUE = '(no venue)';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadSoFacts(sb: any, windowDays: number): Promise<SoFact[]> {
-  const windowStart = todayMyt(-windowDays); // YYYY-MM-DD, MYT
+  const windowStart = todayMyt(-windowDays);
   const { data: rowsRaw, error } = await paginateAll<SoHeader>((from, to) =>
     sb.from('mfg_sales_orders')
       .select(
@@ -219,7 +206,6 @@ async function loadSoFacts(sb: any, windowDays: number): Promise<SoFact[]> {
   if (error) throw new Error(`pms-agent SO header load failed: ${error.message}`);
   const rows = rowsRaw ?? [];
 
-  // Resolve salesperson + venue names in batch (dedupe ids).
   const spIds = [...new Set(rows.map((r) => s(r.salesperson_id)).filter(Boolean))];
   const venueIds = [...new Set(rows.map((r) => s(r.venue_id)).filter(Boolean))];
   const spName = new Map<string, string>();
@@ -232,7 +218,7 @@ async function loadSoFacts(sb: any, windowDays: number): Promise<SoFact[]> {
         for (const r of (data ?? []) as Array<{ id: string; name: string | null }>) {
           if (r.id) spName.set(s(r.id), s(r.name));
         }
-      } catch { /* names optional — fall back to id */ }
+      } catch { }
     })(),
     (async () => {
       if (venueIds.length === 0) return;
@@ -241,7 +227,7 @@ async function loadSoFacts(sb: any, windowDays: number): Promise<SoFact[]> {
         for (const r of (data ?? []) as Array<{ id: string; name: string | null }>) {
           if (r.id) venueName.set(s(r.id), s(r.name));
         }
-      } catch { /* names optional — fall back to free-text venue */ }
+      } catch { }
     })(),
   ]);
 
@@ -279,13 +265,11 @@ async function loadSoFacts(sb: any, windowDays: number): Promise<SoFact[]> {
   });
 }
 
-// ── Aggregation ──────────────────────────────────────────────────────────────
 
 function dimRow(label: string, soCount: number, revenueSen: number, costSen: number, marginSen: number): DimRow {
   return { label, soCount, revenueSen, costSen, marginSen, marginPct: marginPctOf(revenueSen, marginSen) };
 }
 
-/** Group SOs by a label, sum money, sort by revenue desc, cap to DIM_CAP. */
 function aggregateDim(facts: SoFact[], labelOf: (f: SoFact) => string): DimRow[] {
   const m = new Map<string, { count: number; rev: number; cost: number; margin: number }>();
   for (const f of facts) {
@@ -303,7 +287,6 @@ function aggregateDim(facts: SoFact[], labelOf: (f: SoFact) => string): DimRow[]
     .slice(0, DIM_CAP);
 }
 
-/** A dimension + its fill-rate readiness gate. */
 function gatedDim(
   facts: SoFact[],
   labelOf: (f: SoFact) => string,
@@ -316,7 +299,6 @@ function gatedDim(
   return { fillRatePct, gated: fillRatePct < minCoveragePct, rows: aggregateDim(facts, labelOf) };
 }
 
-/** The 5 header category buckets (revenue/cost read from distinct columns). */
 function categoryRows(facts: SoFact[]): DimRow[] {
   const defs: Array<{ label: string; pick: (f: SoFact) => [number, number] }> = [
     { label: 'Mattress/Sofa', pick: (f) => f.cat.mattressSofa },
@@ -341,8 +323,6 @@ function categoryRows(facts: SoFact[]): DimRow[] {
     .sort((x, y) => y.revenueSen - x.revenueSen);
 }
 
-/** salespersonByState cross cells — only SOs with a resolved salesperson,
- *  top CROSS_CAP by revenue (answers "who does especially well where"). */
 function salespersonByState(facts: SoFact[]): PmsBriefData['salespersonByState'] {
   const m = new Map<string, { salesperson: string; stateCode: string; soCount: number; revenueSen: number; marginSen: number }>();
   for (const f of facts) {
@@ -357,7 +337,6 @@ function salespersonByState(facts: SoFact[]): PmsBriefData['salespersonByState']
   return [...m.values()].sort((x, y) => y.revenueSen - x.revenueSen).slice(0, CROSS_CAP);
 }
 
-// ── Proposal persistence (pms_agent_proposals, public schema) ────────────────
 
 async function openProposalKeys(db: D1Database): Promise<Set<string>> {
   const keys = new Set<string>();
@@ -383,7 +362,6 @@ async function openProposalTotal(db: D1Database): Promise<number> {
   }
 }
 
-// ── Job B: project-lifecycle chase (PROPOSAL-ONLY, fully guarded) ─────────────
 
 type ProjectChase = {
   code: string | null;
@@ -396,7 +374,6 @@ type ProjectChase = {
   state: string | null;
 };
 
-/** Confirmed/active projects whose end_date is past but stage was never closed. */
 async function detectProjectChases(db: D1Database, today: string): Promise<ProjectChase[]> {
   const res = await db
     .prepare(
@@ -432,7 +409,6 @@ async function runProjectChase(env: Env, today: string): Promise<number> {
   try {
     chases = await detectProjectChases(db, today);
   } catch (e) {
-    // Any projects-table column drift stays isolated — Job A is untouched.
     console.warn('[pms-agent] project-chase detector skipped (query failed):', e);
     return 0;
   }
@@ -467,7 +443,6 @@ async function runProjectChase(env: Env, today: string): Promise<number> {
   return created;
 }
 
-// ── Job A: build + persist the analytics brief ───────────────────────────────
 
 async function buildBrief(env: Env, facts: SoFact[], settings: PmsSettings): Promise<PmsBriefData> {
   const db = env.DB;
@@ -496,7 +471,6 @@ async function buildBrief(env: Env, facts: SoFact[], settings: PmsSettings): Pro
     openProposals: { total: await openProposalTotal(db) },
   };
 
-  // Snapshot row — ai_focus stays NULL here; the lead's brain call fills it.
   try {
     await db
       .prepare('INSERT INTO pms_agent_briefs (id, brief, ai_focus, created_at) VALUES (?, ?::text::jsonb, NULL, ?)')
@@ -508,18 +482,15 @@ async function buildBrief(env: Env, facts: SoFact[], settings: PmsSettings): Pro
   return brief;
 }
 
-// ── Orchestrator ─────────────────────────────────────────────────────────────
 
 export async function runPmsAgent(env: Env): Promise<{ summary: string; brief: PmsBriefData; proposalsCreated: number }> {
   const sb = getSupabaseService(env);
   const settings = await loadPmsSettings(env.DB);
   const today = todayMyt();
 
-  // Job A — analytics (read-only). Must succeed for a useful run.
   const facts = await loadSoFacts(sb, settings.analyticsWindowDays);
   const brief = await buildBrief(env, facts, settings);
 
-  // Job B — project chase (proposal-only). Isolated so it can never sink Job A.
   const proposalsCreated = await runProjectChase(env, today).catch((e) => {
     console.warn('[pms-agent] project-chase job failed:', e);
     return 0;
@@ -540,7 +511,6 @@ export async function runPmsAgent(env: Env): Promise<{ summary: string; brief: P
   return { summary, brief, proposalsCreated };
 }
 
-// ── Console card counters (must not throw pre-migration) ──────────────────────
 
 export async function pmsAgentStatus(env: Env): Promise<{ openProposals: number; lastBriefAt: string | null }> {
   const db = env.DB;
@@ -552,7 +522,6 @@ export async function pmsAgentStatus(env: Env): Promise<{ openProposals: number;
       .first<{ last?: string | null }>();
     lastBriefAt = r?.last ?? null;
   } catch {
-    /* pre-migration — null */
   }
   return { openProposals, lastBriefAt };
 }

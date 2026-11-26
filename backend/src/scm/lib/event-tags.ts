@@ -35,8 +35,6 @@ export type EventRow = {
   boothNo: string | null;
 };
 
-/* Lower-case aliases, and every mapper dual-reads: the pg driver and the D1
-   mirror disagree on result-column casing (fair-binding.ts). */
 const EVENT_COLUMNS =
   'p.id AS id, p.code AS code, p.name AS name, p.start_date AS startdate, p.end_date AS enddate, ' +
   'p.status AS status, p.archived_at AS archivedat, p.venue AS venue, p.brand AS brand, ' +
@@ -70,7 +68,6 @@ export function toEventRow(r: Record<string, unknown>): EventRow {
     positive integer is that event; anything else is a unit mistake, refused. */
 export function parseEventId(raw: unknown): number | null | 'invalid' {
   if (raw === undefined || raw === null || raw === '') return null;
-  /* A number, or digits as text — never Number(true) === 1. */
   if (typeof raw !== 'number' && !(typeof raw === 'string' && /^\s*\d+\s*$/.test(raw))) return 'invalid';
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : 'invalid';

@@ -1,8 +1,3 @@
-// A write in one tab refreshes the others' screens: only the queries that write
-// touched (a PO save must not re-read the Delivery Planning board), everything
-// for a legacy / unscoped message, and a HIDDEN tab re-reads nothing until it is
-// shown, then once. A hidden Merchant Recon tab used to re-read every report on
-// it after every save made anywhere.
 
 import { QueryClient, QueryObserver, type QueryKey } from '@tanstack/react-query';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -18,7 +13,6 @@ const pause = () => new Promise((res) => setTimeout(res, 20));
 const rig = () => {
   const qc = new QueryClient();
   const observers: Array<() => void> = [];
-  /* An on-screen query, already read: observed, so invalidation refetches it. */
   const onScreen = (queryKey: QueryKey, data: unknown = 'rows') => {
     const queryFn = vi.fn(async () => data);
     qc.setQueryData(queryKey, data);
@@ -62,14 +56,12 @@ describe('a write in another tab', () => {
     r.write([['mfg-sales-orders']]); r.write([['mfg-sales-orders', 1]]); r.write([['mfg-sales-orders']]);
     await pause();
     expect(r.so).not.toHaveBeenCalled();
-    /* Marked stale, so a screen opened while hidden still reads fresh. */
     expect(r.qc.getQueryState(['mfg-sales-orders', 1])?.isInvalidated).toBe(true);
 
     setVisibility('visible');
     await vi.waitFor(() => expect(r.so).toHaveBeenCalledTimes(1));
     await pause();
     expect(r.po).not.toHaveBeenCalled();
-    /* Shown again with nothing new: no further read. */
     setVisibility('hidden'); setVisibility('visible');
     await pause();
     expect(r.so).toHaveBeenCalledTimes(1);
@@ -106,7 +98,6 @@ describe('a write in another tab', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(board).not.toHaveBeenCalled();
 
-    /* Hidden: the claim waits for the tab to be shown, like everything else. */
     setVisibility('hidden');
     r.write([['delivery-planning']]);
     await pause();

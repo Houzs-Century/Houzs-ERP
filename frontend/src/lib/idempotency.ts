@@ -1,53 +1,3 @@
-// ---------------------------------------------------------------------------
-// Idempotency keys for money-mutating requests — the CLIENT half.
-//
-// backend/src/middleware/idempotency.ts is mounted on /api/* after auth and
-// companyContext, so principal + tenant scope are set before its claim store. It has an
-// in-flight 409 and a daily TTL sweep. It is OPT-IN: a pure pass-through unless
-// the client sends an `Idempotency-Key` header, and until this module NO client
-// ever sent one. A safety feature nobody switched on is not a safety feature —
-// every double-fire of a payment write (double tap, flaky-network re-submit,
-// an operator re-pressing after a partial failure) booked the money twice.
-//
-// Two rules. Break EITHER and this is worse than the bug it fixes:
-//
-//   1. STABLE for a retry. A key minted per click or per render hands the two
-//      halves of a double-fire two DIFFERENT keys, and the middleware no-ops.
-//      That is a fix that does nothing.
-//   2. UNIQUE per intent. A key derived from the payload makes two GENUINE
-//      identical payments (the same customer pays RM100 twice today) collide,
-//      and the middleware replays the first response verbatim — so the second
-//      payment is silently swallowed and the money is never booked, while the
-//      operator is told it saved. That is a fix that LOSES money.
-//
-// So: mint once when the operator STARTS one payment (opens the sheet, adds the
-// draft row), reuse it for every retry of that one submit, and let it die with
-// the thing that represents the intent — the draft row is removed on success,
-// the sheet unmounts on close. The key is retired by the intent ENDING, never by
-// the write succeeding; see useIdempotencyKey for why that distinction is load-
-// bearing rather than pedantic.
-//
-// This is deliberately NOT hidden inside authedFetch. Only the call site knows
-// where an intent begins and ends: an automatic per-request key would satisfy
-// (2) and break (1); an automatic payload-derived key would satisfy (1) and
-// break (2). There is no correct automatic key, which is precisely why the
-// middleware was built opt-in and precisely why nobody ever opted in.
-//
-// SCOPE: money that duplicates — a call site that creates a payment-ledger row,
-// adds to a paid total, or MINTS A SOURCE DOCUMENT money hangs off. The third
-// clause was added 2026-07-17 (fix/so-idempotency) and is not a widening of the
-// rule, it is the rule finally being read: SO create was left out while every
-// payment stacked ON TOP of it was covered, so the order itself could be raised
-// twice at RM3,888 and take DO / SI / stock with it. The middleware's own
-// docblock always said so — "instead of creating a duplicate order/DO/PO".
-//
-// NOT a blanket on every POST: plenty of endpoints have legitimate repeat-submit
-// semantics (SoFromProducts' batch generator raises N orders per run BY DESIGN —
-// a per-mount key there would collapse N into 1, which is rule (2) inverted and
-// worse than the bug it would claim to fix), and an endpoint that is already
-// domain-idempotent (payment-vouchers.ts:407 /post, :528 /cancel both detect
-// their own replay and echo back) gains nothing from a key.
-// ---------------------------------------------------------------------------
 import { useState } from "react";
 
 /** Mint a key for ONE payment intent. Opaque to the server, which binds it to
@@ -56,9 +6,6 @@ export function newIdempotencyKey(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
-  // randomUUID needs a secure context. Keep a fallback so a payment can still
-  // be recorded from an http:// LAN origin instead of throwing at the mint —
-  // failing to mint must never block collecting money.
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}-${Math.random()
     .toString(36)
     .slice(2, 12)}`;

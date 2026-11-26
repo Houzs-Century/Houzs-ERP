@@ -1,32 +1,3 @@
-// ----------------------------------------------------------------------------
-// acc/engine — THE one posting gate.
-//
-// Every journal entry in the system is written by postJournal, and every
-// reversal by reverseJournal. No other code may insert into journal_entries /
-// journal_entry_lines. (Requirements brief §2.1: three prior ERPs each grew
-// multiple posting paths and each shipped an entry that silently never hit the
-// ledger; this file exists so that class of bug has nowhere to live.)
-//
-// What the gate enforces, in order:
-//   1. Shape       — ≥2 lines, integer sen, every line one-sided (Dr xor Cr)
-//   2. Balance     — Σdebit === Σcredit, and > 0
-//   3. Chart       — the account code exists for the company, is active, and
-//                    is not a parent (a header with children takes no money)
-//   4. Idempotency — one ACTIVE entry per (company, source_type, source_doc_no).
-//                    Checked by a read that FAILS CLOSED, and enforced again by
-//                    the partial unique index acc_je_one_active_source at the
-//                    database, so a read blip can delay a posting but can never
-//                    double it.
-//   5. Numbering   — je_no minted per company+month; a concurrent mint loses
-//                    the unique index race and re-mints (max 8 tries), so two
-//                    operators posting at once both succeed with distinct
-//                    numbers. (§2.12)
-//
-// The write sequence (insert entry → insert lines → flip posted) and the
-// compensating delete of a header whose lines failed are the SAME sequence the
-// three historical posting paths used — behaviour-preserving on purpose, so
-// the existing suites keep proving the same decisions.
-// ----------------------------------------------------------------------------
 
 import { nextJeNo, jePrefixForCompany } from '../scm/lib/doc-no';
 import { todayMyt } from '../scm/lib/my-time';
@@ -39,16 +10,12 @@ export type EngineLine = RuleLine;
 
 export type PostJournalInput = {
   companyId: number | null;
-  /** DOCUMENT date — drives every report (§2.5). Never "the day the button was pressed". */
   entryDate: string;
   sourceType: string;
   sourceDocNo: string | null;
   narration: string | null;
   lines: EngineLine[];
-  /** default true. false = manual JV draft: entry + lines written, posted stays false. */
   postNow?: boolean;
-  /** One of the books' OPENING journals (mig 20261028T2100): counted whatever its date by a company whose
-      books start on a day (scm.acc_company_settings.books_start_date). Only the Opening Balance page sets it. */
   opening?: boolean;
 };
 
@@ -80,16 +47,6 @@ export type PostJournalResult = PostJournalOk | PostJournalErr;
 
 const isIntSen = (n: unknown): boolean => typeof n === 'number' && Number.isInteger(n) && n >= 0;
 
-/**
- * Validate the company's chart allows every code the entry names.
- *
- * A company with NO chart rows at all is tolerated (legacy mode: validation
- * has nothing to validate against, and refusing would stop books that posted
- * fine for months) — but it is logged, loudly, every time. A company WITH a
- * chart gets the full rule: the code must exist, be active, and have no
- * children (§2.9 — a parent "Operating Expense" header must really be blocked,
- * not just labelled Header in the UI).
- */
 async function checkAccounts(
   sb: any,
   companyId: number | null,
@@ -101,8 +58,6 @@ async function checkAccounts(
     .select('account_code, parent_code, is_active')
     .eq('company_id', co);
   if (error) {
-    // Fail closed: an unanswered chart is not an empty chart. The document
-    // stays unposted and the caller's retry posts it once the read answers.
     return { ok: false, status: 'account_check_failed', reason: error.message };
   }
   const chart = (data ?? []) as Array<{ account_code: string; parent_code: string | null; is_active: boolean | null }>;
@@ -132,7 +87,6 @@ export async function validateJournal(sb: any, input: PostJournalInput): Promise
   const { companyId, sourceType } = input;
   const lines = input.lines ?? [];
 
-  // 1+2 — shape and balance. Rejected before any read or write.
   if (lines.length < 2) return { ok: false, status: 'min_2_lines' };
   let dr = 0;
   let cr = 0;
@@ -149,15 +103,9 @@ export async function validateJournal(sb: any, input: PostJournalInput): Promise
   if (dr !== cr) return { ok: false, status: 'unbalanced', reason: `debit ${dr} ≠ credit ${cr}` };
   if (dr === 0) return { ok: false, status: 'zero_total' };
 
-  // 3 — the chart allows every named account.
   const chartOk = await checkAccounts(sb, companyId, [...new Set(lines.map((l) => l.accountCode))]);
   if (!chartOk.ok) return { ok: false, status: chartOk.status, reason: chartOk.reason };
 
-  // 3b — control accounts are SYSTEM-maintained (brief §2.4): a MANUAL journal
-  // may not name them. Every AR/AP movement must come from a document through
-  // its rule, or the "control balance = detail sum" self-check stops meaning
-  // anything. The books' OPENING journal neither: an opening creditor or
-  // debtor is an opening bill (its own API / SCN / ODB), never a line here.
   if (sourceType === 'MANUAL' || sourceType === 'OPENING') {
     const roles = await resolveRoles(sb, companyId);
     const controlCodes = new Set(CONTROL_ROLES.map((role) => roles[role]));
@@ -177,27 +125,15 @@ export async function validateJournal(sb: any, input: PostJournalInput): Promise
 
 export async function postJournal(sb: any, input: PostJournalInput): Promise<PostJournalResult> {
   const { companyId, sourceType, sourceDocNo, narration } = input;
-  /* `entryDate: string` does not stop `""` — an unfilled <input type="date">
-     posts one, and journal_entries.entry_date is `date NOT NULL`. Blank would
-     500 the whole post AND poison nextJeNo (`new Date("")` is Invalid Date,
-     so the month prefix comes out NaN). Today is the only sane document date
-     for a journal being written today, and it is what every caller that omits
-     the key already gets. */
   const entryDate = dateOrNull(input.entryDate) ?? todayMyt();
   const postNow = input.postNow !== false;
   const lines = input.lines ?? [];
 
-  // 1–3b — shape, balance, the chart, the control guard: the read-only half of
-  // the gate, shared with validateJournal (the dry run asks exactly this).
   const v = await validateJournal(sb, input);
   if (!v.ok) return v;
   const dr = v.totalSen;
   const cr = dr;
 
-  // 4 — one ACTIVE entry per source document. The read fails CLOSED (a blip
-  // must never read as "no entry exists yet" — that is precisely how a second
-  // Dr AR / Cr Sales gets booked), and the partial unique index repeats the
-  // rule at the database for whatever a blip lets through.
   if (sourceDocNo != null) {
     let q = sb
       .from('journal_entries')
@@ -213,9 +149,6 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
     if (active) return { ok: true, status: 'already_posted', jeNo: active.je_no, jeId: active.id, totalSen: dr };
   }
 
-  // 5 — mint + insert, re-minting on a number collision (§2.12). Two
-  // concurrent posts both read the same max; the loser's insert hits the
-  // je_no unique index and the next attempt reads past the winner.
   /* CONTAINED, not swallowed. jePrefixForCompany FAILS CLOSED by throwing —
      correctly, because minting under the wrong company's prefix would collide
      two ledgers' running numbers, and that is worse than not posting.
@@ -257,9 +190,6 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
     }
     lastErr = jeErr;
     if (jeErr.code !== '23505') break;
-    // A 23505 from the one-active-source index (not the je_no index) means a
-    // concurrent caller posted this very document between our guard read and
-    // our insert — that is already_posted, not a retry.
     if (String(jeErr.message ?? '').includes('acc_je_one_active_source')) {
       let q2 = sb
         .from('journal_entries')
@@ -293,9 +223,6 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
   }));
   const { error: linesErr } = await sb.from('journal_entry_lines').insert(lineRows);
   if (linesErr) {
-    // Compensating delete: the header without its lines must not survive.
-    // (The only DELETE the ledger ever sees — a pre-posted header is paperwork
-    // that never happened, not history.)
     await sb.from('journal_entries').delete().eq('id', je.id);
     return { ok: false, status: 'lines_insert_failed', reason: linesErr.message };
   }
@@ -308,44 +235,28 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
   return { ok: true, status: 'posted', jeNo: je.je_no, jeId: je.id, totalSen: dr };
 }
 
-/* ═══════════════════════════ Reversal (void) ═══════════════════════════════ */
 
 export type ReverseJournalInput = {
-  /** source_type of the ORIGINAL entry (e.g. 'SI'); the contra's own type comes from REVERSAL_SOURCE. */
   sourceType: string;
-  /** Find the original by source document… */
   sourceDocNo?: string;
-  /** …or by its journal-entry id (manual JVs carry no source_doc_no). One of the two is required. */
   jeId?: string;
-  /** When provided, both the lookup and the write are scoped to the company (PV path). SI/PI pass null: doc numbers are globally unique by prefix. */
   companyId?: number | null;
-  /** narration for the contra entry, given the original. */
   narration: (orig: { je_no: string }) => string;
-  /** entry_date for the contra. Defaults to today (MYT) — a void happens when it happens. */
   entryDate?: string;
   /** Date the contra on the ORIGINAL entry's own day instead: the entry records
       something that never happened (a payment Finance removes from a cancelled
       order, owner 2026-09-29), so the pair must net to zero in the month it sits
       in rather than leave that month overstated. `entryDate`, when given, wins. */
   onOriginalDate?: boolean;
-  /** canonical 2-line fallback if the original somehow has no lines. */
   fallbackLines?: (totalSen: number) => EngineLine[];
-  /** The contra of an OPENING paper or journal (mig 20261028T2100) is part of
-      the opening too: flagged, it is read on the same footing as what it undoes. */
   opening?: boolean;
 };
 
 export type ReverseJournalResult =
-  /** `jeNo` is the CONTRA written (or, when the original had no lines to
-      mirror, the original itself); `originalJeNo` is always the entry that
-      was voided — the number a reader recognises, which the contra's is not. */
   | { ok: true; status: 'reversed'; jeNo: string; jeId: string; originalJeNo: string }
   | { ok: true; status: 'already_reversed' | 'nothing_to_reverse' }
   | { ok: false; status: 'reversal_read_failed' | 'reversal_insert_failed' | 'reversal_lines_failed' | 'reversal_post_failed' | 'reversal_flag_failed'; reason?: string };
 
-/* A stored DATE as YYYY-MM-DD. PostgREST answers '2026-10-05'; the PostgreSQL
-   transaction client (pg-supabase-transaction.ts, postgres.js) answers a JS Date,
-   whose String() is 'Mon Oct 05 2026 …' — sliced, a date no column accepts. */
 const storedDay = (v: unknown): string =>
   v instanceof Date ? (Number.isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10)) : String(v ?? '').slice(0, 10);
 
@@ -356,8 +267,6 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
     return { ok: false, status: 'reversal_read_failed', reason: 'reverseJournal needs sourceDocNo or jeId' };
   }
 
-  // The ACTIVE original — a document may carry several historical entries
-  // after edit-driven void+repost cycles; the live one is the one to void.
   let q = sb
     .from('journal_entries')
     .select('id, je_no, entry_date, reversed, total_debit_sen, total_credit_sen, narration, company_id, source_doc_no')
@@ -380,9 +289,6 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   ).find((r) => !r.reversed);
   if (!orig) return { ok: true, status: 'nothing_to_reverse' };
 
-  // A contra tied to THIS original already exists (the flag never stuck) —
-  // make the flag stick and stop. Keyed on reversed_by_je, not "any reversal
-  // for this document", so a prior cycle's contra doesn't block this one.
   const { data: revExisting, error: revExistErr } = await sb
     .from('journal_entries')
     .select('id, je_no')
@@ -397,16 +303,10 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
 
   const totalSen = Number(orig.total_debit_sen ?? orig.total_credit_sen ?? 0);
   if (totalSen <= 0) {
-    // Nothing of value to reverse — flag it so re-voids no-op.
     await sb.from('journal_entries').update({ reversed: true }).eq('id', orig.id);
     return { ok: true, status: 'reversed', jeNo: orig.je_no, jeId: orig.id, originalJeNo: orig.je_no };
   }
 
-  // Mirror the SAME accounts + parties + events with debit/credit swapped — a
-  // faithful contra, so an event's cost nets to zero with its voided entry.
-  // The read is caught before the `?? []` fold: a failed read is not "the
-  // original had no lines", and falling through would contra assumed
-  // accounts instead of the real ones.
   const { data: origLines, error: origLinesErr } = await sb
     .from('journal_entry_lines')
     .select('account_code, debit_sen, credit_sen, party_type, party_code, party_name, notes, project_id')
@@ -428,10 +328,6 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
   const companyCol = companyId != null ? { company_id: companyId } : {};
   const prefix = await jePrefixForCompany(sb, companyId);
 
-  // The contra is dated when the void HAPPENS (today by default), so it must be
-  // NUMBERED in that same month's series — mirror postJournal, which mints from
-  // the entry's OWN date. Minting from orig.entry_date put an Aug void into the
-  // original's (e.g. Jan) JE-YYMM series while the row itself was dated Aug.
   const contraEntryDate = dateOrNull(input.entryDate)
     ?? (input.onOriginalDate ? dateOrNull(storedDay(orig.entry_date)) : null)
     ?? todayMyt();
@@ -520,9 +416,6 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
     await sb.from('journal_entries').delete().eq('id', revJe.id);
     return { ok: false, status: 'reversal_post_failed', reason: postErr.message };
   }
-  // The contra is posted. If the flag does not stick, the caller must not book
-  // afresh over an original the books still count; its retry lands on the
-  // reversed_by_je guard above, which makes the flag stick and answers ok.
   const { error: flagErr } = await sb.from('journal_entries').update({ reversed: true, reversed_by_je: revJe.id }).eq('id', orig.id);
   if (flagErr) return { ok: false, status: 'reversal_flag_failed', reason: flagErr.message };
 

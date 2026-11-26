@@ -39,8 +39,6 @@ export async function poExportRowsHandler(c: Ctx) {
   return c.json(out);
 }
 
-/* GET /mfg-purchase-orders/facets?<list params> -> { facets, truncated }
-   The funnel option counts over every matching order (lib/po-list-facets.ts). */
 export async function poFacetsHandler(c: Ctx) {
   const filters = await withPoSearchIds(c.get('supabase'), c, readPoListFilters((k) => c.req.query(k)));
   const out = await buildPoFacets(c.get('supabase'), c, filters, VALID_STATUSES);

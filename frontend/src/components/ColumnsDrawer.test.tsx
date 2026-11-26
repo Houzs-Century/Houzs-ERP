@@ -2,14 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { DataTable, type Column } from "./DataTable";
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Columns drawer — design handoff "Direction A" (2026-08-01).
-
-   Driven through DataTable rather than in isolation on purpose: the drawer
-   holds no column state of its own, and the property worth pinning is that
-   every gesture lands on the TABLE immediately (`Done` only closes). Testing
-   the drawer alone would test a shell.
-   ──────────────────────────────────────────────────────────────────────────── */
 
 type Row = { id: number; name: string };
 const rows: Row[] = [{ id: 1, name: "One" }];
@@ -71,11 +63,9 @@ describe("columns drawer", () => {
     renderTable("groups");
     openDrawer();
 
-    // 44 flat rows is a scroll, not a chooser — hence the groups.
     expect(screen.getByText("Basic")).toBeTruthy();
     expect(screen.getByText("Amounts")).toBeTruthy();
     expect(screen.getByText("Logistics")).toBeTruthy();
-    // Amounts: Total shows, Tax is defaultHidden.
     expect(screen.getByText("Amounts").parentElement?.textContent).toContain("1/2");
   });
 
@@ -85,8 +75,6 @@ describe("columns drawer", () => {
 
     fireEvent.click(screen.getByText("Amounts"));
     expect(screen.queryByRole("button", { name: "Total" })).toBeNull();
-    // The count survives the collapse, and the TABLE is untouched — collapsing
-    // is about the drawer, not about the columns.
     expect(screen.getByText("Amounts").parentElement?.textContent).toContain("1/2");
     expect(headerLabels(container)).toContain("Total");
   });
@@ -115,7 +103,6 @@ describe("columns drawer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.queryByLabelText("Search columns")).toBeNull();
-    // Still hidden after closing: Done is not a commit step.
     expect(headerLabels(container)).not.toContain("Total");
   });
 
@@ -127,7 +114,6 @@ describe("columns drawer", () => {
     const field = screen.getByLabelText("Width of Date in pixels");
     fireEvent.change(field, { target: { value: "9999" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    // Clamped to the 60–400 the design specifies.
     expect(JSON.parse(localStorage.getItem("dt:widths:width")!)).toEqual({ date: 400 });
 
     fireEvent.click(screen.getByText("400px"));
@@ -145,10 +131,8 @@ describe("columns drawer", () => {
     expect(JSON.parse(localStorage.getItem("dt:pinned:freeze")!)).toEqual(["date"]);
 
     fireEvent.click(screen.getByTitle(/^Frozen left/));
-    // MOVED, not added — frozen to both edges is not a table anyone can render.
     expect(JSON.parse(localStorage.getItem("dt:pinned:freeze")!)).toEqual([]);
     expect(JSON.parse(localStorage.getItem("dt:pinnedr:freeze")!)).toEqual(["date"]);
-    // A right-frozen column renders LAST, whatever its place in the order.
     expect(headerLabels(container)).toEqual(["Customer", "Total", "Carrier", "Date"]);
 
     fireEvent.click(screen.getByTitle(/^Frozen right/));
@@ -166,7 +150,6 @@ describe("columns drawer", () => {
     const head = [...container.querySelectorAll<HTMLElement>("thead th")];
     const last = head[head.length - 1]!;
     expect(last.style.position).toBe("sticky");
-    // Offset from the RIGHT edge: nothing is frozen outside it, so zero.
     expect(last.style.right).toBe("0px");
     expect(last.className).toContain("border-l");
     expect(last.style.left).toBe("");
@@ -202,8 +185,6 @@ describe("columns drawer", () => {
     drag(row("Customer"), row("Date"));
     expect(headerLabels(container)).toEqual(["Customer", "Date", "Total", "Carrier"]);
 
-    // Group order belongs to the page, not the operator: an Amounts column
-    // cannot be dropped among the Basic ones.
     drag(row("Total"), row("Customer"));
     expect(headerLabels(container)).toEqual(["Customer", "Date", "Total", "Carrier"]);
   });
@@ -211,7 +192,6 @@ describe("columns drawer", () => {
   it("stacks two right-frozen columns by width, counted from the right edge", () => {
     const { container } = renderTable("stack");
     openDrawer();
-    // Freeze Total (120px) and Carrier right; Carrier is last in table order.
     const freezeRight = (label: string) => {
       const row = Array.from(document.querySelectorAll<HTMLElement>("[data-column-row]")).find(
         (el) => el.textContent?.includes(label),
@@ -226,8 +206,6 @@ describe("columns drawer", () => {
     const head = [...container.querySelectorAll<HTMLElement>("thead th")];
     const last = head[head.length - 1]!;
     const secondLast = head[head.length - 2]!;
-    // The outermost sits at 0; the one inside it is offset by the OUTER one's
-    // width — accumulated from the right, not from the left.
     expect(last.style.right).toBe("0px");
     expect(secondLast.style.right).not.toBe("0px");
     expect(Number.parseInt(secondLast.style.right, 10)).toBeGreaterThan(0);
@@ -240,7 +218,6 @@ describe("columns drawer", () => {
       Array.from(document.querySelectorAll<HTMLElement>("[data-column-row]")).find(
         (el) => el.textContent?.includes(label),
       )!;
-    // Freeze Date to the RIGHT, leave Customer unfrozen (same Basic group).
     fireEvent.click(row("Date").querySelector<HTMLElement>("[title='Freeze to the left']")!);
     fireEvent.click(row("Date").querySelector<HTMLElement>("[title^='Frozen left']")!);
 
@@ -253,9 +230,6 @@ describe("columns drawer", () => {
       fireEvent.dragEnd(from, { dataTransfer });
     };
 
-    /* A right-frozen column and an unfrozen one are BOTH "not left-pinned", so
-       a guard that asked only that would let this through — rewriting the
-       stored order while the column stayed in the right run. */
     drag(row("Date"), row("Customer"));
     expect(headerLabels(container)).toEqual(before);
     drag(row("Customer"), row("Date"));
@@ -265,7 +239,6 @@ describe("columns drawer", () => {
   it("becomes a bottom sheet on a phone, with an Apply that only closes", () => {
     setViewport(375);
     renderTable("sheet");
-    // The mobile shell renders cards; the drawer trigger lives in the toolbar.
     openDrawer();
 
     expect(screen.getByRole("dialog", { name: "Columns" })).toBeTruthy();
@@ -308,16 +281,11 @@ describe("columns drawer", () => {
     );
     openDrawer();
 
-    // One group is no grouping — the header would say only "everything below".
     expect(screen.queryByText("Amounts")).toBeNull();
     expect(screen.getByRole("button", { name: "Amount" })).toBeTruthy();
   });
 });
 
-/* The Sales Orders list is the first page to annotate its columns (PR 2 of the
-   redesign). Its 44 columns are what the grouping was built for, so the map
-   itself is worth a test: a group that quietly loses its columns turns the
-   drawer back into the flat scroll it replaced. */
 describe("Sales Orders column groups", () => {
   it("puts every declared column in a group, and none in the fallback", async () => {
     const source = await import("node:fs").then((fs) =>
@@ -329,10 +297,6 @@ describe("Sales Orders column groups", () => {
     const keys = [...columnsBlock.matchAll(/\bkey: "([a-z0-9_]+)"/g)].map((m) => m[1]);
     const groups = [...columnsBlock.matchAll(/\bgroup: "([^"]+)"/g)].map((m) => m[1]);
 
-    /* Since 2026-09-15 the finance money columns and the line columns are built
-       by pages/scm-v2/so-do-list-columns.tsx (shared with the Delivery Order
-       list). The page passes the finance group by name; every line column is in
-       "Lines". They count toward the page's columns here. */
     const shared = await import("node:fs").then((fs) =>
       fs.readFileSync("src/pages/scm-v2/so-do-list-columns.tsx", "utf8"),
     );
@@ -346,8 +310,6 @@ describe("Sales Orders column groups", () => {
     const lineKeys = [...soLineBlock.matchAll(/^ {4}([a-z0-9_]+): /gm)].map((m) => m[1]);
     expect(soLineBlock).toContain('group: "Lines"');
 
-    // Every column carries a group — a new column added without one would
-    // silently fall to the bottom of the drawer, ungrouped.
     expect(keys.length + financeKeys.length + lineKeys.length).toBeGreaterThanOrEqual(44);
     expect(groups.length).toBe(keys.length);
     expect(financeKeys).toHaveLength(13);

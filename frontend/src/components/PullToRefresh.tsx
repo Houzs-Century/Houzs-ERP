@@ -12,15 +12,6 @@ import { ArrowDown, RefreshCw } from "lucide-react";
 import { useToast } from "../hooks/useToast";
 import { cn } from "../lib/utils";
 
-// ── Refresh guard ──────────────────────────────────────────────
-//
-// Pages with unsaved form state (e.g. an open Panel with a dirty
-// draft) don't want a stray pull-to-refresh tearing down the page.
-// `usePullToRefreshBlock(true)` registers a block; PullToRefresh
-// notices and shows a toast instead of refreshing.
-//
-// Implementation is a refcount: many components can hold a block
-// concurrently; refresh only fires when the count is zero.
 
 interface GuardCtx {
   blocked: boolean;
@@ -62,21 +53,12 @@ function usePullToRefreshBlocked(): boolean {
 }
 
 interface Props {
-  /**
-   * Called when the user pulls past the threshold and releases.
-   * Defaults to `window.location.reload()` — a hard, F5-style refresh.
-   */
   onRefresh?: () => Promise<unknown> | void;
-  /** Optional extra padding above the indicator (e.g. when there's a sticky bar). */
   topOffset?: number;
   children: ReactNode;
   className?: string;
 }
 
-// Sensitivity tuning. The dead-zone lets the user scroll up casually
-// without engaging the pull, and the resistance multiplier means the
-// indicator only travels a fraction of the finger's distance — so a
-// committed pull is required, not a flick.
 const DEAD_ZONE = 14;
 const RESISTANCE = 0.55;
 const THRESHOLD = 80;
@@ -112,8 +94,6 @@ export function PullToRefresh({
   const [reducedMotion, setReducedMotion] = useState(false);
   const blocked = usePullToRefreshBlocked();
   const toast = useToast();
-  // Mirror `blocked` into a ref so the touchend handler can read the
-  // latest value without re-binding listeners every time it flips.
   const blockedRef = useRef(blocked);
   useEffect(() => {
     blockedRef.current = blocked;
@@ -125,10 +105,6 @@ export function PullToRefresh({
     scrollRef.current = findScrollAncestor(wrap) ?? document.documentElement;
   }, []);
 
-  // Track the user's "reduce motion" OS preference. When set, the
-  // pull-to-refresh gesture still triggers the refresh, but the visual
-  // translation of indicator + content is suppressed so the page
-  // doesn't jolt downward as the user pulls.
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -161,17 +137,11 @@ export function PullToRefresh({
       if (refreshing || startYRef.current == null) return;
       const dy = e.touches[0].clientY - startYRef.current;
       if (dy <= DEAD_ZONE) {
-        // dead zone — finger hasn't committed to a pull yet. Casual
-        // scroll-up jitter falls in here and never engages.
         setPull(0);
         return;
       }
-      // Constant resistance the whole way: the indicator travels at
-      // 0.55 of the finger's distance past the dead zone.
       const resisted = (dy - DEAD_ZONE) * RESISTANCE;
       setPull(Math.min(resisted, MAX_PULL));
-      // Once we're past the dead zone we own the gesture — block the
-      // browser's own pull-to-refresh / overscroll.
       if (e.cancelable) e.preventDefault();
     }
 
@@ -183,9 +153,6 @@ export function PullToRefresh({
         return;
       }
       if (pull >= THRESHOLD && !refreshing) {
-        // Honour any registered block — typically a Panel with unsaved
-        // changes. Snap the indicator back, surface a toast, and skip
-        // the refresh entirely so the user's draft survives.
         if (blockedRef.current) {
           setPull(0);
           toast.error(
@@ -199,13 +166,10 @@ export function PullToRefresh({
           if (onRefresh) {
             await onRefresh();
           } else {
-            // F5-style hard reload — never returns, no need to clear
-            // refreshing state (the page is being torn down).
             window.location.reload();
             return;
           }
         } catch {
-          // swallow — onRefresh's own error handling owns the toast
         } finally {
           setRefreshing(false);
           setPull(0);
@@ -236,9 +200,6 @@ export function PullToRefresh({
     ? "Release to refresh"
     : "Pull down to refresh";
 
-  // Under reduced-motion: indicator stays parked at its top-offset slot
-  // (revealed by opacity only), and the content doesn't translate. The
-  // refresh action itself still fires when the gesture commits.
   const indicatorTranslate = reducedMotion ? 0 : pull - 56;
   const arrowRotate = reducedMotion ? 0 : rotate;
   const contentTranslate = reducedMotion ? 0 : pull * 0.45;
@@ -286,14 +247,6 @@ export function PullToRefresh({
           {label}
         </span>
       </div>
-      {/* At rest this div must carry NO transform. `translateY(0px)` is not
-          `none`, and any transform other than `none` makes an element the
-          containing block for its `position: fixed` descendants — this div wraps
-          every page in the app, so an always-on identity transform silently
-          anchored page-level drawers/dialogs to the content box instead of the
-          viewport (BUG-HISTORY 2026-07-16, SO History drawer). Set it only while
-          the finger is actually pulling; `none` → `translateY(Npx)` still
-          transitions (browsers interpolate `none` as the identity matrix). */}
       <div
         className={className}
         style={{

@@ -53,8 +53,6 @@ describe('summariseCollected', () => {
   });
 
   it('a junk amount counts as zero rather than poisoning the total with NaN', () => {
-    /* One NaN turns the whole figure into "NaN" on screen, which reads as the
-       system being broken rather than as one bad row. */
     const s = summariseCollected([
       pay({ id: 'good', amount_sen: 100_00 }),
       pay({ id: 'bad', amount_sen: Number.NaN }),

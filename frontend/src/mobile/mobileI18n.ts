@@ -39,22 +39,6 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 export const MOBILE_LANGS = ["en", "ms", "zh", "bn"] as const;
 export type MobileLang = (typeof MOBILE_LANGS)[number];
 
-/**
- * WHERE THE PREFERENCE LIVES — localStorage, per DEVICE, not per user row.
- *
- * Chosen over a server-side `users.preferred_lang` column because:
- *  - it must work on the LOGIN screen, before any user identity exists;
- *  - a phone is a personal device here, so per-device == per-user in practice;
- *  - it needs zero network round-trip, so language never flickers on cold load
- *    and never depends on an API that can 500;
- *  - it costs no migration, and migration numbers are contended right now.
- *
- * Consequences, stated honestly: the choice SURVIVES logout/login (it is not
- * cleared with the auth token — a Bengali reader who logs out must not get an
- * English login screen back), and it does NOT follow the user to a second
- * device or a desktop browser. If "follows the user everywhere" is ever
- * wanted, add the column and seed it FROM this value on first login.
- */
 const STORAGE_KEY = "houzs.mobile.lang";
 
 const listeners = new Set<() => void>();
@@ -74,7 +58,6 @@ function readStoredLang(): MobileLang {
     if (isMobileLang(v)) return v;
     if (v !== null) localStorage.removeItem(STORAGE_KEY);
   } catch {
-    /* private mode / storage disabled — fall through to English */
   }
   return volatileLang ?? "en";
 }
@@ -84,7 +67,6 @@ export function setMobileLang(lang: MobileLang) {
   try {
     localStorage.setItem(STORAGE_KEY, lang);
   } catch {
-    /* ignore — the in-memory emit below still switches the live session */
   }
   emit();
 }
@@ -96,7 +78,7 @@ export function useMobileLang(): MobileLang {
       return () => listeners.delete(cb);
     },
     readStoredLang,
-    () => "en", // server snapshot
+    () => "en",
   );
 }
 
@@ -113,8 +95,6 @@ if (typeof window !== "undefined") {
   });
 }
 
-// Display labels for the switcher itself — ALWAYS in each language's own
-// native script, so someone who reads only Bengali can find their own row.
 export const LANG_LABELS: Record<MobileLang, string> = {
   en: "English",
   ms: "Bahasa Malaysia",
@@ -122,8 +102,6 @@ export const LANG_LABELS: Record<MobileLang, string> = {
   bn: "বাংলা",
 };
 
-// English gloss under each native label, so an English-reading admin helping a
-// worker set their phone up can tell the rows apart.
 export const LANG_SUBLABELS: Record<MobileLang, string> = {
   en: "English",
   ms: "Malay",
@@ -133,12 +111,7 @@ export const LANG_SUBLABELS: Record<MobileLang, string> = {
 
 type Dict = Record<string, Record<MobileLang, string>>;
 
-// Flat, grep-able dictionary. Kept small on purpose: this PR wires the
-// LANGUAGE + ANNOUNCEMENTS surface the owner asked for. Broader mobile
-// coverage is a follow-up, and a half-translated screen is worse than an
-// honestly English one — so strings land here only when all four are real.
 const dict: Dict = {
-  // ---- Language screen ----
   "lang.title": {
     en: "Language",
     ms: "Bahasa",
@@ -158,16 +131,12 @@ const dict: Dict = {
     bn: "তারিখ ও পরিমাণ মালয়েশিয়ার বিন্যাসেই থাকবে।",
   },
 
-  // ---- Announcements ----
   "ann.title": {
     en: "Announcements",
     ms: "Pengumuman",
     zh: "公告",
     bn: "ঘোষণা",
   },
-  // Shown when the reader is seeing a MACHINE translation rather than what the
-  // author actually typed. Non-negotiable: an auto-translated workplace notice
-  // must say so.
   "ann.autoTranslated": {
     en: "Auto-translated",
     ms: "Diterjemah automatik",
@@ -186,8 +155,6 @@ const dict: Dict = {
     zh: "查看译文",
     bn: "অনুবাদ দেখুন",
   },
-  // Shown when the reader picked a language this notice has no translation for
-  // and is therefore reading the original as posted.
   "ann.noTranslation": {
     en: "No translation available — showing the original.",
     ms: "Tiada terjemahan — memaparkan teks asal.",
@@ -214,8 +181,6 @@ export function useT() {
     (id: string): string => {
       const row = dict[id];
       if (!row) return id;
-      // Note `||` not `??` — an empty-string translation is a HOLE, not a
-      // value, and must fall through to English.
       return row[lang] || row.en || id;
     },
     [lang],
@@ -235,14 +200,10 @@ export function useApplyHtmlLang() {
     try {
       document.documentElement.setAttribute("lang", lang);
     } catch {
-      /* ignore */
     }
   }, [lang]);
 }
 
-// ------------------------------------------------------------
-// Announcement localisation
-// ------------------------------------------------------------
 
 /** One translated pair as stored in `announcements.translations`. `bodyHtml`
  *  exists only for a notice composed with formatting — the translated body
@@ -255,13 +216,8 @@ export type AnnouncementTranslations = Partial<
 export type LocalizedAnnouncement = {
   title: string;
   body: string;
-  /** Rich fragment to render instead of `body`, when the shown version has
-   *  one. NEVER the original's html paired with a translated body — a
-   *  translation that came back without its tags shows as plain text. */
   bodyHtml: string | null;
-  /** True when title/body above came from the stored MACHINE translation. */
   isTranslated: boolean;
-  /** True when a translation for the chosen language exists at all. */
   hasTranslation: boolean;
 };
 
@@ -301,9 +257,6 @@ export function localizeAnnouncement(
   const title = typeof pair?.title === "string" ? pair.title.trim() : "";
   const body = typeof pair?.body === "string" ? pair.body.trim() : "";
 
-  // A title is required for the row to be usable. An empty BODY is legitimate
-  // (plenty of notices are a headline only) — so only demand a translated body
-  // when the ORIGINAL had one.
   const bodyOk = a.body.trim() ? Boolean(body) : true;
   if (!title || !bodyOk) {
     return { ...original, isTranslated: false, hasTranslation: false };

@@ -65,9 +65,6 @@ describe('deriveProductCostFromSuppliers — BEDFRAME (matrix {P1,P2})', () => {
 
 describe('deriveProductCostFromSuppliers — SOFA (whole set, NOT per-cell max)', () => {
   it('takes the WHOLE grid from the single dearest supplier', () => {
-    // Supplier A has the single dearest cell (300 at 24") but a cheap 28" (100).
-    // Supplier B is uniformly 250. Owner rule: the whole set comes from the
-    // dearest supplier (A), so 28" must be A's 100 — NOT B's 250 (per-cell max).
     const r = chosen(
       deriveProductCostFromSuppliers('SOFA', [
         b({ supplier_id: 'A', price_matrix: { '24': { P2: 300000 }, '28': { P2: 100000 } } }),
@@ -78,7 +75,7 @@ describe('deriveProductCostFromSuppliers — SOFA (whole set, NOT per-cell max)'
     const rows = r.patch.seat_height_prices ?? [];
     const cell = (h: string) => rows.find((x) => x.height === h && x.tier === 'PRICE_2')?.priceSen;
     expect(cell('24')).toBe(300000);
-    expect(cell('28')).toBe(100000); // proves whole-set, not per-cell max
+    expect(cell('28')).toBe(100000);
   });
 
   it('carries all four tiers of the chosen supplier and the flat fallback', () => {
@@ -91,7 +88,7 @@ describe('deriveProductCostFromSuppliers — SOFA (whole set, NOT per-cell max)'
         }),
       ]),
     );
-    expect(r.patch.base_price_sen).toBe(111000); // flat fallback lane
+    expect(r.patch.base_price_sen).toBe(111000);
     const rows = r.patch.seat_height_prices ?? [];
     expect(rows).toEqual(
       expect.arrayContaining([
@@ -141,8 +138,6 @@ describe('deriveProductCostFromSuppliers — zero-priced winner is reported, not
 
 describe('deriveProductCostFromSuppliers — a cost-less binding never anchors cost (owner 2026-09-16)', () => {
   it('SOFA: a supplier with only P1 (no P2 anywhere, flat 0) does NOT win; cost comes from a P2 supplier (9058-L class)', () => {
-    // ARMANI 9058-L is only-P1 with a 10405 outlier; the four agreeing suppliers
-    // quote a real P2 cost. The dearest AMONG suppliers that quote a cost wins.
     const r = chosen(
       deriveProductCostFromSuppliers('SOFA', [
         b({ supplier_id: 'armani', unit_price_sen: 0, price_matrix: { '24': { P1: 1040500 }, '30': { P1: 110000 } } }),
@@ -153,10 +148,10 @@ describe('deriveProductCostFromSuppliers — a cost-less binding never anchors c
         }),
       ]),
     );
-    expect(r.chosenSupplierId).toBe('ohana'); // NOT armani
-    expect(r.dearnessSen).toBe(115000); // RM1150 (dearest cell of the cost supplier), never 1040500
+    expect(r.chosenSupplierId).toBe('ohana');
+    expect(r.dearnessSen).toBe(115000);
     const rows = r.patch.seat_height_prices ?? [];
-    expect(rows.some((x) => x.priceSen === 1040500)).toBe(false); // the P1 outlier never leaks
+    expect(rows.some((x) => x.priceSen === 1040500)).toBe(false);
     expect(rows.find((x) => x.height === '24' && x.tier === 'PRICE_2')?.priceSen).toBe(105000);
   });
 
@@ -175,14 +170,11 @@ describe('deriveProductCostFromSuppliers — a cost-less binding never anchors c
         b({ supplier_id: 'real', price_matrix: { P2: 55000 } }),
       ]),
     );
-    expect(r.chosenSupplierId).toBe('real'); // NOT onlyP1
-    expect(r.patch.base_price_sen).toBe(55000); // RM550, never null and never 2990
+    expect(r.chosenSupplierId).toBe('real');
+    expect(r.patch.base_price_sen).toBe(55000);
   });
 
   it('a binding that HAS a cost tier still ranks by its dearest cell (rule unchanged)', () => {
-    // 'rich' has both a real P2 cost AND a high P1; it still participates and its
-    // whole set (P2 cost) wins over the cheaper 'real' — the filter only removes
-    // cost-less bindings, it does not change ranking for costed ones.
     const r = chosen(
       deriveProductCostFromSuppliers('BEDFRAME', [
         b({ supplier_id: 'real', price_matrix: { P2: 55000 } }),
@@ -201,8 +193,8 @@ describe('deriveProductCostFromSuppliers — BEDFRAME flat-priced (no matrix)', 
       b({ supplier_id: 'b', unit_price_sen: 160000, price_matrix: null }),
     ]);
     if (r.skipped) throw new Error('expected a patch');
-    expect(r.chosenSupplierId).toBe('a');      // dearest flat
-    expect(r.patch.base_price_sen).toBe(165000); // not null
+    expect(r.chosenSupplierId).toBe('a');
+    expect(r.patch.base_price_sen).toBe(165000);
   });
 });
 
@@ -274,13 +266,13 @@ describe('resolveProductCostAnchor — the drawer/SKU-master display state', () 
 
   it('a cost-less binding is NOT counted among the costed suppliers (N of M)', () => {
     const r = resolveProductCostAnchor('BEDFRAME', [
-      b({ supplier_id: 'p1only', price_matrix: { P1: 299000 } }), // no cost tier
+      b({ supplier_id: 'p1only', price_matrix: { P1: 299000 } }),
       b({ supplier_id: 'real', price_matrix: { P2: 55000 } }),
     ]);
-    expect(r.state).toBe('ok'); // only one costed supplier -> no conflict
+    expect(r.state).toBe('ok');
     expect(r.anchorSupplierId).toBe('real');
     expect(r.costSen).toBe(55000);
-    expect(r.costedCount).toBe(1); // p1only is not costed
+    expect(r.costedCount).toBe(1);
     expect(r.totalCount).toBe(2);
   });
 
@@ -290,7 +282,7 @@ describe('resolveProductCostAnchor — the drawer/SKU-master display state', () 
     ]);
     expect(r.state).toBe('ok');
     expect(r.anchorSupplierId).toBe('only');
-    expect(r.costSen).toBe(110000); // base_price_sen (flat) null -> dearnessSen = dearest cell across the grid
+    expect(r.costSen).toBe(110000);
   });
 });
 

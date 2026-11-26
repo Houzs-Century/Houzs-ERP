@@ -1,51 +1,12 @@
-// ----------------------------------------------------------------------------
-// read-failure — what a failed SCM read SAYS, to the operator and to the log.
-//
-// WHY THIS EXISTS, in one production trace. On 2026-08-17 GET
-// /api/scm/delivery-planning answered `{"error":"Something went wrong. Please
-// try again."}` for every filter in BOTH companies — index.ts's humanizeError
-// final fallback, which is what a plain `throw new Error(...)` reaching the
 // global handler produces. Locating it needed a `wrangler tail` against the live
-// Worker, and the line it printed was:
-//
-//     [onError] Error: delivered-sum read failed:
-//
-// Nothing after the colon. The template was `${err.message ?? String(err)}`, and
-// the driver had handed back an error whose `message` was the EMPTY STRING — so
-// the one field the message interpolated was the one field that was blank, and
-// `??` does not fire on '' . Two separate failures of nerve, both fixed here:
-//
-//   1. THE THROW SAID NOTHING. supabase-js errors carry `code` / `details` /
-//      `hint` as well as `message`, and a gateway rejection (an over-long
-//      request URI, say) can arrive with none of them set — so describeReadError
-//      falls back to dumping the object rather than resolving to ''. A diagnostic
-//      string that can be empty is not a diagnostic.
-//
-//   2. THE ROUTE SAID NOTHING EITHER. Every sibling SCM list answers
-//      `{error:'load_failed', reason}`; this one throw escaped its handler
-//      instead, and the callers that do NOT catch it (the Sales Order list among
-//      them) had no way to say which read died. readFailureError wraps the throw
-//      in an HTTPException carrying that exact body, so an UNCAUGHT one now
-//      lands as `{error:'load_failed', stage, reason}` too — index.ts passes an
-//      HTTPException's own response through untouched. Callers that DO catch use
-//      readFailure() and get the same body.
-//
-// THE SPLIT IS DELIBERATE: the RICH detail (driver text, codes, list sizes) goes
-// to console.error and nowhere else; the operator gets a stage code they can
-// quote and a plain sentence. Staff must never be shown Postgres strings — that
-// is what humanizeError exists for — and we must never again be shown nothing.
-// ----------------------------------------------------------------------------
 
 import { HTTPException } from 'hono/http-exception';
 
-/** Best-effort JSON of an unknown throwable, bounded so a log line stays a log
- *  line. Never throws, never returns '' — an unserialisable value still names
- *  its type. */
 function safeJson(err: unknown): string {
   try {
     const s = JSON.stringify(err, Object.getOwnPropertyNames(Object(err)));
     if (s && s !== '{}') return s.length > 400 ? `${s.slice(0, 400)}…` : s;
-  } catch { /* circular / exotic — fall through */ }
+  } catch { }
   return `<${typeof err}> ${String(err)}`;
 }
 
@@ -75,7 +36,6 @@ export function describeReadError(
     const f = field(k);
     if (f) parts.push(f);
   }
-  // No usable message is itself the finding — say so, and hand over the object.
   if (!field('message')) parts.push('message=<empty>', `raw=${safeJson(err)}`);
   for (const [k, v] of Object.entries(ctx)) parts.push(`${k}=${v}`);
   return parts.join(' ');
@@ -83,8 +43,6 @@ export function describeReadError(
 
 export type ReadFailureBody = { error: 'load_failed'; stage: string; reason: string };
 
-/** What each stage code means to a human. A stage with no entry still answers —
- *  the CODE is the part support needs, the phrase is a courtesy. */
 const STAGE_LABEL: Record<string, string | undefined> = {
   warehouses: 'the warehouse list',
   sales_orders: 'the sales orders',

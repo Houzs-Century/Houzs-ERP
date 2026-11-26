@@ -81,40 +81,40 @@ export type AccountRole =
    real accounts. 326/327 are the ERP-extension clearing codes parked in
    AutoCount's free gap — the settlement layer's own accounts. */
 export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
-  AR: '300-0000',                // ACCOUNT RECEIVEABLE
-  AR_OTHER: '305-0000',          // OTHER DEBTOR (the Other Debtors module's control)
-  SALES: '500-0000',             // Sales Revenue (template; refined by the chart import)
-  INVENTORY: '330-0000',         // STOCK
-  AP: '400-0000',                // ACCOUNT PAYABLE
-  AP_OTHER: '405-0000',          // OTHER CREDITOS (the accountant's spelling)
-  CASH: '320-0000',              // CASH IN HAND
-  BANK_DEFAULT: '310-0010',      // CASH AT BANK - MAYBANK
-  BANK_PAY_DEFAULT: '310-0010',  // resolveRoles: the company's BANK_DEFAULT when unset
-  TRANSIT_EDC: '326-0000',       // CARD MACHINE CLEARING (EDC)
-  TRANSIT_ONLINE: '327-0000',    // ONLINE PAYMENT CLEARING (FPX/E-WALLET)
-  CUSTOMER_DEPOSITS: '400-0001', // DEPOSIT (under ACCOUNT PAYABLE)
-  OVER_SHORT: '946-0000',        // Cash Over/Short (ERP extension)
-  CLOSING_STOCK: '620-0000',     // STOCKS AT THE END OF YEAR (month-close P&L leg, the one-account shape before 2026-09-21)
-  INVENTORY_CUSTOMER: '330-0001',      // STOCK - CUSTOMER
-  INVENTORY_DISPLAY: '330-0002',       // STOCK - DISPLAY
-  INVENTORY_SERVICE: '330-0003',       // STOCK - SERVICE
-  INVENTORY_SHOWROOM: '330-0004',      // STOCK - SHOWROOM
-  INVENTORY_OTHERS: '330-0005',        // STOCK - OTHERS
-  OPENING_STOCK_CUSTOMER: '600-0001',  // STOCKS AT THE BEGINNING OF YEAR - CUSTOMER (the month's opening)
-  OPENING_STOCK_DISPLAY: '600-0002',   // STOCKS AT THE BEGINNING OF YEAR - DISPLAY
-  OPENING_STOCK_SERVICE: '600-0003',   // STOCKS AT THE BEGINNING OF YEAR - SERVICE
-  OPENING_STOCK_SHOWROOM: '600-0004',  // STOCKS AT THE BEGINNING OF YEAR - SHOWROOM
-  OPENING_STOCK_OTHERS: '600-0005',    // STOCKS AT THE BEGINNING OF YEAR - OTHERS
-  CLOSING_STOCK_CUSTOMER: '620-0001',  // STOCKS AT THE END OF YEAR - CUSTOMER
-  CLOSING_STOCK_DISPLAY: '620-0002',   // STOCKS AT THE END OF YEAR - DISPLAY
-  CLOSING_STOCK_SERVICE: '620-0003',   // STOCKS AT THE END OF YEAR - SERVICE
-  CLOSING_STOCK_SHOWROOM: '620-0004',  // STOCKS AT THE END OF YEAR - SHOWROOM
-  CLOSING_STOCK_OTHERS: '620-0005',    // STOCKS AT THE END OF YEAR - OTHERS
-  SALES_RETURNS: '510-0000',     // RETURN INWARDS (a customer credit note's default line)
-  PURCHASE_RETURNS: '612-0000',  // PURCHASES RETURN (a supplier credit note's default line)
-  DEPOSIT_INCOME: '509-0000',    // DEPOSIT PAY BY CUSTOMER (a deposit invoice's credit side)
-  COMMISSION_PREPAID: '360-0050', // PREPAYMENT COMMISSION (the monthly commission bills)
-  COMMISSION_EXPENSE: '900-C003', // COMMISSION ( EVENT ) (what the release moves them to)
+  AR: '300-0000',
+  AR_OTHER: '305-0000',
+  SALES: '500-0000',
+  INVENTORY: '330-0000',
+  AP: '400-0000',
+  AP_OTHER: '405-0000',
+  CASH: '320-0000',
+  BANK_DEFAULT: '310-0010',
+  BANK_PAY_DEFAULT: '310-0010',
+  TRANSIT_EDC: '326-0000',
+  TRANSIT_ONLINE: '327-0000',
+  CUSTOMER_DEPOSITS: '400-0001',
+  OVER_SHORT: '946-0000',
+  CLOSING_STOCK: '620-0000',
+  INVENTORY_CUSTOMER: '330-0001',
+  INVENTORY_DISPLAY: '330-0002',
+  INVENTORY_SERVICE: '330-0003',
+  INVENTORY_SHOWROOM: '330-0004',
+  INVENTORY_OTHERS: '330-0005',
+  OPENING_STOCK_CUSTOMER: '600-0001',
+  OPENING_STOCK_DISPLAY: '600-0002',
+  OPENING_STOCK_SERVICE: '600-0003',
+  OPENING_STOCK_SHOWROOM: '600-0004',
+  OPENING_STOCK_OTHERS: '600-0005',
+  CLOSING_STOCK_CUSTOMER: '620-0001',
+  CLOSING_STOCK_DISPLAY: '620-0002',
+  CLOSING_STOCK_SERVICE: '620-0003',
+  CLOSING_STOCK_SHOWROOM: '620-0004',
+  CLOSING_STOCK_OTHERS: '620-0005',
+  SALES_RETURNS: '510-0000',
+  PURCHASE_RETURNS: '612-0000',
+  DEPOSIT_INCOME: '509-0000',
+  COMMISSION_PREPAID: '360-0050',
+  COMMISSION_EXPENSE: '900-C003',
 };
 
 /** The accounts each closing-stock bucket books on (acc/stock-close.ts). */
@@ -126,9 +126,6 @@ export const STOCK_BUCKET_ROLES: Record<StockBucket, { inventory: AccountRole; o
   others: { inventory: 'INVENTORY_OTHERS', opening: 'OPENING_STOCK_OTHERS', closing: 'CLOSING_STOCK_OTHERS' },
 };
 
-/* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may
-   not touch them — the engine enforces this. AR and AP today; the
-   settlement-in-transit roles join in phase 2. */
 export const CONTROL_ROLES: AccountRole[] = ['AR', 'AR_OTHER', 'AP', 'AP_OTHER'];
 
 /** Which AP control a supplier's paper belongs to. 405-x supplier codes are
@@ -199,7 +196,6 @@ export async function resolveRoles(sb: any, companyId: number | null): Promise<R
   return codes;
 }
 
-/* ── Line builders — the rules table above, as code ────────────────────────── */
 
 export type RuleLine = {
   accountCode: string;
@@ -538,11 +534,9 @@ export function customerPaymentLines(
   p: {
     method: string;
     docNo: string;
-    transitAccountCode?: string | null; // resolved acquirer transit, when mapped
+    transitAccountCode?: string | null;
     customerCode?: string | null;
     customerName?: string | null;
-    /** The bank Finance confirmed a transfer into (Conts #476); null = the
-        company's default bank. Ignored for every other method. */
     bankAccountCode: string | null;
   },
   amountSen: number,

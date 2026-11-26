@@ -1,7 +1,3 @@
-// Sister review G6: two buyers with the same PO open. The editor re-sends the
-// whole header, so the second Save silently put back what the first had saved.
-// The header PATCH now carries the updated_at the editor loaded and refuses a
-// stale one. Drives the REAL header PATCH through the fake PostgREST client.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -66,9 +62,6 @@ describe('PO header PATCH: the loaded version must still be current', () => {
   });
 });
 
-/* The database half (mig 20261110T2000). Two Saves fired together both read the
-   row before either writes, so both pass the token compare above; only the
-   compare-and-set on `version` can let exactly one through. */
 describe('PO header PATCH: two Saves at the same instant', () => {
   it('exactly one succeeds, and the stored notes are the winner\'s', async () => {
     const [a, b] = await Promise.all([
@@ -93,8 +86,6 @@ describe('PO header PATCH: two Saves at the same instant', () => {
   });
 
   it('a Save whose version was claimed after its read is refused before any write', async () => {
-    /* Another Save claims the next version between this one's read and its
-       first write: the exact window the token compare cannot see. */
     const realFrom = sb.from;
     let raced = false;
     sb.from = ((table: string) => {

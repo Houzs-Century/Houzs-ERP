@@ -2,10 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { parseBulkSupplierDateBody } from './mfg-purchase-orders';
 import { pickSupplierDateSlot } from '../lib/po-supplier-date-cascade';
 
-/* The batch endpoint writes a date onto every line of every PO it is handed, so
-   its input guard is the only thing between a fat-fingered payload and a lot of
-   rows. These pin the guard; the per-PO lock / company skipping lives in the
-   handler around it. */
 
 const ok = (body: Record<string, unknown>) => {
   const r = parseBulkSupplierDateBody(body);
@@ -108,9 +104,6 @@ describe('parseBulkSupplierDateBody — applyToLines', () => {
   });
 });
 
-/* DEV-73 (Sim, 13 Oct 2026): a recorded supplier date is history. Re-setting
-   Date 2 used to overwrite it silently, so the route now refuses a filled slot
-   and "next" walks each PO to its own first empty one. */
 describe('pickSupplierDateSlot', () => {
   const row = (d2: unknown, d3: unknown, d4: unknown) => ({
     supplier_delivery_date_2: d2, supplier_delivery_date_3: d3, supplier_delivery_date_4: d4,

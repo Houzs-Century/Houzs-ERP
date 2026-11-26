@@ -27,11 +27,6 @@ const specialText = (s: unknown): string => {
   return '';
 };
 
-/* Hydraulic is matched in the picked specials AND the free-text add-on note:
-   Sim's own example (HC-SO-2610-161) only says "with hydraulic" in
-   extraAddonNote. `special` is the legacy key. The AutoCount-recorded specials
-   key is left out on purpose: a guard test keeps it to display surfaces, and a
-   supplier pick decides the PO's price. */
 const hasHydraulic = (v: Record<string, unknown>): boolean => {
   for (const key of ['specials', 'special']) {
     const arr = v[key];
@@ -42,8 +37,6 @@ const hasHydraulic = (v: Record<string, unknown>): boolean => {
   return typeof note === 'string' && HYDRAULIC.test(note);
 };
 
-/* nbFabricCodes: upper-cased fabric_code of every Fabric Converter row whose
-   series is NB. */
 export const needsNbSupplier = (variants: unknown, nbFabricCodes: ReadonlySet<string>): boolean => {
   if (!variants || typeof variants !== 'object') return false;
   const v = variants as Record<string, unknown>;

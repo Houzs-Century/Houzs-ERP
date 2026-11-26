@@ -48,7 +48,6 @@ export function LogisticPeriodSection({ rows, period, progress, totals, overdue,
   const [by, setBy] = useState<"amount" | "orders">("amount");
   const amt = by === "amount";
   const date = (o: PlanningOrder) => jobDate(o);
-  /* Jobs look ahead: "this month" means the whole month, not up to today. */
   const end = periodEnd(period);
   const jobs = rows.filter((o) => !!date(o) && (date(o) as string) >= period.from && (date(o) as string) <= end);
   const byType = new Map<string, { type: string; jobs: number; done: number }>();
@@ -59,7 +58,6 @@ export function LogisticPeriodSection({ rows, period, progress, totals, overdue,
     byType.set(t, g);
   }
   const types = [...byType.values()].sort((a, b) => b.jobs - a.jobs);
-  /* Where the rest of the open deliveries sit: the job table is only this period. */
   const openSo = rows.filter((o) => o.row_type === "so" && !jobDone(o, progress));
   const dated = (test: (d: string) => boolean) => openSo.filter((o) => { const d = date(o); return !!d && test(d); }).length;
   const reconcile = { before: dated((d) => d < period.from), inside: dated((d) => d >= period.from && d <= end), after: dated((d) => d > end), none: openSo.filter((o) => !date(o)).length };

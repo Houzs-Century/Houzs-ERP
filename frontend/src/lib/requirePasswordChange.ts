@@ -1,8 +1,5 @@
 import { api } from "../api/client";
 
-/* Team > member > "Require password change" — desktop TeamMemberProfile and
-   mobile MemberAccountActions share this so the wording of what happens to the
-   member cannot drift between the two surfaces. */
 
 export function requirePasswordChangeConfirmText(email: string): string {
   return (

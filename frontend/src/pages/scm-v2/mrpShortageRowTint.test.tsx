@@ -55,7 +55,6 @@ vi.mock('../../vendor/scm/lib/suppliers-queries', () => ({
 import { Mrp } from './Mrp';
 
 beforeAll(() => {
-  // `_rowShort_<hash>` -> every `.name` in the module becomes `._name_<hash>`.
   const hash = String(styles.rowShort).replace(/^_rowShort_/, '');
   const css = readFileSync('src/pages/scm-v2/Mrp.module.css', 'utf8')
     .replace(/\.([a-zA-Z][\w-]*)/g, (_m, name: string) => `._${name}_${hash}`);
@@ -79,7 +78,6 @@ describe('MRP shortage rows carry their colour on the shared DataTable', () => {
     const shortCells = [...dataRowOf('MT-SHORT').cells];
     expect(shortCells.length).toBeGreaterThan(3);
     for (const td of shortCells) expect(paint(td)).toMatch(/rgba\(22,\s*105,\s*95,\s*0\.08\)/);
-    // The deep-petrol bar stays on the leading cell.
     expect(getComputedStyle(shortCells[0]!).boxShadow).toMatch(/inset 3px 0 0 #08352e/);
 
     for (const td of dataRowOf('MT-STOCK').cells) expect(paint(td)).not.toMatch(/rgba\(22,\s*105,\s*95/);

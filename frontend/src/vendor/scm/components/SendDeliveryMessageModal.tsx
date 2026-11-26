@@ -134,7 +134,6 @@ export const SKIP_LABEL: Record<string, string> = {
   eastmy_shipment_fields_required: 'set Consignment No. + ETA on the row first',
 };
 
-/** The per-customer block reasons, phrased for the operator. */
 const DRIVER_BLOCK_HINT: Record<NonNullable<DriverGroupPlan['block']>, string> = {
   no_driver: 'No driver on these orders — set the Driver column on the row first.',
   not_linked: 'This driver was typed on the delivery order, not picked from Fleet, so there is no IC or phone. Pick the driver in the Driver column first.',
@@ -157,32 +156,19 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
   const notify = useNotify();
 
   const needsDriver = kind === 'driver_info';
-  // Postpone takes no input here: it reads each order's Amend Reason and
-  // Delivery Date straight off the board (set those columns on the row first).
   const isPostpone = kind === 'postpone';
-  // One Service Case job per message: the template names one case and one date.
   const isAssrSend = kind === 'assr_arrangement';
-  // East Malaysia (Sabah / Sarawak) touchpoints. Shipped / Arrived read the
-  // shipment facts off the board's EM columns (the latest DO), so an order whose
-  // columns are not filled yet is skipped, not sent blank.
   const isEmPrep = kind === 'eastmy_prep';
   const isEmShipped = kind === 'eastmy_shipped';
   const isEmArrived = kind === 'eastmy_arrived';
 
-  // Driver Info only: the operator's per-customer edits of the delivery time,
-  // keyed by phone. A customer not edited here sends its rows' Time Slot.
   const [timeByPhone, setTimeByPhone] = useState<Record<string, string>>({});
-  // Sequential per-customer sends run across several awaits, so a local flag
-  // keeps the button disabled for the whole run (send.isPending toggles per call).
   const [busy, setBusy] = useState(false);
   const [customersDone, setCustomersDone] = useState(0);
 
-  // Preview grouping — mirrors the backend's phone grouping.
   const groups = new Map<string, PlanningOrder[]>();
   const noPhone: PlanningOrder[] = [];
   for (const r of rows) {
-    // A Service Case job sends alone (its template names one date), never
-    // bundled with another job or an SO on the same phone.
     const key = phoneKey(r.phone) && (r.row_type === 'assr' ? r.so_doc_no : phoneKey(r.phone));
     if (!key) { noPhone.push(r); continue; }
     const arr = groups.get(key) ?? [];
@@ -192,9 +178,6 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
   const sendableDocs = [...groups.values()].flat().map((r) => r.so_doc_no);
   const customers = [...groups.entries()].map(([phone, list]) => ({ phone, docNos: list.map((r) => r.so_doc_no) }));
 
-  // Driver Info: one plan per customer (driver pulled from the orders' crew +
-  // this customer's typed time). A customer is ready only when its plan has no
-  // block; ready customers each send their own Connect call.
   const timeFor = (phone: string, list: PlanningOrder[]): string => timeByPhone[phone] ?? groupTimeSlot(list);
   const driverGroups = needsDriver
     ? [...groups.entries()].map(([phone, list]) => ({
@@ -211,8 +194,6 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
 
   type SendResult = Awaited<ReturnType<typeof send.mutateAsync>>;
 
-  /* Post-send: summarise and close. The server already moved each sent order's
-     Delivery Message Status; only the ones it could not move are listed. */
   const finish = (res: SendResult) => {
     const sentDocs = new Set(res.sent.flatMap((s) => s.docNos));
     onSent?.(rows.filter((r) => sentDocs.has(r.so_doc_no)));
@@ -235,7 +216,6 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
     if (!canSend) return;
 
     if (needsDriver) {
-      // One Connect call per ready customer, each with its own driver + time.
       setBusy(true);
       const agg: Required<SendDeliveryMessagesResult> = { sent: [], failed: [], skipped: [], statusNotMoved: [] };
       for (const g of readyDriverGroups) {
@@ -254,8 +234,6 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
       return;
     }
 
-    // Every other kind (postpone / balance / postage read what they need off
-    // each order server-side), a few customers per request.
     setBusy(true);
     setCustomersDone(0);
     const res = await sendInChunks(send.mutateAsync, kind, customers, setCustomersDone);
@@ -263,7 +241,6 @@ export const SendDeliveryMessageModal = ({ rows, onClose, onSent, kind = 'delive
     finish(res);
   };
 
-  // A send in progress keeps the drawer open: closing it would hide which customers went.
   const close = busy ? undefined : onClose;
 
   return (

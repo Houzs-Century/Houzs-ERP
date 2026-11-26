@@ -28,7 +28,6 @@ vi.mock("../vendor/scm/lib/authed-fetch", async (orig) => ({
 }));
 vi.mock("../vendor/scm/lib/sales-order-queries", async (orig) => ({
   ...(await orig<typeof import("../vendor/scm/lib/sales-order-queries")>()),
-  /* The server kept the reason: the screen unlocks (the hook's own contract, failed-save-looks-ok.test.tsx). */
   useOverrideSoLock: () => ({ mutate: (v: unknown, o?: { onSuccess?: () => void }) => { overrideCalls.push(v); o?.onSuccess?.(); }, isPending: false }),
 }));
 vi.mock("./MobileSkuPicker", () => ({
@@ -86,7 +85,7 @@ const override = async () => {
   fireEvent.click(screen.getByRole("button", { name: "Override" }));
   await screen.findByRole("button", { name: "Re-lock" });
 };
-const qtyInputs = () => document.querySelectorAll('input[aria-label="Qty"]'); // one per editable line card
+const qtyInputs = () => document.querySelectorAll('input[aria-label="Qty"]');
 const field = (value: string) => screen.getByDisplayValue(value) as HTMLInputElement;
 const writes = () => vi.mocked(authedFetch).mock.calls
   .filter(([, init]) => (init as { method?: string } | undefined)?.method && (init as { method?: string }).method !== "GET")
@@ -151,7 +150,7 @@ describe("Logistics with the permission, after Override", () => {
     await waitFor(() => expect(writes().some((w) => w.method === "POST" && /\/items$/.test(w.path))).toBe(true));
     const post = writes().find((w) => w.method === "POST" && /\/items$/.test(w.path))!;
     expect(post.body).toMatchObject({ itemCode: "SVC-TRANSPORT", afterDo: true });
-    expect(post.body.targetDoId).toBeUndefined(); // one open DO: the server picks it
+    expect(post.body.targetDoId).toBeUndefined();
   });
 
   it("with two open DOs, offers the pick and sends it", async () => {

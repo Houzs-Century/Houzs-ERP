@@ -21,10 +21,6 @@ import { parsePgrestInList } from '../lib/pgrest-in-list';
 
 type Row = Record<string, unknown>;
 
-/* Captures every row written to purchase_order_items, which is what these
-   assertions are about. Reads are served from `tables`; writes to anything else
-   are accepted and ignored (the audit row, the po_qty_picked recount) so the
-   convert can run to completion without the fake modelling the whole schema. */
 function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
   class Q {
     rows: Row[];
@@ -59,8 +55,6 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
     insert(payload: Row | Row[]) {
       const rows = Array.isArray(payload) ? payload : [payload];
       if (this.table === 'purchase_order_items') captured.push(...rows);
-      /* The PO header insert is chained `.select(...).single()`, so hand back a
-         row carrying the id + po_number the line insert keys off. */
       if (this.table === 'purchase_orders') {
         this.rows = rows.map((r, i) => ({ ...r, id: `po-new-${i + 1}`, po_number: r.po_number ?? 'PO-2608-001' }));
       } else {
@@ -81,7 +75,6 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
 
 const SUPPLIER_ID = 'sup-1';
 
-/** One SO line as the convert reads it. `photos` is the whole point. */
 const soLine = (id: string, itemCode: string, photos: string[] | null): Row => ({
   id,
   doc_no: 'SO-2608-001',
@@ -98,12 +91,10 @@ const soLine = (id: string, itemCode: string, photos: string[] | null): Row => (
   so: { sales_location: 'KL', customer_delivery_date: '2026-09-30' },
 });
 
-/** Runs the real convert over the given SO lines; returns the PO line rows. */
 async function convertAndCapture(soLines: Row[]): Promise<Row[]> {
   const captured: Row[] = [];
   const sb = fakeSb({
     mfg_sales_order_items: soLines,
-    // CONFIRMED — anything else is refused by the orderable gate before the map.
     mfg_sales_orders: [{ doc_no: 'SO-2608-001', status: 'CONFIRMED' }],
     warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL' }],
     suppliers: [{ id: SUPPLIER_ID, code: 'SUP1', name: 'Supplier One' }],
@@ -131,8 +122,6 @@ async function convertAndCapture(soLines: Row[]): Promise<Row[]> {
       if (key === 'user') return { id: 'user-1' };
       return undefined;
     },
-    // loadLeadBuffers swallows a throwing DB and falls back to no buffers, which
-    // is the behaviour under test here (dates are not what these assert on).
     env: { DB: { prepare: () => { throw new Error('no D1 in this harness'); } } },
     json: (body: unknown, status = 200) => ({ status, body: body as Record<string, unknown> }),
   } as unknown as PoConvertContext;
@@ -151,15 +140,10 @@ describe('SO -> PO convert carries the line photos (migration 0274)', () => {
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0].photo_urls).toEqual(['so-items/SO-2608-001/si-1/aaa.jpg']);
-    // The provenance link is what a later importer keys its own photos off.
     expect(rows[0].so_item_id).toBe('si-1');
   });
 
   test('every compartment line of one sofa build keeps the shared build photo', async () => {
-    /* The trap this pins: an AutoCount-style sofa build is several compartment
-       lines carrying the SAME photo. Deduplicating photos across the PO would
-       leave every compartment but one with no photo at all — the operator sees
-       a blank line and re-attaches by hand. */
     const shared = 'so-items/SO-2608-001/si-1/build.jpg';
     const rows = await convertAndCapture([
       soLine('si-1', 'SOFA-A-LHF', [shared]),

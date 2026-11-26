@@ -31,8 +31,6 @@ export function AmbientSnow() {
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     };
     const seed = () => {
-      // Density scales with area; the max is generous enough that a desktop
-      // viewport doesn't look sparse (a phone lands well under it).
       const n = Math.max(34, Math.min(110, Math.round((W * H) / 9000)));
       parts = Array.from({ length: n }, () => mk(true));
     };

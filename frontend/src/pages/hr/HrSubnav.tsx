@@ -1,14 +1,3 @@
-/* HR · Employees & Attendance — secondary sidebar (redesign).
- *
- * Replaces the 14-tab horizontal strip with a grouped, resizable, collapsible
- * rail that sits between the dark app sidebar and the content. Width (264,
- * clamp 200-420, double-click resets) and open/collapsed state persist to
- * localStorage; it auto-collapses once on a narrow screen. Sub-labels are
- * SAMPLE data for now (handoff: data wiring comes later).
- *
- * Group accent colours map to design-system tokens: People/Overview = primary
- * (petrol), Time = time (amber) on warning-bg, Pay = accent (brass),
- * Performance = learning (blue). */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -25,8 +14,6 @@ type Group = "overview" | "people" | "time" | "pay" | "perf";
 
 type Item = { key: string; label: string; glyph: ReactNode; sub: string; group: Group };
 
-/** Group chip colours — soft background + glyph colour; active swaps to the
- *  solid colour with a white glyph. */
 const GROUP: Record<Group, { soft: string; glyph: string; solid: string; heading: string | null }> = {
   overview: { soft: "bg-primary-soft", glyph: "text-primary", solid: "bg-primary", heading: null },
   people: { soft: "bg-primary-soft", glyph: "text-primary", solid: "bg-primary", heading: "PEOPLE" },
@@ -74,15 +61,14 @@ function readOpen(): boolean {
     const v = window.localStorage.getItem(KEY_OPEN);
     if (v === "0") return false;
     if (v === "1") return true;
-  } catch { /* private mode */ }
-  // No stored preference: auto-collapse once on a narrow screen.
+  } catch { }
   return typeof window === "undefined" || window.innerWidth >= 1100;
 }
 function readWidth(): number {
   try {
     const n = Number(window.localStorage.getItem(KEY_W));
     if (Number.isFinite(n) && n > 0) return clampW(n);
-  } catch { /* private mode */ }
+  } catch { }
   return DEFAULT_W;
 }
 
@@ -94,7 +80,7 @@ export function HrSubnav({ active, onSelect, hiddenKeys }: { active: string; onS
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
   useEffect(() => {
-    try { window.localStorage.setItem(KEY_OPEN, open ? "1" : "0"); } catch { /* private mode */ }
+    try { window.localStorage.setItem(KEY_OPEN, open ? "1" : "0"); } catch { }
   }, [open]);
 
   const onDown = useCallback(
@@ -115,7 +101,7 @@ export function HrSubnav({ active, onSelect, hiddenKeys }: { active: string; onS
     const up = () => {
       setDragging(false);
       dragRef.current = null;
-      try { window.localStorage.setItem(KEY_W, String(Math.round(width))); } catch { /* private mode */ }
+      try { window.localStorage.setItem(KEY_W, String(Math.round(width))); } catch { }
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
@@ -130,10 +116,9 @@ export function HrSubnav({ active, onSelect, hiddenKeys }: { active: string; onS
   }, [dragging, width]);
   const resetWidth = () => {
     setWidth(DEFAULT_W);
-    try { window.localStorage.setItem(KEY_W, String(DEFAULT_W)); } catch { /* private mode */ }
+    try { window.localStorage.setItem(KEY_W, String(DEFAULT_W)); } catch { }
   };
 
-  // ── collapsed 52px rail ────────────────────────────────────────────────────
   if (!open) {
     return (
       <nav className="relative flex shrink-0 flex-col items-center gap-1 border-r border-border-subtle bg-surface-2 py-2" style={{ width: RAIL_W }} aria-label="HR navigation">
@@ -164,11 +149,9 @@ export function HrSubnav({ active, onSelect, hiddenKeys }: { active: string; onS
     );
   }
 
-  // ── expanded sidebar ───────────────────────────────────────────────────────
   let lastGroup: Group | null = null;
   return (
     <nav className="relative flex shrink-0 flex-col border-r border-border-subtle bg-surface-2" style={{ width }} aria-label="HR navigation">
-      {/* header */}
       <div className="flex h-[52px] shrink-0 items-center justify-between border-b border-border-subtle px-3">
         <div className="min-w-0">
           <div className="text-[15px] font-bold leading-tight text-ink">HR</div>
@@ -184,7 +167,6 @@ export function HrSubnav({ active, onSelect, hiddenKeys }: { active: string; onS
         </button>
       </div>
 
-      {/* scrollable item list */}
       <div className="thin-scroll flex-1 overflow-y-auto px-2 py-2">
         {items.map((it) => {
           const gc = GROUP[it.group];
@@ -216,7 +198,6 @@ export function HrSubnav({ active, onSelect, hiddenKeys }: { active: string; onS
         })}
       </div>
 
-      {/* drag handle on the right edge */}
       <div
         role="separator"
         aria-orientation="vertical"

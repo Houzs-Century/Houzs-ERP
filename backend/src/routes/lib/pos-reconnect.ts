@@ -1,12 +1,3 @@
-/* Reconnect by approval: a POS device that lost its terminal (another device
- * was set up on it, so its token died) asks to have it back, and a supervisor
- * approves from another device or from POS Admin. Nobody at the displaced
- * device types a code or a PIN.
- *
- * The displaced device proves itself with the token it still holds: a token
- * swap keeps the outgoing hash in `prev_token_hash`, so only the device that
- * held the terminal immediately before can ask. Anything older pairs by link.
- */
 import { momentMs } from "../../scm/shared/pos-pairing";
 
 /** How long an unanswered request, and an unclaimed approval, stay open. */

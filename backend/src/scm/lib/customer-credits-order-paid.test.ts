@@ -1,10 +1,3 @@
-// Customer credit must not be spent on an invoice its sales order already paid.
-//
-// Callers hand applyCustomerCreditToSi `total - paid_sen`, and paid_sen holds only
-// the receipts taken on the invoice itself. The deposit and payments collected on
-// the sales order settle the invoice too (si-order-deposit), so an invoice raised
-// off a fully paid order looked fully owed and the customer's credit was applied
-// to it. Production had 13 such credit receipts, every one on an order already paid.
 import { describe, expect, test } from 'vitest';
 import { applyCustomerCreditToSi } from './customer-credits';
 

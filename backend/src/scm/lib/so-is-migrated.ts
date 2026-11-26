@@ -63,13 +63,9 @@
    --------------------------------------------------------------------------- */
 
 export type SoNumberShape =
-  /** No AutoCount number at all — the ERP made it and nothing has pushed it. */
   | 'no-book-number'
-  /** `doc_no` IS the book number: the book took OUR number, so we made it. */
   | 'equal'
-  /** `doc_no` is a prefix + the book number: the cutover import built it. */
   | 'prefixed'
-  /** Fits neither. Cannot come from the import; see `soIsMigratedShape`. */
   | 'neither';
 
 /**
@@ -120,20 +116,10 @@ export function soIsMigratedShape(
   docNo: string | null | undefined,
   acDocNo: string | null | undefined,
 ): boolean {
-  /* `neither` LOCKS, with `prefixed`. See the header: it cannot be produced by
-     the cutover import, but `renumber-sales-orders.mjs` can give a migrated
-     order a new doc_no, and reading that as "the ERP made this" would open a
-     document the owner ruled shut. */
   const shape = soNumberShape(docNo, acDocNo);
   return shape === 'prefixed' || shape === 'neither';
 }
 
-/* The reader, not the client. Typing the supabase client structurally here made
-   the compiler unroll its generics at the line-PATCH call site (TS2589,
-   "excessively deep"); the header PATCH's identical shape compiles, so the
-   difference is the surrounding inference and not this file. Taking a FUNCTION
-   sidesteps it and is the better boundary anyway — this module needs one answer,
-   not a database client. */
 export type MigratedReader = (docNo: string) => PromiseLike<{ data: unknown; error: unknown }>;
 
 /**
@@ -150,7 +136,7 @@ export async function soIsMigrated(read: MigratedReader, docNo: string): Promise
   const { data, error } = await read(docNo);
   if (error) throw new Error(`soIsMigrated: ${(error as { message?: string }).message ?? 'read failed'}`);
   const row = data as { doc_no?: unknown; docNo?: unknown; linked_ac_docno?: unknown; linkedAcDocno?: unknown } | null;
-  if (row == null) return false; // no such order — the handler will 404
+  if (row == null) return false;
   const rowDocNo = row.doc_no ?? row.docNo;
   const link = row.linked_ac_docno ?? row.linkedAcDocno;
   return soIsMigratedShape(

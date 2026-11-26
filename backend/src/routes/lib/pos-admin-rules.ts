@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-admin-rules.ts — the pure rules behind the POS Admin menu: what a
-// cashier PIN is, how a cashier / terminal code is minted, what an event's
-// status word is, and how one Excel import row becomes a POS item patch.
-// Tested without a database.
-// ----------------------------------------------------------------------------
 import { MFG_PRODUCT_CATEGORIES, isMfgProductCategory, type MfgProductCategory } from "../../scm/shared/product-categories";
 
 export const CASHIER_ROLES = ["PARTTIME", "SUPERVISOR"] as const;
@@ -100,7 +94,6 @@ export function parseImportRow(raw: ImportRowInput): ParsedImportRow {
   return { ok: true, item_code, barcode: barcode && /^[0-9A-Za-z-]{4,32}$/.test(barcode) ? barcode : null, fields };
 }
 
-/* ── POS Items > Add by category ─────────────────────────────────────────── */
 
 /** One ACTIVE inventory product as the add-by-category count sees it:
  *  `pos_active` is null when it is not a POS item yet. */

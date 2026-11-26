@@ -1,9 +1,3 @@
-// Supplier delivery orders that come back with the repaired item (Pending Item
-// Ready, Operation Dept 2026-11-09). A case can have several. Registered thin in
-// routes/assr.ts under /:id/return-dos, inside the enforceCaseScope /:id guard
-// (company and row scope) and gated on service_cases.write. Saving a received
-// date fills the current trip's back date when that is still empty, so the date
-// is typed once.
 import type { Context } from "hono";
 import type { Env } from "../types";
 import { currentSupplierReturn, patchSupplierReturn } from "./assrSupplierReturns";

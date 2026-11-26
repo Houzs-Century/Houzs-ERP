@@ -118,7 +118,6 @@ const mount = (url: string) =>
   );
 
 beforeEach(() => {
-  // The SCREEN holds one delivery order; the filtered set holds three with four lines.
   h.rows = [all[0]!];
   h.aoa = [];
   h.written = [];
@@ -151,7 +150,6 @@ const exportNow = async () => {
   return { header, body, cell };
 };
 
-/** The grid's header captions, left to right, as the operator sees them. */
 const gridHeader = (): string[] =>
   Array.from(document.querySelectorAll("table thead th"))
     .map((th) => th.textContent.trim())
@@ -177,7 +175,6 @@ describe("Delivery Orders list: the ONE Export", () => {
     const { header, body, cell } = await exportNow();
     expect(onScreen.length).toBeGreaterThan(5);
     expect(header).toEqual(onScreen);
-    // 2 + 1 + 1 lines across the three delivery orders the server matched.
     expect(body).toHaveLength(4);
     expect(body.map((r) => cell(r, "Doc No"))).toEqual(["DO-000601", "DO-000601", "DO-000602", "DO-000603"]);
     expect(body.map((r) => cell(r, "Item Code"))).toEqual(["AK-CODY (K)", "AK-BASTION (Q)", "AK-CODY (K)", "HOK-5530 SOFA"]);
@@ -202,8 +199,6 @@ describe("Delivery Orders list: the ONE Export", () => {
     primeInVisitColFilters("delivery-orders-v2", { item_code: ["AK-BASTION (Q)"] });
     mount("/scm/delivery-orders");
     const { body, cell } = await exportNow();
-    // The funnel keeps a WHOLE delivery order that has a Bastion line — on the
-    // screen page or beyond it — and drops the ones that have none.
     expect(body.map((r) => cell(r, "Doc No"))).toEqual(["DO-000601", "DO-000601", "DO-000604"]);
     expect(body.map((r) => cell(r, "Item Code"))).toEqual(["AK-CODY (K)", "AK-BASTION (Q)", "AK-BASTION (Q)"]);
   });
@@ -246,7 +241,6 @@ describe("Delivery Orders list: the ONE Export", () => {
   });
 
   it("refuses to hand over a short file past the export's document limit", async () => {
-    // A full 20,000-document window that still says there is more.
     const many = Array.from({ length: 20000 }, (_, i) => ({ id: `d-many-${i}`, do_number: `HC-DO-${i}`, status: "DELIVERED", lines: [] }));
     h.authed.mockImplementation(async () => ({ deliveryOrders: many, total: 20000, lineCount: 0, next: 20000 }));
     mount("/scm/delivery-orders");

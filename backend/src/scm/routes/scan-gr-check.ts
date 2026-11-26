@@ -41,9 +41,6 @@ type CheckRow = SharedRow<GrnReview>;
 
 scanGrCheck.post('/upload', (c) => handleUpload(c, { documentType: 'GR', feature: 'scan_gr_split', reviewVersion: REVIEW_VERSION, scannedToday: (review) => ({ ...review, deliveryDate: todayMyt() }), runLocal: runGrnJobFromRow }));
 
-/* A working copy of an older shape: rebuild it from the stored read, once, keeping
-   the supplier and D.O. the operator may have edited and any row they tied that
-   the rebuild did not. Its date becomes the day it was scanned. */
 async function upgradeCopies(svc: SupabaseClient, companyId: number | null, rows: CheckRow[]): Promise<void> {
   for (const r of rows) {
     if (r.review_state !== 'pending' || !r.review || r.review.v === REVIEW_VERSION || !r.sample_id) continue;
@@ -52,7 +49,6 @@ async function upgradeCopies(svc: SupabaseClient, companyId: number | null, rows
     const parsed = (data as { extracted: GrnExtracted | null } | null)?.extracted ?? null;
     if (!parsed || !Array.isArray(parsed.lines)) continue;
     const { review, note } = await reviewOfRead(svc, companyId, parsed, mytDateOf(r.created_at));
-    // What the operator chose for a row still stands on the rebuilt row that printed the same code.
     const chosen = new Map(r.review.lines.filter((l) => l.read?.itemCode && (l.poItemId || l.gift) && !l.suggested).map((l) => [l.read?.itemCode, l]));
     const lines = review.lines.map((l) => {
       const old = l.poItemId || l.gift ? undefined : chosen.get(l.read?.itemCode);
@@ -68,15 +64,10 @@ async function upgradeCopies(svc: SupabaseClient, companyId: number | null, rows
   }
 }
 
-/* GET /scan-gr/check/pending — this user's documents still being read or
-   waiting to be checked (last 14 days), with what the editor needs: the
-   suppliers, the open PO lines of every supplier on them, and per document
-   whether it is a repeat of a receipt already made and what still blocks it. */
 scanGrCheck.get('/pending', async (c) => {
   const svc = svcOf(c.env);
   const companyId = activeCompanyId(c) ?? null;
-  // A document whose queue message died comes back here even if nobody opens the old list.
-  await reapStaleGrnScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { /* tests */ } });
+  await reapStaleGrnScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { } });
   const waiting = await waitingRows<GrnReview>(svc, c, 'GR');
   if ('failed' in waiting) return c.json({ error: 'query_failed', reason: 'Could not load your scans. Please try again.' }, 500);
   const { rows } = waiting;
@@ -89,13 +80,11 @@ scanGrCheck.get('/pending', async (c) => {
   if (refs.length > 0) {
     const { data: g, error: gErr } = await svc.from('grns').select('id, grn_number, supplier_id, delivery_note_ref, status, received_at')
       .eq('company_id', companyId).neq('status', 'CANCELLED').in('delivery_note_ref', refs);
-    // Without this read no repeat could be flagged, so the list is refused rather than shown clean.
     if (gErr) return c.json({ error: 'query_failed', reason: 'Could not check for delivery orders already received. Please try again.' }, 500);
     for (const x of (g as Array<{ id: string; grn_number: string; supplier_id: string | null; delivery_note_ref: string | null; status: string; received_at: string | null }> | null) ?? []) {
       existing.push({ id: x.id, grnNumber: x.grn_number, supplierId: x.supplier_id, deliveryNoteRef: x.delivery_note_ref, status: x.status, receivedAt: x.received_at });
     }
   }
-  // Marked as gold = the read is a good example the scanner learns from (so_scan_samples ACCEPTED / CONFIRMED).
   const gold = await goldSamples(svc, rows.map((r) => r.sample_id).filter((x): x is string => !!x));
   const supplierIds = new Set(rows.map((r) => r.review?.supplierId).filter(Boolean));
   const repeats = repeatsInList(rows.map((r) => ({ id: r.id, fileName: r.file_name, review: r.review })));
@@ -134,7 +123,6 @@ scanGrCheck.get('/supplier-skus', async (c) => {
   return c.json({ success: true, data: { skus: [...seen].map(([code, name]) => ({ code, name })) } });
 });
 
-/* Open PO lines of one supplier, when the operator changes a document's supplier. */
 scanGrCheck.get('/po-lines', async (c) => {
   const supplierId = c.req.query('supplierId') ?? '';
   const lines = (await loadOpenPoLines(svcOf(c.env), activeCompanyId(c) ?? null)).filter((l) => l.supplierId === supplierId);
@@ -145,7 +133,6 @@ scanGrCheck.get('/po-lines', async (c) => {
 
 const ownRows = (svc: SupabaseClient, c: CheckContext, ids: string[]) => ownScanRows<GrnReview>(svc, c, 'GR', ids);
 
-/* PATCH /scan-gr/check/:id {review} — save the operator's edit. */
 scanGrCheck.patch('/:id', async (c) => {
   const body = await jsonBody(c) as { review?: unknown } | null;
   const review = cleanReview(body?.review);
@@ -160,8 +147,6 @@ scanGrCheck.patch('/:id', async (c) => {
   return c.json({ success: true });
 });
 
-/* POST /scan-gr/check/create {ids} — make the DRAFT goods receipts. One result
-   per document; a refused one keeps its working copy and says why. */
 scanGrCheck.post('/create', async (c) => {
   // company-scope: rows are read with the active company and the caller; drafts go through createDraftGrnFromPoItems, whose PO-line read is company-scoped; each row update repeats the company predicate.
   const svc = svcOf(c.env);
@@ -193,16 +178,11 @@ scanGrCheck.post('/create', async (c) => {
       continue;
     }
     const grnNumbers = res.created.map((g) => g.grnNumber);
-    /* Free gifts go on the first draft at RM0, no PO link, and each printed code
-       is remembered for this supplier so the next delivery order marks it alone.
-       Only ACTIVE products of this company (loadCatalogueProducts). */
     const wanted = giftsOf(review);
     const products = await loadCatalogueProducts(svc, companyId, wanted.map((g) => g.itemCode));
     const added = await addGiftLines(svc, companyId, res.created[0].id, wanted.filter((g) => products.has(g.itemCode)), userId);
     const skipped = wanted.length - added.length;
     const rackNote = scanRackNote(await applyScanRacks(svc, companyId, res.created.map((g) => g.id), racksOf(review)));
-    /* What the operator confirmed teaches the scanner: the printed code of each
-       row tied to a PO line, and of each gift. Next time it matches by itself. */
     const teach = [
       ...added.filter((g) => g.printedCode).map((g) => ({ printedCode: g.printedCode, itemCode: g.itemCode })),
       ...codesToTeach(review, (id) => itemOfLine.get(id)),

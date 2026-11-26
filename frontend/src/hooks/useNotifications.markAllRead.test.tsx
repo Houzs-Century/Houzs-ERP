@@ -1,27 +1,3 @@
-/* "MARK ALL READ" EXISTED ONLY ON THE PHONE.
- *
- * MobileInbox had a working bulk mark-read; the desktop Notifications page —
- * the one the bell's "view all" lands on — had no write at all, only Reload.
- * Same feed, same endpoint, same user: on a phone you could clear it, at a desk
- * you could not.
- *
- * The fix does NOT copy MobileInbox's loop onto the desktop page. Both surfaces
- * already consume `useNotifications`, so the action belongs in the provider they
- * share — one implementation, one error contract, two callers. Copying it would
- * have been the same duplication class this whole audit is about.
- *
- * Two things are pinned here, and the second is the one with teeth:
- *
- *   1. it posts to every project carrying unread items, and to no others
- *   2. it REPORTS failures instead of eating them
- *
- * (2) is a real change, not a tidy-up. MobileInbox's version ended each request
- * with `.catch(() => {})`, so a bulk mark-read that failed for every project
- * looked identical to one that worked: the spinner stopped, the list reloaded,
- * the badge stayed up, and nothing was said. That is the "a failure that reaches
- * nobody is worse than a crash" rule, and the shared version returns counts so
- * each surface can render the truth.
- */
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -54,13 +30,10 @@ describe("useNotifications().markAllRead", () => {
     await act(async () => { await result.current.markAllRead(); });
 
     const posted = apiPost.mock.calls.map(([url]) => url).sort();
-    // 12 had a zero count — posting for it is a pointless round-trip.
     expect(posted).toEqual(["/api/projects/11/read", "/api/projects/13/read"]);
   });
 
   test("reports how many failed instead of swallowing them", async () => {
-    /* The shape that used to be invisible: the server refuses, and the screen
-       says nothing at all. */
     apiPost.mockRejectedValue(new Error("403 forbidden"));
     const { result } = renderHook(() => useNotifications(), { wrapper });
     await waitFor(() => expect(result.current.totalUnread).toBe(4));

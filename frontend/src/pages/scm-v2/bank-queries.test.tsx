@@ -1,9 +1,3 @@
-// The bank hooks' contract is the URL + verb + body each one sends — pinned
-// the same way settlement-queries.test.tsx does, with authed-fetch mocked at
-// the module seam. Until this file existed, bank-queries was the one module
-// on this screen no test EXECUTED (BankStatementTab.test.tsx mocks it), which
-// is exactly the shape the coverage ratchet counts: a transport layer whose
-// paths nothing would catch drifting.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
@@ -71,8 +65,6 @@ describe('the writes', () => {
   test('useBookBankReceipt sends the allocations, with the line in the path', async () => {
     mockedFetch.mockResolvedValueOnce({ ok: true, status: 'posted', results: [] });
     const { result } = renderHook(() => useBookBankReceipt(), { wrapper });
-    /* ONE CREDIT CAN PAY SEVERAL STATEMENTS — the allocations array is the
-       whole point of the shape, so it is pinned with two. */
     result.current.mutate({
       lineId: 7,
       allocations: [{ batchId: 1, amountSen: 100000 }, { batchId: 2, amountSen: 250000 }],
@@ -98,8 +90,6 @@ describe('the writes', () => {
     ignore.result.current.mutate({ lineId: 4, note: 'own transfer, booked from the other side' });
     await waitFor(() => expect(ignore.result.current.isSuccess).toBe(true));
     expect(mockedFetch.mock.calls[1]![0]).toBe('/accounting/bank/lines/4/ignore');
-    /* The reason travels — an ignored movement leaves the difference for ever
-       and this sentence is all the next person will have. */
     expect(JSON.parse(String(mockedFetch.mock.calls[1]![1]?.body))).toEqual({ note: 'own transfer, booked from the other side' });
 
     mockedFetch.mockResolvedValueOnce({ ok: true, status: 'open' });

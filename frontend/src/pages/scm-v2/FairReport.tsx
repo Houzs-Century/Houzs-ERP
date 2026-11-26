@@ -72,14 +72,10 @@ import { useReportRange } from './reports/useReportRange';
 import sr from './reports/SalesReport.module.css';
 import { guardFormula } from '../../lib/csv';
 
-// ── money / number formatting ────────────────────────────────────────────────
-/** A grid cell: nothing reads as a dash, so a wide grid reads cleanly. */
 const cell = (sen: number | null | undefined): string => (sen ? fmtSenPlain(sen) : '—');
-/** A tile or the quick view: 0.00 is a figure. */
 const money = (sen: number | null | undefined): string => fmtSenPlain(sen ?? 0);
 const pct = (p: number | null | undefined): string => (p == null ? '—' : `${p.toFixed(1)}%`);
 const pctOf = (part: number, whole: number): number | null => (whole === 0 ? null : (part / whole) * 100);
-/** Signed points for a margin drift (DO vs SO). */
 const pts = (a: number | null | undefined, b: number | null | undefined): string => {
   if (a == null || b == null) return '—';
   const d = a - b;
@@ -90,17 +86,12 @@ const signedMoney = (sen: number | null | undefined): string => {
   if (!v) return '—';
   return `${v > 0 ? '+' : '−'}${fmtSenPlain(Math.abs(v))}`;
 };
-/** A rate card's figure: 5 → "5%", 2.5 → "2.5%". */
 const ratePct = (v: number | null | undefined): string => `${Number(v ?? 0)}%`;
 const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString('en-MY')} ${n === 1 ? one : many}`;
 
-// 'gaps' is a FRONTEND-ONLY tab (its own /reports/costing-gap-listing endpoint),
-// NOT a fair-report stage — so it is kept out of FairStage (which mirrors the
-// backend FAIR_STAGES) and lives only as a tab key here.
 type TabKey = FairStage | 'gaps';
 const STAGE_LABELS: Record<TabKey, string> = { so: 'Sales Orders', do: 'Delivery Orders', invoice: 'Invoices', pnl: 'P&L', gaps: 'Costing Gaps' };
 
-// Optional column groups per stage — the chips in the bar turn these off and on.
 const OPTIONAL_GROUPS: Record<TabKey, { key: string; label: string }[]> = {
   so: [
     { key: 'catcost', label: 'Cost by category' },
@@ -112,10 +103,6 @@ const OPTIONAL_GROUPS: Record<TabKey, { key: string; label: string }[]> = {
   gaps: [],
 };
 
-/* The line under the bar: what the stage shows. By default every stage picks
-   its orders by their SO date (the server's one window), so no line claims
-   another; with each stage by its own date the Delivery Orders and Invoices
-   lines say which date picks them. */
 const DESCRIPTIONS = {
   so: 'Orders taken at the fair, by SO date: the amount, the cost estimated when the order was taken, the deposit paid and the balance left.',
   do: 'The same orders once delivered: the cost frozen when the goods left the warehouse (FIFO) against the cost estimated at order. Cost Δ is what the wait changed.',
@@ -160,7 +147,6 @@ export function legacyRange(sp: URLSearchParams): { from: string; to: string } |
   return from && to ? { from, to } : null;
 }
 
-// ── filter options ───────────────────────────────────────────────────────────
 type OptionMaps = {
   venues: string[];
   projects: Record<string, string>;
@@ -174,10 +160,6 @@ type FairOf = Pick<FairDims, 'project_id' | 'project' | 'project_start_date' | '
 const fairDates = (f: Pick<FairOf, 'project_start_date' | 'project_end_date'>): string =>
   (f.project_start_date ? `${fmtDate(f.project_start_date)}${f.project_end_date ? ` – ${fmtDate(f.project_end_date)}` : ''}` : '');
 
-/** Merge the distinct filter values carried on a batch of rows (and fairs) into
- *  the running option set. Accumulated (never shrinks) so a dropdown stays
- *  usable after a filter narrows the result. Returns `prev` unchanged when
- *  nothing is new. */
 function accumulate(prev: OptionMaps, rows: readonly FairDims[], fairs: readonly FairOf[]): OptionMaps {
   const venues = new Set(prev.venues);
   const projects = { ...prev.projects };
@@ -193,7 +175,6 @@ function accumulate(prev: OptionMaps, rows: readonly FairDims[], fairs: readonly
     }
   }
   for (const r of rows) {
-    // Venue keys on the TEXT (venue_id is a dead scm.venues FK, NULL on modern SOs).
     if (r.venue && !venues.has(r.venue)) { venues.add(r.venue); changed = true; }
     if (r.state && !states.has(r.state)) { states.add(r.state); changed = true; }
     if (r.branding && !brandings.has(r.branding)) { brandings.add(r.branding); changed = true; }
@@ -216,7 +197,6 @@ const catRows = (c: FairCostByCategory): [string, number][] => [
   ['Service', c.service_cost_sen],
 ];
 
-// ── tiles ────────────────────────────────────────────────────────────────────
 const TILE_LABELS = {
   so: ['Total orders', 'Revenue', 'Outstanding', 'Paid'],
   do: ['Delivered orders', 'SO-time cost', 'DO cost (ship-time)', 'Cost drift'],
@@ -241,7 +221,6 @@ export function everyFairTotals(fairs: readonly FairPnlFairRow[]) {
   return { ...t, grossPct: pctOf(t.gross, t.revenue), netPct: pctOf(t.net, t.revenue) };
 }
 
-/** What the picked fair's overhead is made of, from its card. */
 function overheadMakeup(d: FairPnlResponse): string {
   if (!d.meta.rate_present) return `No cost-rate card${d.meta.brand ? ` for ${d.meta.brand}` : ' for this fair’s brand'}`;
   const o = d.summary.overheads;
@@ -302,10 +281,7 @@ export function salesTiles(d: FairReportResponse, period: string): ReportTile[] 
   ];
 }
 
-// ── columns (one list draws the table AND the sheet) ─────────────────────────
 type SheetSpec<R> = { kind: SheetColumn['kind']; value: (r: R) => SheetValue; total?: (rows: readonly R[]) => SheetValue };
-/** A table column that also says what it prints: `sheet` for a figure column,
- *  `sheetLabel` for the one that names the row on paper. */
 type SalesCol<R> = Column<R> & { sheet?: SheetSpec<R>; sheetLabel?: (r: R) => string };
 
 const marginOf = (revenue: number, cost: number): number | null => pctOf(revenue - cost, revenue);
@@ -333,7 +309,6 @@ const dateCol = <R,>(key: string, label: string, f: (r: R) => string | null | un
   render: (r) => <span className="tabular-nums">{fmtDateOrDash(f(r))}</span>,
   sheet: { kind: 'text', value: (r) => { const d = f(r); return d ? fmtDate(d) : null; } },
 });
-/** An SO number: it opens the order's quick view. */
 const soCol = <R,>(key: string, label: string, f: (r: R) => string | null | undefined, open: (so: string) => void, names = false): SalesCol<R> => ({
   key, label, getValue: (r) => f(r) ?? '',
   render: (r) => {
@@ -554,7 +529,6 @@ export function gapColumns(open: (so: string) => void): SalesCol<FairCostingGapR
   ];
 }
 
-// ── the sheet: the stage as shown, for Excel / PDF / Print ──────────────────
 export function salesSheet<R>(o: {
   title: string; subtitle: string; meta: ReportSheet['meta'];
   cols: readonly SalesCol<R>[]; rows: readonly R[]; total: string | null; notes?: string[];
@@ -574,7 +548,6 @@ export function salesSheet<R>(o: {
   };
 }
 
-// ── CSV export (the report's own, under ⋯) ──────────────────────────────────
 function toCsv(headers: string[], rows: (string | number | null | undefined)[][]): string {
   const esc = (v: string | number | null | undefined) => {
     const s = v == null ? '' : guardFormula(String(v));
@@ -590,7 +563,6 @@ function download(name: string, csv: string) {
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 }
-/** Plain 2-decimal number for CSV (no dash, no separators that would break CSV). */
 const c = (sen: number | null | undefined): string => (Number(sen ?? 0) / 100).toFixed(2);
 const csvDate = (d: string | null | undefined): string => (d ? fmtDate(d) : '');
 
@@ -654,7 +626,6 @@ export function buildExport(data: FairReportResponse): { headers: string[]; body
   };
 }
 
-// ── the page ─────────────────────────────────────────────────────────────────
 export const FairReport = () => (
   <ReportShell report="fair">
     <SalesReport />
@@ -671,7 +642,6 @@ export function SalesReport() {
   const range = useReportRange();
   const openDoc = useOpenDocInTab();
 
-  /* An address from before the shared range opens on the range it meant. */
   useEffect(() => {
     if (!LEGACY_DATE_KEYS.some((k) => sp.has(k))) return;
     const legacy = legacyRange(sp);
@@ -683,13 +653,11 @@ export function SalesReport() {
     }, { replace: true });
   }, [sp, setSp]);
 
-  // ── stage (clamped to what this user may see) ──────────────────────────────
   const rawStage = sp.get('stage') as TabKey | null;
   const firstTab = tabKeys.at(0);
   const stage: TabKey = rawStage && tabKeys.includes(rawStage) ? rawStage : (firstTab ?? 'so');
   const reportStage: FairStage = stage === 'gaps' ? 'so' : stage;
 
-  // ── the five filters (URL) + the shared range and how it picks ─────────────
   const projectRaw = sp.get('project');
   const project = projectRaw && Number.isFinite(Number(projectRaw)) ? Number(projectRaw) : undefined;
   const dateBasis: DateBasis = sp.get('dates') === 'stage' ? 'stage' : 'so';
@@ -708,7 +676,6 @@ export function SalesReport() {
   const hidden = useMemo(() => new Set((sp.get('hide') || '').split(',').filter(Boolean)), [sp]);
   const selectedSo = sp.get('so');
 
-  // setter that preserves the rest of the query string.
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(sp);
     if (value == null || value === '') next.delete(key);
@@ -721,21 +688,16 @@ export function SalesReport() {
 
   const enabled = stage !== 'gaps' && allowed.includes(reportStage) && range.usable;
   const q = useFairReport(reportStage, filters, enabled);
-  /* The answer for what is asked now — not the one still on screen from before
-     (the read keeps the previous answer while the next one loads). */
   const cur = q.data && q.data.stage === reportStage
     && (q.data.stage !== 'pnl' || (q.data.filters.project ?? null) === (project ?? null)) ? q.data : undefined;
   const pnl = cur?.stage === 'pnl' ? cur : undefined;
   const everyFair = reportStage === 'pnl' && project == null;
   const fairs = useMemo(() => pnl?.fairs ?? [], [pnl]);
-  // The costing-gap tab has its own endpoint (not the fair-report stage machinery).
   const gapQ = useCostingGapListing(stage === 'gaps' && showGaps);
-  // A 403 (not in the report's cohort) must not read as a transient "please retry".
   const errorInfo = (stage === 'gaps' ? gapQ.isError : enabled && q.isError)
     ? fairReportErrorInfo(stage === 'gaps' ? gapQ.error : q.error)
     : null;
 
-  // ── accumulate filter options from whatever rows and fairs have loaded ──────
   const [opts, setOpts] = useState<OptionMaps>(EMPTY_OPTS);
   useEffect(() => {
     if (!cur) return;
@@ -760,7 +722,6 @@ export function SalesReport() {
     setParam('hide', [...next].join(','));
   };
 
-  // ── what the bar says ──────────────────────────────────────────────────────
   const pickedFair = pnl?.meta.fair ?? null;
   const projLabel: string | undefined = project != null ? opts.projects[String(project)] : undefined;
   const fairName = pickedFair?.project ?? projLabel?.split(' · ')[0] ?? 'this fair';
@@ -781,15 +742,12 @@ export function SalesReport() {
         : dateBasis === 'stage' && reportStage === 'invoice' ? DESCRIPTIONS.invoiceOwn
           : DESCRIPTIONS[reportStage];
 
-  // ── tiles ──────────────────────────────────────────────────────────────────
   const tileKey = reportStage === 'pnl' ? (everyFair ? 'pnlEvery' : 'pnlFair') : reportStage;
-  /* A P&L with nothing in the dates says so in a sentence instead. */
   const emptyPnl = pnl != null && (everyFair ? fairs.length === 0 : pnl.rows.length === 0);
   const tiles: ReportTile[] | null = stage === 'gaps' || !range.usable ? null
     : cur ? (emptyPnl ? null : salesTiles(cur, period))
       : TILE_LABELS[tileKey].map((label) => ({ key: label, label, value: '' }));
 
-  // ── a message in place of the table ────────────────────────────────────────
   const applyFairDates = () => {
     if (!pickedFair?.project_start_date) return;
     const start = pickedFair.project_start_date;
@@ -811,7 +769,6 @@ export function SalesReport() {
     );
   }
 
-  // ── exports ────────────────────────────────────────────────────────────────
   const noOpen = () => undefined;
   const spId = sp.get('salesperson');
   const spName: string | undefined = spId ? opts.salespersons[spId] : undefined;
@@ -845,7 +802,6 @@ export function SalesReport() {
     download(name, toCsv(headers, body));
   };
 
-  // ── the body ───────────────────────────────────────────────────────────────
   let body: ReactNode;
   if (message) body = <div className={sr.msg} role="status">{message}</div>;
   else if (stage === 'gaps') {
@@ -962,7 +918,6 @@ export function SalesReport() {
   );
 }
 
-// ── a filter in the toolbar ──────────────────────────────────────────────────
 function PickFilter({ label, value, onChange, options, allLabel }: {
   label: string; value: string; onChange: (v: string) => void;
   options: { value: string; label: string }[]; allLabel: string;
@@ -977,7 +932,6 @@ function PickFilter({ label, value, onChange, options, allLabel }: {
   );
 }
 
-// ── table ─────────────────────────────────────────────────────────────────────
 /* The footer sums what is on screen: the stage's rows after the table's own
    search / filters, or only the ticked rows (owner 2026-09-25). The route pages
    through every match, so with no table filter the footer equals the tiles. */
@@ -986,7 +940,6 @@ function StageTable({ data, stage, hidden, loading, onOpen, onOpenOrder }: {
   onOpen: (so: string) => void; onOpenOrder: (so: string | null | undefined) => void;
 }) {
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
-  // Another stage or filter is another set of rows: the ticks do not carry.
   useEffect(() => setPicked(new Set()), [data]);
   const common = {
     loading,
@@ -1026,7 +979,6 @@ function StageTable({ data, stage, hidden, loading, onOpen, onOpenOrder }: {
   );
 }
 
-// ── cards view ────────────────────────────────────────────────────────────────
 type Fig = { k: string; v: string; tone?: 'good' | 'late' };
 type CardOf = { key: string; no: string; open: () => void; sub: string; figs: Fig[] };
 
@@ -1099,7 +1051,6 @@ function FairCards({ fairs, loading, onOpenFair }: { fairs: readonly FairPnlFair
   return <Cards cards={cards} loading={loading} />;
 }
 
-// ── quick-view drawer ─────────────────────────────────────────────────────────
 const th = 'px-3 py-2 text-left text-[10.5px] font-semibold uppercase tracking-brand text-ink-muted whitespace-nowrap';
 const thR = 'px-3 py-2 text-right text-[10.5px] font-semibold uppercase tracking-brand text-ink-muted whitespace-nowrap';
 const td = 'px-3 py-2.5 text-[12.5px] text-ink whitespace-nowrap';
@@ -1161,7 +1112,6 @@ function FairDrawer({ docNo, onClose, onOpenOrder }: { docNo: string | null; onC
                 </span>
               </div>
 
-              {/* meta grid */}
               <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-3.5">
                 <Meta k="SO No" v={<span className={docNoCls}>{d.so_no}</span>} />
                 <Meta k="Order Form" v={<span className={docNoCls}>{d.order_form ?? '—'}</span>} />
@@ -1171,7 +1121,6 @@ function FairDrawer({ docNo, onClose, onOpenOrder }: { docNo: string | null; onC
                 <Meta k="Payment" v={d.payment_methods.join(' + ') || '—'} />
               </dl>
 
-              {/* linkage chain */}
               <SectionH>Document linkage · SO → DO → Invoice</SectionH>
               <div className="flex flex-wrap items-stretch gap-1.5">
                 <ChainLink label="Sales Order" nos={[d.linkage.so_no]} sub={`Confirmed ${fmtDateOrDash(d.so_date)}`} done />
@@ -1181,7 +1130,6 @@ function FairDrawer({ docNo, onClose, onOpenOrder }: { docNo: string | null; onC
                 <ChainLink label="Invoice" nos={d.linkage.invoice_nos} sub={d.linkage.invoice_nos.length ? 'Invoiced' : 'Not invoiced'} done={!!d.linkage.invoice_nos.length} />
               </div>
 
-              {/* order lines */}
               <SectionH>Order lines · selling &amp; cost</SectionH>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-[12px]">
@@ -1221,7 +1169,6 @@ function FairDrawer({ docNo, onClose, onOpenOrder }: { docNo: string | null; onC
                 </table>
               </div>
 
-              {/* summary grid */}
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <MiniStat k="Amount" v={money(d.amount_sen)} />
                 <MiniStat k="Selling" v={money(d.selling_sen)} />
@@ -1231,7 +1178,6 @@ function FairDrawer({ docNo, onClose, onOpenOrder }: { docNo: string | null; onC
                 <MiniStat k="Balance" v={money(d.balance_sen)} />
               </div>
 
-              {/* cost by category */}
               <SectionH>Cost by category</SectionH>
               <div className="overflow-hidden rounded-lg border border-border">
                 {catRows(d.cost_by_category).map(([label, v]) => (
@@ -1244,7 +1190,6 @@ function FairDrawer({ docNo, onClose, onOpenOrder }: { docNo: string | null; onC
                 </div>
               </div>
 
-              {/* deposit by tender */}
               <SectionH>Deposit by tender</SectionH>
               <div className="space-y-2">
                 {d.payments.length === 0 && <div className="text-[12px] text-ink-muted">No payments recorded.</div>}

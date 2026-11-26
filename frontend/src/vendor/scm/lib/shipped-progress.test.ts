@@ -24,8 +24,6 @@ describe('how much has left', () => {
     expect(shippedProgressOf({ shipped_qty: 5, deliverable_qty: 5 }).state).toBe('full');
   });
 
-  /* THE ONE THAT MATTERS. A payload that predates these fields must not read as
-     "nothing has shipped" — that is a claim, and this order may be fully out. */
   test('a MISSING figure is unknown, never zero', () => {
     expect(shippedProgressOf({}).state).toBe('unknown');
     expect(shippedProgressOf({ shipped_qty: 2 }).state).toBe('unknown');
@@ -34,15 +32,10 @@ describe('how much has left', () => {
     expect(shippedProgressLabel(shippedProgressOf({}))).toBeNull();
   });
 
-  /* Every line cancelled, or a service-only order: there is nothing to ship.
-     Calling that 'full' would put a DELIVERED badge on an order nobody shipped. */
   test('nothing TO ship is none, never full', () => {
     expect(shippedProgressOf({ shipped_qty: 0, deliverable_qty: 0 }).state).toBe('none');
   });
 
-  /* An over-delivery is a real state (a replacement shipped against a reduced
-     line). It reads full, and the label keeps both numbers so the oddity is
-     visible rather than clamped away. */
   test('shipped MORE than committed reads full and shows both numbers', () => {
     const p = shippedProgressOf({ shipped_qty: 6, deliverable_qty: 5 });
     expect(p.state).toBe('full');

@@ -74,13 +74,11 @@ const NO_PERM = (what: string) => ({ error: `You don't have permission to ${what
 const HEADER = 'id, company_id, invoice_number, supplier_id, supplier_invoice_ref, invoice_date, due_date, currency, exchange_rate, total_sen, paid_sen, status, notes, created_at, created_by, posted_at, posted_by, cancelled_at, cancelled_by, official_doc, official_doc_note, official_doc_at, official_doc_by, opening, doc_kind';
 const LINE = 'id, line_no, description, debit_account_code, amount_sen, project_id';
 
-/** What the paper is called in its journal: a supplier's debit note, or an AP invoice. */
 const paperOf = (inv: Row): string => (inv.doc_kind === 'DN' ? 'Supplier debit note' : 'AP invoice');
 
 /** projectId: the event the line's money is for (owner 2026-09-30, 5a; lib/event-tags.ts). */
 type CleanLine = { description: string | null; code: string; amountSen: number; projectId: number | null };
 
-/** 1–50 lines, each with a leaf account and a positive integer sen. */
 function buildLines(raw: unknown): { lines: CleanLine[]; total: number } | { error: string; message: string } {
   const arr = Array.isArray(raw) ? raw : [];
   if (arr.length === 0 || arr.length > 50) return { error: 'lines_required', message: 'An AP invoice takes 1 to 50 lines.' };
@@ -115,25 +113,16 @@ async function loadSupplier(c: any, supplierId: string): Promise<{ supplier: { i
   return { supplier: data as { id: string; code: string | null; name: string | null } };
 }
 
-/* ── GET / — both kinds, one list ─────────────────────────────────────────── */
 export const listApInvoicesHandler = async (c: any): Promise<Response> => {
-  /* Reads ride the finance area guard (GET → 'view'), as the receipts and
-     other-debtors lists do; the PV key family gates the WRITES below. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const kind = String(c.req.query('kind') ?? 'ALL').toUpperCase();
-  /* docKind=DN: the supplier debit notes alone (the CN / DN page's tab) — a
-     purchase invoice is never one; docKind=INV: the bills without them. */
   const docKind = String(c.req.query('docKind') ?? '').trim().toUpperCase();
-  /* The control each bill sits on (the redesign's Control column and its
-     Trade / Other filter): the server's own rule, the roles read once. */
   const roles = await resolveRoles(sb, co.companyId);
 
   const rows: Row[] = [];
   if (kind === 'ALL' || kind === 'API') {
-    /* Every bill, paged: the voucher pickers read this list, and a newest-500
-       cap made an older unpaid bill impossible to pay, with nothing said. */
     const { data, error } = await paginateAll<Row>((from, to) => {
       let q = scopeToCompany(sb.from('ap_invoices').select(`${HEADER}, supplier:suppliers(id, code, name)`), c);
       if (docKind === 'DN' || docKind === 'INV') q = q.eq('doc_kind', docKind);
@@ -143,9 +132,6 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
     for (const r of (data ?? []) as Row[]) rows.push(shape('API', r, roles));
   }
   if ((kind === 'ALL' || kind === 'PI') && docKind !== 'DN') {
-    /* The operational invoices, read-only here: the Procurement page raises
-       and edits them; this list only SHOWS them beside the AP invoices so
-       the Finance side sees a supplier's whole debt. */
     const { data, error } = await paginateAll<Row>((from, to) => scopeToCompany(
       sb.from('purchase_invoices')
         .select(`id, invoice_number, supplier_invoice_ref, supplier_id, invoice_date, due_date, currency, total_sen, paid_sen, status, notes, ${HOLD_COLUMNS}, supplier:suppliers(id, code, name)`)
@@ -155,7 +141,6 @@ export const listApInvoicesHandler = async (c: any): Promise<Response> => {
     for (const r of (data ?? []) as Row[]) rows.push(shape('PI', r, roles));
   }
   rows.sort((a, b) => String(b.invoiceDate ?? '').localeCompare(String(a.invoiceDate ?? '')) || String(b.invoiceNumber).localeCompare(String(a.invoiceNumber)));
-  /* When Finance plans to pay each bill (step 7) — beside its due date, never instead of it. */
   const plans = await billPlans(sb, co.companyId);
   if (!plans.ok) return c.json({ error: 'load_failed', reason: plans.reason }, 500);
   for (const r of rows) r.plannedOn = plans.byBill.get(`${r.kind}:${r.id}`) ?? null;
@@ -167,12 +152,9 @@ function shape(kind: 'API' | 'PI', r: Row, roles: RoleCodes): Row {
   const total = Number(r.total_sen ?? 0);
   const paid = Number(r.paid_sen ?? 0);
   const controlRole = apControlRole(sup?.code ?? null);
-  /* A purchase invoice held in Procurement: every voucher path refuses it
-     (payment-vouchers.ts), so the list says so before anyone tries. */
   const held = kind === 'PI' && isDocumentHeld(r);
   return {
     kind,
-    /* 'DN' for a supplier's debit note; a purchase invoice is always an invoice. */
     docKind: kind === 'API' && r.doc_kind === 'DN' ? 'DN' : 'INV',
     id: r.id,
     invoiceNumber: r.invoice_number,
@@ -188,11 +170,8 @@ function shape(kind: 'API' | 'PI', r: Row, roles: RoleCodes): Row {
     currency: r.currency ?? 'MYR',
     totalSen: total,
     paidSen: paid,
-    /* A cancelled bill owes nothing: its posting was reversed, so its face
-       amount must not show (or export, or add up) as money owed to the supplier. */
     outstandingSen: String(r.status ?? '').toUpperCase() === 'CANCELLED' ? 0 : Math.max(0, total - paid),
     status: String(r.status ?? ''),
-    /* Trade creditors (AP, 400) or Other creditors (AP_OTHER, 405) — by the supplier's code. */
     controlRole,
     controlCode: roles[controlRole],
     held,
@@ -200,8 +179,6 @@ function shape(kind: 'API' | 'PI', r: Row, roles: RoleCodes): Row {
   };
 }
 
-/* ── GET /:id — an AP invoice with its lines, what paid it, its journal and
-   the control it sits on (the bill page, batch 4 step 6) ───────────────── */
 export const apInvoiceDetailHandler = async (c: any): Promise<Response> => {
   const found = await loadInvoice(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
@@ -221,7 +198,6 @@ export const apInvoiceDetailHandler = async (c: any): Promise<Response> => {
   return c.json({ invoice: { ...found.inv, je_no: pay.jeNo, planned_on: (plan.data as { planned_on?: string } | null)?.planned_on ?? null }, lines: lines.data ?? [], supplier: sup.data ?? null, payments: pay.payments, controlCode });
 };
 
-/* ── POST / — raise a DRAFT ──────────────────────────────────────────────── */
 export const createApInvoiceHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.create') && !hasHouzsPerm(c, 'scm.payment_voucher.write')) {
     return c.json(NO_PERM('raise an AP invoice'), 403);
@@ -233,7 +209,6 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
 
   const supplierId = String(body.supplierId ?? '').trim();
   if (!supplierId) return c.json({ error: 'supplier_required', message: 'Pick the supplier this bill is from.' }, 400);
-  /* A supplier's debit note is raised as this bill (2026-10-28); anything else is an invoice. */
   const docKindRaw = String(body.docKind ?? 'INV').trim().toUpperCase();
   if (docKindRaw !== 'INV' && docKindRaw !== 'DN') return c.json({ error: 'bad_doc_kind', message: 'docKind is INV (an AP invoice) or DN (a supplier debit note).' }, 400);
   const docKind: 'INV' | 'DN' = docKindRaw;
@@ -302,8 +277,6 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     await sb.from('ap_invoices').delete().eq('company_id', co.companyId).eq('id', (inv as Row).id);
     return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
   }
-  /* The request is claimed only if still waiting — else this bill never
-     stood — and its files are copied onto the bill. */
   let requestFilesCopied = 0;
   if (prq.request) {
     const linked = await linkPaymentRequest(c, prq.request, { kind: 'API', id: String((inv as Row).id), number: invoiceNumber });
@@ -314,11 +287,6 @@ export const createApInvoiceHandler = async (c: any): Promise<Response> => {
     }
     requestFilesCopied = linked.filesCopied;
   }
-  /* The habit this bill teaches: the supplier's name → the first line's
-     account, so the OCR's next reading of the same vendor's bill pre-fills
-     it. A voucher paying a supplier has nothing to teach (its line is the AP
-     control); the BILL is where the expense account is chosen — hence the
-     source flag, which lifts memory's supplier-payment skip for this call. */
   await learnVendorMemory(sb, c, {
     payeeName: sup.supplier.name, purpose: 'SUPPLIER_PAYMENT', source: 'AP_INVOICE',
     lines: built.lines.map((l, i) => ({ line_no: i + 1, debit_account_code: l.code })),
@@ -350,9 +318,6 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
   }
   const posted = inv.status !== 'DRAFT';
   const paid = Number(inv.paid_sen ?? 0);
-  /* Snapshot what the contra needs BEFORE the update: a client that hands out
-     live row references (the test fake does) would otherwise show the edited
-     date here, and the contra must be dated as the OLD bill was. */
   const oldDate = String(inv.invoice_date);
   const oldSupplierId = String(inv.supplier_id);
   const sb = c.get('supabase');
@@ -397,9 +362,6 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     const newTotal = rebuilt ? rebuilt.total : Number(inv.total_sen ?? 0);
     patch.status = newTotal <= paid ? 'PAID' : paid > 0 ? 'PARTIALLY_PAID' : 'POSTED';
   }
-  /* The lines, the header and the ledger re-post commit together or not at all. Each used to commit on its own: a
-     failure part-way left a bill whose lines, total and journal disagreed (lines deleted, or the old journal reversed
-     with no new one), and nothing put it right. */
   return runScmPgCommand(c, async (tx) => {
     if (rebuilt) {
       const { error: delErr } = await tx.from('ap_invoice_lines').delete().eq('company_id', co.companyId).eq('invoice_id', inv.id);
@@ -410,8 +372,6 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
       })));
       if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
     }
-    /* Compare-and-set on what the checks above read: a voucher settling this bill, or a cancel, since then makes the
-       edit refuse rather than write a status and total worked out from a stale paid figure. */
     const { data, error } = await tx.from('ap_invoices').update(patch)
       .eq('company_id', co.companyId).eq('id', inv.id).eq('paid_sen', paid).neq('status', 'CANCELLED')
       .select(HEADER).maybeSingle();
@@ -419,9 +379,6 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
     if (!data) return c.json({ error: 'changed', message: `${String(inv.invoice_number)} was paid or cancelled while you were editing it. Reload and try again.` }, 409);
     if (!posted) return c.json({ ok: true, invoice: data });
 
-    /* The re-post: contra the entry the old bill wrote, then book the bill as
-       it now reads — through the one gate, so numbering and the one-active-
-       entry rule hold exactly as on the first post. */
     const after = (data ?? inv) as Row;
     const rev = await reverseJournal(tx, {
       sourceType: 'API',
@@ -451,7 +408,6 @@ export const updateApInvoiceHandler = async (c: any): Promise<Response> => {
   });
 };
 
-/* ── POST /:id/post — into the ledger, once ──────────────────────────────── */
 export const postApInvoiceHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) return c.json(NO_PERM('post to the general ledger'), 403);
   const co = requireActiveCompanyId(c);
@@ -493,7 +449,6 @@ export const postApInvoiceHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true, jeNo: je.jeNo, status: je.status });
 };
 
-/* ── POST /:id/cancel — a draft dies quietly; a posted bill gets its contra ─ */
 export const cancelApInvoiceHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.cancel')) return c.json(NO_PERM('cancel an AP invoice'), 403);
   const co = requireActiveCompanyId(c);
@@ -530,14 +485,8 @@ export const apInvoices = new Hono();
    service client. Without it every read here answered 403 and every write crashed. See docs/bugs/0648; tests/scmRouterBridge.test.ts pins it. */
 apInvoices.use('*', supabaseAuth);
 apInvoices.get('/', listApInvoicesHandler);
-/* Every refusal of a create comes before its first write (the number mint), so the
-   per-mount Idempotency-Key is released on each and a corrected Save goes through. */
 apInvoices.post('/', noWriteUntilMarked, createApInvoiceHandler);
-/* Supplier bills printed together, each followed by its files (batch 4,
-   step 8; routes/ap-bill-print.ts) — a literal path, before '/:id'. */
 apInvoices.post('/print-bundle', printApBillsBundleHandler);
-/* Files before /:id, as the PV mounts them — the evidence paths never fall
-   into the detail matcher. */
 apInvoices.post('/:id/files', uploadApInvoiceFileHandler);
 apInvoices.get('/:id/files', listApInvoiceFilesHandler);
 apInvoices.get('/:id/files/:fileId', streamApInvoiceFileHandler);
@@ -550,6 +499,4 @@ apInvoices.patch('/:id', updateApInvoiceHandler);
 apInvoices.post('/:id/post', postApInvoiceHandler);
 apInvoices.post('/:id/cancel', cancelApInvoiceHandler);
 
-/* Referenced so a stale import never hides that the active company is the
-   scope on every write above. */
 void activeCompanyId;

@@ -37,7 +37,6 @@ const world = (over: { matches?: Row[]; pays?: Row[]; sos?: Row[]; siPays?: Row[
   acc_settlement_batches: [{ id: 5, company_id: 2, acquirer_code: 'GHL', file_name: 'StatementOfAccountDetails2026-06-05.csv', period_from: '2026-06-02', period_to: '2026-06-02', net_sen: 275_040, stated_net_sen: 275_040 }],
   acc_settlement_rows: [
     { id: 2, batch_id: 5, company_id: 2, acquirer_code: 'GHL', line_no: 2, txn_date: '2026-06-02', ref: '615318040666', gross_sen: 286_500, fee_sen: 11_460, net_sen: 275_040, bucket: 'UNMATCHED', confirmed_at: null, posted_je_no: null },
-    /* Another company's line with the same id shape — never reachable from company 2. */
     { id: 3, batch_id: 6, company_id: 1, acquirer_code: 'GHL', line_no: 1, txn_date: '2026-06-02', ref: null, gross_sen: 100, fee_sen: 0, net_sen: 100, bucket: 'UNMATCHED', confirmed_at: null, posted_je_no: null },
   ],
   acc_settlement_matches: over.matches ?? [],
@@ -48,12 +47,12 @@ const world = (over: { matches?: Row[]; pays?: Row[]; sos?: Row[]; siPays?: Row[
     so('2990-SO-2605-090', 'Lim Siew Mei'),
   ],
   mfg_sales_order_payments: over.pays ?? [
-    pay('p-011', '2990-SO-2606-011'),                                                        // the one: same amount, 12 days off, no bank
-    pay('p-013', '2990-SO-2606-013', { amount_sen: 336_500, approval_code: '009577' }),     // different amount
+    pay('p-011', '2990-SO-2606-011'),
+    pay('p-013', '2990-SO-2606-013', { amount_sen: 336_500, approval_code: '009577' }),
     pay('p-002', '2990-SO-2606-002', { amount_sen: 168_300, method: 'merchant', merchant_provider: 'MBB', paid_at: '2026-06-12' }),
-    pay('p-cash', '2990-SO-2605-090', { amount_sen: 286_500, method: 'cash', paid_at: '2026-06-02' }),   // same amount, but cash
-    pay('p-old', '2990-SO-2605-090', { amount_sen: 286_500, method: 'merchant', merchant_provider: 'GHL', paid_at: '2026-05-01' }), // same amount, months earlier
-    pay('p-theirs', 'HC-SO-1', { company_id: 1, amount_sen: 286_500 }),                     // other company
+    pay('p-cash', '2990-SO-2605-090', { amount_sen: 286_500, method: 'cash', paid_at: '2026-06-02' }),
+    pay('p-old', '2990-SO-2605-090', { amount_sen: 286_500, method: 'merchant', merchant_provider: 'GHL', paid_at: '2026-05-01' }),
+    pay('p-theirs', 'HC-SO-1', { company_id: 1, amount_sen: 286_500 }),
   ],
   sales_invoice_payments: over.siPays ?? [],
   sales_invoices: over.sis ?? [],
@@ -88,8 +87,6 @@ describe('findPaymentsForRow', () => {
     ]);
   });
 
-  /* A cash sale is not on any merchant report, and another company's money is
-     not this company's to claim. Neither appears however well the amount agrees. */
   it('never offers a cash payment, or another company\'s', async () => {
     const out = await findPaymentsForRow(world(), 2, 2, '');
     const ids = out.ok ? out.payments.map((p) => p.id) : [];
@@ -152,9 +149,6 @@ describe('confirmSettlementRow reads the chosen payments back, and trusts nothin
     expect((await confirm(world(), [{ source: 'SOPAY', id: 'p-nope', docNo: null, amountSen: 286_500 }])).status).toBe('payment_not_found');
   });
 
-  /* THE RULE THE OWNER SET. The screen said RM 2,865.00; the row says something
-     else now (edited since, or a stale list). The database's figure is the
-     one that must equal the gross — and here it does not. */
   it('refuses when the payment\'s own amount is not the line\'s gross, whatever the screen sent', async () => {
     const sb = world({ pays: [pay('p-011', '2990-SO-2606-011', { amount_sen: 286_400 })] });
     const out = await confirm(sb, [{ source: 'SOPAY', id: 'p-011', docNo: '2990-SO-2606-011', amountSen: 286_500 }]);

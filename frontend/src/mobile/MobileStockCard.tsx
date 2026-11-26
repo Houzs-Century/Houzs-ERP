@@ -16,23 +16,9 @@ import {
   type InventoryReservation,
 } from "../vendor/scm/lib/inventory-queries";
 
-/* ------------------------------------------------------------------ *
- * Mobile Stock Card — per-SKU on-hand, the merged per-lot stock view
- * (each open lot with its warehouse, attributes, qty, unit cost, SOURCE
- * doc, received date, reservation + reserving SO's delivery date), and the
- * movement ledger. Phone twin of desktop pages/scm-v2/Inventory.tsx's Stock
- * Breakdown drawer; reuses the SAME shared feed + transform
- * (useInventoryReservations + buildStockBreakdown) so owned vs CONSIGNMENT is
- * split by the lot's SOURCE (never the warehouse flag) and consignment stays
- * OUT of value — one logic layer, two presentations. A warehouse filter (pills)
- * scopes the whole card. No backend. Opened from the Inventory list.
- * ------------------------------------------------------------------ */
 
 type MovementRow = InventoryMovement & { runningBalance: number };
 
-// OUT reduces on-hand (qty stored positive); IN/ADJUSTMENT/TRANSFER carry the
-// value that applies (ADJ/TRANSFER are already signed). Verbatim from desktop
-// StockCard running-balance rule.
 const signedQty = (m: InventoryMovement): number => (m.movement_type === "OUT" ? -m.qty : m.qty);
 
 const TYPE_PILL: Record<InventoryMovement["movement_type"], { cls: string; label: (m: InventoryMovement) => string }> = {
@@ -42,9 +28,6 @@ const TYPE_PILL: Record<InventoryMovement["movement_type"], { cls: string; label
   TRANSFER: { cls: "tr", label: () => "TRANSFER" },
 };
 
-/* One lot's card — warehouse + attributes + qty/cost, its SOURCE doc, received
-   date, reservation status and (when reserved) the reserving SO(s) + delivery
-   date. Owned shows the lot value; consignment shows a badge and no value. */
 function LotCard({ l, consignment, first }: { l: InventoryReservation; consignment: boolean; first: boolean }) {
   const attrs = formatVariantKey(l.variant_key, l.fabric_supplier_code);
   const value = (l.qty_remaining ?? 0) * (l.unit_cost_sen ?? 0);
@@ -111,7 +94,6 @@ function LotCard({ l, consignment, first }: { l: InventoryReservation; consignme
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 10.5, color: "var(--mut)" }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {l.source_doc_no || "—"}
-          {/* GRN-sourced lot also traces to its originating PO (display only). */}
           {l.source_po_no ? ` · from ${l.source_po_no}` : ""}
           {l.received_at ? ` · ${formatDate(l.received_at)}` : ""}
         </span>
@@ -149,31 +131,21 @@ export function MobileStockCard({
   onBack: () => void;
   onNewTransfer: () => void;
 }) {
-  // A warehouse filter scopes the whole card. Desktop keeps it in ?warehouseId;
-  // the mobile screen has no route params, so it lives in local state.
   const [warehouseId, setWarehouseId] = useState<string | undefined>(undefined);
 
   const warehousesQ = useWarehouses();
-  // ONE per-lot feed drives both the stat header and the merged lot list — the
-  // SAME endpoint + transform the desktop drawer uses.
   const reservationsQ = useInventoryReservations({ itemCode, warehouseId });
   const movementsQ = useInventoryMovements({ itemCode, warehouseId });
 
   const warehouses = warehousesQ.data ?? [];
-  // Movements carry only warehouse_id; map it to the SHORT code-name ("KL
-  // WAREHOUSE") the desktop Warehouse column shows — the ONE canonical label.
   const whName = (id: string) => {
     const w = warehouses.find((x) => x.id === id);
     return w ? w.code : "—";
   };
   const selectedWh = warehouseId ? warehouses.find((w) => w.id === warehouseId) ?? null : null;
 
-  // Owned vs consignment split + owned value/qty totals (consignment excluded
-  // from value). Null-safe shared transform.
   const bd = useMemo(() => buildStockBreakdown(reservationsQ.data), [reservationsQ.data]);
 
-  // API returns DESC; reverse to ASC to accumulate the running balance, then
-  // render DESC (newest first) with the balance AFTER each movement.
   const rows = useMemo<MovementRow[]>(() => {
     const desc = movementsQ.data ?? [];
     const asc = [...desc].reverse();
@@ -250,8 +222,6 @@ export function MobileStockCard({
           </div>
         )}
 
-        {/* Merged stock lots — oldest first (FIFO). Owned lots, then consignment
-            lots (badged, no value). Same feed + split as the desktop drawer. */}
         <div className="sc-sl"><span className="t">Stock lots · oldest first</span><span className="ln" /></div>
         {reservationsQ.isLoading ? (
           <div style={{ textAlign: "center", color: "var(--mut2)", fontSize: 12, padding: "20px 0" }}>Loading…</div>
@@ -298,18 +268,12 @@ export function MobileStockCard({
                   <span className={`sc-mp ${pill.cls}`}>{pill.label(m)}</span>
                   <div className="md">
                     <div className="dt tnum">{formatDate(m.created_at)}</div>
-                    {/* An ADJUSTMENT has no source_doc_no, so the raw reason_code
-                        (WRITEOFF / COUNT / DAMAGE / THEFT) was reaching the screen.
-                        Desktop already labels it (StockAdjustments.tsx) — same
-                        helper here so the two can't drift. */}
                     <div className="rf">
                       {m.source_doc_no ||
                         (m.reason_code ? adjustmentReasonLabel(m.reason_code) : "") ||
                         m.notes ||
                         "—"}
                     </div>
-                    {/* Which warehouse the movement hit + its unit cost — desktop
-                        shows both as columns; the money must be visible here too. */}
                     <div className="rf">
                       {whName(m.warehouse_id)}
                       {m.unit_cost_sen != null && m.unit_cost_sen > 0 ? ` · ${fmtSen(m.unit_cost_sen)}` : ""}

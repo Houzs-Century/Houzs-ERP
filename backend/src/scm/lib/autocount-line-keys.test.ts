@@ -21,7 +21,6 @@ const target = (over: Partial<LineKeyTarget> = {}): LineKeyTarget => ({
   ...over,
 });
 
-/** Records every key written, and can be told to fail one row. */
 function fakeSb(failIds: string[] = []) {
   const wrote: Array<{ id: string; key: number }> = [];
   const sb = {
@@ -52,8 +51,6 @@ describe('persistLineKeys reports why it did not store', () => {
     expect(wrote).toEqual([{ id: 'row-1', key: 4001 }, { id: 'row-2', key: 4002 }]);
   });
 
-  /* THE ONE THAT COST HC-GRN-2609-034 ITS IDENTITY. An older service, or one
-     whose own read-back failed, reports no lines at all. */
   test('AutoCount reported no lines: says so, writes nothing', async () => {
     const { sb, wrote } = fakeSb();
     const reason = await persistLineKeys(sb, row, target(), []);
@@ -80,8 +77,6 @@ describe('persistLineKeys reports why it did not store', () => {
     expect(wrote).toEqual([]);
   });
 
-  /* A repeated code with no Desc2 on both sides is a guess, and this planner
-     does not guess — a wrong DtlKey edits somebody else's line. */
   test('a repeated code with nothing to separate it: says so, writes nothing', async () => {
     const { sb, wrote } = fakeSb();
     const reason = await persistLineKeys(
@@ -95,9 +90,6 @@ describe('persistLineKeys reports why it did not store', () => {
     expect(wrote).toEqual([]);
   });
 
-  /* A PARTIAL IS AS COSTLY AS A CLEAN MISS: composeEdit refuses a document with
-     ANY keyless line, so one failed write loses the whole document its next
-     edit. It must not report success. */
   test('one row fails to write: reports the partial rather than passing', async () => {
     const { sb, wrote } = fakeSb(['row-2']);
     const reason = await persistLineKeys(sb, row, target(), [

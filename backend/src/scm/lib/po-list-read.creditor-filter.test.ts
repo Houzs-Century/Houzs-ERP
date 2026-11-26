@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readPoListFilters, poListSelect, filterPoList, type PoListFilters } from './po-list-read';
 
-// A recording PostgREST-builder fake: every filter method records (col, vals)
-// and returns itself, so a test can read back exactly which server-side filters
-// filterPoList applied.
 function recorder() {
   const calls: Array<{ m: string; col: string; vals: unknown }> = [];
   const self: Record<string, unknown> = {};
@@ -16,7 +13,6 @@ function recorder() {
   return { self, calls };
 }
 
-// companyId resolved to 1 → scopeToCompany adds eq(company_id, 1).
 const ctx = { get: (k: string) => (k === 'companyId' ? 1 : undefined) } as { get(key: string): unknown };
 const VALID = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED', 'DRAFT', 'RECEIVED', 'CANCELLED']);
 

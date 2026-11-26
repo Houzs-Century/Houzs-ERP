@@ -33,13 +33,10 @@ export function QuickActionsFAB() {
   const location = useLocation();
   const [open, setOpen] = useState(false);
 
-  // Close the menu on route change so tapping an action doesn't leave
-  // the popover hanging on the next page.
   useEffect(() => {
     setOpen(false);
   }, [location.pathname]);
 
-  // Also close on Escape when open.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -49,12 +46,9 @@ export function QuickActionsFAB() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  // Hide on the driver shell (separate layout) and when not authed.
   if (!user) return null;
   if (location.pathname.startsWith("/driver")) return null;
 
-  // Shared with the mobile MobileSalesOrders FAB (auth/salesAccess) so the
-  // "New Service Case includes Sales staff" rule lives in one place.
   const { canNewSo, canNewCase } = quickActionAccess(user, can, pageAccess);
   // New Project — restricted to BD / owner / weisiang (owner 2026-07-24).
   const canNewProject = canCreateEvent(user);
@@ -101,8 +95,6 @@ export function QuickActionsFAB() {
 
   const onFabClick = () => {
     if (actions.length === 1) {
-      // Preserve the old direct-open behaviour when there's only one
-      // eligible action — no menu, one tap = one navigation.
       navigate(actions[0].to);
       return;
     }
@@ -111,10 +103,6 @@ export function QuickActionsFAB() {
 
   const node = (
     <>
-      {/* Click-outside scrim — same z-index tier as the FAB so a tap
-          anywhere outside the popover dismisses it. Transparent (not a
-          dark overlay) because this isn't a modal — the underlying page
-          should still be legible. */}
       {open && (
         <div
           className="fixed inset-0 z-30"
@@ -123,17 +111,10 @@ export function QuickActionsFAB() {
         />
       )}
 
-      {/* Action buttons stack UPWARD from just above the "+" FAB. Each
-          animates in with a small stagger (fade + slide) so the group
-          reads as one motion. Same right offset as the FAB so the labels
-          align to the right edge. */}
       {open && (
         <div
           className={cn(
             "fixed z-40 flex flex-col items-end gap-2",
-            // Sit directly above the pill — its bottom + its height (48) + 8.
-            //   Mobile:  bottom-24 (96) + 48 + 8 = 152 px
-            //   Desktop: bottom-5 (20) + 48 + 8 = 76 px
             "right-4 bottom-[calc(9.5rem+env(safe-area-inset-bottom))]",
             "lg:right-5 lg:bottom-[76px]",
           )}

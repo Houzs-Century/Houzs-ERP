@@ -1,14 +1,3 @@
-// Unit tests for applyPoAmendment — the Approve engine for a Purchase Order
-// amendment — driven through the same minimal fake PostgREST client the
-// reviseBoundPo suite uses. Route-level coverage is not possible in this repo's
-// harness (scm rides Supabase Postgres; the harness rebuilds only the D1 side),
-// so these pin the contract the money + stock paths depend on:
-//   • approve SNAPSHOTS the current PO into po_revisions and BUMPS the revision;
-//   • a QTY / PRICE diff rewrites the line and rolls the PO subtotal + total;
-//   • an ADD inserts a line and lifts the total; a REMOVE deletes it and drops it;
-//   • a REMOVE of an already-received line is PRESERVED and warned, not deleted;
-//   • a surviving line revised below its received qty ABORTS (received floor);
-//   • one AMENDMENT_PO_APPROVED row lands on entity_audit_log.
 import { describe, it, expect } from 'vitest';
 import { applyPoAmendment, InactiveSkuError, ReceivedFloorError } from './po-revision';
 import { parsePgrestInList } from './pgrest-in-list';
@@ -31,8 +20,6 @@ class Query {
   in(col: string, val: any[]) { this.filters.push({ kind: 'in', col, val }); return this; }
   order() { return this; }
   limit() { return this; }
-  /* The shared binding reader (lib/supplier-bindings.ts) filters with an escaped
-     in-list and pages with range; the list here is small, so range returns all. */
   filter(col: string, op: string, val: string) {
     if (op !== 'in') throw new Error(`fake: filter(${op}) is not implemented`);
     return this.in(col, parsePgrestInList(val));
@@ -95,7 +82,6 @@ const AMD = 'poamd-1';
 const POID = 'PO-uuid-1';
 const PONO = 'PO-2607-001';
 
-// Base fixture: PO with two lines, each qty 1. Amendment lines are set per test.
 function baseStore(): Record<string, Row[]> {
   return {
     po_amendments: [{ id: AMD, po_id: POID, po_number: PONO, header_changes: null, old_header_snapshot: null }],
@@ -123,13 +109,10 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
 
     const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
 
-    // Snapshot of the PRE-amendment revision (1) is frozen into po_revisions.
     expect(store.po_revisions).toHaveLength(1);
     expect(store.po_revisions[0]).toMatchObject({ po_id: POID, revision: 1, amendment_id: AMD });
-    // Revision bumped to 2.
     expect(store.purchase_orders[0].revision).toBe(2);
     expect(res.revision).toBe(2);
-    // Exactly one AMENDMENT_PO_APPROVED audit row for this PO.
     const audits = store.entity_audit_log.filter((a) => a.action === 'AMENDMENT_PO_APPROVED');
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({ entity_type: 'PURCHASE_ORDER', entity_id: POID, entity_doc_no: PONO });
@@ -143,7 +126,7 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
     const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
     const line = store.purchase_order_items.find((i) => i.id === 'POI-1')!;
     expect(line.qty).toBe(3);
-    expect(line.line_total_sen).toBe(3000);           // 3 * 1000
+    expect(line.line_total_sen).toBe(3000);
     expect(store.purchase_orders[0].subtotal_sen).toBe(3000 + 2000);
     expect(store.purchase_orders[0].total_sen).toBe(5000);
     expect(res.linesUpdated).toBe(1);
@@ -219,12 +202,11 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
       { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'REMOVE', new_qty: null, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
     ];
     const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
-    expect(store.purchase_order_items.find((i) => i.id === 'POI-2')).toBeDefined();  // preserved
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-2')).toBeDefined();
     expect(res.linesRemoved).toBe(0);
     expect(res.warnings).toHaveLength(1);
     expect(res.warnings[0]).toContain('Bed Two');
     expect(res.warnings[0].toLowerCase()).toContain('already received');
-    // Plain language: no codes / keys / jargon.
     expect(res.warnings[0]).not.toMatch(/_sen|uuid|received_qty/i);
   });
 
@@ -235,10 +217,9 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
       { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 1, new_unit_price_sen: null, new_item_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 3 } },
     ];
     await expect(applyPoAmendment(fakeSb(store), AMD, 'user-1')).rejects.toBeInstanceOf(ReceivedFloorError);
-    // Nothing changed — no snapshot, no revision bump.
     expect(store.po_revisions).toHaveLength(0);
     expect(store.purchase_orders[0].revision).toBe(1);
-    expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.qty).toBe(1);  // unchanged fixture qty
+    expect(store.purchase_order_items.find((i) => i.id === 'POI-1')!.qty).toBe(1);
   });
 
   it('answers the DB floor (P0411, a GRN posted after the floor read) with ReceivedFloorError, not a 500', async () => {
@@ -249,7 +230,6 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
     ];
     const sb = fakeSb(store);
     const from = sb.from;
-    // received_qty still reads 0, so the app floor passes; the trigger refuses the write.
     sb.from = (table: string) => {
       const q = from(table);
       if (table === 'purchase_order_items') {
@@ -296,9 +276,6 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
    supplier's code for the new item, from the same binding the convert path
    reads, or the purchase order goes on telling the factory to build the old
    piece (HC-PO-2609-064: `5536-L(LHF)` left under `9058-1A(LHF)`). */
-/* Sister review P5: approving an amendment on a PO whose lines carry no dates
-   wiped the PO's expected arrival date, so it dropped out of the expected
-   lists and MRP timing. */
 describe('applyPoAmendment — the PO expected date survives undated lines', () => {
   it('keeps expected_at when no line carries a delivery date', async () => {
     const store = baseStore();
@@ -375,10 +352,6 @@ describe('applyPoAmendment — the supplier code follows a changed item code', (
   });
 });
 
-/* The SKU decides an amended line's category (2026-09-15). An added line took
-   `new_variants.itemGroup` or `others`; a SPEC-moved code kept the old group. On a
-   company-1 sofa / Sofa Accessory line that group decides whether MRP counts the
-   purchase order at all. */
 describe('applyPoAmendment — the category comes from the SKU', () => {
   const products = (): Row[] => [
     { code: 'SQUARE PILLOW', category: 'FABRIC_ACCESSORY', company_id: 1 },

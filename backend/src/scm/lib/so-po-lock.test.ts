@@ -1,8 +1,3 @@
-// Unit tests for soPoLocked — "a live Purchase Order already claims this SO".
-// Route-level coverage isn't possible in this harness (scm rides Supabase
-// Postgres, the harness rebuilds only the D1 side), so these pin the rules
-// through a minimal fake PostgREST client — same shape as
-// so-converted-po.test.ts, which walks the same SO→PO chain.
 import { describe, expect, test } from 'vitest';
 import { soHasLivePo, soHasUnreceivedPo, soPoLocked, soPoLockedMany } from './so-po-lock';
 
@@ -38,9 +33,9 @@ function fakeSb(tables: Record<string, Row[]>, failOn?: string) {
   return { from: (table: string) => new Q(table, tables[table] ?? []) };
 }
 
-const MIRRORED = '2990-SO-2608-017';   // 2990 — in scope
-const HOUZS = 'HC-SO-011196';          // Houzs, AutoCount-era number
-const HOUZS_HC = 'HC-SO-2610-075';     // Houzs — the order that changed the scope
+const MIRRORED = '2990-SO-2608-017';
+const HOUZS = 'HC-SO-011196';
+const HOUZS_HC = 'HC-SO-2610-075';
 
 const soItem = (id: string, docNo: string): Row => ({ id, doc_no: docNo });
 const poItem = (soItemId: string, poId: string | null): Row => ({ so_item_id: soItemId, purchase_order_id: poId });
@@ -48,8 +43,6 @@ const po = (id: string, status: string): Row => ({ id, status });
 
 describe('soPoLocked', () => {
   test('locks a 2990 SO whose line is claimed by a submitted PO', async () => {
-    // The 2990-SO-2608-017 shape exactly: MRP raised 2990-PO-2608-011 against
-    // both sofa lines, then a salesperson edited the SO with no amendment.
     const sb = fakeSb({
       mfg_sales_order_items: [soItem('si-1', MIRRORED), soItem('si-2', MIRRORED)],
       purchase_order_items: [poItem('si-1', 'po-1'), poItem('si-2', 'po-1')],
@@ -68,9 +61,6 @@ describe('soPoLocked', () => {
   });
 
   test('a CANCELLED PO releases the SO', async () => {
-    // Cancelling the PO is the sanctioned way to unlock a PO-locked SO (the
-    // header PATCH deliberately refuses the remove-Processing-Date hatch under
-    // this lock), so this case is load-bearing, not incidental.
     const sb = fakeSb({
       mfg_sales_order_items: [soItem('si-1', MIRRORED)],
       purchase_order_items: [poItem('si-1', 'po-1')],
@@ -89,9 +79,6 @@ describe('soPoLocked', () => {
   });
 
   test('a DRAFT PO locks — diverging from recomputeSoPicked on purpose', async () => {
-    // recomputeSoPicked excludes DRAFT so a draft can't drop a line off the
-    // From-SO picker. Different question: a purchaser mid-draft is exactly when
-    // a silent line edit does the most damage.
     const sb = fakeSb({
       mfg_sales_order_items: [soItem('si-1', MIRRORED)],
       purchase_order_items: [poItem('si-1', 'po-1')],
@@ -101,9 +88,6 @@ describe('soPoLocked', () => {
   });
 
   describe('SCOPE: every company (owner 2026-11-09, HC-SO-2610-075)', () => {
-    // HC-PO-2610-142 was raised from HC-SO-2610-075 on 2026-10-07; a direct
-    // edit then added "SPECIAL: HB Fully Cover + Divan Top Fully Cover" to the
-    // JAGER-(Q) line and the PO was received without the covers.
     test('locks an HC- SO whose line is claimed by a live PO', async () => {
       const sb = fakeSb({
         mfg_sales_order_items: [soItem('si-1', HOUZS_HC)],
@@ -175,10 +159,6 @@ describe('soPoLocked', () => {
   });
 
   describe('fails CLOSED on a read error', () => {
-    // The opposite of so-converted-po.ts's best-effort empty map: that one feeds
-    // a display column, this one is a guard. An unreadable PO link cannot prove
-    // the SO is free, and a wrong "unlocked" ships an unapproved spec change to
-    // a supplier.
     const tables = {
       mfg_sales_order_items: [soItem('si-1', MIRRORED)],
       purchase_order_items: [poItem('si-1', 'po-1')],
@@ -198,7 +178,6 @@ describe('soPoLocked', () => {
 
 describe('soHasLivePo (BUG-101: any company)', () => {
   test('a Houzs SO with a live PO answers true, and so does soPoLocked now', async () => {
-    // HC-SO-2609-395 / PO-2610-025: the Processing Date moved after the PO.
     const sb = fakeSb({
       mfg_sales_order_items: [soItem('si-1', HOUZS)],
       purchase_order_items: [poItem('si-1', 'po-1')],

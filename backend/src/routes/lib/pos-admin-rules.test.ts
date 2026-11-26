@@ -1,5 +1,3 @@
-// The POS Admin rules: PIN shape, code minting, event status word, and the
-// Excel import row.
 import { describe, expect, test } from "vitest";
 import { countByCategory, hasSellingPrice, isPosCashierPin, nextCode, parseImportRow, pickedCategories, posEventStatus } from "./pos-admin-rules";
 

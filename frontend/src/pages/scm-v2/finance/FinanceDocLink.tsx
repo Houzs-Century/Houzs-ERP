@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// FinanceDocLink — a document number on a Finance page, in the owner's redesign
-// (batch 4 §1; the design's Finance UI conventions): IBM Plex Sans 13/600 with a
-// dotted underline, never monospace. A plain click opens the document in its
-// own tab of the in-app strip (the rule of lib/openDocInTab), so the list stays
-// one click away and the document's Back returns to it (lib/useWorkspaceOpener);
-// Ctrl/Cmd/Shift-click opens a browser window, as any link does. One component
-// for every Money out page — MerchantRecon's DocLink is a per-page copy.
-// ----------------------------------------------------------------------------
 
 import type { MouseEvent } from 'react';
 import { Link } from 'react-router-dom';
@@ -31,7 +22,6 @@ export const financeDocHref = (kind: FinanceDocKind, id: string): string => {
     ticks), so the document's Back lands on the page as it was. */
 export function FinanceDocLink({ to, children, className, onOpen }: { to: string; children: string; className?: string; onOpen?: () => void }) {
   const onClick = (e: MouseEvent<HTMLAnchorElement>) => {
-    /* A row that opens on a click must not open as well. */
     e.stopPropagation();
     if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
       onOpen?.();

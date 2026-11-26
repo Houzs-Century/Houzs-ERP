@@ -1,9 +1,3 @@
-// The posting gate itself. Every auto-posting document type runs THROUGH this
-// code, so these tests are the floor under all of them: shape, balance, chart,
-// idempotency, numbering, reversal. Each case asserts a DECISION the
-// requirements brief names (§2.1 one gate, §2.2 computed state, §2.9 parent
-// block, §2.12 concurrency, §2.14 fail loud), and each has been inverted in
-// the source once to confirm it fails.
 
 import { describe, it, expect } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
@@ -48,7 +42,6 @@ describe('postJournal — the one gate', () => {
     const out = await postJournal(sb, { ...base, lines: drCr(388800, 388800) });
     expect(out).toMatchObject({ ok: true, status: 'posted', totalSen: 388800 });
     const je = sb.tables.journal_entries[0];
-    // je_no derives from the DOCUMENT date (2026-08 → 2608), not today (§2.5).
     expect(je.je_no).toBe('JE-2608-0001');
     expect(je.posted).toBe(true);
     expect(je.total_debit_sen).toBe(388800);
@@ -124,7 +117,7 @@ describe('postJournal — the one gate', () => {
     const out = await postJournal(sb, {
       ...base,
       lines: [
-        { accountCode: '900-0000', debitSen: 100, creditSen: 0 }, // has child 905-0000
+        { accountCode: '900-0000', debitSen: 100, creditSen: 0 },
         { accountCode: '500-0000', debitSen: 0, creditSen: 100 },
       ],
     });
@@ -153,7 +146,7 @@ describe('postJournal — the one gate', () => {
     });
     const out = await postJournal(sb, { ...base, lines: drCr(100, 100) });
     expect(out).toMatchObject({ ok: true, status: 'already_posted', jeNo: 'JE-2607-0002' });
-    expect(sb.tables.journal_entries).toHaveLength(2); // nothing new written
+    expect(sb.tables.journal_entries).toHaveLength(2);
   });
 
   it('an idempotency read that does not answer fails CLOSED — a blip must never book twice (§2.14)', async () => {
@@ -168,7 +161,6 @@ describe('postJournal — the one gate', () => {
     const out = await postJournal(sb, { ...base, sourceType: 'MANUAL', sourceDocNo: null, lines: drCr(100, 100) });
     expect(out).toMatchObject({ ok: false, status: 'control_account_manual' });
     expect(sb.tables.journal_entries).toHaveLength(0);
-    // The SAME lines through a document rule are exactly how AR moves — allowed.
     const viaRule = await postJournal(sb, { ...base, lines: drCr(100, 100) });
     expect(viaRule).toMatchObject({ ok: true, status: 'posted' });
   });
@@ -178,10 +170,6 @@ describe('postJournal — the one gate', () => {
     { accountCode: '500-0000', debitSen: 0, creditSen: cr },
   ];
 
-  /* The books' opening (mig 20261028T2100): an opening creditor or debtor is
-     an opening bill of its own, so the OPENING journal may no more name a
-     control account than a manual one may; and the entry carries the flag the
-     report views count it by, whatever its date. */
   it('an OPENING journal may NOT touch a control account, and carries the opening flag', async () => {
     const sb = world();
     const opening = { ...base, entryDate: '2026-08-31', sourceType: 'OPENING', sourceDocNo: 'HC-OPENING-2608', opening: true };
@@ -192,7 +180,6 @@ describe('postJournal — the one gate', () => {
     const out = await postJournal(sb, { ...opening, lines: manualLines(100, 100) });
     expect(out).toMatchObject({ ok: true, status: 'posted' });
     expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'OPENING', entry_date: '2026-08-31', opening: true });
-    /* Every other journal is written without the column — the default (false) stands. */
     await postJournal(sb, { ...base, lines: drCr(100, 100) });
     expect(sb.tables.journal_entries[1]!.opening).toBeUndefined();
   });
@@ -207,8 +194,6 @@ describe('postJournal — the one gate', () => {
 
   it('a failed lines insert deletes the orphan header (no headless entries)', async () => {
     const sb = world({ missing: { journal_entry_lines: ['account_code'] } });
-    // fakeSb only fails SELECTS on missing columns, so simulate via unique
-    // violation instead: a duplicate (journal_entry_id, line_no) pair.
     const sbU = fakeSb(
       { accounts: CHART_C1, journal_entries: [], journal_entry_lines: [], acc_account_roles: [] },
       {},
@@ -314,9 +299,6 @@ describe('reverseJournal — voiding through the same gate', () => {
     expect(out).toMatchObject({ ok: false, status: 'reversal_read_failed' });
   });
 
-  /* The database refusing an UPDATE on journal_entries — the fake checks unique
-     indexes on INSERT only, and the refusal that mattered (2026-10-20) was the
-     one-active index answering the contra's `posted = true` with 23505. */
   const refusingUpdate = (sb: ReturnType<typeof world>, refuses: (patch: Row) => boolean) => ({
     ...sb,
     from: (t: string) => {

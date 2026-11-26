@@ -107,10 +107,10 @@ describe('buildAmendmentQueueRows', () => {
       ],
     );
     expect(rows.map((r) => r.key)).toEqual([
-      'cancel:new-open',      // Requested, newest
-      'amendment:old-open',   // Requested, older
-      'amendment:approved',   // Approved
-      'cancel:withdrawn',     // closed
+      'cancel:new-open',
+      'amendment:old-open',
+      'amendment:approved',
+      'cancel:withdrawn',
     ]);
   });
 

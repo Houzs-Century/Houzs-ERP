@@ -80,8 +80,6 @@ export function LeavePage() {
     [mine, statusFilter, typeFilter],
   );
 
-  // Calendar entries, from the data the page already has: approved team leave
-  // (approvers) + pending team leave + my own (labelled "You"), deduped by id.
   const calEntries: CalEntry[] = useMemo(() => {
     const seen = new Set<number>();
     const out: CalEntry[] = [];

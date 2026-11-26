@@ -1,6 +1,3 @@
-// Fleet Health building blocks in the approved design (2026-11-07): white cards
-// with a quiet edge, the black number plate, tone-coloured stat tiles and the
-// grey segmented switch. Shared by the dashboard and the lorry record.
 import type { ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import type { Tone } from "../FleetHealth";
@@ -98,9 +95,6 @@ export function Segmented<T extends string>({ label, value, options, onChange }:
 
 export const TONE_DOT: Record<Tone, string> = { crit: "bg-err", warn: "bg-warning-text", ok: "bg-primary", info: "bg-[#2c6aa0]", neutral: "bg-ink-muted" };
 
-/* The lorry record's controls and inner cards, from the same design: small
-   34px buttons, 42px inputs with a plain label above, a warm inset card for one
-   record inside a section, and a fact (label over a readable value). */
 export const BTN_PRI = "inline-flex h-[34px] items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-3 text-[13px] font-semibold text-white hover:bg-primary/90 disabled:opacity-50";
 export const BTN_SEC = "inline-flex h-[34px] items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#d9d3c6] bg-surface px-3 text-[13px] font-semibold text-ink hover:border-primary/50 disabled:opacity-50";
 export const BTN_GHOST = "inline-flex h-[34px] items-center gap-1 whitespace-nowrap rounded-[7px] px-2.5 text-[13px] font-semibold text-primary hover:bg-primary-soft disabled:opacity-50";

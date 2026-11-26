@@ -1,10 +1,3 @@
-/* Employees & Attendance > Trip Pay: the driver's commission and the crews'
- * allowances. A trip month (23rd to 22nd) fills itself every night from
- * Delivery Planning and the Projects module's Setup / Dismantle ("Read Delivery
- * Planning" does it now), or from a pasted Trip Report; every row can be
- * corrected, and a corrected row is never overwritten by a later read. Each
- * person's commission and allowances are worked out from the rows and the
- * rates, and land on the payslip of the month of the same name. */
 import { useMemo, useState } from "react";
 import { ClipboardPaste, Pencil, Plus, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";

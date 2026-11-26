@@ -1,7 +1,3 @@
-/* The problem kinds a delivery crew can report at POD ("Delivered with issue").
-   backend/src/scm/shared/delivery-issue-kinds.ts and
-   frontend/src/vendor/scm/lib/delivery-issue-kinds.ts are byte-identical
-   (delivery-issue-kinds.canonical.test.ts); change both together. */
 
 export const DELIVERY_ISSUE_KINDS = [
   { value: "damaged", label: "Damaged" },

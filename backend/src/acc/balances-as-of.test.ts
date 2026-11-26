@@ -1,7 +1,3 @@
-/* The Trial balance as at a day (batch 6 read c1): the all-time balances less
-   the lines the books count dated after the day — a reversal pair taken back
-   by neither side, an asset or an expense still reading debit less credit,
-   the rest credit less debit, an account with nothing later left as it was. */
 import { describe, expect, test } from 'vitest';
 import { balancesAsOf, type AccountBalanceRow } from './balances-as-of';
 
@@ -23,7 +19,6 @@ describe('balancesAsOf', () => {
     ]);
     expect(out[0]).toMatchObject({ total_debit_sen: 800_000, total_credit_sen: 280_000, balance_sen: 520_000 });
     expect(out[1]).toMatchObject({ total_debit_sen: 0, total_credit_sen: 600_000, balance_sen: 600_000 });
-    /* Nothing later: the account is the very row it was. */
     expect(out[2]).toBe(allTime[2]);
   });
 

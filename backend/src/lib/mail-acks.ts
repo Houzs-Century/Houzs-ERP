@@ -172,8 +172,6 @@ export async function myOwedOnThread(
 
 export type AckEscalationRun = { scanned: number; chased: number; people: number; supervisors: number };
 
-// The half-hourly cron: once per message, past the window, tell the people
-// still owing and their supervisors.
 export async function runMailAckEscalation(env: Env, now = Date.now()): Promise<AckEscalationRun> {
   const cutoff = new Date(now - ACK_OVERDUE_HOURS * 3_600_000).toISOString();
   const due = await env.DB.prepare(

@@ -42,7 +42,6 @@
 // network drops internally on GETs; this predicate sits on top of that and is
 // the last line, not the first.)
 
-/** Numeric HTTP status off either error shape, or undefined for a network-layer failure. */
 function statusOf(error: unknown): number | undefined {
   const s = (error as { status?: unknown } | null | undefined)?.status;
   return typeof s === "number" ? s : undefined;

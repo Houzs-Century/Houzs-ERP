@@ -1,6 +1,3 @@
-/* GET /api/scm/logistic-overview/on-time — the reads behind the on-time KPI
-   (lib/on-time-delivery.ts holds the rules). Company scope: every read is scoped to
-   the active company (companyScope.ts), the DOs, the SOs, their crews and runs. */
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { chunkIn, paginateAll } from './paginate-all';
@@ -29,12 +26,9 @@ export async function buildOnTime(c: Context<{ Bindings: Env; Variables: Variabl
   const warehouseId = /^[0-9a-f-]{36}$/i.test(wq) ? wq : null;
   const fail = (what: string, e: { message: string }): SwrBuild => ({ ok: false, status: 500, body: { error: 'load_failed', reason: `${what}: ${e.message}` } });
 
-  /* 1. DOs closed as delivered around the period. delivered_at is a UTC stamp, so a day
-     either side is read and the Malaysia date decides. */
   const delivered = await paginateAll<Row>((f, t) => scopeToCompany(sb.from('delivery_orders')
     .select('so_doc_no').eq('status', 'DELIVERED').gte('delivered_at', addDays(from, -1)).lt('delivered_at', addDays(to, 2)), c).order('id').range(f, t));
   if (delivered.error) return fail('delivered orders', delivered.error);
-  /* 2. Orders promised in the period, up to yesterday: the candidates for late-open. */
   const last = to < today ? to : addDays(today, -1);
   const promised = last < from ? { data: [] as Row[], error: null } : await paginateAll<Row>((f, t) => scopeToCompany(sb.from('mfg_sales_orders')
     .select('doc_no').not('status', 'in', '(DRAFT,CANCELLED)')
@@ -59,8 +53,6 @@ export async function buildOnTime(c: Context<{ Bindings: Env; Variables: Variabl
   for (const [k, list] of dosOf) { const l = latestLiveDo(list); if (l) latest.set(k, l.row); }
   const latestIds = [...latest.values()].map((d) => String(d.id));
 
-  /* 3. Who carried it: the latest DO's crew (lorry, driver 1), else the live run it rides,
-     else the Vehicle and Driver typed on the DO. */
   const crew = await chunkIn<Row>(latestIds, (b, f, t) => scopeToCompany(sb.from('delivery_order_crew')
     .select('do_id, lorry_id, lorry_plate, driver_1_name').in('do_id', b), c).order('id').range(f, t));
   if (crew.error) return fail('delivery crews', crew.error);
@@ -79,8 +71,6 @@ export async function buildOnTime(c: Context<{ Bindings: Env; Variables: Variabl
   for (const s of stops.data) { const l = lorryOfTrip.get(String(s.trip_id)); if (l) tripLorry.set(String(s.do_id), l); }
   const crewOf = new Map(crew.data.map((r) => [String(r.do_id), r]));
 
-  /* ?warehouse=: an order counts where its latest DO ships from; with no DO yet, where
-     its first line ships from. */
   const lineWh = new Map<string, string>();
   if (warehouseId) {
     const noDo = docNos.filter((d) => !latest.has(d));

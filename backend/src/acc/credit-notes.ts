@@ -42,7 +42,6 @@ export const CREDIT_NOTE_LINE = 'id, line_no, description, account_code, amount_
     event page nets it off that row. */
 export type CreditNoteLineInput = {
   description: string | null; code: string; amountSen: number; projectId?: number | null;
-  /** The delivery-return line this credits and its units (backlog A1) — both or neither. */
   returnItemId?: string | null; qty?: number | null;
 };
 
@@ -80,7 +79,6 @@ export async function apInvoiceEventLines(sb: Db, companyId: number, apInvoiceId
   return data as Array<{ debit_account_code: string; project_id: number | string | null }>;
 }
 
-/** The AP invoices a stored note knocks off. A failed read is none. */
 async function knockedOffApInvoices(sb: Db, companyId: number, noteId: unknown): Promise<string[]> {
   const { data, error } = await sb.from('acc_credit_note_allocations').select('ap_invoice_id').eq('company_id', companyId).eq('note_id', noteId);
   if (error || !Array.isArray(data)) return [];
@@ -89,12 +87,10 @@ async function knockedOffApInvoices(sb: Db, companyId: number, noteId: unknown):
 
 export type InsertCreditNoteInput = {
   companyId: number;
-  /** The document prefix the number is minted under (companyDocPrefix / docPrefixForCode). */
   docPrefix: string;
   kind: NoteKind;
   party: NoteParty;
   supplierId?: string | null;
-  /** The Other Debtors registry row an OCN is to. */
   debtorId?: string | null;
   soDocNo?: string | null;
   salesInvoiceId?: string | null;
@@ -108,15 +104,11 @@ export type InsertCreditNoteInput = {
   /** The converted payment row whose move this note took off a deposit
       invoice (docs/bugs/0927) — the other partial taker beside a refund. */
   convertedPaymentId?: string | null;
-  /** The delivery return a customer note answers (backlog A1); its lines carry the return lines. */
   deliveryReturnId?: string | null;
   noteDate: string;
   reason?: string | null;
   notes?: string | null;
-  /** Every line already carries its account — the caller resolved the kind's default. */
   lines: CreditNoteLineInput[];
-  /** The AP invoices a supplier note's knock-off ticks — their events fill
-      the lines that name none, as the named invoice's do. */
   knockOffApInvoiceIds?: string[];
   createdBy: string | null;
 };
@@ -126,8 +118,6 @@ export type InsertCreditNoteInput = {
 export async function insertCreditNote(sb: Db, p: InsertCreditNoteInput): Promise<{ ok: true; note: Row } | { ok: false; reason: string }> {
   if (p.lines.length === 0) return { ok: false, reason: 'a note takes at least one line' };
   const total = p.lines.reduce((s, l) => s + l.amountSen, 0);
-  /* Every path that raises a supplier note against an AP invoice — the screen,
-     the scan — takes the invoice's events here. */
   const sources = [p.apInvoiceId, ...(p.knockOffApInvoiceIds ?? [])].filter((v): v is string => !!v);
   const lines = p.kind === 'SCN' && sources.length > 0
     ? eventsFromApInvoice(p.lines, await apInvoiceEventLines(sb, p.companyId, sources))
@@ -226,10 +216,6 @@ export async function cancelCreditNote(
 ): Promise<{ ok: true; status: 'cancelled' | 'already_cancelled'; contraJeNo: string | null } | { ok: false; status: string; reason: string }> {
   const note = p.note;
   if (note.status === 'CANCELLED') return { ok: true, status: 'already_cancelled', contraJeNo: null };
-  /* A supplier note's credit comes back off the invoices it was applied to
-     first (2026-10-01, Supplier CN part 2) — they owe it again; an other
-     debtor's comes back off the bills it was knocked off, a customer's off the
-     sales invoices (2026-11-03) — each owes it again. */
   if (note.kind === 'SCN' || note.kind === 'OCN' || note.kind === 'CN') {
     const back = await removeAllAllocations(sb, { companyId: p.companyId, note });
     if (!back.ok) return { ok: false, status: back.refusal.error, reason: back.refusal.message };

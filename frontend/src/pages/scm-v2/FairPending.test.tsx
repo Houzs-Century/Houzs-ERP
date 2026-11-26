@@ -1,11 +1,3 @@
-/* The screen that settles a fair link a person has to decide.
- *
- * What these cases pin is mostly what the screen REFUSES to do: it never offers
- * a fair at a place the order does not record, it never offers one that was not
- * running on the order's own date, and it keeps the three reasons apart instead
- * of showing one undifferentiated pile — "waiting for the fair" needs nobody,
- * "pick one" needs a person, and they must not look the same.
- */
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -55,7 +47,6 @@ const who = vi.hoisted(() => ({ perms: new Set<string>(['scm.finance.accounting'
 vi.mock('../../auth/AuthContext', () => ({
   useAuth: () => ({ user: { id: 1, role_name: who.role, position_name: null, email: 'x@houzs.test' }, can: (p: string) => who.perms.has('*') || who.perms.has(p) }),
 }));
-/* The staff roster the SO list names salespeople from; s5 is on no roster. */
 const STAFF = vi.hoisted((): Record<string, string> => ({ s1: 'Alice', s2: 'Bob', s3: 'Chong', s4: 'Devi' }));
 vi.mock('../../hooks/useStaffLookup', () => ({
   useStaffLookup: () => ({
@@ -83,9 +74,7 @@ import { allBoothChoices, boothChoices } from '../../vendor/scm/lib/fair-booth-c
 
 const show = () => render(<MemoryRouter><FairPending /></MemoryRouter>);
 
-/* The row's fair picker: a type-to-search list over every fair. */
 const fairInput = (doc: string) => screen.getByLabelText(`Fair for ${doc}`) as HTMLInputElement;
-/** Open a row's picker; the portalled list is the last <ul role="listbox">. */
 function openFairs(doc: string): HTMLElement {
   fireEvent.focus(fairInput(doc));
   const lists = document.querySelectorAll('ul[role="listbox"]');
@@ -93,8 +82,6 @@ function openFairs(doc: string): HTMLElement {
 }
 const optionTexts = (list: HTMLElement) => [...list.querySelectorAll('li[role="option"]')].map((li) => li.textContent);
 const headingTexts = (list: HTMLElement) => [...list.querySelectorAll('li[role="presentation"]')].map((li) => li.textContent);
-/** Pick an option by its label. Opening seeds the search with the current
- *  pick (house rule), so the search is emptied first to see every fair. */
 function pickFair(doc: string, label: string) {
   const list = openFairs(doc);
   fireEvent.change(fairInput(doc), { target: { value: '' } });
@@ -115,8 +102,6 @@ describe('FairPending', () => {
   });
 
   it('never files an order with no verdict as waiting for the fair', () => {
-    /* A NULL verdict used to fall into "Waiting for the fair", which says nobody
-       needs to act — wrong for an order nothing ever tried to link. */
     show();
     const waiting = screen.getByText('Waiting for the fair (1)').closest('section') as HTMLElement;
     expect(waiting.textContent).not.toContain('HC-SO-2609-009');
@@ -150,7 +135,6 @@ describe('FairPending', () => {
     const cols = [...group.querySelectorAll('col')].map((c) => (c as HTMLElement).style.width);
     expect(cols).toHaveLength(8);
     expect(cols.at(-1)).toBe('');
-    /* Fixed widths leave the Fair cell at least 300px at the table's narrowest. */
     const table = group.querySelector('table') as HTMLTableElement;
     const min = parseInt(table.style.minWidth, 10);
     const fixed = cols.filter((w) => w.endsWith('px')).reduce((s, w) => s + parseInt(w, 10), 0);
@@ -208,9 +192,6 @@ describe('FairPending', () => {
   });
 
   it('offers NOTHING for an order whose place has no fair that day', () => {
-    /* The Sunway order is the real 2026-09-13 case: a venue whose last fair
-       ended on the 6th. Offering the MID VALLEY row here would be inventing an
-       attribution, so the control is disabled and says why. */
     show();
     const input = fairInput('HC-SO-2609-065');
     expect(input.disabled).toBe(true);
@@ -238,7 +219,6 @@ describe('FairPending', () => {
         key: 'mid valley|bighome|2026-08-28|2026-08-31', venue: 'MID VALLEY', organizer: 'BIGHOME', startDate: '2026-08-28', endDate: '2026-08-31',
         projectIds: [300], booths: [{ projectId: 300, brand: 'AKEMI' }],
       },
-      /* Already offered at the order's own place: listed once. */
       OPTIONS.running[0],
     ];
     try {
@@ -254,7 +234,6 @@ describe('FairPending', () => {
       ]);
       fireEvent.change(fairInput('HC-SO-2609-064'), { target: { value: 'setia' } });
       expect(optionTexts(list)).toEqual(['AKEMI — SETIA SPICE CONVENTION CENTRE — HOMEDEC (10/02 - 10/04)']);
-      /* An order whose own place has nothing can still be linked. */
       const input = fairInput('HC-SO-2609-065');
       expect(input.disabled).toBe(false);
       expect(input.value).toBe('');
@@ -444,7 +423,6 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     status: 'CONFIRMED', local_total_sen: 338800, salesperson_id: 's1', customer_so_no: 'HC13316', check: 'REPORT_ELSEWHERE', target: toIoigecc, current: mallMgt,
     note: 'The evening report of AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11) lists it on 10/10; the order is under AKEMI — IOI MALL PUTRAJAYA — MALL MGT (09/16 - 09/20).',
   };
-  /* The unlinked HC-SO-2609-065 (waiting for the fair) is in a report: it moves up. */
   const UNLINKED: FairCheckRow = { ...ROWS[1]!, check: 'REPORT_ELSEWHERE', target: toIoigecc, current: null, note: 'The evening report … lists it; the order has no event.' };
   const TWO_REPORTS: FairCheckRow = {
     ...LINKED_ELSEWHERE, doc_no: 'HC-SO-2610-200', target: null, note: 'The evening reports of A and B both list it.',
@@ -458,9 +436,7 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     const group = screen.getByText('Report says another fair (3)').closest('section') as HTMLElement;
     expect(group.textContent).toContain('Report says [AKEMI] HOMELOVE · IOIGECC · 10/09 - 10/11 · reported 10/10');
     expect(group.textContent).toContain('Two reports list it: [AKEMI] HOMELOVE (IOIGECC · 10/09 - 10/11) / [AKEMI] MLE (MVEC SOUTHKEY · 09/18 - 09/20)');
-    /* Moved up out of "Waiting for the fair", not listed twice. */
     expect(screen.queryByText('Waiting for the fair (1)')).toBeNull();
-    /* Still unattributed until it moves: the count is unchanged. */
     expect(screen.getByText('5 orders not yet attributed to a fair.')).toBeTruthy();
   });
 
@@ -473,7 +449,6 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
       { docNo: 'HC-SO-2610-167', projectId: 307 },
       { docNo: 'HC-SO-2609-065', projectId: 307 },
     ]);
-    /* Two reports dispute it and nobody picked: nothing to move it to. */
     expect((within(group).getByLabelText('Tick HC-SO-2610-200') as HTMLInputElement).disabled).toBe(true);
     expect(fairInput('HC-SO-2610-200').value).toBe('');
     expect(headingTexts(openFairs('HC-SO-2610-200'))[0]).toBe('Report says');
@@ -491,7 +466,6 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     const group = screen.getByText('Report says another fair (2)').closest('section') as HTMLElement;
     const heads = within(group).getAllByRole('columnheader');
     expect(heads.map((h) => h.textContent)).toEqual(['SO No.', 'Ref No.', 'SO date', 'Salesperson', 'Now under', 'Brand', 'Amount', 'Fair']);
-    /* The tick sits first in the SO No. cell, ahead of the number. */
     expect(heads[0]!.querySelector('input[type="checkbox"]')).toBeTruthy();
     const body = group.querySelector('tbody') as HTMLTableSectionElement;
     expect(body.rows).toHaveLength(2);
@@ -501,7 +475,6 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     expect([...linked.cells].map((c) => c.textContent).slice(0, 7)).toEqual([
       'HC-SO-2610-167', 'HC13316', '2026/10/12', 'Alice', '[AKEMI] MALL MGTIOI MALL PUTRAJAYA · 09/16 - 09/20', 'AKEMI', 'RM 3,388.00',
     ]);
-    /* The Fair box holds the booth the report names, what the report says under it. */
     expect(fairInput('HC-SO-2610-167').value).toBe('AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)');
     expect(linked.cells[7]!.textContent).toContain('Report says [AKEMI] HOMELOVE · IOIGECC · 10/09 - 10/11 · reported 10/10');
     expect(linked.cells).toHaveLength(8);
@@ -529,18 +502,15 @@ describe('FairPending — report says another fair (owner 2026-10-20)', () => {
     expect(headingTexts(list)[0]).toBe('Report says');
     expect(optionTexts(list)[0]).toBe('AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)');
     fireEvent.blur(fairInput('HC-SO-2610-167'));
-    /* The report is wrong: another fair, linked from the row. */
     pickFair('HC-SO-2610-167', 'AKEMI — SETIA SPICE CONVENTION CENTRE — HOMEDEC (10/02 - 10/04)');
     const row = screen.getByText('HC-SO-2610-167').closest('tr') as HTMLTableRowElement;
     fireEvent.click(within(row).getByRole('button', { name: 'Link' }));
     expect(assign).toHaveBeenCalledWith({ docNo: 'HC-SO-2610-167', projectId: 2235 });
-    /* Transfer moves each order to the fair in its own box. */
     fireEvent.click(within(group).getByRole('button', { name: 'Transfer all (2)' }));
     expect(transferMutate.mock.calls[0]![0]).toEqual([
       { docNo: 'HC-SO-2610-167', projectId: 2235 },
       { docNo: 'HC-SO-2609-065', projectId: 307 },
     ]);
-    /* Its own booth in the box: nothing to link — Put aside leaves it there. */
     pickFair('HC-SO-2610-167', 'AKEMI — IOI MALL PUTRAJAYA — MALL MGT (09/16 - 09/20)');
     const link = within(row).getByRole('button', { name: 'Link' }) as HTMLButtonElement;
     expect(link.disabled).toBe(true);

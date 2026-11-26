@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// mrp-lead-times — per-category MRP lead time (Commander 2026-05-29), now also
-// per-WAREHOUSE (Commander 2026-06-22, migration 0184 / SCM mig 0036).
-//
-// Backs the "Lead Times" dialog on the MRP page + feeds the MRP server's
-// order-by-date calc and the PO-from-SO delivery-date calc. One integer per
-// product category (days to order BEFORE the SO delivery date), plus Others,
-// scoped by warehouse. `warehouse_id = NULL` = the GLOBAL DEFAULT; a warehouse
-// row overrides the global for that (warehouse, category). The lookup cascade
-// lives in lib/lead-time.ts. See migrations 0099 + 0184 (SCM mig 0036).
-//
-// Endpoints:
-//   GET /     — { categories, leadTimes: { "null": {sofa,…}, "<wh-uuid>": {…} } }
-//               ("null" = the global-defaults bucket; one bucket per warehouse)
-//   PUT /     — body { warehouseId: string|null, category, leadDays } → upsert
-// ----------------------------------------------------------------------------
 
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
@@ -28,7 +12,6 @@ export const mrpLeadTimes = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrpLeadTimes.use('*', supabaseAuth);
 
 const putSchema = z.object({
-  // null = the GLOBAL DEFAULT bucket; a uuid = that warehouse's override.
   warehouseId: z.string().uuid().nullable(),
   category: z.string().regex(LEAD_CATEGORY_RE),
   leadDays: z.number().int().min(0),
@@ -36,18 +19,11 @@ const putSchema = z.object({
 
 type DbRow = { warehouse_id: string | null; category: string; lead_days: number };
 
-// The global-defaults bucket lives under the string key "null"; each warehouse
-// under its uuid.
 const GLOBAL_KEY = 'null';
 
 const categoryRegistry = (c: Context<{ Bindings: Env; Variables: Variables }>) =>
   c.get('supabase').from('acc_item_groups').select('code, name, is_active');
 
-// GET / — { categories, leadTimes }. categories: every product category a lead
-// time can be set for, new ones included (2990-0063). leadTimes: per-warehouse
-// map { [warehouseKey]: { [category]: days } } holding only what is SET; a
-// missing category falls back (own -> sofa for a Sofa Accessory -> others -> 0,
-// see lib/lead-time.ts). The global-defaults bucket is under "null".
 mrpLeadTimes.get('/', async (c) => {
   const sb = c.get('supabase');
   const [rows, categories] = await Promise.all([
@@ -64,15 +40,7 @@ mrpLeadTimes.get('/', async (c) => {
   return c.json({ categories, leadTimes });
 });
 
-// PUT / — upsert one (warehouse, category)'s lead days. warehouseId null = the
 // global default. Uniqueness is (warehouse_id, category) (migration 0184).
-//
-// Config-write gated (canWriteScmConfig — flat `scm.config.write` OR the position
-// policy canWriteConfig flag, see houzs-perms.ts), mirroring the FE "Lead Times"
-// button. The /mrp-lead-times/* area guard is scm.procurement.mrp, which falls
-// through for a non-L2-configured caller (a flat scm.access holder), so the coarse
-// umbrella alone would let any SCM user rewrite lead times without this gate. GET
-// stays open — the MRP page reads lead times for its order-by-date calc.
 mrpLeadTimes.put('/', async (c) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403);

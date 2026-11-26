@@ -1,26 +1,9 @@
-// ----------------------------------------------------------------------------
-// size-info — shared SIZE_INFO map + display helpers.
-//
-// Source of truth for what each bedframe / mattress size letter
-// (K · Q · S · SS · SK · SP) maps to as a Malaysian-market label and
-// physical width × length in centimetres. Used by the auto-SKU-generator
-// preview, the Model Detail page's Allowed Options picker, the New Model
-// dialog's inline picker, and the Maintenance pool list display.
-//
-// MUST stay aligned with the same map duplicated server-side in
-// apps/api/src/routes/product-models.ts §SIZE_INFO — that one runs in
-// Cloudflare Workers and can't import from this package directly.
-// Forward-port goal: lift to packages/shared/ once a non-trivial second
-// caller in workers appears.
-// ----------------------------------------------------------------------------
 
 export type SizeInfo = {
-  /** Imperial label e.g. "6FT" — for SK / SP the label IS the dimensions
-      ("200X200CM"), so `dim` is empty. */
   label: string;
   dim:   string;
-  w:     number;  // width in cm
-  l:     number;  // length in cm
+  w:     number;
+  l:     number;
 };
 
 export const SIZE_INFO: Record<string, SizeInfo> = {
@@ -29,8 +12,6 @@ export const SIZE_INFO: Record<string, SizeInfo> = {
   S:  { label: '3FT',       dim: '90X190CM',  w: 90,  l: 190 },
   SS: { label: '3.5FT',     dim: '107X190CM', w: 107, l: 190 },
   SK: { label: '200X200CM', dim: '',          w: 200, l: 200 },
-  // SP = made-to-order custom size: no fixed dims, so name renders "(CUSTOM)"
-  // not a fake 220X220; real dims + quoted price captured per-order on the line.
   SP: { label: 'CUSTOM',    dim: '',          w: 0,   l: 0   },
 };
 
@@ -69,9 +50,6 @@ export function resolveSizeInfo(
   const label = override?.label?.trim() || base?.label || code;
   const dim   = override?.dimensions?.trim() || base?.dim || '';
 
-  // Parse width × length from the (possibly overridden) dimensions string
-  // so {width} / {length} placeholders in the mattress name template keep
-  // working when commander changes "183X190CM" to "180X200CM".
   let w = base?.w ?? 0;
   let l = base?.l ?? 0;
   if (override?.dimensions) {

@@ -1,8 +1,3 @@
-/* Supplier bills booked more than once, grouped for Finance to review (the
-   rows that predate the refusal in duplicate-supplier-bill.ts). The grouping
-   key is the refusal's own: company, supplier, the table the bill lives in,
-   the AP doc kind, and billRefKey of the supplier's bill number. A cancelled
-   copy is not live and never forms or joins a group. */
 
 import { billRefKey } from './duplicate-supplier-bill';
 

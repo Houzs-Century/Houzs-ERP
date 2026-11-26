@@ -31,9 +31,7 @@ import { parseSalesReport, summaryTotalOf } from "../vendor/shared/sales-report-
 type ChatMessage = { id: number; action: string; note: string | null };
 
 export type ChatSalesReport = {
-  /** The row under a chat message: what it counts for, and its actions. */
   footerFor: (a: ChatMessage) => ReactNode;
-  /** Run after the caller's own message was posted. */
   afterSend: (note: string) => Promise<void>;
 };
 
@@ -45,9 +43,7 @@ export function useChatSalesReport({
 }: {
   projectId: number;
   toast: ReturnType<typeof useToast>;
-  /** Total Sales changed — the page re-reads the project. */
   onTotalSet: () => void;
-  /** A message was voided — the chat drops it. */
   onVoided: (activityId: number) => void;
 }): ChatSalesReport {
   const { user: me, can } = useAuth();
@@ -59,7 +55,6 @@ export function useChatSalesReport({
   const counted = useMemo(() => new Set(billsQ.data?.report_activity_ids ?? []), [billsQ.data]);
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  /** Write Total Sales (whole RM, or null to empty it). */
   async function writeTotal(sen: number | null, done: string) {
     await api.patch(`/api/projects/${projectId}/finance`, { total_sales: sen == null ? null : sen / 100 });
     toast.success(done);
@@ -90,7 +85,6 @@ export function useChatSalesReport({
       onVoided(a.id);
       invalidate();
       toast.success("Voided — it no longer counts for this event");
-      /* Total Sales came from this summary: put back the latest one left. */
       if (summary && canSetTotal && totalWas != null && Math.round(totalWas * 100) === summary.total_sen) {
         const fresh = normalizeProjectSalesBills(await api.get<unknown>(`/api/project-sales-bills/${projectId}`));
         const next = fresh.summary?.total_sen ?? null;

@@ -39,7 +39,7 @@ import { buildServiceCaseReceived, isConnectConfigured, postConnectContact } fro
  *  hand-entered DO that wins outright. */
 export interface AssrAckCase {
   assrNo: string;
-  soNo: string | null;        // the case's doc_no (the SO/order ref), ref_1 in the template
+  soNo: string | null;
   customerName: string | null;
   phone: string | null;
   refNo: string | null;

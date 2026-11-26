@@ -113,11 +113,9 @@ describe('where an amount goes', () => {
     expect(lineHome(staff, "FINANCE - SALARY - OCT2026", pay)).toEqual({ dept: 'ga', team: 'FINANCE' });
     expect(lineHome(staff, "OPERATION HELPER SALARY - OCT'26", pay)).toEqual({ dept: 'logistics' });
     expect(lineHome(staff, "OPERATION STOREKEEPER PG SALARY - NOV'26", pay)).toEqual({ dept: 'operation', row: 'manpower_storekeeper', region: 'PG', income: null });
-    /* No team named: the account's own department, else the selling department (2990's showroom staff). */
     expect(lineHome(staff, "GROSS SALARY - SEP'26", pay)).toEqual({ dept: 'sales' });
     expect(lineHome(acc('900-S011', 'S)- PART TIME WORKER / WAGES', { department_row: 'exhibition' }), 'PART TIME WORKERS (2 JOB)', pay)).toEqual({ dept: 'exhibition' });
     expect(lineHome(directorEpf, "EPF - SEP'26", pay)).toEqual({ dept: 'ga', team: null });
-    /* Not a payroll account: its words decide nothing. */
     expect(lineHome(office, 'FINANCE - PRINTER INK', { payroll: false, recharge: false })).toEqual({ dept: 'ga', team: null });
   });
 

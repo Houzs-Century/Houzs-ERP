@@ -10,16 +10,12 @@
 // Set SOFA_PDF_OUT=<path> to also write the rendered PDF for eyeballing.
 
 import { describe, expect, it, vi } from 'vitest';
-// The letterhead is fetched for the tab's company before drawing (BUG-111).
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { writeFileSync } from 'node:fs';
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';
 import { layoutDepth, motionMark } from './sofa-layout-pdf';
 import { pdfRawText } from './pdf-raw-text';
 
-/* One cast for every test's line array, instead of one per call site: the
-   generator takes the rich PoItem[]; these fixtures carry only the fields each
-   case exercises. Kept to a single `as never` so the eslint ratchet stays low. */
 const asItems = (rows: unknown[]) => rows as never;
 
 const header = {
@@ -42,9 +38,6 @@ const header = {
   },
 } as never;
 
-/* Two per-module lines of one build, SO-New style: the module rides in the SKU
-   suffix ("XAMMAR-2A(LHF)"), item_group 'sofa', NO stored x/y geometry — the
-   reconstruction path (buildDefaultSofaCells) must draw the default layout. */
 const sofaLine = (moduleId: string) => ({
   item_code: `XAMMAR-${moduleId}`,
   material_name: `SOFA XAMMAR ${moduleId}`,
@@ -66,18 +59,10 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     );
     const pdf = Buffer.from(b64, 'base64');
     const raw = pdfRawText(pdf);
-    // Section title + the TV marker label are literal text ops in the stream.
     expect(raw).toContain('Sofa layout');
-    /* Reworded 2026-08-28 — the heading used to end "(orientation / LHF·RHF)",
-       which was a note to ourselves in a document a supplier reads. What is
-       pinned is the two facts the picture depends on, not the wording around
-       them. */
     expect(raw).toContain('viewed from above');
     expect(raw).toContain('front faces the TV');
     expect(raw).not.toContain('LHF·RHF');
-    // Caption carries the module list + source SO no. jsPDF escapes parens in
-    // text ops ("2A(LHF)" → "2A\(LHF\)"), and the caption wraps to the diagram
-    // width, so assert the atomic tokens rather than the joined line.
     expect(raw).toContain('2A\\(LHF\\)');
     expect(raw).toContain('L\\(RHF\\)');
     expect(raw).toContain('2990-SO-2607-016');
@@ -109,7 +94,6 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     );
     const raw = pdfRawText(Buffer.from(b64, 'base64'));
     expect(raw).toContain('Sofa layout');
-    // The real modules appear in the caption; the stale "2A(RHF)" must not.
     expect(raw).toContain('1NA');
     expect(raw).toContain('1A\\(P\\)\\(RHF\\)');
     expect(raw).not.toContain('2A\\(RHF\\)');
@@ -132,9 +116,6 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-u.pdf'), pdf);
   });
 
-  /* BUG-42, HC-PO-2609-318 (Sim 2026-09-30): power seats drew as plain seats.
-     The plan must stamp "P" on each one — a bare "(P) Tj" text op, distinct
-     from the escaped "1A\(P\)..." caption. */
   it('marks power seats with P on the plan', async () => {
     const line = (moduleId: string) => ({ ...sofaLine(moduleId), item_code: `DSL-8038-${moduleId}` });
     const b64 = await purchaseOrderPdfBase64(
@@ -167,15 +148,10 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
     const pdf = Buffer.from(b64, 'base64');
     const raw = pdfRawText(pdf);
     expect(raw).toMatch(/Console[^)]*\) Tj/);
-    // The caption runs in drawing order: the stool, drawn apart, comes last.
     expect(raw).not.toContain('STOOL +');
     if (process.env.SOFA_PDF_OUT) writeFileSync(process.env.SOFA_PDF_OUT.replace(/\.pdf$/, '-console.pdf'), pdf);
   });
 
-  /* BUG-110 (Sim 2026-10-13): 2990-SO-2610-037 was laid out at 28" (L(RHF) at
-     x=178, the 28" width of a 2A) but its lines carry no `depth`, so the PO
-     drew at 24" with a 20cm gap. -022 stores seatHeight 28 while its x/y are
-     24" (L at x=158) and must stay joined. Real variants from both SOs. */
   it('draws a POS sofa at the depth its positions were laid out at', () => {
     const cells = (lx: number) => [
       { moduleId: '2A(LHF)', x: 0, y: 0, rot: 0 as const },

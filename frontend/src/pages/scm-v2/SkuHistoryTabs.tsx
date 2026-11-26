@@ -6,12 +6,6 @@ import {
   useMfgProductPriceChanges,
 } from '../../vendor/scm/lib/mfg-products-queries';
 
-/* History — the three-tab block on the SKU drawer (approved mockup):
-     · Cost (anchor)  — the derived product cost over time + which supplier anchored it.
-     · Selling        — the scheduled selling-price timeline (reuses /price-changes).
-     · Supplier price — every supplier's cost change, with a raised/lowered arrow.
-   Cost / supplier money is finance-gated server-side (null -> "hidden"). Rows arrive
-   newest-first from the backend. Own file so Products.tsx stays under its ceiling. */
 
 type Tab = 'cost' | 'selling' | 'supplier';
 

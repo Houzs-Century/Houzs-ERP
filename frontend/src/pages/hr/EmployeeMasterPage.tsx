@@ -1,10 +1,3 @@
-/* HR · Employees & Attendance — Employee Master (redesign look, real data).
- * Six stat cards (four are click-to-filter), a toolbar (search, group/flat,
- * show-salary), and three layouts: A table (grouped by position), B by-position
- * columns, D today board. The roster is the real employee master; today's punch
- * is joined from the attendance read. Add / edit / import reuse the existing
- * working EmployeeDrawer and bulk modals (HrEmployees owns them). Salary masked
- * by default. */
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { fmtSen, todayMY } from "../../vendor/shared/format";
@@ -17,11 +10,8 @@ const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).jo
 type Layout = "A" | "B" | "D";
 type Filter = null | "punched" | "late" | "notlinked" | "foreign";
 
-// A view row joins an employee to today's punch and the figure the page shows.
 type Row = { e: Employee; punch: PunchState; time: string | null; lateMin: number; salarySen: number; linked: boolean; position: string };
 
-// Position accent: the real position is free text, so colour it deterministically
-// from a semantic-token palette rather than three fixed buckets.
 const POS_PALETTE = [
   { dot: "bg-learning", soft: "bg-learning-soft", text: "text-learning", bar: "bg-learning" },
   { dot: "bg-accent", soft: "bg-accent-soft", text: "text-accent", bar: "bg-accent" },
@@ -227,7 +217,6 @@ export function EmployeeMasterPage({
   );
 }
 
-// ── A · Table ────────────────────────────────────────────────────────────────
 function RowLine({ r, money, attReady, onPick }: { r: Row; money: (n: number) => string; attReady: boolean; onPick: (e: Employee) => void }) {
   return (
     <button type="button" onClick={() => onPick(r.e)} className="grid w-full grid-cols-[2.2fr_1.3fr_1.5fr_1.6fr_1fr_0.8fr_auto] items-center gap-3 border-b border-border-subtle px-4 py-2 text-left hover:bg-primary-soft/40">
@@ -276,7 +265,6 @@ function TableLayout({ rows, grouped, money, attReady, onPick, onDutyOf, positio
   );
 }
 
-// ── B · By position (columns of cards) ───────────────────────────────────────
 function PersonCard({ r, attReady, onPick }: { r: Row; attReady: boolean; onPick: (e: Employee) => void }) {
   return (
     <button type="button" onClick={() => onPick(r.e)} className="flex w-full items-center gap-2.5 rounded-lg border border-border bg-surface px-2.5 py-2 text-left hover:border-primary/50">
@@ -316,7 +304,6 @@ function ByPositionLayout({ positions, byPos, onDutyOf, attReady, onPick }: { po
   );
 }
 
-// ── D · Today board (columns by punch status) ────────────────────────────────
 const BOARD: { key: PunchState; label: string; dot: string }[] = [
   { key: "on", label: "On duty", dot: "bg-synced" },
   { key: "late", label: "Late", dot: "bg-time" },

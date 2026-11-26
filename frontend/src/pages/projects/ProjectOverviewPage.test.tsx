@@ -96,7 +96,6 @@ describe("Project Overview — the project table", () => {
     expect(cells).toContain("Selangor");
     expect(cells).toContain("138,358.00");
     expect(row.textContent).not.toContain("RM ");
-    /* The name never wraps. */
     expect(within(table).getByText("[AKEMI] MYHOME").className.split(" ")).toContain("whitespace-nowrap");
     const loss = within(table).getByText("(10,713.76)");
     expect(loss.className).toContain("text-err");
@@ -133,11 +132,9 @@ describe("Project Overview — the project table", () => {
       expect(within(table).getByRole("button", { name: `Filter & sort ${c}` })).toBeTruthy();
     }
 
-    /* A click on a figure's header sorts by it. */
     fireEvent.click(within(table).getByText("Sales"));
     expect(titles()).toEqual(["[ZANOTTI] HOMELOVE", "[AKEMI] MYHOME", "[AKEMI] HOMELOVE"]);
 
-    /* Its funnel lists the figures as the table shows them, and a minimum narrows the rows and the Total. */
     fireEvent.click(within(table).getByRole("button", { name: "Filter & sort Sales" }));
     expect(screen.getAllByText("138,358.00").length).toBe(2);
     fireEvent.change(screen.getByLabelText("Minimum"), { target: { value: "100000" } });
@@ -145,7 +142,6 @@ describe("Project Overview — the project table", () => {
     expect(titles()).toEqual(["[AKEMI] MYHOME", "[AKEMI] HOMELOVE"]);
     expect(within(projectsTable()).getByText("Total · 2 projects")).toBeTruthy();
 
-    /* The dates' funnel has the presets and a From / To range. */
     fireEvent.click(within(projectsTable()).getByRole("button", { name: "Filter & sort Start" }));
     expect(screen.getByLabelText("From date")).toBeTruthy();
     expect(screen.getByRole("button", { name: "This Month" })).toBeTruthy();
@@ -179,10 +175,8 @@ describe("Project Overview — future date ranges (owner 2026-11-18)", () => {
     const row = within(projectsTable()).getByText("[AKEMI] MYHOME").closest("tr") as HTMLTableRowElement;
     /* No tag; its forecast figures are shaded (owner 2026-11-19). */
     expect(within(row).queryByText("Estimate")).toBeNull();
-    /* Sales was typed (teal); Rental is the last event's (yellow). */
     expect(within(row).getByText("90,000.00").getAttribute("data-forecast")).toBe("typed");
     expect(within(row).getByText("12,000.00").getAttribute("data-forecast")).toBe("last");
-    /* The Total row says it holds a forecast too. */
     expect(within(projectsTable()).getAllByText("90,000.00").some((el) => el.getAttribute("title")?.startsWith("Typed forecast 90,000.00 · last event -"))).toBe(true);
     const split = screen.getByTestId("layer-split");
     expect(split.textContent).toContain("1 of 1 projects include a forecast");

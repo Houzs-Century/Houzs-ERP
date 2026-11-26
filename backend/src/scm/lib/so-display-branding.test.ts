@@ -1,17 +1,3 @@
-/* The Branding column, pinned.
-
-   Three surfaces render it and must agree — the SO list, Delivery Planning and
-   Consignment Orders — and until 2026-08-15 they agreed only because someone
-   kept three copies in step by hand, under a comment that literally said "keep
-   in lock-step with the SO list". These tests are what that comment was asking
-   for.
-
-   2026-08-17 — the rule itself moved to ../shared/so-branding-label.ts, which is
-   MIRRORED into the frontend and enforced identical by check-shared-mirrors, so
-   ConsignmentOrders.tsx no longer holds a second copy to keep in step. What
-   stays here is this file's original job: pinning the label every caller of
-   `deriveBranding` sees. Its own suite lives beside it in
-   ../shared/so-branding-label.test.ts. */
 import { describe, expect, test } from 'vitest';
 
 import { deriveBranding } from './so-display-branding';
@@ -20,8 +6,6 @@ import { normCategory } from './so-readiness';
 
 describe('deriveBranding', () => {
   test('a sofa and a bedframe are fixed strings, whatever the line says its brand is', () => {
-    /* No company argument here — the default reading is 2990's, which is what
-       every caller of this alias had before companyCode existed. */
     expect(deriveBranding('SOFA', null)).toBe('2990s Sofa');
     expect(deriveBranding('SOFA', 'HAPPISLEEP')).toBe('2990s Sofa');
     expect(deriveBranding('BEDFRAME', 'ANYTHING')).toBe('Bedframe');
@@ -34,10 +18,6 @@ describe('deriveBranding', () => {
   });
 
   test('a mattress whose SKU carries no brand names the category (owner 2026-08-18)', () => {
-    /* «mattress follow SKU branding if SKU no brand mean matress», both
-       companies. The old rule claimed a blank mattress for the house brand
-       ("2990 Mattress") and folded the loose spellings into it; nothing is
-       manufactured here any more. */
     expect(deriveBranding('MATTRESS', null)).toBe('Mattress');
     expect(deriveBranding('MATTRESS', '   ')).toBe('Mattress');
     expect(deriveBranding('MATTRESS', null)).not.toBe('2990 Mattress');
@@ -64,23 +44,12 @@ describe('deriveBranding', () => {
     expect(deriveBranding(null, 'HAPPISLEEP')).toBe('No Items');
   });
 
-  /* THE PROPERTY. Not "these seven cases are non-blank" — the whole point of
-     the bug was a category nobody had listed. The domain is derived from
-     source (CATEGORY_SOURCES: the mfg_product_category enum + its four
-     migrations, and normCategory's six buckets) and crossed with every brand
-     shape a line can carry.
-
-     THIS TEST FAILED BEFORE THE FIX, which is the only reason it is worth
-     having: ACCESSORY, SERVICE, OTHERS, DINING, BEDLINES, DIFFUSER, CARPET and
-     the no-items case all returned ''. */
   test('PROPERTY: no category the system can produce ever renders blank', () => {
     const categories: Array<string | null | undefined> = [
       ...CATEGORY_SOURCES.productEnum,
       ...CATEGORY_SOURCES.normBuckets,
-      /* item_group is free TEXT, so the raw shapes really do arrive here. */
       'BEDFRAME - DIVAN', 'sofa set', ' Mattress  ', 'ACCESSORIES', 'DELIVERY SERVICE',
       'PILLOW', 'BEDFRAME + MATTRESS SET',
-      /* and the absences */
       null, undefined, '', '   ',
     ];
     const brands: Array<string | null | undefined> = [
@@ -98,10 +67,6 @@ describe('deriveBranding', () => {
     expect(blanks, `${blanks.length} blank labels:\n  ${blanks.join('\n  ')}`).toEqual([]);
   });
 
-  /* Every value the PRODUCT MASTER can hold gets a label that names it, not a
-     generic bucket — the four enum members added for Houzs SKUs (DINING /
-     BEDLINES / DIFFUSER / CARPET) are precisely the ones normCategory folds
-     into OTHERS, and folding is what made them blank. */
   test('the four categories added after the old rule was written name themselves', () => {
     expect(deriveBranding('DINING', null)).toBe('Dining');
     expect(deriveBranding('BEDLINES', null)).toBe('Bedlines');
@@ -123,10 +88,6 @@ describe('normCategory — the shared bucket rule the three surfaces now share',
   });
 
   test('SERVICE is its OWN bucket, not OTHERS', () => {
-    /* One of the six hand-written copies of this function — the one in
-       consignment-orders.ts — omits this branch and returns OTHERS. It feeds
-       `item_categories`, which nothing currently reads, so it is latent rather
-       than live; this assertion is what the consolidated version has to keep. */
     expect(normCategory('SERVICE')).toBe('SERVICE');
     expect(normCategory('DELIVERY SERVICE')).toBe('SERVICE');
   });
@@ -139,9 +100,6 @@ describe('normCategory — the shared bucket rule the three surfaces now share',
   });
 
   test('BEDFRAME is tested FIRST, so a group naming both wins for bedframe', () => {
-    /* Not decoration: the branch order is the rule. A "BEDFRAME + MATTRESS SET"
-       line buckets as BEDFRAME, and the Branding column therefore reads
-       "Bedframe" rather than following a mattress brand. */
     expect(normCategory('BEDFRAME + MATTRESS SET')).toBe('BEDFRAME');
   });
 });

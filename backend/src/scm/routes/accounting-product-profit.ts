@@ -35,8 +35,6 @@ const failed = (e: unknown): string => String((e as { message?: string } | null)
 type Loaded = { ok: true; orders: PpOrder[]; lines: PpLine[]; products: PpProduct[]; models: PpModel[] } | { ok: false; reason: string };
 
 export async function loadProductProfit(sb: Db, companyId: number, range: { from: string; to: string }): Promise<Loaded> {
-  /* The months' orders by SO date. Status is an enum the fake client cannot be
-     trusted to compare; the DRAFT/CANCELLED rule is applied in code. */
   const sos = await paginateAll<PpOrder>((f, t) =>
     sb.from('mfg_sales_orders')
       .select('doc_no, status')
@@ -54,10 +52,6 @@ export async function loadProductProfit(sb: Db, companyId: number, range: { from
   if (its.error) return { ok: false, reason: failed(its.error) };
   const lines = its.data;
 
-  /* The company's product list and models, read whole (a few thousand short
-     rows), never by an `in` list of item codes: a code can carry a double
-     quote (DUNLOPILLO GENERASI 5" MATT) that PostgREST's in-list cannot hold,
-     and a model id is a uuid. The builder looks up only the codes it meets. */
   const prods = await paginateAll<PpProduct>((f, t) =>
     sb.from('mfg_products')
       .select('code, model_id, base_model, size_label')
@@ -80,7 +74,6 @@ export const MAX_PROFIT_MONTHS = 24;
 
 type Months = { ok: true; month: string; from: string; to: string } | { ok: false; error: string; message: string };
 
-/** The month a ?from / ?to value names: "2026-09" or any day in it ("2026-09-14"). */
 const monthOf = (v: string): string | null => {
   const m = /^(\d{4}-\d{2})(-\d{2})?$/.exec(v);
   return m && monthRange(m[1]!) ? m[1]! : null;

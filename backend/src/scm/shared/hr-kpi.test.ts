@@ -10,7 +10,6 @@ import {
   type KpiTierDef,
 } from "./hr-kpi";
 
-// The storekeeper-supervisor template: 8 KPIs, weights 0.15 x4 + 0.10 x4 = 1.00.
 const METRICS: KpiMetricDef[] = [
   { id: 1, weightBp: 1500 },
   { id: 2, weightBp: 1500 },
@@ -30,18 +29,15 @@ const TIERS: KpiTierDef[] = [
   { minScoreX100: 0, maxScoreX100: 199, label: "Unsatisfactory", supervisorAmountSen: 0, staffAmountSen: 0 },
 ];
 
-// A fully rated week (ratings x100), re-used per week in the helpers below.
 const week = (w: number, ratings: number[]): KpiRating[] => ratings.map((r, i) => ({ week: w, metricId: METRICS[i].id, ratingX100: r }));
 
 describe("weekScoreX100", () => {
   it("is the weighted average of the week's ratings", () => {
-    // weighted sum 4,150,000 / weight 10,000 = 415
     expect(weekScoreX100(METRICS, week(1, [500, 400, 300, 400, 400, 400, 500, 400]), 1)).toBe(415);
   });
 
   it("is a plain average when every weight is equal", () => {
     const equal = METRICS.map((m) => ({ ...m, weightBp: 1000 }));
-    // mean of [5,4,3,4,4,4,5,4] = 4.125 -> 413 (rounded)
     expect(weekScoreX100(equal, week(1, [500, 400, 300, 400, 400, 400, 500, 400]), 1)).toBe(413);
   });
 
@@ -59,9 +55,8 @@ describe("weekScoreX100", () => {
 describe("finalScoreX100", () => {
   it("averages only the fully rated weeks", () => {
     const ratings = [
-      ...week(1, [500, 500, 500, 500, 500, 500, 500, 500]), // 500
-      ...week(2, [300, 300, 300, 300, 300, 300, 300, 300]), // 300
-      // weeks 3 and 4 unrated
+      ...week(1, [500, 500, 500, 500, 500, 500, 500, 500]),
+      ...week(2, [300, 300, 300, 300, 300, 300, 300, 300]),
     ];
     expect(finalScoreX100(METRICS, ratings)).toBe(400);
   });
@@ -96,8 +91,8 @@ describe("tierAmountSen", () => {
 describe("computeKpi", () => {
   it("scores a month end to end and books the supervisor amount", () => {
     const ratings = [
-      ...week(1, [500, 400, 300, 400, 400, 400, 500, 400]), // 415
-      ...week(2, [400, 400, 300, 400, 400, 400, 400, 300]), // weighted avg
+      ...week(1, [500, 400, 300, 400, 400, 400, 500, 400]),
+      ...week(2, [400, 400, 300, 400, 400, 400, 400, 300]),
       ...week(3, [400, 500, 300, 400, 400, 400, 400, 500]),
       ...week(4, [500, 400, 400, 400, 400, 400, 500, 400]),
     ];

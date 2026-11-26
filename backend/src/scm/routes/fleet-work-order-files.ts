@@ -21,7 +21,7 @@ import type { Env, Variables } from "../env";
 export const fleetWorkOrderFiles = new Hono<{ Bindings: Env; Variables: Variables }>();
 fleetWorkOrderFiles.use("*", supabaseAuth);
 
-const FILE_MAX = 15 * 1024 * 1024; // a scanned invoice or a phone photo, not a video
+const FILE_MAX = 15 * 1024 * 1024;
 const MIME: Record<string, string> = {
   pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg",
   png: "image/png", webp: "image/webp", heic: "image/heic",
@@ -31,10 +31,6 @@ type Refs = Record<string, string[] | null>;
 const loadRefs = (sb: Variables["supabase"], woId: string) =>
   sb.from("lorry_work_orders").select("id, invoice_refs, quote_refs, photo_refs").eq("id", woId).maybeSingle();
 
-// PUT /:woId?kind=invoice|quote|photo&ext=pdf&name=inv.pdf
-// ponytail: read-modify-write of the refs array; two uploads to the SAME work
-// order in the same instant can drop one ref. The screen uploads one at a time.
-// Move to a child table (like lorry_compliance_attachments) if that bites.
 fleetWorkOrderFiles.put("/:woId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - one fleet shared by HOUZS and 2990 (see fleet-maintenance.ts inHouseLorries).
   const woId = c.req.param("woId");
@@ -62,7 +58,6 @@ fleetWorkOrderFiles.put("/:woId", requireHouzsPerm("fleet.write"), async (c) => 
   return c.json({ key, kind }, 201);
 });
 
-// DELETE /:woId?key=... - drops the ref AND the R2 object.
 fleetWorkOrderFiles.delete("/:woId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - one fleet shared by HOUZS and 2990 (see fleet-maintenance.ts inHouseLorries).
   const woId = c.req.param("woId");
@@ -81,13 +76,10 @@ fleetWorkOrderFiles.delete("/:woId", requireHouzsPerm("fleet.write"), async (c) 
   if (Object.keys(patch).length === 0) return c.json({ error: "not_found" }, 404);
   const { error } = await sb.from("lorry_work_orders").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", woId);
   if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
-  // Row first, object second: a failed object delete leaves a harmless orphan,
-  // the reverse could leave a ref pointing at nothing.
-  try { await c.env.POD_BUCKET.delete(key); } catch { /* see above */ }
+  try { await c.env.POD_BUCKET.delete(key); } catch { }
   return c.json({ ok: true });
 });
 
-// GET /:woId/file?key=... - stream one file back.
 fleetWorkOrderFiles.get("/:woId/file", requireHouzsPerm("fleet.read"), async (c) => {
   const key = c.req.query("key") || "";
   if (!isWorkOrderFileKeyOf(key, c.req.param("woId"))) return c.json({ error: "not_found" }, 404);

@@ -42,27 +42,14 @@ import { creditNotesBySi } from './si-credit-notes';
 /** One invoice competing for the order's money. All sen. */
 export interface AllocatableInvoice {
   id: string;
-  /** `sales_invoices.invoice_number` — the tie-break, and unique per company. */
   invoiceNumber: string;
-  /** `sales_invoices.invoice_date`, ISO date or null. Null sorts LAST. */
   invoiceDate: string | null;
-  /** Raw `sales_invoices.status`. */
   status: string;
   totalSen: number;
-  /** `sales_invoices.paid_sen` — receipts taken on THIS invoice, not the order. */
   ownPaidSen: number;
-  /** What customers' credit notes knocked off it (si-credit-notes.ts) — it owes
-      that much less, so it absorbs that much less of the order's money. */
   creditedSen: number;
 }
 
-/* An invoice that cannot take money must not absorb any of the order's.
-   CANCELLED is dead (the SI route refuses a payment on it, `not_payable`) and a
-   DRAFT has posted no revenue and is refused the same way — letting either
-   absorb a slice would hide that money from the invoice that can actually use
-   it. The remaining statuses (SENT / PARTIALLY_PAID / PAID / OVERDUE) are all
-   live documents; a PAID one simply has nothing left to absorb, which the
-   outstanding term below handles on its own. */
 const INELIGIBLE_STATUSES = new Set(['CANCELLED', 'DRAFT']);
 
 export function absorbsOrderDeposit(status: string | null | undefined): boolean {
@@ -143,11 +130,8 @@ export interface OrderDepositTransaction {
 
 export interface OrderDepositForInvoice {
   so_doc_no: string;
-  /** Everything the ORDER has collected, by the SO's own rule (so-outstanding). */
   order_collected_sen: number;
-  /** The slice of that allocated to the invoice this was read for. */
   applied_sen: number;
-  /** The order's payment rows, so the screen can say WHICH document took it. */
   transactions: OrderDepositTransaction[];
 }
 
@@ -155,7 +139,6 @@ type ReadResult =
   | { ok: true; deposit: OrderDepositForInvoice | null }
   | { ok: false; reason: string };
 
-/* The columns the allocation needs off a sibling invoice. */
 const SIBLING_COLS = 'id, invoice_number, invoice_date, status, total_sen, paid_sen';
 
 /**
@@ -206,12 +189,6 @@ export async function readOrderDeposit(
   const payRows = (pays.data ?? []) as Array<OrderDepositTransaction & { is_deposit?: boolean | null }>;
   const ledgerPaidSen = payRows.reduce((s, p) => s + Number(p.amount_sen ?? 0), 0);
   const depositInLedger = payRows.some((p) => p.is_deposit === true);
-  /* The SO's OWN rule for "what has this order collected", imported rather than
-     re-derived. A second implementation of a money rule is how the order screen
-     and the invoice screen start disagreeing quietly — the whole reason
-     shared/so-outstanding.ts exists. It is also what carries the LEGACY header
-     deposit (an order migrated from AutoCount whose deposit never became a
-     ledger row), which a bare SUM over the payments table would miss. */
   const collectedSen = soPaidSen(
     soPaidInputsOf(soRow as Record<string, unknown>, ledgerPaidSen, depositInLedger),
   );
@@ -271,10 +248,6 @@ export async function readOrderDepositForInvoice(
 
 /** The persisted status an invoice should carry, given everything settling it. */
 export function siStatusFor(current: string, totalSen: number, settledSen: number): string | null {
-  /* LEAK GUARD (DRAFT) — never auto-advance a DRAFT invoice's status off the
-     payments rollup. A DRAFT stays DRAFT until it is explicitly confirmed; the
-     ladder below would otherwise silently flip it to SENT on a line edit.
-     CANCELLED is likewise frozen. */
   if (current === 'CANCELLED' || current === 'DRAFT') return null;
   if (settledSen >= totalSen && totalSen > 0) return 'PAID';
   if (settledSen > 0) return 'PARTIALLY_PAID';
@@ -300,11 +273,6 @@ export function siStatusFor(current: string, totalSen: number, settledSen: numbe
 export async function recomputeSiPaid(sb: any, salesInvoiceId: string): Promise<void> {
   const { data: pays, error: paysErr } = await sb.from('sales_invoice_payments')
     .select('amount_sen').eq('sales_invoice_id', salesInvoiceId);
-  /* A failed READ is not an unpaid invoice. `?? []` folded a transient blip into
-     paid = 0, which does not merely understate paid_sen — it drives the status
-     ladder below, so a fully PAID invoice silently reverted to SENT and re-entered
-     the AR chase. An invoice that genuinely has no payments resolves error === null
-     with data === [], and MUST still fall through to write paid = 0. */
   if (paysErr) {
     /* eslint-disable-next-line no-console */
     console.error('[si-recompute-paid] payments read failed — paid/status left unchanged:', salesInvoiceId, paysErr.message);
@@ -313,9 +281,6 @@ export async function recomputeSiPaid(sb: any, salesInvoiceId: string): Promise<
   const paid = (pays ?? []).reduce((s: number, p: { amount_sen: number }) => s + Number(p.amount_sen ?? 0), 0);
   const { data: cur, error: curErr } = await sb.from('sales_invoices')
     .select('total_sen, status, so_doc_no, company_id').eq('id', salesInvoiceId).maybeSingle();
-  /* Distinct from `!cur` below: that is a genuinely missing invoice (error null,
-     data null). This is "we could not find out", and the status ladder must not
-     run on a total_sen we never read. */
   if (curErr) {
     /* eslint-disable-next-line no-console */
     console.error('[si-recompute-paid] header read failed — paid/status left unchanged:', salesInvoiceId, curErr.message);
@@ -324,17 +289,8 @@ export async function recomputeSiPaid(sb: any, salesInvoiceId: string): Promise<
   if (!cur) return;
   const c0 = cur as { total_sen: number; status: string; so_doc_no: string | null; company_id: number | null };
 
-  /* The order's deposit counts as settled, so the STATUS the office reads
-     agrees with the outstanding figure the screen shows. Same fail-closed
-     contract as the two reads above and for the same reason: on a read error we
-     do not know how much of this invoice is settled, and guessing 0 is the
-     reversion-to-SENT incident recorded above wearing a different hat. So the
-     paid_sen write (which we DID read) still lands, and the status is left
-     exactly as it was for the next successful roll to fix. */
   let deposit = 0;
   let depositUnknown = false;
-  /* What customers' credit notes knocked off it settles it too (si-credit-notes.ts)
-     — never folded into paid_sen. Unread, the status waits like the deposit's. */
   let credited: number | null = null;
   if (c0.so_doc_no) {
     const d = await readOrderDeposit(sb, c0.so_doc_no, c0.company_id ?? null);
@@ -347,7 +303,6 @@ export async function recomputeSiPaid(sb: any, salesInvoiceId: string): Promise<
       console.error('[si-recompute-paid] order deposit read failed — status left unchanged:', salesInvoiceId, d.reason);
     }
   } else {
-    /* No company stamped (pre-0083 rows) means no allocation could name it. */
     const read = c0.company_id == null ? null : await creditNotesBySi(sb, c0.company_id, [salesInvoiceId]);
     credited = read === null ? 0 : read.ok ? (read.bySi.get(salesInvoiceId) ?? 0) : null;
   }
@@ -458,13 +413,11 @@ export async function stampOrderDeposit(
   }
   const sibRows = reads && !failed ? (reads[2].data ?? []) as Array<Record<string, unknown>> : [];
 
-  /* The credit notes knocked off the page's invoices and every sibling the split runs over. */
   const credited = await creditNotesBySi(sb, companyId, [...list, ...sibRows].map((r) => String(r.id ?? '')));
   if (!credited.ok) {
     /* eslint-disable-next-line no-console */
     console.error('[si-order-deposit] credit-note stamp failed — rows keep the un-adjusted outstanding:', credited.reason);
   } else {
-    /* A draft or cancelled invoice is owed nothing, so nothing is knocked off it. */
     for (const r of list) r.credit_notes_sen = absorbsOrderDeposit(r.status as string | null) ? (credited.bySi.get(String(r.id)) ?? 0) : 0;
   }
   const creditOf = (id: string): number => (credited.ok ? (credited.bySi.get(id) ?? 0) : 0);
@@ -513,10 +466,6 @@ export async function stampOrderDeposit(
   }
 
   for (const r of list) {
-    /* A row whose order is not in `sos` (no so_doc_no, or an order this company
-       cannot see) resolves to 0 — it has no deposit to apply, which is a real
-       answer, not a failed read. The failed-read case returned above with the
-       field still null. */
     r.so_deposit_applied_sen = applied.get(String(r.id)) ?? 0;
   }
 }

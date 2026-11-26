@@ -62,8 +62,6 @@ describe('jePrefixForCompany — reads the master where it actually lives', () =
 });
 
 describe('postJournal — a prefix failure is a refusal, not a 500', () => {
-  /* `missing` makes the fake answer this table with a column error, which is
-     what a read against a table PostgREST cannot see looks like to the caller. */
   const brokenCompanies = () => fakeSb({ companies: COMPANIES, journal_entries: [], journal_entry_lines: [], accounts: [] }, { companies: ['code'] });
 
   const INPUT = {

@@ -16,13 +16,9 @@
 
 /** The one comparison, so the API, the UI and any report agree on the word. */
 export type PiLinePriceComparison = {
-  /** Ordered price, or null when this line has no purchase-order line behind it. */
   poUnitPriceSen: number | null;
-  /** What the supplier billed — the PI line's own unit price. */
   supplierUnitPriceSen: number;
-  /** supplier - PO, per unit. null when there is nothing to compare against. */
   diffSen: number | null;
-  /** True only when the two are BOTH known and differ. */
   differs: boolean;
 };
 
@@ -31,9 +27,6 @@ export const comparePiLinePrice = (
   poUnitPriceSen: number | null,
 ): PiLinePriceComparison => {
   const supplier = Number.isFinite(supplierUnitPriceSen) ? supplierUnitPriceSen : 0;
-  /* `0` joins `null` here: an order that named no price cannot be over- or
-     under-billed against. See the measurement in the header — 68% of live lines
-     are this case, and calling them differences hides the 1.7% that are. */
   if (poUnitPriceSen == null || poUnitPriceSen === 0) {
     return { poUnitPriceSen, supplierUnitPriceSen: supplier, diffSen: null, differs: false };
   }

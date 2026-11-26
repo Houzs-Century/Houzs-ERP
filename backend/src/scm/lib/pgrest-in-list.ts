@@ -47,10 +47,6 @@
 /** What a PostgREST filter list can carry — same union `chunkIn` accepts. */
 export type InValue = string | number;
 
-/* The library's own rule, restated so the parity test can assert against it
-   rather than against a second opinion. `"` and `\` are ADDED here: PostgREST
-   treats both as structural inside a quoted value, and a value carrying either
-   is precisely what the library cannot express. */
 const RESERVED = /[,()]/;
 const NEEDS_ESCAPE = /["\\]/;
 

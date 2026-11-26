@@ -15,7 +15,6 @@ import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 import { inArm } from './so-ref-search';
 import { normalizePhone } from '../shared';
 
-/* Full SI header — mirrors the editable DO header shape. */
 export const SI_HEADER_COLS =
   'id, invoice_number, so_doc_no, delivery_order_id, debtor_code, debtor_name, ' +
   'invoice_date, due_date, customer_delivery_date, currency, ' +
@@ -29,7 +28,6 @@ export const SI_HEADER_COLS =
   'local_total_sen, total_cost_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'status, notes, sent_at, paid_at, confirmed_at, created_at, created_by, updated_at';
 
-/* The list's select: the header and the AutoCount invoice number. */
 export const SI_LIST_SELECT = `${SI_HEADER_COLS}, linked_ac_docno`;
 
 /** The list's filter contract, as the query string carries it. */
@@ -44,15 +42,11 @@ export type SiListFilters = {
      client-side on the loaded page. */
   debtorNames: string[] | null;
   currencies: string[] | null;
-  /** SOs whose reference matches `q` (lib/so-ref-search.ts): the SI's own ref
-      copy is empty on many rows, so the SO link is matched instead. */
   soRefDocNos: string[];
 };
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
 
-/* Multi-value funnel params ride as a JSON array in ONE param (a customer name
-   may contain a comma). Malformed / empty reads as no filter. */
 function jsonArrayParam(v: string | undefined): string[] | null {
   if (v === undefined || v === '') return null;
   try {
@@ -78,7 +72,6 @@ export function readSiListFilters(query: (key: string) => string | undefined): S
   };
 }
 
-/* Indexed by a caller's string, so an unknown key is `undefined` — say so. */
 const BUCKETS: Readonly<Record<string, string[] | undefined>> = SI_STATUS_BUCKETS;
 
 const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'debtor_name', 'status', 'total_sen']);
@@ -119,9 +112,7 @@ export function filterSiList<Q>(q: Q, f: SiListFilters, c: CompanyScopeCtx, scop
     if (BUCKETS[f.status]) out = out.in('status', BUCKETS[f.status]!);
     else out = out.eq('status', f.status);
   }
-  out = scopeToCompany(out, c); // multi-company: isolate to the active company
-  /* Customer NAME, PHONE and the linked SO REFERENCE (ref, snapshotted onto the
-     SI), plus the doc numbers — the base-table columns the list searches. */
+  out = scopeToCompany(out, c);
   if (f.q) {
     const s = escapeForOr(f.q);
     if (s) out = out.or([

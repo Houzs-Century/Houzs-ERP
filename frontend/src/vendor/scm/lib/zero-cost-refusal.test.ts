@@ -1,15 +1,3 @@
-/* The zero-cost receipt refusal, read once and understood by every surface.
-
-   ── WHY THIS MODULE EXISTS ─────────────────────────────────────────────────
-   `backend/src/scm/lib/zero-cost-receipt-guard.ts` answers 409 with the OFFENDING
-   LINES and a `remedy` array naming the two ways out: enter the unit price from
-   the supplier's goods-received document, or tick "Received free" on that line.
-   `authed-fetch` turned that body into a sentence and threw the parse away, so a
-   caller could show the refusal and nothing else — which is what left the mobile
-   receipt screen with a correct, readable refusal naming two fixes and NEITHER
-   of them on the screen in the receiver's hand ("Post" and "Cancel" only). The
-   parse now lives here, shared, so the sentence and the remedy UI read the same
-   body. */
 
 import { describe, expect, test } from 'vitest';
 import {

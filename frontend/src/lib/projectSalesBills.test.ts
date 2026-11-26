@@ -1,6 +1,3 @@
-/* The derivations every surface shares for a project's sales report: the red
-   number per attending rep, the words on a bill's row, and a read of another
-   shape degrading to empty rather than crashing the page. */
 import { describe, expect, test } from "vitest";
 import { billStatusLabel, fmtRmSen, normalizeProjectSalesBills, notOpenedByRepId, type PersonSummary } from "./projectSalesBills";
 

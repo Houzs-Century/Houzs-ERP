@@ -21,7 +21,6 @@ const NO_PERM = { error: "You don't have permission to manage voucher numbering.
 
 type LetterRow = { account_code: string; letter: string };
 
-/* ── GET /accounting/numbering — digits + per-money-account letters ───────── */
 export const numberingGet = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -42,9 +41,6 @@ export const numberingGet = async (c: any): Promise<Response> => {
   if (digitsRes.error) return c.json({ error: 'load_failed', reason: digitsRes.error.message }, 500);
 
   const letterOf = new Map(((lettersRes.data ?? []) as LetterRow[]).map((r) => [r.account_code, r.letter]));
-  /* The cash drawer's series is FIXED at C (CPV on the voucher, COR on the
-     receipt) — reported as such so the card renders it read-only instead of
-     inviting a letter the PUT would refuse (owner hit exactly that dialog). */
   const roles = await resolveRoles(sb, co.companyId);
   return c.json({
     digits: Number((digitsRes.data as { doc_digits?: number } | null)?.doc_digits ?? 3),
@@ -56,7 +52,6 @@ export const numberingGet = async (c: any): Promise<Response> => {
   });
 };
 
-/* ── PUT /accounting/numbering — {digits?, letters?: [{accountCode, letter}]} ─ */
 export const numberingPut = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -85,26 +80,19 @@ export const numberingPut = async (c: any): Promise<Response> => {
       const accountCode = String(raw.accountCode ?? '').trim();
       const letter = String(raw.letter ?? '').trim().toUpperCase();
       if (!accountCode) return c.json({ error: 'bad_letter', message: 'Every letter row needs its account.' }, 400);
-      /* The cash drawer never takes a configured letter: its series is fixed
-         at C on both papers (CPV / COR), minted straight off roles.CASH. */
       if (accountCode === roles.CASH) {
         return c.json({ error: 'letter_fixed', message: `${accountCode} is the cash drawer — its series is fixed at C (CPV / COR), nothing to configure.` }, 400);
       }
       if (!/^[A-Z]{1,3}$/.test(letter)) {
         return c.json({ error: 'bad_letter', message: `${accountCode}: the letter must be 1-3 letters (A-Z).` }, 400);
       }
-      /* C is the CASH channel ({co}CPV / {co}COR) — a bank on C would collide
-         with the drawer's own series. */
       if (letter === 'C') {
         return c.json({ error: 'letter_reserved', message: `C is the fixed cash series (CPV / COR) — pick another letter for ${accountCode}.` }, 400);
       }
-      /* Two banks on one letter would SHARE a number series — refuse before
-         the database does, with the two named. */
       if (seen.has(letter)) return c.json({ error: 'letter_taken', message: `Letter ${letter} is used twice in this save.` }, 400);
       seen.add(letter);
       rows.push({ accountCode, letter });
     }
-    /* Verified against the company's own money accounts. */
     const { data: accs, error: aErr } = await sb.from('accounts')
       .select('account_code')
       .eq('company_id', co.companyId)

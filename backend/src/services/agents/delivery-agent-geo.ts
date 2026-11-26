@@ -1,27 +1,6 @@
-// ---------------------------------------------------------------------------
-// delivery-agent-geo.ts — Malaysia state-code canonicalisation + the Delivery
-// Planning region-config loader for the Delivery Agent engine.
-//
-// Two jobs:
-//   1. resolveStateCode() — free-text customer_state ("Pulau Pinang",
-//      "p.pinang", "WP Kuala Lumpur") → a canonical 2-3 letter code (PNG, KL).
-//      The learner's config-proposal keys (`delivery.transitDays.<STATE>`)
-//      MUST be [A-Z]{2,3} to pass the agent-console whitelist pattern, and
-//      Houzs (unlike HOOKKA) has no malaysia-states lib — so it lives here.
-//   2. loadRegionConfig() / stateToRegions() — a faithful replica of the
-//      UNEXPORTED region-config machinery in scm/routes/delivery-planning.ts
-//      (loadRegionConfig + stateToRegionsFromConfig + normState). The board is
-//      the source of truth for region semantics; if the board's version ever
-//      changes, mirror it here. Re-implemented (not imported) only because the
-//      board keeps those functions module-private.
-//
-// Pure reads + pure functions — nothing here writes.
-// ---------------------------------------------------------------------------
 
 import { paginateAll } from '../../scm/lib/paginate-all';
 
-/* ── Canonical Malaysia state codes ─────────────────────────────────────────
-   All codes match /^[A-Z]{2,3}$/ (the config-proposal whitelist shape). */
 export const MALAYSIA_STATE_NAMES: Record<string, string> = {
   JHR: 'Johor',
   KDH: 'Kedah',
@@ -42,8 +21,6 @@ export const MALAYSIA_STATE_NAMES: Record<string, string> = {
   SG: 'Singapore',
 };
 
-/* Normalise free-text for tolerant matching — VERBATIM the board's normState:
-   upper, strip accents/punctuation, collapse whitespace. */
 export function normState(s: string | null | undefined): string {
   return (s ?? '')
     .normalize('NFKD').replace(/[̀-ͯ]/g, '')
@@ -53,7 +30,6 @@ export function normState(s: string | null | undefined): string {
     .trim();
 }
 
-/* Normalised name / alias → code. Keys are normState() outputs. */
 const STATE_ALIASES: Record<string, string> = {
   'JOHOR': 'JHR', 'JOHOR BAHRU': 'JHR', 'JB': 'JHR',
   'KEDAH': 'KDH',
@@ -82,15 +58,10 @@ const STATE_ALIASES: Record<string, string> = {
 export function resolveStateCode(raw: string | null | undefined): string | null {
   const k = normState(raw);
   if (!k) return null;
-  if (MALAYSIA_STATE_NAMES[k]) return k;         // already a code
+  if (MALAYSIA_STATE_NAMES[k]) return k;
   return STATE_ALIASES[k] ?? null;
 }
 
-/* ── Region config (replica of the board's private loader) ─────────────────
-   Region buckets = owner-maintained scm.delivery_planning_regions master +
-   the per-state MULTI mapping scm.state_delivery_regions (migration 0053).
-   A state can map to SEVERAL regions; unmapped states fall back to KL (or the
-   first configured region). Same fallbacks as the board when config is empty. */
 
 export type Region = string;
 
@@ -104,7 +75,6 @@ const FALLBACK_REGIONS: Array<{ key: Region; label: string }> = [
 export interface RegionConfig {
   regions: Array<{ key: Region; label: string }>;
   validCodes: Set<Region>;
-  /** normState(state_key) → region codes[] */
   byState: Map<string, Region[]>;
 }
 
@@ -133,7 +103,7 @@ export async function loadRegionConfig(sb: any): Promise<RegionConfig> {
         validCodes.add(code);
       }
     }
-  } catch { /* fall through to fallback below */ }
+  } catch { }
 
   const byState = new Map<string, Region[]>();
   if (codeById.size > 0) {
@@ -152,7 +122,7 @@ export async function loadRegionConfig(sb: any): Promise<RegionConfig> {
         if (!arr.includes(code)) arr.push(code);
         byState.set(k, arr);
       }
-    } catch { /* mapping stays empty → fallback default applies per-order */ }
+    } catch { }
   }
 
   if (regions.length === 0) {

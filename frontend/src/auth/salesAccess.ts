@@ -1,7 +1,4 @@
 import { ACCESS_RANK, type AuthUser, type AccessLevel } from "../types";
-// Concrete module, NOT the @2990s/shared barrel: this file is eagerly imported
-// by App.tsx, and the barrel drags the whole vendored shared graph (sofa-build,
-// mfg-pricing, phone, …, ~24 KB raw) into the initial bundle for one boolean.
 import { COSTING_DISPLAY_ENABLED } from "../vendor/shared/costing-enabled";
 import { capability } from "./capabilities";
 
@@ -29,21 +26,10 @@ import { capability } from "./capabilities";
  * still client-side and still mirror pmsAccess.
  */
 
-/** Owner/IT `*` or a director-level position — sees everything. */
-// Lower-case + collapse internal whitespace + trim. Tolerant to casing/spacing
-// drift ONLY, never substring. Mirror of backend services/pmsAccess.normalisePosition.
 function normalisePosition(name: string | null | undefined): string {
   return (name ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-/** A sales position name — matches "Sales Executive", "Sales Coordinator",
- *  "Sales Director", but ALSO the no-space / punctuated variants that the old
- *  `/^Sales\s/` missed and thereby FAILED OPEN on: "Salesperson",
- *  "Sales-Executive", "Sales_Rep". A `Sales`-prefixed title is always a sales
- *  role here, so a prefix test is correct and safe (there is no non-sales
- *  position that starts with "Sales"). The primary, most-robust signal is now
- *  `department_name` (see isSalesStaff); this remains as a fallback for rows
- *  whose department isn't populated. */
 const SALES_POSITION = /^sales/i;
 
 /**
@@ -73,9 +59,6 @@ export function isDirectorUser(user: AuthUser | null | undefined): boolean {
  */
 export function isSalesStaff(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
-  // The server's answer (pmsAccess.isSalesUser, which reads the Title's policy
-  // row first) wins whenever /auth/me carried a capability set; the org-field
-  // regex below is the fallback for a shell that predates it.
   if (user.capabilities) return capability(user, "org.sales.staff");
   const dept = (user.department_name ?? "").toLowerCase();
   if (dept.includes("sales")) return true;
@@ -129,11 +112,6 @@ const SAVE_EMAILS = new Set([
 export function canSaveSalesReport(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
   const position = (user.position_name ?? "").trim().toLowerCase();
-  // role_name + email are non-null on AuthUser (types.ts), BUT tests construct
-  // partial users without them, and a Worker that predates a field still fills
-  // the object. Defensive ?? "" here, with lint suppressed inline — the ratchet
-  // was 2 before this file, and raising it (vs bearing one disable comment) is
-  // the shape of a silent gap next time someone touches it.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
   const role = (user.role_name ?? "").trim().toLowerCase();
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
@@ -154,14 +132,6 @@ export function isSalesNonDirector(user: AuthUser | null | undefined): boolean {
   return isSalesStaff(user) && !isDirectorUser(user);
 }
 
-/** Exact "Sales Director" position — the signal for the DEPARTMENT-SCOPED Team
- *  admin grant (owner 2026-07). EXACT normalised name so ONLY "Sales Director"
- *  matches, not "Sales Executive"/"Sales Coordinator" nor a name merely
- *  CONTAINING "Sales Director" ("Assistant to Sales Director"). This WAS
- *  /\bSales Director\b/i. Mirrors backend services/pmsAccess.isSalesDirectorUser;
- *  the backend stays the authority — this drives nav visibility + in-page
- *  scoping (defence-in-depth / UX only). MUST stay identical to the backend
- *  SALES_DIRECTOR_POSITION_NAMES. */
 const SALES_DIRECTOR_POSITION_NAMES: ReadonlySet<string> = new Set(
   ["Sales Director"].map(normalisePosition),
 );
@@ -313,22 +283,6 @@ export function canRevertDelivery(user: AuthUser | null | undefined): boolean {
   return (user?.position_capabilities ?? []).includes("scm.do.revert");
 }
 
-/**
- * PROCUREMENT OPERATE gate — "may this user CREATE or CHANGE a PO / GRN".
- *
- * Same job as {@link canOperateScmSalesDoc} for the two supply-chain areas, and
- * split out because the RULE half differs: the Sales-JD write denial keys off
- * `SALES_JD[area] === "view"` (backend `services/salesJdAccess.ts`), which names
- * only `scm.sales.delivery` and `scm.sales.invoices`. Procurement is not a
- * document Sales views-but-cannot-write; it is one they are not granted at all,
- * so the page_access matrix is the whole answer and adding an `isSalesStaff`
- * term here would invent a second, divergent rule.
- *
- * The backend term this mirrors is `scm/middleware/area-guard`: `edit` on the
- * area for POST/PATCH/PUT/DELETE. `MobileConvertWizard` POSTs `/grns` and
- * `/mfg-purchase-orders/from-sos`, so a `view`-level holder offered the "+"
- * walks into a 403 after filling in the whole wizard.
- */
 function canOperateScmProcurement(
   can: (perm: string) => boolean,
   pageAccess: (page: string) => AccessLevel,
@@ -436,8 +390,6 @@ export function canViewScmCosting(user: AuthUser | null | undefined): boolean {
 // tiers unconditionally, so the FE must not hide behind the SCM costing switch
 // or the nav + page would disagree with what the API will serve.
 
-// 'pnl' is the exhibition P&L view — management-only, like do / invoice (a Sales
-// Director never gets it), mirroring backend lib/fair-report.fairReportAccess.
 export type FairStage = "so" | "do" | "invoice" | "pnl";
 
 /** MANAGEMENT tier for the Fair Report — all stages incl. P&L. */
@@ -615,6 +567,6 @@ export function canWriteProjectFinance(
 ): boolean {
   if (!user) return false;
   if (!can("projects.write")) return false;
-  if (user.position_id == null) return true; // financeHiddenForUser's legacy arm
+  if (user.position_id == null) return true;
   return user.project_finance_viewer === true;
 }

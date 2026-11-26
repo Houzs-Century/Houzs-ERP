@@ -1,5 +1,3 @@
-/* A delivery order with no Sales Order (2990-PO-2610-019, KABBIN): the set ships
- * straight from stock when ONE batch in the warehouse holds all of it. */
 import { describe, expect, test } from 'vitest';
 import { oneBatchCovers } from './sofa-batch-guard';
 import { sofaStockKey } from './sofa-set-coverage';

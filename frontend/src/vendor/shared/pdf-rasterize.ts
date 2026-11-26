@@ -1,24 +1,12 @@
-// ----------------------------------------------------------------------------
-// pdf-rasterize — a scanner PDF whose pages are fax-coded (CCITT G4) or JBIG2
-// images is re-drawn in the browser as ordinary JPEG pages, still one PDF with
-// the same pages, before it is uploaded for reading.
-//
-// WHY: the reading model is handed the PDF as-is and could not see those images:
-// Hookka DO-2611-037 (Canon office scanner, 3 CCITT pages) came back "no lines"
-// on every upload (2026-11-13), and the same pages as JPEG read all 22 rows and
-// their racks. pdf.js decodes both codecs, so the browser does the conversion.
-// ----------------------------------------------------------------------------
 
 import { PDF_COMPRESS } from '../scm/lib/pdf-options';
 
 const PAGE_EDGE_PX = 2200;
 const JPEG_QUALITY = 0.85;
-// pdf.js stops drawing in a hidden tab; past this the original goes up unchanged.
 const GIVE_UP_MS = 45_000;
 
 /** True when the PDF holds fax-coded or JBIG2 images the reader cannot see. */
 export function hasUnreadableImageCodec(bytes: Uint8Array): boolean {
-  // Filter names are plain ASCII in the PDF's object dictionaries.
   const text = new TextDecoder('latin1').decode(bytes);
   return /\/(CCITTFaxDecode|JBIG2Decode)\b/.test(text);
 }

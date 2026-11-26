@@ -44,8 +44,6 @@ const deleteSchema = z.object({
 
 type DbRow = { supplier_id: string; category: string; lead_days: number };
 
-// GET /?supplierId= — one supplier's overrides. A category the owner has
-// NOT overridden is absent (the base applies), NOT 0 — the two are different facts.
 mrpSupplierLeadTimes.get('/', async (c) => {
   const supplierId = c.req.query('supplierId');
   if (!supplierId) return c.json({ error: 'supplier_id_required' }, 400);
@@ -60,21 +58,11 @@ mrpSupplierLeadTimes.get('/', async (c) => {
   );
   if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
 
-  // Only what is SET; a missing category means no override (the base applies).
   const leadTimes: Record<string, number> = {};
   for (const r of (data ?? []) as DbRow[]) leadTimes[r.category] = r.lead_days ?? 0;
   return c.json({ leadTimes });
 });
 
-// PUT / — upsert one (supplier, category) override. Uniqueness is
-// (company_id, supplier_id, category).
-//
-// Config-write gated (canWriteScmConfig — flat `scm.config.write` OR the position
-// policy canWriteConfig flag, see houzs-perms.ts), like the base /mrp-lead-times
-// PUT. The /mrp-supplier-lead-times/* area guard is scm.procurement.mrp, which
-// falls through for a non-L2-configured caller (a flat scm.access holder), so the
-// coarse umbrella alone would let any SCM user rewrite overrides. GET stays open —
-// the supplier page reads the overrides.
 mrpSupplierLeadTimes.put('/', async (c) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403);
@@ -107,10 +95,6 @@ mrpSupplierLeadTimes.put('/', async (c) => {
   return c.json({ ok: true, ...parsed.data });
 });
 
-// DELETE / — clear one override so the base applies again. The company_id +
-// supplier_id + category predicate is the whole tenant boundary on this write
-// (the SCM client is service-role and bypasses RLS). Config-write gated, same as
-// PUT above — a DELETE here is a master-data write like the upsert.
 mrpSupplierLeadTimes.delete('/', async (c) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403);

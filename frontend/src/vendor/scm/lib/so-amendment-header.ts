@@ -126,13 +126,9 @@ export const AMENDABLE_HEADER_LABELS: Record<AmendableHeaderKey, string> = {
   email:                'Email',
 };
 
-/** Loose equality mirroring the backend's `norm()` — null / undefined / '' all
-    collapse, so a form re-sending a blank field as '' does not read as a change
-    from null. */
 const norm = (v: string | null | undefined): string =>
   v === null || v === undefined ? '' : String(v).trim();
 
-/** '' -> null so a cleared field persists as NULL (matches the PATCH payloads). */
 const outValue = (v: string | null | undefined): string | null => {
   const n = norm(v);
   return n === '' ? null : n;
@@ -156,8 +152,8 @@ export function buildAmendmentHeaderChanges(
   const changes: SoAmendmentHeaderChanges = {};
   const oldSnapshot: SoAmendmentHeaderChanges = {};
   for (const key of AMENDABLE_HEADER_KEYS) {
-    if (!(key in next)) continue;          // surface doesn't collect this field
-    if (norm(next[key]) === norm(original[key])) continue;   // untouched
+    if (!(key in next)) continue;
+    if (norm(next[key]) === norm(original[key])) continue;
     changes[key] = outValue(next[key]);
     oldSnapshot[key] = outValue(original[key]);
   }
@@ -168,8 +164,6 @@ export function buildAmendmentHeaderChanges(
 export const hasAmendmentHeaderChanges = (h: SoAmendmentHeaderChanges): boolean =>
   Object.keys(h).length > 0;
 
-/** The date-valued amendable keys — rendered through the caller's date
-    formatter so the numeric DD/MM/YYYY house rule applies. */
 const DATE_HEADER_KEYS = new Set<AmendableHeaderKey>([
   'processingDate',
   'customerDeliveryDate',
@@ -243,7 +237,5 @@ export function withoutFrozenHeaderFields<T extends Record<string, unknown>>(pat
   const out: Record<string, unknown> = { ...patch };
   for (const key of AMENDABLE_HEADER_KEYS) delete out[key];
   delete out['salesLocation'];
-  // Double cast: T is a generic constrained to Record<string, unknown>, so a
-  // direct `as T` from the widened Record is not a comparable conversion.
   return out as unknown as T;
 }

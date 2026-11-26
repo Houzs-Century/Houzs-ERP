@@ -1,18 +1,3 @@
-/* ----------------------------------------------------------------------------
-   The Sales Order right-click menu — the four decisions a person may make, and
-   the two that must never be confused with each other.
-
-   WHAT THIS IS FOR. The menu's shape is the product: which rows get which entry,
-   and what the entry is CALLED. Both are decided by plain predicates over a
-   status string, which is exactly the kind of thing that reads correct and is
-   wrong for one status. So the assertions are on the LABEL SEQUENCE for a named
-   status, the same shape as row-menus-remaining-lists.test.ts.
-
-   CLOSE AND CANCEL ARE ONE MENU APART AND DO OPPOSITE THINGS TO THE MONEY —
-   Close keeps the document and everything already delivered against it, Cancel
-   voids the whole thing and turns a deposit into customer credit. The label is
-   what stands between them, so the label is pinned.
-   ---------------------------------------------------------------------------- */
 
 import { describe, expect, test, vi } from "vitest";
 import type { RowMenuItem } from "../../lib/rowMenu";
@@ -28,10 +13,6 @@ type Row = {
   reopenable?: boolean | null;
 };
 const labels = (m: RowMenuItem[]) => m.map((x) => (x.divider ? "—" : x.label));
-/* Fills the doc_no every Sales Order row really has, so each test still says
-   only what it is about. No `do_refs` / `si_refs`, so these rows offer exactly
-   one print entry — `Print` — and the chain entries are pinned in
-   printChain.test.ts against rows that DO carry them. */
 const R = (o: { status?: string | null; on_hold?: boolean | null; has_undelivered?: boolean | null; reopenable?: boolean | null } = {}): Row =>
   ({ doc_no: "SO-0001", ...o });
 const noop = () => {};
@@ -51,14 +32,10 @@ describe("Close remaining", () => {
     },
   );
 
-  /* A draft has no remainder to give up on, a cancelled order never happened,
-     and an already-closed one has nothing left to decide. */
   test.each(["DRAFT", "CANCELLED", "CLOSED"])("is NOT offered on %s", (status) => {
     expect(labels(soMenu()(R({ status })))).not.toContain("Close remaining");
   });
 
-  /* "Close" alone reads as "finish", and finishing is the opposite of what this
-     does — a remainder is being ABANDONED. */
   test("is never labelled just 'Close'", () => {
     expect(labels(soMenu()(R({ status: "CONFIRMED" })))).not.toContain("Close");
   });
@@ -75,19 +52,10 @@ describe("Close remaining", () => {
 });
 
 describe("a closed order is terminal on this menu", () => {
-  /* Closing says the remainder is not coming, so there is nothing left to
-     deliver — soCanRaiseDo names CLOSED in the deny-list and the entry goes. */
   test("offers no Transfer to Delivery Order", () => {
     expect(labels(soMenu()(R({ status: "CLOSED" }))).join("|")).not.toMatch(/Delivery Order/);
   });
 
-  /* THE HOLD IS STILL OFFERED, and that is a decision rather than an oversight.
-     Since mig 0324 a hold is a MARKER, not a status — `PATCH /:docNo/hold`
-     never touches `status` and deliberately does not gate on it
-     (document-hold-route.ts says so in its own header). So a closed order can
-     be flagged "on hold" as a note to whoever reads the list, and taking the
-     flag off restores nothing because nothing was overwritten. Blocking it here
-     would re-couple the two things mig 0324 separated. */
   test("still offers the hold marker, which says nothing about the status", () => {
     expect(labels(soMenu()(R({ status: "CLOSED" })))).toContain("Put On Hold");
   });
@@ -99,9 +67,6 @@ describe("a closed order is terminal on this menu", () => {
     expect(labels(soMenu()(R({ status: "CONFIRMED", on_hold: true })))).toContain("Close remaining");
   });
 
-  /* Cancel STAYS. An order that turns out to be void entirely is the cancel
-     guards' question, not this menu's — and the transition table lets
-     CLOSED > CANCELLED through for the same reason. */
   test("still offers Cancel, alone, last and red", () => {
     const m = soMenu()(R({ status: "CLOSED" }));
     const last = m[m.length - 1]!;
@@ -154,16 +119,12 @@ describe("Print, for the whole chain", () => {
     expect(print).toHaveBeenCalledWith({ doc: "so", docNo: "HC-SO-2608-001", key: "HC-SO-2608-001" });
   });
 
-  /* An order with no delivery must not show a dead or greyed "Print Delivery
-     Order" — the entry is not BUILT, so nothing renders and no separator moves. */
   test("an order with nothing downstream offers Print and nothing else", () => {
     const items = labels(soMenu()(withChain({ do_refs: [], si_refs: [] })));
     expect(items.slice(0, items.indexOf("—"))).toEqual(["Open", "Edit", "Copy as new", "Print"]);
     expect(items.some((l) => l.startsWith("Print "))).toBe(false);
   });
 
-  /* Every other group is unchanged by the print entries — the shape rule
-     (open/edit/print, transfer, status, cancel) still holds. */
   test("the groups after Print are untouched", () => {
     const items = labels(soMenu()(withChain({ status: "DRAFT", do_refs: [], si_refs: [] })));
     expect(items).toEqual([
@@ -219,8 +180,6 @@ describe("Copy as new", () => {
   });
 });
 
-/* Conts #699: a fully delivered order was offered Transfer to Delivery Order,
-   which opened an empty DO form. `has_undelivered` is the list's live reading. */
 describe("Transfer to Delivery Order needs something left to deliver", () => {
   test("is not offered on a row whose has_undelivered is false", () => {
     expect(labels(soMenu()(R({ status: "DELIVERED", has_undelivered: false }))).join("|")).not.toMatch(/Delivery Order/);
@@ -231,9 +190,6 @@ describe("Transfer to Delivery Order needs something left to deliver", () => {
   });
 });
 
-/* TODO.md (2026-09-15): Reopen showed on every cancelled order and the server
-   refused it every time it was not a carried-over AutoCount order. The list now
-   carries the server's `reopenable`, and the entry follows it. */
 describe("Reopen", () => {
   test("is offered on a cancelled order the server will reopen", () => {
     const reopen = vi.fn();

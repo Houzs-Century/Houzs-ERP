@@ -23,11 +23,7 @@ import { useDebouncedValue } from './hooks';
 export type SoValidateDraft = Record<string, unknown>;
 
 export interface SoValidateResult {
-  /** The backend's blocking reasons, in the order it returns them. [] = the
-   *  draft clears every gate the server can see (the real submit still runs the
-   *  authoritative gates). */
   problems: SaveProblem[];
-  /** True while a validate request for the latest draft is in flight. */
   loading: boolean;
 }
 
@@ -56,8 +52,6 @@ export function useSoValidate(
       }),
     enabled,
     retry: false,
-    // Keep the previous answer visible while the next one loads, so the count
-    // does not flicker to zero between keystrokes.
     placeholderData: keepPreviousData,
   });
   return { problems: q.data?.problems ?? [], loading: q.isFetching };

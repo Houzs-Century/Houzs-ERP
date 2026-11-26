@@ -3,39 +3,6 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
 
-// ---------------------------------------------------------------------------
-// THE CLASS GATE for deploy churn: no <Suspense> anywhere in this tree may sit
-// without a SCOPED crash boundary above it, in its own file.
-//
-// Why this file exists instead of another per-file assertion
-// ----------------------------------------------------------
-// The previous pass fixed the three lazy slots inside MobileApp.tsx and gated
-// them with `readFileSync("src/mobile/MobileApp.tsx")` + not.toContain("<Suspense").
-// That gate reported GREEN while AuthGate.tsx mounted the ENTIRE mobile product
-// — `<Suspense fallback={null}><MobileApp /></Suspense>` — with no boundary at
-// all. A gate that reads one hardcoded path proves something about that path
-// and nothing about the class. This one parses every .tsx under src/ and is
-// blind to no file, so a bare <Suspense> added tomorrow in a file nobody has
-// thought of fails the suite instead of shipping.
-//
-// WHAT "SCOPED" MEANS, and what this does NOT prove
-// ------------------------------------------------
-// Scoped = the nearest boundary above the slot is keyed, so a caught error
-// clears when the operator moves. A `resetKey` attribute on the element proves
-// it directly; a component qualifies transitively when its own body wraps
-// {children} in something already known to be scoped (that is how
-// RouteCrashBoundary gets in — it renders <ChunkReloadBoundary
-// resetKey={location.pathname}>). main.tsx's top-level <ChunkReloadBoundary>
-// takes no resetKey and therefore counts for nothing here, which is the whole
-// point: it is the boundary that eats the entire app.
-//
-// It does NOT prove the key actually changes at runtime — a slot could pass by
-// keying on a constant. Two of them deliberately do (AuthGate's mobile shell,
-// main.tsx's public surfaces) because there is no navigation above those to
-// clear a crash with; both say so at the call site. What this gate does prove
-// is that the failure is contained where it happens rather than replacing the
-// whole tree, and that no NEW slot is added with no boundary at all.
-// ---------------------------------------------------------------------------
 
 const SRC = join(process.cwd(), "src");
 
@@ -66,7 +33,6 @@ function hasResetKey(node: ts.Node): boolean {
   );
 }
 
-/** Every JSX element in a subtree, plus whether that subtree renders {children}. */
 function jsxElements(root: ts.Node): ts.Node[] {
   const found: ts.Node[] = [];
   const visit = (n: ts.Node) => {
@@ -99,12 +65,11 @@ const parsed: Parsed[] = files.map((file) => ({
     file,
     readFileSync(file, "utf8"),
     ts.ScriptTarget.ESNext,
-    /* setParentNodes */ true,
+ true,
     ts.ScriptKind.TSX,
   ),
 }));
 
-/** Component declarations (uppercase-named functions) with their bodies. */
 function componentDecls(source: ts.SourceFile): { name: string; body: ts.Node }[] {
   const out: { name: string; body: ts.Node }[] = [];
   const visit = (n: ts.Node) => {
@@ -120,9 +85,6 @@ function componentDecls(source: ts.SourceFile): { name: string; body: ts.Node }[
   return out;
 }
 
-/** Fixpoint: a component is a scoped boundary when it wraps {children} in an
- *  element that is itself scoped (a resetKey attribute, or another such
- *  component). Seeded by nothing — every member has to earn it. */
 function scopedComponents(): Set<string> {
   const scoped = new Set<string>();
   let changed = true;
@@ -166,9 +128,6 @@ function suspenseSites(): Site[] {
       const tag = tagOf(el);
       if (tag !== "Suspense" && tag !== "React.Suspense") continue;
       let covered = false;
-      // Stop AT the SourceFile: its own `parent` is undefined at runtime even
-      // though the type says otherwise, so this is the termination condition,
-      // not a truthiness guard the linter would rightly call redundant.
       for (let p = el.parent; !ts.isSourceFile(p); p = p.parent) {
         if (isScopedElement(p)) {
           covered = true;
@@ -186,13 +145,8 @@ describe("every lazy slot in the tree sits inside a scoped crash boundary", () =
   const sites = suspenseSites();
 
   it("measured something — the population is not empty", () => {
-    // A verdict computed over zero files reads exactly like a pass. All three
-    // of these must be real numbers or the assertion below means nothing.
     expect(files.length).toBeGreaterThan(300);
     expect(sites.length).toBeGreaterThan(0);
-    // The slots themselves, so "no bare <Suspense>" cannot be true merely
-    // because the walk found no JSX: every lazy mount in the tree is one of
-    // these three wrappers, and there are dozens.
     const mounts = parsed.flatMap(({ source }) =>
       jsxElements(source).filter((el) => {
         const tag = tagOf(el);
@@ -203,8 +157,6 @@ describe("every lazy slot in the tree sits inside a scoped crash boundary", () =
   });
 
   it("resolved the boundary components rather than hardcoding their names", () => {
-    // Earned through the fixpoint above, not listed: RouteCrashBoundary gets in
-    // because it renders <ChunkReloadBoundary resetKey={location.pathname}>.
     expect([...SCOPED].sort()).toEqual(
       expect.arrayContaining(["LazySlot", "MobileCrashBoundary", "RouteCrashBoundary"]),
     );
@@ -214,8 +166,6 @@ describe("every lazy slot in the tree sits inside a scoped crash boundary", () =
 
   it("has no <Suspense> whose nearest boundary is the unkeyed top-level one", () => {
     const bare = sites.filter((s) => !s.covered).map((s) => s.where);
-    // AuthGate.tsx:120 was on this list until 2026-08-18 — the mobile shell,
-    // i.e. the half of the product that is actually carried around a factory.
     expect(bare).toEqual([]);
   });
 });

@@ -1,20 +1,3 @@
-// ----------------------------------------------------------------------------
-// ConsignmentReturnFromNote — LINE-LEVEL, QUANTITY-BASED Consignment Note →
-// Consignment Return picker. Faithful clone of DeliveryReturnFromDo.tsx, on the
-// consignment side: the operator picks individual Consignment Note LINES, each
-// with a return qty 1..remaining (and a condition). A note line can be returned
-// across SEVERAL Consignment Returns until its remaining (delivered − returned,
-// derived LIVE by the server) reaches 0.
-//
-// A debtor-lock keeps the merge clean: once one line is ticked, lines of a
-// DIFFERENT debtor grey out — a return is for ONE debtor.
-//
-// Continue stashes the picked lines (carrying each line's noteItemId + condition)
-// to the scoped SCM handoff store and opens the normal New Consignment
-// Return form prefilled for review (?fromPicks=1). No stock moves until Create.
-//
-// Routing: /scm/consignment-returns/from-note.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';

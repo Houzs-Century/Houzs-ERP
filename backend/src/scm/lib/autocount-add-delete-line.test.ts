@@ -141,13 +141,6 @@ describe('a changed line set reaches the payload', () => {
     expect((sb.tables.autocount_outbox ?? [])[0].payload.body.Rebuild).toBe(true);
   });
 
-  /* THE OTHER HALF, and it is the dangerous direction. A delivery order was
-     CREATED BY TRANSFER, and its lines are where AutoCount records that -
-     FromDocType / FromDocNo, listed in AcSyncService.DetailWanted with the note
-     that these four are the DOWNSTREAM shape. ClearDetails() destroys them, and
-     the host's own guard cannot see it: AnyLineTransferred reads TransferedQty,
-     which is what this document transferred ONWARD, not what it came from. So
-     the ERP must never ask. */
   test('a converted document is never rebuilt, whatever its line set did', async () => {
     const sb = withFlag({
       delivery_orders: [{ id: 'do-1', do_number: 'HC-DO-9', do_date: '2026-08-10', debtor_name: 'ACME', ref: null, phone: null, note: null, linked_ac_docno: 'DO-000021' }],

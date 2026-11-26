@@ -1,10 +1,3 @@
-/* How one audit "from" / "to" value reads in the History drawer.
-
-   Gap review P18: a field holding an inline picture (a data: URL) or a long text
-   used to print in full, so one change could fill the drawer with base64. A
-   picture now reads "[image]" (also inside an object value), and text past
-   AUDIT_VALUE_MAX characters is cut with "…"; the drawer keeps the full text in
-   the tooltip. */
 import { fmtSen } from '@2990s/shared';
 import type { AuditLabelDictionary } from './audit-labels';
 

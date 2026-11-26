@@ -1,11 +1,7 @@
-// Logistic Overview, narrowed to one region: the page's figures recomputed from the
-// delivery orders of that region, so everything below a click follows it.
 import type { DayRow, LorryDay, LorryRow } from "./LogisticDailySection";
 import type { PeriodTotals } from "./LogisticPeriodSection";
 import { countsForLorry, lorryTrips, type LorryJob, type LorryJobDetail } from "../../vendor/shared/logistic-region";
 
-/* A region narrows what a lorry delivered, and a service job rides on a delivery run.
-   A job with no region of its own (an event, a stock move) stays the lorry's. */
 const jobsInRegion = <J extends LorryJob>(jobs: readonly J[], region: string | null): J[] =>
   region == null ? [...jobs] : jobs.filter((j) => j.kind !== "delivery" && j.kind !== "service");
 
@@ -37,8 +33,6 @@ export function focusPeriod(p: PeriodTotals, region: string | null, day: string 
     g.orders += 1; g.amountSen += d.amountSen; perDay.set(k, g);
   }
   const lorryDayList = [...perDay.values()].sort((a, b) => b.date.localeCompare(a.date) || b.amountSen - a.amountSen);
-  /* A region narrows what a lorry delivered. A job has no region, so its other trips stay
-     the lorry's own, and only a picked day narrows them. */
   const byLorry: LorryRow[] = p.byLorry.flatMap((l) => {
     const ds = lorryDayList.filter((x) => x.lorry === l.lorry);
     const jobs = p.lorryJobs.filter((j) => j.plate === l.lorry && (day == null || j.date === day));

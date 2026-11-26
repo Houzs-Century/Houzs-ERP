@@ -1,10 +1,3 @@
-// A confirmed PMS project only reaches the Delivery Planning board once it has a
-// setup / dismantle date (that is the fleet commitment the board mirrors). Owner
-// 2026-10-31: on confirm, derive those from the event window so the project shows
-// without re-keying the dates — setup = event start - 1 day, dismantle = event
-// end + 1 day (the dominant convention in the existing data: ~253 projects at -1
-// and ~203 at +1). Pure + fill-only + confirmed-only, so it mirrors exactly what
-// the board shows and never fights a hand-set date.
 import type { Env } from "../types";
 
 /** Shift a YYYY-MM-DD (or YYYY-MM-DDThh:mm) date string by `days`, returning

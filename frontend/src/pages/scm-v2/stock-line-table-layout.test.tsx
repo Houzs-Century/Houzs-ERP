@@ -65,7 +65,6 @@ const draw = (el: React.ReactElement) => render(
 const assertLayout = () => {
   const table = document.querySelector('table')!;
   expect(table.classList.contains(styles.tableOwnWidths!)).toBe(true);
-  // No <td> carries the inline-flex actions class itself.
   expect(document.querySelectorAll(`td.${styles.actionsCell}`)).toHaveLength(0);
   expect(document.querySelectorAll(`td > .${styles.actionsCell}`).length).toBeGreaterThan(0);
 };

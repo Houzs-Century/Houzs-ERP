@@ -91,13 +91,11 @@ export type CommissionChange = {
   date: string;
   deltaGoodsSen: number;
   kind: 'upsale' | 'drop';
-  /** 'price_wiped' (from 2026-11-13): the order's price wiped to 0, not put back yet. */
   notCounted: 'opening_day' | 'first_price' | 'system_fix' | 'price_wiped' | null;
   /** An upsale / drop Finance left out (「这次改价不算」): listed, moving no commission. Absent before 2026-11-12. */
   uncounted?: boolean;
   source: string;
   changedBy: string | null;
-  /** Back-filled from the SO's modification history (1–19 October 2026); absent from older servers. */
   fromHistory?: boolean;
 };
 /* Finance's buttons (owner 2026-11-12: 「1个这张单不要算，1个是这个算下个月」, then on
@@ -106,8 +104,6 @@ export type CommissionMarkKind = 'exclude' | 'defer' | 'exclude_change';
 export type CommissionMarkInfo = {
   id: string;
   kind: CommissionMarkKind;
-  /** defer: the month (YYYY-MM) its commission leaves; exclude_change: the month
-      whose upsales / drop sales are left out; exclude: null. */
   month: string | null;
   reason: string | null;
   markedBy: string | null;
@@ -116,13 +112,10 @@ export type CommissionMarkInfo = {
 export type CommissionSoRow = {
   docNo: string;
   soDate: string | null;
-  /** The venue typed on an order with no fair (its fair row is "No fair", id below 0). */
   venue?: string | null;
-  /** Ref No. (the booklet number), status and when it was keyed — absent before 2026-11-12. */
   ref?: string | null;
   status?: string;
   createdAt?: string;
-  /** Finance's mark; the commission is then 0 here. */
   mark?: CommissionMarkInfo;
   salesperson: string | null;
   customer: string | null;
@@ -140,15 +133,12 @@ export type CommissionFairRow = {
   id: number;
   name: string;
   brand: string | null;
-  /** The project's own place — absent from a server before 2026-10-26 (read
-      through fairPlace, which falls back to the name). */
   organizer?: string | null;
   venue?: string | null;
   state?: string | null;
   startDate: string;
   endDate: string | null;
   ratePct: number | null;
-  /** The event page's typed Total Sales and its Commission row (RM). */
   totalSalesRm: number | null;
   estimateRm: number | null;
   /** Its orders' goods and those × the rate (owner 2026-11-12: 「total sales 应该是 by
@@ -168,7 +158,6 @@ export type CommissionAdjustment = {
   goodsSen: number;
   commissionSen: number;
   beforeReach: boolean;
-  /** An upsale / drop Finance left out, and what that left out of the line. */
   uncounted?: boolean;
   uncountedSen?: number;
 };
@@ -177,7 +166,6 @@ export type CommissionOrderPlace = {
   docNo: string; fairId: number; fairName: string;
   brand: string | null; organizer: string | null; venue: string | null; state: string | null;
   salesperson: string | null; customer: string | null; ratePct: number | null;
-  /** Ref No., SO date and status — absent before 2026-11-12. */
   ref?: string | null; soDate?: string | null; status?: string;
 };
 /** An earlier order once, its final result in the range (「我看final结果」). */
@@ -197,7 +185,6 @@ export type CommissionChangedOrder = CommissionOrderPlace & {
   part: 'range' | 'earlier';
   lastChange: string;
   originalSen: number; latestSen: number; amendedSen: number;
-  /** The goods of the changes left out: in Amended, not in the effect. */
   uncountedGoodsSen?: number;
   reachedOn: string | null;
   effectSen: number;
@@ -209,7 +196,6 @@ export type CommissionChangedOrder = CommissionOrderPlace & {
 /** A closed month's commission for one order, then and now — paid in the first
  *  open month as that month's adjustment (owner 2026-10-26, 关月). */
 export type CommissionMonthAdjustment = {
-  /** The closed month it belongs to, YYYY-MM. */
   month: string;
   docNo: string;
   fairId: number | null;
@@ -217,11 +203,8 @@ export type CommissionMonthAdjustment = {
   brand: string | null;
   salesperson: string | null;
   customer: string | null;
-  /** Ref No., SO date and status — absent on rows made before 2026-11-12. */
   ref?: string | null; soDate?: string | null; status?: string;
-  /** What that month paid for the order: as closed, plus adjustments paid since. */
   wasSen: number;
-  /** That month recalculated today. */
   nowSen: number;
   adjustmentSen: number;
   /** The goods Now is worked on and the rate (owner 2026-11-13: 「我看不到goods amount和rate」) —
@@ -236,7 +219,6 @@ export type CommissionDeferredIn = CommissionOrderPlace & {
   fromMonth: string;
   mark: CommissionMarkInfo;
   commissionSen: number;
-  /** Marked again here — moved on or not counted; 0 is paid here then. */
   markedAgain?: CommissionMarkInfo;
 };
 /** One of Finance's own lines (owner 2026-11-13): goods typed on an order for a
@@ -249,28 +231,21 @@ export type CommissionManualLine = CommissionOrderPlace & {
 /** Which date puts an order in the range: its fair's start, or its own SO date. */
 export type CommissionBasis = 'fair' | 'so_date';
 export type EventCommission = {
-  /** Absent from a server older than the toggle — read it through basisOf. */
   basis?: CommissionBasis;
   from: string;
   to: string;
   fairs: CommissionFairRow[];
   adjustments: CommissionAdjustment[];
-  /** Absent from a server before 2026-10-26 — read as empty. */
   earlierOrders?: CommissionEarlierOrder[];
   changedOrders?: CommissionChangedOrder[];
-  /** Closed months' commission that changed after they closed, paid here — absent before 2026-10-27. */
   monthAdjustments?: CommissionMonthAdjustment[];
   /** 补开单: orders keyed in the range for a fair that had ended before it — absent before 2026-11-12. */
   lateBills?: string[];
-  /** The orders Finance marked on this report, and what the month before moved here. */
   marked?: CommissionMarkedOrder[];
   deferredIn?: CommissionDeferredIn[];
-  /** Finance's own lines for the months the range begins — absent when there are none. */
   manualLines?: CommissionManualLine[];
   totals: { payableSen: number; adjustmentsSen: number; monthAdjustmentsSen?: number; deferredInSen?: number; manualSen?: number; totalSen: number };
-  /** Set when the range is a closed month, served as it was closed. */
   closed?: { month: string; closedAt: string; closedBy: string | null };
-  /** The company's closed months (YYYY-MM) and the first open one. */
   closes?: { months: string[]; openFrom: string | null };
 };
 

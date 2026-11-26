@@ -1,11 +1,3 @@
-// The order's deposit must reach the LIST, not just the detail page.
-//
-// WHY THIS FILE IS SEPARATE FROM si-order-deposit.test.ts. That one pins the
-// RULE. This one pins the thing that actually went wrong in production: the
-// rule existed, the detail page used it, and every other screen did not. On
-// 2026-08-23, after the detail-only fix shipped, `HC-SI-2608-004` read 2,400 on
-// the detail page and 4,400 on the list the office scans to decide who to
-// chase. A rule nothing calls is not a fix.
 import { describe, expect, test } from 'vitest';
 import { stampOrderDeposit } from './si-order-deposit';
 
@@ -13,14 +5,12 @@ type Store = {
   orders: Array<Record<string, unknown>>;
   payments: Array<Record<string, unknown>>;
   invoices: Array<Record<string, unknown>>;
-  /* The customers' credit notes knocked off the invoices (si-credit-notes.ts). */
   allocations?: Array<Record<string, unknown>>;
   notes?: Array<Record<string, unknown>>;
   fail: 'orders' | 'payments' | 'invoices' | 'credits' | null;
   reads: string[];
 };
 
-/** Chainable PostgREST stand-in supporting the `.in()` batched reads. */
 function fakeSb(store: Store) {
   class Q {
     table: string;
@@ -84,10 +74,6 @@ describe('stampOrderDeposit', () => {
     expect(rows[0]!.so_deposit_applied_sen).toBe(200_000);
   });
 
-  /* THE PAGE IS NOT THE POPULATION. si-2 is on page 2; if the allocation ran
-     over the page's rows alone it would hand si-2 the same 2,000 that si-1
-     already took, and the two pages would together claim 4,000 of a 2,000
-     deposit. */
   test('a sibling that is NOT on this page still takes its share first', async () => {
     const store = twoInvoiceOrder();
     const pageTwo = [{ id: 'si-2', so_doc_no: 'HC-SO-2608-006' }] as Array<Record<string, unknown>>;
@@ -115,9 +101,6 @@ describe('stampOrderDeposit', () => {
     expect(rows[0]!.so_deposit_applied_sen).toBe(0);
   });
 
-  /* Four reads for the page, not four per row — the whole reason the stamp is
-     batched: the order, its payments, its invoices, and the credit notes knocked
-     off them. Twenty rows on one order must not become eighty round trips. */
   test('it costs FOUR reads for the whole page', async () => {
     const store = twoInvoiceOrder();
     const rows = Array.from({ length: 20 }, (_, i) => ({ id: `si-${i}`, so_doc_no: 'HC-SO-2608-006' }));

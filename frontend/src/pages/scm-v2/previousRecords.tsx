@@ -39,7 +39,6 @@ export const refOfKey = (key: string): PaymentRef | null => {
 /** Ticks for one table: what DataTable's `selection` takes, and the payments ticked. */
 export function usePaymentTicks(visibleKeys: readonly string[]) {
   const [ticked, setTicked] = useState<Set<string>>(new Set());
-  /* A row that left the list (marked, or no longer in the dates) is no longer ticked. */
   const visible = visibleKeys.join('\n');
   const kept = useMemo(() => {
     const live = new Set(visible.split('\n'));

@@ -31,14 +31,7 @@ export const deliveryFees = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 deliveryFees.use('*', supabaseAuth);
 
-// Houzs-flavoured: gate via canWriteScmConfig (flat `scm.config.write` OR the position policy canWriteConfig flag, see houzs-perms.ts) against
-// the REAL caller (the 2990 staff_role lookup is dead in Houzs — the SCM
-// bridge pins every caller to one super_admin row). Owner + IT Admin pass via
-// `*`; grant the flat key to a ROLE, or set the Title's canWriteConfig flag,
-// under Team > Roles & Permissions (the Roles and Titles tabs).
 
-// Same form holds fees + lead days. Each field is independent so the PATCH
-// can partial-update either group without nuking the other.
 const patchSchema = z.object({
   baseFee:                  z.number().int().nonnegative().optional(),
   crossCategoryFee:         z.number().int().nonnegative().optional(),
@@ -46,12 +39,8 @@ const patchSchema = z.object({
   sofaLeadDays:             z.number().int().nonnegative().optional(),
 });
 
-// GET — every authenticated staff role can read.
 deliveryFees.get('/', async (c) => {
   const supabase = c.get('supabase');
-  // Read the ACTIVE company's single config row by company_id (each company has
-  // exactly one). NOT `.eq('id',1)` — 2990's row is id=100001, not 1, so keying
-  // on id would miss it and fall back to Houzs's. company_id is the real key.
   const { data, error } = await scopeToCompany(
     supabase
       .from('delivery_fee_config')
@@ -71,9 +60,6 @@ deliveryFees.get('/', async (c) => {
   });
 });
 
-// PATCH — fee editors only (admin / coordinator / sales_director). Server-side
-// role check + RLS as defence-in-depth (migrations 0029 + 0112 grant UPDATE to
-// exactly these roles).
 deliveryFees.patch('/', async (c) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403);
@@ -102,7 +88,6 @@ deliveryFees.patch('/', async (c) => {
   if (parsed.data.mattressBedframeLeadDays !== undefined) patch.mattress_bedframe_lead_days = parsed.data.mattressBedframeLeadDays;
   if (parsed.data.sofaLeadDays             !== undefined) patch.sofa_lead_days              = parsed.data.sofaLeadDays;
 
-  // Update the ACTIVE company's row by company_id (not id=1 — 2990's is id=100001).
   let q = supabase
     .from('delivery_fee_config')
     .update(patch);
@@ -112,15 +97,6 @@ deliveryFees.patch('/', async (c) => {
   return c.json({ ok: true });
 });
 
-/* ─── Special delivery fee rules (migration 0024) ──────────────────────────
-   Generalises the per-Model 0140 table onto the #691 RuleTarget abstraction. A
-   rule's `target` jsonb is RuleTarget[] (scopes model | variant | combo |
-   compartment). standalone_fee overrides the base delivery fee when the rule
-   matches an SO; cross_cat_followup_fee applies on a cross-category follow-up.
-   Read for any staff (the order POST recomputes from it); write for the same
-   fee-editor roles as the config above. Fees are whole MYR (server scales ×100
-   to sen). combo/compartment are model-agnostic — they allow an empty modelId;
-   model/variant require a real modelId to match a line's Model. */
 
 const deliveryTargetSchema = targetRefinementSchema
   .and(z.object({ modelId: z.string() }))
@@ -138,7 +114,6 @@ const specialRuleSchema = z.object({
   label:               z.string().optional(),
 });
 
-// Reused gate for the special-fee writes — Houzs flat-key permission.
 const requireFeeEditor = async (c: AppContext) => {
   if (!canWriteScmConfig(c)) {
     return { error: c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403) };
@@ -150,8 +125,6 @@ const requireFeeEditor = async (c: AppContext) => {
   return { userId, supabase };
 };
 
-// GET — list every special delivery rule. `target` (jsonb RuleTarget[]) passes
-// through untouched; the matcher (deliveryTargetMatchesAnyLine) coerces on use.
 deliveryFees.get('/special', async (c) => {
   const supabase = c.get('supabase');
   const { data, error } = await scopeToCompany(
@@ -172,7 +145,6 @@ deliveryFees.get('/special', async (c) => {
   return c.json(rows);
 });
 
-// PUT — upsert one special rule. With `id` → update that row; without → insert.
 deliveryFees.put('/special', async (c) => {
   const gate = await requireFeeEditor(c);
   if ('error' in gate) return gate.error;

@@ -1,7 +1,3 @@
-// Backend classification coverage — mirror of the frontend routing test, plus the
-// routingNote stamped onto the amendment-approved audit row. Proves: colour ->
-// processing (Production / Design); delivery date -> delivery/commercial
-// (Logistics); a mixed amendment tags both types.
 import { describe, it, expect } from 'vitest';
 import { routeField, summariseRouting, routingNote } from './amendment-routing';
 

@@ -1,25 +1,3 @@
-// ---------------------------------------------------------------------------
-// Announcement auto-translation — reusable core. Ported from Hookka
-// (src/api/lib/translate-announcement.ts).
-//
-// The office posts a free-text announcement in ONE language. To support
-// multilingual office staff we translate ONCE on POST (and on edit when
-// title/body change), store all four versions as a JSON blob on the row, and
-// the FE picks the matching language at render time.
-//
-// HOUZS NOTE: ANTHROPIC_API_KEY is OPTIONAL in Env. When unset the call
-// short-circuits to null and the FE simply renders the original title/body.
-// The route never blocks on the translate call — a Claude outage or missing
-// key MUST NEVER prevent posting an announcement.
-//
-// 2026-09-06: the translation no longer sits on the request path at all. The
-// routes write the row with `translations = NULL`, answer, and run
-// `translateAndStore()` under waitUntil; it fills the column when the reply
-// lands (guarded so it never overwrites a newer edit). Before this, a rich
-// notice took 40-100 s to post (four languages of HTML, up to 4096 tokens,
-// three retries, no timeout): the owner saw "Posting…" hang, clicked again,
-// and every click had in fact inserted a row — nine copies of one notice.
-// ---------------------------------------------------------------------------
 
 import {
   hasRichFormatting,
@@ -33,18 +11,8 @@ import { recordAi, type AiUsageTag } from "../services/aiUsage";
 export const CLAUDE_MODEL = "claude-sonnet-4-6";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
-// Anthropic returns transient 429 rate-limits and 529 "Overloaded" / 5xx spikes
-// that clear on a retry. Without one a single transient blip drops the whole
-// announcement translation to null (FE then shows the original text only). Retry
-// those a few times with an exponential-ish backoff; non-retryable statuses and
-// the final attempt fall through to the caller's existing !resp.ok handling.
 const RETRYABLE_ANTHROPIC_STATUS = new Set([429, 500, 502, 503, 529]);
 
-// Per-attempt ceiling. Four languages of a long rich body is the slowest
-// generation this app makes; a healthy reply lands well inside this, and a
-// stuck socket must not pin the background job for as long as the platform
-// allows. An aborted attempt rejects and falls to translateAnnouncement's
-// catch → null, the same outcome as a network failure.
 export const TRANSLATE_ATTEMPT_TIMEOUT_MS = 30_000;
 
 async function anthropicFetchWithRetry(
@@ -62,7 +30,7 @@ async function anthropicFetchWithRetry(
     try {
       const peek = await resp.clone().text();
       if (/overloaded/i.test(peek)) overloaded = true;
-    } catch { /* body peek is best-effort */ }
+    } catch { }
     const retryable = RETRYABLE_ANTHROPIC_STATUS.has(resp.status) || overloaded;
     if (!retryable || attempt === tries - 1) return resp;
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
@@ -86,13 +54,8 @@ async function anthropicFetchWithRetry(
 export const ANNOUNCEMENT_LANGS = ["en", "ms", "zh", "bn"] as const;
 export type AnnouncementLang = (typeof ANNOUNCEMENT_LANGS)[number];
 
-// One translated pair. `bodyHtml` is present only when the SOURCE notice was
-// composed with formatting (announcements.body_html): it is the translated
-// body re-canonicalised through announcementRichText.ts, and `body` is then
-// the plain-text shadow of it — the same body/body_html contract as the row.
 export type TranslationPair = { title: string; body: string; bodyHtml?: string };
 
-// The full stored shape — title+body for every supported language.
 export type AnnouncementTranslations = Record<AnnouncementLang, TranslationPair>;
 
 type AnthropicTranslateResponse = {
@@ -193,9 +156,6 @@ export function splitRichTranslations(
 export async function translateAnnouncement(args: {
   title: string;
   body: string;
-  /** The canonicalised rich body, when the notice has one. Sent INSTEAD of
-   *  `body` so the translation keeps the author's formatting; the returned
-   *  HTML is re-canonicalised and split back into body / bodyHtml per language. */
   bodyHtml?: string | null;
   apiKey: string | undefined;
   usage: AiUsageTag | null;
@@ -252,9 +212,6 @@ export async function translateAnnouncement(args: {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Off-request translation (2026-09-06).
-// ---------------------------------------------------------------------------
 
 /** The text a translation describes — exactly what the row stores. */
 export type TranslationSource = {
@@ -297,8 +254,6 @@ export async function translateAndStore(
       .bind(JSON.stringify(translations), id, src.title, src.body, src.bodyHtml ?? "")
       .run();
     if (r.meta.changes === 0) return "stale";
-    // Readers cache the banner snapshot with the translations inside it —
-    // orphan those so the translated copy reaches phones on the next poll.
     await bumpConfigVersion(env, "banner");
     return "stored";
   } catch (e) {

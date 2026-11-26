@@ -1,8 +1,3 @@
-// A stat tile summarises a row set. When that row set is empty because it has
-// not LOADED — a first paint, a search in flight, a failed fetch — every
-// aggregate over it is 0, and a card that prints "RM 0.00" is stating a fact it
-// does not have. This suite pins the unknown state so the placeholder can never
-// quietly regress back into a confident number.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StatCard } from "./StatCard";
@@ -30,8 +25,6 @@ describe("StatCard pending state", () => {
   });
 
   it("does not colour an unknown value as if it were a real result", () => {
-    // tone="error" paints the number red. A red RM 0.00 that only means
-    // "not loaded" reads as a settled, alarming answer.
     const { container } = render(
       <StatCard label="Outstanding (RM)" value="RM 0.00" tone="error" pending />,
     );
@@ -49,8 +42,6 @@ describe("StatCard pending state", () => {
   });
 });
 
-// Sister-ERP gap review G15: a list whose read FAILED left its tiles on
-// "Loading…" for ever, so staff waited instead of retrying.
 describe("StatCard failed state", () => {
   it("says it could not load, not Loading…, and shows no figure", () => {
     const { container } = render(

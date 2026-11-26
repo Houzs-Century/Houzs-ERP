@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// A PostgREST stand-in over in-memory tables. TEST HELPER ONLY — nothing the
-// Worker ships imports it.
-//
-// It moved out of autocount-outbox.test.ts when a SECOND suite needed it
-// (autocount-requeue.test.ts). A copied fake is the failure mode worth avoiding
-// here: the value of this thing is that it answers like the real edge — a column
-// the table does not have fails the WHOLE query with 42703 rather than being
-// dropped — and a copy that quietly lost that would make its suite prove less
-// than its test names claim.
-// ----------------------------------------------------------------------------
 
 import { parsePgrestInList } from './pgrest-in-list';
 
@@ -25,26 +14,14 @@ export type Row = Record<string, any>;
 export interface FakeUniqueIndex {
   table: string;
   column: string;
-  /** Rows the index covers. A partial index only constrains these. */
   covers?: (r: Row) => boolean;
   name?: string;
 }
 
-/* Supports the shapes these modules use: select/eq/neq/in/lt/like/order/limit/
-   single/maybeSingle, insert (one row or an array), update and delete. `missing`
-   names columns the table does NOT have: asking for one fails the whole query
-   with 42703 and a null body, exactly as PostgREST does — the only way a test
-   can catch a read that quietly becomes "this document has no lines", and the
-   only way to simulate the transient blip that defeats an idempotency guard. */
 export function fakeSb(
   tables: Record<string, Row[]>,
   missing: Record<string, string[]> = {},
   unique: FakeUniqueIndex[] = [],
-  /* Tables whose primary key is a BIGINT identity rather than a uuid/text id.
-     Their minted ids are NUMBERS, because handlers over such a table validate
-     the path parameter with Number.isInteger — a `row-1` id would make every
-     one of those handlers answer 400 in tests and pass in production, which is
-     the wrong way round for a fake to be wrong. */
   numericIdTables: string[] = [],
   /* POSTGREST'S OWN RESPONSE CEILING (`db-max-rows`), when a suite needs it.
      Null means "no ceiling", which is what every existing caller gets. A read
@@ -65,23 +42,13 @@ export function fakeSb(
     let pendingUpdate: Row | null = null;
     let pendingDelete = false;
     let columnError: { code: string; message: string } | null = null;
-    /** What the last UPDATE actually touched, for `.update(...).select(...)`. */
     let updated: Row[] | null = null;
     let wantCount = false;
     let headOnly = false;
     let selectCalled = false;
     let lastInserted: Row | null = null;
-    /* ORDER BY is applied for real, not ignored. `nextJeNo` mints the next
-       accounting voucher number from `.order('je_no', { ascending: false })
-       .limit(1)`, so a fake that returned insertion order would hand out a
-       number that already exists and a test called "does not collide" would
-       pass while production duplicated a JE. */
     let rangeFrom: number | null = null;
     let rangeTo: number | null = null;
-    /** Rows the filters match, sorted — BEFORE any window or cap. This is what
-     *  `count: 'exact'` answers with (Content-Range's total), which is why it is
-     *  its own function: a count computed after the window would agree with the
-     *  truncated read and could never reveal it. */
     const matched = () => {
       const rs = tables[table].filter((r) => filters.every((f) => f(r)));
       for (const { col, asc } of [...sorts].reverse()) {
@@ -99,21 +66,10 @@ export function fakeSb(
     };
     const rows = () => {
       const rs = matched();
-      /* PostgREST `.range(from, to)` is an INCLUSIVE offset window applied
-         after sorting — paginateAll (lib/paginate-all.ts) is built on it, so a
-         fake without it forces every paged read into bespoke pagination the
-         production code does not use. Faithful semantics: slice AFTER sort,
-         inclusive of `to`, composable with `.limit()` the way PostgREST
-         composes them (limit caps the window). */
       const windowed = rangeFrom != null ? rs.slice(rangeFrom, (rangeTo ?? rs.length - 1) + 1) : rs;
       const capped = limitN == null ? windowed : windowed.slice(0, limitN);
-      // The SERVER's ceiling is applied LAST and beats whatever was asked for.
       return maxRows == null ? capped : capped.slice(0, maxRows);
     };
-    /* The insert-time half of a UNIQUE index. Postgres answers 23505 and the
-       row is NOT written; enqueueAcOp reads that as "the same intent is already
-       queued" and returns false. A fake that accepted the duplicate would let a
-       test called "does not double-queue" pass while production really did. */
     const uniqueViolation = (payload: Row) => {
       for (const ix of unique) {
         if (ix.table !== table) continue;
@@ -134,22 +90,8 @@ export function fakeSb(
     };
     const settle = () => {
       if (columnError) return { data: null, error: columnError };
-      /* head:true asks for the COUNT and no rows. conversionIsPartial reads it
-         to decide whether a transfer leaves any of the parent's lines behind,
-         and a fake that answered `undefined` would make every test take the
-         refusal branch for the wrong reason.
-
-         `count` WITHOUT `head` is a different request and used to be answered
-         as if it were this one — `{ data: null }`, so a paginated list read
-         (`.select(COLS, { count: 'exact' })`, the shape every SCM list page
-         uses) came back with no rows at all under this fake. It falls through
-         to the row return below, which carries the count alongside. */
       if (headOnly) return { data: null, count: matched().length, error: null };
       if (pendingRows) {
-        /* Bulk insert. PostgREST takes an array and writes every row in ONE
-           statement; postSiRevenue posts both GL lines that way, so a fake that
-           stored the array as a single row would let a test assert "two lines"
-           against one object that merely looks like two. */
         for (const row of pendingRows) {
           const violated = uniqueViolation(row);
           if (violated) return { data: null, error: violated };
@@ -157,28 +99,14 @@ export function fakeSb(
         const written = pendingRows.map((row, i) => ({ id: mintId(tables[table].length + i + 1), ...row }));
         tables[table].push(...written);
         lastInserted = written[0] ?? null;
-        /* PostgREST returns the written rows when the insert asks for them
-           (`.insert([...]).select('id, line_no')`) and nothing when it does
-           not. The settlement upload needs the new ids to link each statement
-           line to its payments, so a fake that always answered null would
-           force that code into a shape production does not use. */
         return { data: selectCalled ? written : null, error: null };
       }
       if (pendingInsert) {
         const violated = uniqueViolation(pendingInsert);
         if (violated) return { data: null, error: violated };
-        /* Keep the written row so `.insert(...).select('*').single()` can hand it
-           back the way PostgREST does. postSiRevenue reads `je.id` off exactly
-           that chain and writes the JE's lines against it, so a fake that
-           returned null there would fail on the happy path for a reason that has
-           nothing to do with the rule under test. */
         const written = { id: mintId(tables[table].length + 1), ...pendingInsert };
         tables[table].push(written);
         lastInserted = written;
-        /* data stays null on the bare `await sb.from(t).insert(x)` path — three
-           suites already assert that shape. The written row is handed back only
-           through .select().single()/.maybeSingle(), which is the chain that
-           asks for it. */
         return { data: null, error: null };
       }
       if (pendingDelete) {
@@ -193,16 +121,6 @@ export function fakeSb(
         return { data: null, error: null };
       }
       if (pendingUpdate) {
-        /* THE ROWS THIS UPDATE MATCHED, remembered before it changes them.
-           PostgREST's `.update(...).select()` is one `UPDATE … RETURNING`
-           statement: the WHERE is evaluated against the rows as they were, and
-           what comes back is what it actually touched. Recomputing `rows()`
-           afterwards is a different question — it re-runs the filter over the
-           CHANGED rows — and the two answers differ exactly when the update
-           writes the column being filtered on. That is not a corner case here:
-           it is how a conditional claim works (claimOutboxRow sets `claimed_at`
-           while filtering on `claimed_at IS NULL`), and a fake that recomputed
-           would report every successful claim as a lost one. */
         const touched = rows();
         for (const r of touched) Object.assign(r, pendingUpdate);
         updated = touched;
@@ -226,10 +144,6 @@ export function fakeSb(
         else pendingInsert = payload;
         return builder;
       },
-      /* PostgREST upsert — insert, or update the row the onConflict columns
-         already name. Modeled the way supabase-js sends it: the conflict key
-         is a comma-joined column list; a hit updates IN PLACE, a miss falls
-         through to the normal insert path (unique checks included). */
       upsert(payload: Row | Row[], opts?: { onConflict?: string }) {
         const rows = Array.isArray(payload) ? payload : [payload];
         const keys = String(opts?.onConflict ?? '').split(',').map((k) => k.trim()).filter(Boolean);
@@ -250,35 +164,16 @@ export function fakeSb(
       update(patch: Row) { pendingUpdate = patch; return builder; },
       delete() { pendingDelete = true; return builder; },
       eq(col: string, val: unknown) { filters.push((r) => String(r[col]) === String(val)); return builder; },
-      /* PostgREST `is`, which is the ONLY correct way to ask about NULL — `eq`
-         sends `=`, and `col = NULL` is NULL rather than true in SQL, so a null
-         test written as `.eq(col, null)` matches nothing against a real
-         database however well it reads. Absent and null are the same answer
-         here, as they are in Postgres: a column with no value is null. */
       is(col: string, val: unknown) {
         filters.push((r) => (val === null ? r[col] === null || r[col] === undefined : r[col] === val));
         return builder;
       },
-      /* THE NEGATION OF `is` and of `in`, and only of those. PostgREST's
-         `.not(col, op, val)` takes any operator, but the shapes this repo asks
-         for are `.not(col, 'is', null)` — "has a value" — and `.not(col, 'in',
-         list)` — "none of these" — so an unknown operator
-         THROWS rather than quietly matching everything. A fake that answered a
-         filter it does not implement by returning every row would make a scope
-         test pass for the wrong reason, which is the exact failure mode this
-         file exists to avoid. */
       not(col: string, op: string, val: unknown) {
-        /* `.not(col, 'in', '(a,b)')` — "none of these", the escaped in-list the
-           app builds with pgrestInList (the supplier list leaves out Finance's
-           own suppliers). Parsed by the same function, like filter() below. */
         if (op === 'in') {
           const vals = parsePgrestInList(String(val));
           filters.push((r) => !vals.includes(String(r[col])));
           return builder;
         }
-        /* `.not(col, 'like', 'SVC-%')` — the SO line readers leaving the service
-           lines out. A NULL column passes neither `like` nor its negation, as in
-           SQL (`NOT (NULL LIKE …)` is NULL). */
         if (op === 'like') {
           const rx = new RegExp(`^${String(val).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`);
           filters.push((r) => r[col] != null && !rx.test(String(r[col])));
@@ -316,15 +211,7 @@ export function fakeSb(
         filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) < Number(val) : String(r[col]) < String(val)));
         return builder;
       },
-      /* gte/lte compare as PostgREST does for the column's type: numbers
-         numerically, everything else lexically — which is exactly how ISO
-         date/timestamp strings order, the use these appear in (accounting's
-         entry_date and paid_at windows). */
       gte(col: string, val: unknown) {
-        /* NULL matches NO comparison, as in Postgres. The old `?? ''` fold made
-           a null date row pass every `lte(date)` — which double-counted the
-           migration-window rows the stock close deliberately fetches by a
-           SEPARATE is-null query. */
         filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) >= Number(val) : String(r[col]) >= String(val)));
         return builder;
       },
@@ -332,31 +219,16 @@ export function fakeSb(
         filters.push((r) => r[col] != null && (typeof r[col] === 'number' ? Number(r[col]) <= Number(val) : String(r[col]) <= String(val)));
         return builder;
       },
-      /* PostgREST `like` with SQL wildcards. Only `%` is used in this codebase
-         (`JE-2607-%`), and the anchoring matters: an unanchored match would let
-         one company's JE sequence see the other's ("2990-JE-2607-1" matching
-         "JE-2607-%"), which is the collision the prefix exists to prevent. */
       like(col: string, pattern: string) {
         const rx = new RegExp(`^${String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`);
         filters.push((r) => rx.test(String(r[col] ?? '')));
         return builder;
       },
-      /* `ilike` is `like` with the `i` flag and nothing else — same anchoring,
-         same escaping. The outbox page searches a document number the operator
-         typed off paper, where case is not a fact about the document. */
       ilike(col: string, pattern: string) {
         const rx = new RegExp(`^${String(pattern).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
         filters.push((r) => rx.test(String(r[col] ?? '')));
         return builder;
       },
-      /* PostgREST `or=(a.op.v,b.op.v)`: the row passes when ANY term does. Only
-         the term shapes the list readers send are understood — `ilike` (the
-         search box), `eq` and `is.true|false|null` (the hold marker), `neq`
-         (the sales lines' item group), `in.(…)` (the SO Branding funnel),
-         `ov.{…}` (the sales scope, the SO Sales Location funnel); anything else
-         THROWS, for the reason `not()` above gives. Terms split on the commas
-         OUTSIDE a quoted value, an `in.(…)` list or an `ov.{…}` array, as
-         PostgREST does. */
       or(expr: string) {
         const terms = orTerms(expr);
         filters.push((r) => terms.some((f) => f(r)));
@@ -371,15 +243,9 @@ export function fakeSb(
       maybeSingle: async () => {
         const settled = settle();
         if (settled.error) return { data: null, error: settled.error };
-        /* `updated` first: see the UPDATE branch in settle(). It is null on every
-           chain that did not update, so nothing else changes shape. */
         if (updated) return { data: updated[0] ?? null, error: null };
         return { data: lastInserted ?? rows()[0] ?? null, error: null };
       },
-      /* `.single()` on zero rows is an ERROR in PostgREST (PGRST116), not a null
-         body — the exact difference CLAUDE.md's maybeSingle rule turns on. A fake
-         that answered null here would let a handler's honest 404 path go
-         untested while production returned a 500. */
       single: async () => {
         const settled = settle();
         if (settled.error) return { data: null, error: settled.error };
@@ -389,8 +255,6 @@ export function fakeSb(
         }
         return { data: row, error: null };
       },
-      /* An awaited update(...).select() is UPDATE ... RETURNING: the rows it touched, as PostgREST answers. A
-         compare-and-set reads an empty list as "lost". Every other chain is unchanged. */
       then(resolve: (v: unknown) => unknown) {
         return Promise.resolve(settle()).then((v) => resolve(pendingUpdate && updated && selectCalled && !(v as { error?: unknown }).error ? { data: updated, error: null } : v));
       },
@@ -406,16 +270,6 @@ export function fakeSb(
      fake throws `sb.schema is not a function` and the test would be measuring
      the fake, not the code. See docs/bugs/0522. */
   const schemaCalls: string[] = [];
-  /* `.rpc(name, args)` — Postgres functions the code calls through PostgREST
-     (scm.acc_register_item_group extends the category enums, which no DML can
-     model). Every call is RECORDED for assertions. A function with no handler
-     answers the way PostgREST answers for a function that IS NOT THERE —
-     PGRST202 — because that is a real production state every rpc caller
-     already has a lane for: doc-no's counter degrades to its pre-counter path
-     on exactly this code (lib/rpc-missing.ts), and inventing a different
-     error here made 25 tests about CONFIRMING SETTLEMENTS fail inside the JE
-     minter. A test ABOUT an rpc registers a handler in `rpcHandlers`; the
-     handler's return value is the `data`, a throw becomes the error. */
   const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
   const api: {
     from: (t: string) => any;
@@ -451,8 +305,6 @@ export function fakeSb(
   return api as never as typeof api;
 }
 
-/* The terms of a PostgREST `or=(...)`, each a row predicate. An `and(...)` term
-   passes when every inner term does (the delivery board's date bands). */
 function orTerms(expr: string): Array<(r: Row) => boolean> {
   const parts: string[] = [];
   let cur = '', depth = 0, quoted = false;
@@ -486,9 +338,7 @@ function orTerms(expr: string): Array<(r: Row) => boolean> {
       return (r: Row) => rx.test(String(r[col!] ?? ''));
     }
     if (op === 'eq') return (r: Row) => String(r[col!]) === val;
-    // NULL is unequal to nothing in SQL; a reader asks for it with `is.null`.
     if (op === 'neq') return (r: Row) => r[col!] != null && String(r[col!]) !== val;
-    // Date / text comparisons, lexical as gte/lte on the builder; NULL matches none.
     if (op === 'gte') return (r: Row) => r[col!] != null && String(r[col!]) >= val;
     if (op === 'lte') return (r: Row) => r[col!] != null && String(r[col!]) <= val;
     if (op === 'gt') return (r: Row) => r[col!] != null && String(r[col!]) > val;

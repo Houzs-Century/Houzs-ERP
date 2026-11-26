@@ -1,7 +1,3 @@
-// Owner rule (6 Oct 2026, last edit wins, same as SO): a Consignment Order header
-// Delivery Date CHANGE moves every line's date, hand-set ones included, except a
-// line already on a live Consignment Note. A save that
-// leaves the date unchanged touches no line (the CO page re-sends every field).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';

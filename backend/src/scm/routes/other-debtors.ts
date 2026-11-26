@@ -73,7 +73,6 @@ export const DEBTOR_PARTY_FIELDS: ReadonlyArray<readonly [string, string]> = [
 /** What a read of a debtor brings: the account code and the party's data. */
 export const DEBTOR_PARTY_COLS = ['code', ...DEBTOR_PARTY_FIELDS.map(([, col]) => col)].join(', ');
 const partyText = (v: unknown): string | null => { const s = String(v ?? '').trim(); return s ? s : null; };
-/** Every party column from a create body — absent and blank alike are NULL. */
 const partyColumns = (body: Row): Row => Object.fromEntries(DEBTOR_PARTY_FIELDS.map(([key, col]) => [col, partyText(body[key])]));
 
 /* The debtor's account code, AutoCount style (owner 2026-11-03: 305-A001). For
@@ -84,7 +83,6 @@ const DEBTOR_CODE_MAX = 30;
 const debtorCodeOf = (v: unknown): string | null => { const s = String(v ?? '').trim().toUpperCase(); return s ? s : null; };
 const codeTaken = (c: any, code: string): Response => c.json({ error: 'code_taken', message: `Another debtor already has ${code}.` }, 409);
 const isDuplicateKey = (e: { code?: unknown; message?: unknown }): boolean => String(e.code ?? '') === '23505' || /duplicate key/i.test(String(e.message ?? ''));
-/** Refuses a code too long, or one another debtor of this company holds, in words. */
 const refuseDebtorCode = async (c: any, code: string | null, selfId: string | null): Promise<Response | null> => {
   if (!code) return null;
   if (code.length > DEBTOR_CODE_MAX) return c.json({ error: 'code_too_long', message: `An account code is ${DEBTOR_CODE_MAX} characters at most.` }, 400);
@@ -93,7 +91,6 @@ const refuseDebtorCode = async (c: any, code: string | null, selfId: string | nu
   return ((data ?? []) as Row[]).some((d) => String(d.id) !== selfId) ? codeTaken(c, code) : null;
 };
 
-/* Same door as the PV's Paid From: the receiving account must BE money. */
 const requireMoneyIn = async (c: any, code: string): Promise<Response | null> => {
   const sb = c.get('supabase');
   const coId = activeCompanyId(c);
@@ -118,7 +115,6 @@ const loadDebtor = async (c: any, id: string): Promise<{ debtor: Row } | { resp:
   return { debtor: data as Row };
 };
 
-/* ── Registry ─────────────────────────────────────────────────────────────── */
 
 export const listDebtorsHandler = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
@@ -210,7 +206,6 @@ export const debtorDetailHandler = async (c: any): Promise<Response> => {
   ]);
   if (bills.error) return c.json({ error: 'load_failed', reason: bills.error.message }, 500);
   if (receipts.error) return c.json({ error: 'load_failed', reason: receipts.error.message }, 500);
-  /* Each bill's lines ride along (2026-09-06): Edit and Copy start from them. */
   const billRows = (bills.data ?? []) as Row[];
   const byBill = new Map<string, Row[]>();
   if (billRows.length > 0) {
@@ -223,8 +218,6 @@ export const debtorDetailHandler = async (c: any): Promise<Response> => {
       byBill.set(k, [...(byBill.get(k) ?? []), l]);
     }
   }
-  /* Each receipt names the bills it knocks off (the owner's Claude Design,
-     batch 5 §8.3 c4) — this debtor's own bills, by number. */
   const receiptRows = (receipts.data ?? []) as Row[];
   const billsOfReceipt = new Map<string, Array<{ billId: string; no: string | null; amountSen: number }>>();
   if (receiptRows.length > 0) {
@@ -245,11 +238,6 @@ export const debtorDetailHandler = async (c: any): Promise<Response> => {
   });
 };
 
-/* ── GET /receipts/:receiptId — one debtor receipt, for its page ────────────
-   (the owner's Claude Design, batch 5 §8.3 c4). The receipt with every mark
-   of its four layers, its debtor (the registry row the paper's RECEIVED FROM
-   reads), and what it knocks off: each bill's number, date, description and
-   what it still owes, with the amount this receipt takes off it. Reads only. */
 export const debtorReceiptDetailHandler = async (c: Parameters<typeof debtorDetailHandler>[0]): Promise<Response> => {
   const found = await loadReceipt(c);
   if ('resp' in found) return found.resp;
@@ -331,8 +319,6 @@ function buildBillLines(raw: unknown): { lines: BillLine[]; total: number } | { 
   return { lines, total: lines.reduce((s, l) => s + l.amountSen, 0) };
 }
 
-/** The ODB entry for a bill: Dr the other-debtor control for the total, Cr
-    each line its own account — the same shape on first post and on re-post. */
 function debtorBillRuleLines(roles: { AR_OTHER: string }, debtorName: string, billNumber: string, lines: BillLine[], totalSen: number): RuleLine[] {
   return [
     {
@@ -377,14 +363,12 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
     const leafErr = await requireLeafAccount(c, coId, code);
     if (leafErr) return leafErr;
   }
-  /* A line's event must be the company's own (lib/event-tags.ts). */
   const eventErr = await unknownEventRefusal(c, lines.map((l) => l.projectId));
   if (eventErr) return eventErr;
   const billDate = dateOrNull(body.billDate) ?? todayMyt();
   const totalSen = lines.reduce((s, l) => s + l.amountSen, 0);
 
   const sb = c.get('supabase');
-  /* Every refusal above only read, so it released the form's Idempotency-Key. */
   writesFromHere(c);
   const billNumber = await mintMonthlyDocNo(sb, 'acc_debtor_bills', 'bill_number', `${companyDocPrefix(c)}${docKind === 'DN' ? 'ODN' : 'ODB'}-${docMonthTag(billDate)}`);
   const { data: bill, error: insErr } = await sb.from('acc_debtor_bills').insert({
@@ -426,7 +410,6 @@ export const createDebtorBillHandler = async (c: any): Promise<Response> => {
     lines: ruleLines,
   });
   if (!r.ok) {
-    /* The bill does not exist without its journal — direct-post means BOTH. */
     await sb.from('acc_debtor_bill_lines').delete().eq('company_id', coId).eq('bill_id', bill.id);
     await sb.from('acc_debtor_bills').delete().eq('company_id', coId).eq('id', bill.id);
     return c.json({ error: 'post_failed', reason: (r as { reason?: string }).reason ?? r.status }, 500);
@@ -456,8 +439,6 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
   const paper = bill.doc_kind === 'DN' ? 'debit note' : 'debtor bill';
   if (bill.opening === true) return c.json(openingDocumentRefusal(String(bill.bill_number)), 409);
   if (bill.status === 'CANCELLED') return c.json({ error: 'cancelled', message: `${bill.bill_number} is cancelled — raise it again instead.` }, 409);
-  /* Snapshot before the update — a client handing out live row references
-     (the test fake does) would otherwise show the edited date to the contra. */
   const oldDate = String(bill.bill_date);
   const billNumber = String(bill.bill_number);
   const coId = Number(bill.company_id);
@@ -480,13 +461,9 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
     if (eventErr) return eventErr;
     rebuilt = built;
   }
-  /* A blank or absent date keeps the old one — through the shared coercion, so
-     an unfilled <input type="date"> ("") never reaches the DATE column. */
   const billDate = dateOrNull(body.billDate) ?? oldDate;
   const notes = body.notes !== undefined ? (body.notes ? String(body.notes).trim() : null) : (bill.notes ?? null);
 
-  /* The lines, the header and the ledger re-post commit together or not at all. Written one by one, a failure
-     between them left new lines under the old journal, or the old journal reversed and no new one. */
   return runScmPgCommand(c, async (tx) => {
     if (rebuilt) {
       const { error: delErr } = await tx.from('acc_debtor_bill_lines').delete().eq('company_id', coId).eq('bill_id', bill.id);
@@ -498,9 +475,6 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
       if (lineErr) return c.json({ error: 'save_failed', reason: lineErr.message }, 500);
     }
     const totalSen = rebuilt ? rebuilt.total : Number(bill.total_sen ?? 0);
-    /* The status follows the new total: a bill cut down to what was already received is PAID, one raised above it
-       owes again. Compare-and-set on received_sen and the status: a receipt or a cancel that landed since the bill was
-       read refuses the edit instead of being written over. */
     const nextStatus = received > 0 && received >= totalSen ? 'PAID' : 'POSTED';
     const { data: upd, error: upErr } = await tx.from('acc_debtor_bills')
       .update({ bill_date: billDate, notes, total_sen: totalSen, status: nextStatus })
@@ -511,8 +485,6 @@ export const updateDebtorBillHandler = async (c: any): Promise<Response> => {
       return c.json({ error: 'changed', message: `${billNumber} changed while you were editing it (money received, or cancelled). Reload and try again.` }, 409);
     }
 
-    /* The re-post: contra the entry the old bill wrote, then book the bill as
-       it now reads — through the one gate. */
     const rev = await reverseJournal(tx, {
       companyId: coId,
       sourceType: 'ODB',
@@ -574,11 +546,7 @@ export const cancelDebtorBillHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/* ── Receipt — the owner's four layers, then Dr bank / Cr AR_OTHER ────────── */
 
-/* The bills a debtor receipt takes money for — the checks raising one makes,
-   and changing a draft makes again (batch 5 §4.3 c5): each a positive whole
-   sen on one of THIS debtor's live bills, never above what the bill still owes. */
 type Allocation = { billId: string; amountSen: number };
 const checkAllocations = async (c: any, debtorId: string, raw: unknown): Promise<{ allocs: Allocation[] } | { resp: Response }> => {
   const rawAllocs: unknown[] = Array.isArray(raw) ? raw : [];
@@ -641,7 +609,6 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
      hand and posts in the same call. */
   const postNow = body.postNow === true;
 
-  /* Every refusal above only read, so it released the form's Idempotency-Key. */
   writesFromHere(c);
   const receiptNumber = await mintMonthlyDocNo(sb, 'acc_debtor_receipts', 'receipt_number', `${companyDocPrefix(c)}ODR-${docMonthTag(receiptDate)}`);
   const { data: receipt, error: insErr } = await sb.from('acc_debtor_receipts').insert({
@@ -674,8 +641,6 @@ export const createDebtorReceiptHandler = async (c: any): Promise<Response> => {
   if (markErr) return c.json({ error: 'save_failed', reason: markErr.message, receipt: made }, 500);
   const { data: fresh, error: freshErr } = await sb.from('acc_debtor_receipts').select('*').eq('company_id', coId).eq('id', receipt.id).maybeSingle();
   if (freshErr || !fresh) return c.json({ error: 'load_failed', reason: freshErr?.message ?? 'receipt vanished', receipt: made }, 500);
-  /* A failure past this point leaves a stamped DRAFT the Other Debtors page
-     can re-approve (resume), so the number and the allocations are not lost. */
   const posted = await postDebtorReceiptAtomic(c, coId, fresh as Row);
   if ('resp' in posted) return posted.resp;
   return c.json({ ok: true, receipt: made, posted: true, jeNo: posted.jeNo }, 201);
@@ -693,13 +658,6 @@ const loadReceipt = async (c: any): Promise<{ receipt: Row } | { resp: Response 
 
 const stamp = (c: any) => ({ at: now(), by: String(c.get('user')?.id ?? '') });
 
-/* ── PATCH /receipts/:receiptId — change a receipt not yet checked ──────────
-   (the owner's Claude Design, batch 5 §4.3 c5). Its date, the money account it
-   lands on and the bills it takes money for, while it is a DRAFT nobody has
-   checked — the payment voucher's rule (pvCanEdit): a Prepared receipt is still
-   editable and keeps its stage; a Checked one is locked until it is rejected
-   back to Draft. The same checks as raising it. Posts nothing — the money
-   moves at approval — and the number stays. */
 export const updateDebtorReceiptHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write') && !hasHouzsPerm(c, 'scm.payment_voucher.create')) {
     return c.json({ error: "You don't have permission to do that." }, 403);
@@ -740,9 +698,6 @@ export const updateDebtorReceiptHandler = async (c: any): Promise<Response> => {
 
   const sb = c.get('supabase');
   const coId = r.company_id;
-  /* The bills it takes money for are replaced whole. If a later write fails,
-     the old set goes back, so the receipt never says one total and knocks off
-     another. */
   let restore: (() => Promise<string | null>) | null = null;
   if (allocs) {
     const { data: was, error: wasErr } = await sb.from('acc_debtor_receipt_allocations')
@@ -828,7 +783,7 @@ export const rejectDebtorReceiptHandler = async (c: any): Promise<Response> => {
     return c.json({ error: "You don't have permission to do that." }, 403);
   }
   let body: any = {};
-  try { body = await c.req.json(); } catch { /* note is optional */ }
+  try { body = await c.req.json(); } catch { }
   const found = await loadReceipt(c);
   if ('resp' in found) return found.resp;
   const r = found.receipt;
@@ -859,8 +814,6 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
   if (!co.ok) return c.json({ error: 'no_company', message: 'No active company resolves for this session.' }, 409);
   const coId = co.companyId;
 
-  /* Approve stamps once; a resume after a died post never rewrites the stamp
-     (the PV's 0343 rule, reused). */
   if (!r.approved_at) {
     const s = stamp(c);
     const { error } = await sb.from('acc_debtor_receipts')
@@ -872,14 +825,7 @@ export const approveDebtorReceiptHandler = async (c: any): Promise<Response> => 
   return c.json({ ok: true, jeNo: posted.jeNo });
 };
 
-/* The posting itself — Dr bank / Cr AR_OTHER (source ODR), then the ticked
-   bills knocked off — shared by the fourth layer's Approve and by the
-   Receipts page's post-now door, so both book the identical entry. */
 const postDebtorReceipt = async (c: any, sb: any, coId: number, r: Row): Promise<{ jeNo: string } | { resp: Response }> => {
-  /* Claimed FIRST, compare-and-set, inside the caller's transaction (postDebtorReceiptAtomic). A double click or a
-     retry waits on this row and then finds it POSTED, so the bills are never knocked off twice; a failure further down
-     rolls the claim back with everything else. Before, POSTED was written last, and a retry after a post that died
-     between the knock-offs and that write met postJournal's already_posted and knocked the bills off again. */
   const { data: claimed, error: claimErr } = await sb.from('acc_debtor_receipts')
     .update({ status: 'POSTED', posted_at: now() })
     .eq('company_id', coId).eq('id', r.id).neq('status', 'POSTED').neq('status', 'CANCELLED')
@@ -913,16 +859,12 @@ const postDebtorReceipt = async (c: any, sb: any, coId: number, r: Row): Promise
   });
   if (!post.ok) return { resp: c.json({ error: 'post_failed', reason: (post as { reason?: string }).reason ?? post.status }, 500) };
 
-  /* Knock the ticked bills off — clamped at each bill's outstanding, the
-     pv-settle shape (a concurrent receipt may have landed first). */
   const { data: allocs, error: aErr } = await sb.from('acc_debtor_receipt_allocations')
     .select('bill_id, amount_sen').eq('company_id', coId).eq('receipt_id', r.id);
   if (aErr) return { resp: c.json({ error: 'load_failed', reason: aErr.message }, 500) };
   for (const a of (allocs ?? []) as Row[]) {
     const { data: bill, error: billErr } = await sb.from('acc_debtor_bills')
       .select('id, total_sen, received_sen').eq('company_id', coId).eq('id', a.bill_id).maybeSingle();
-    /* Fail LOUD: the journal already posted; a bill we cannot read is a
-       knock-off we cannot prove — the operator re-approves and it resumes. */
     if (billErr) return { resp: c.json({ error: 'load_failed', reason: billErr.message }, 500) };
     if (!bill) continue;
     const room = Number(bill.total_sen) - Number(bill.received_sen ?? 0);
@@ -932,8 +874,6 @@ const postDebtorReceipt = async (c: any, sb: any, coId: number, r: Row): Promise
     }
     if (applied <= 0) continue;
     const nextReceived = Number(bill.received_sen ?? 0) + applied;
-    /* Compare-and-set on what was read: another receipt landing on the same bill meanwhile refuses this one (and
-       rolls it back) instead of the second write losing the first one's money. */
     const { data: moved, error: upErr } = await sb.from('acc_debtor_bills').update({
       received_sen: nextReceived,
       status: nextReceived >= Number(bill.total_sen) ? 'PAID' : 'POSTED',
@@ -947,8 +887,6 @@ const postDebtorReceipt = async (c: any, sb: any, coId: number, r: Row): Promise
   return { jeNo: String((post as Row).jeNo ?? '') };
 };
 
-/** postDebtorReceipt in one transaction: the claim, the journal and the bill knock-offs commit together or not at
-    all. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the Hono context is untyped across this route file, as in every handler above
 const postDebtorReceiptAtomic = async (c: any, coId: number, r: Row): Promise<{ jeNo: string } | { resp: Response }> => {
   let jeNo = '';
@@ -981,9 +919,6 @@ export const voidDebtorReceiptHandler = async (c: any): Promise<Response> => {
   if (r.status === 'CANCELLED') return c.json({ error: 'void_twice', message: `${r.receipt_number} is void.` }, 409);
   if (r.status !== 'POSTED') return c.json({ error: 'not_posted', message: `${r.receipt_number} is not on the books — reject the draft instead of voiding it.` }, 409);
   const coId = Number(r.company_id);
-  /* One transaction, the status claimed first by compare-and-set: a void that died part-way rolls back whole, and a
-     second press waits on the row and finds it void. Before, the status was written last, so a resume re-walked the
-     bills and took the receipt's money off them a second time. */
   return runScmPgCommand(c, async (tx) => {
     const { data: claimed, error: claimErr } = await tx.from('acc_debtor_receipts')
       .update({ status: 'CANCELLED' }).eq('company_id', coId).eq('id', r.id).eq('status', 'POSTED').select('id');
@@ -996,9 +931,6 @@ export const voidDebtorReceiptHandler = async (c: any): Promise<Response> => {
       narration: (orig) => `Void debtor receipt ${r.receipt_number} — voids ${orig.je_no}`,
     });
     if (!rev.ok) return c.json({ error: 'reverse_failed', reason: (rev as { reason?: string }).reason ?? rev.status }, 500);
-    /* The money goes back onto the bills it was taken off — the knock-off's own
-       clamp read backwards, floored at zero. Fail LOUD: the journal is already
-       reversed, and a bill we cannot read would keep money it no longer has. */
     const { data: allocs, error: aErr } = await tx.from('acc_debtor_receipt_allocations')
       .select('bill_id, amount_sen').eq('company_id', coId).eq('receipt_id', r.id);
     if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
@@ -1018,7 +950,6 @@ export const voidDebtorReceiptHandler = async (c: any): Promise<Response> => {
   });
 };
 
-/* ── Router ───────────────────────────────────────────────────────────────── */
 
 export const otherDebtors = new Hono();
 /* The SCM bridge is PER ROUTER (scm/index.ts mounts no global one): it stashes

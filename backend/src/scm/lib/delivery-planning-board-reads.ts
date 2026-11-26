@@ -25,7 +25,6 @@ export function kickOffBoardReads(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- sb is the scm service client, mirrored from boardDeliverableByDoc
   sb: any,
   docNos: string[],
-  /** false for ?counts_only: the balance and DO reads only feed display columns and the row scope. */
   display: boolean,
 ) {
   const liveBalanceReadP = chunkIn<{ doc_no: string | null; balance_sen_live: number | null }>(display ? docNos : [], (batch, from, to) =>
@@ -47,9 +46,6 @@ export function kickOffBoardReads(
       .order('created_at', { ascending: true })
       .range(from, to),
   );
-  /* boardDeliverableByDoc THROWS on failure (the others resolve {data,error}); wrap
-     it so the in-flight promise can never float as an unhandled rejection while the
-     other reads run. The handler reproduces the 'delivered_sum' 500 at its await. */
   const deliverableReadP = boardDeliverableByDoc(sb, docNos).then(
     (r) => ({ ok: r } as const),
     (e) => ({ err: e } as const),
@@ -57,31 +53,11 @@ export function kickOffBoardReads(
   const doRowsReadP = chunkIn<DeliveryOrderExecRow>(display ? docNos : [], (batch, from, to) =>
     sb.from('delivery_orders')
       .select('id, do_number, so_doc_no, status, driver_id, driver_name, vehicle, delivery_state, customer_delivery_date, do_date, delivered_at, pod_r2_key, pod_lat, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date, em_delivery_status, consignment_no, vessel_voyage, etd_port_klang, bs_delivery_date, esb_remarks, bs_remarks, ctn, em_delivered_date')
-      // Oldest first, so "the last DO" (whose crew the row shows and the crew cells
-      // write) is the NEWEST one, the same DO latestLiveDoIdForSo picks; by id alone
-      // it was whichever UUID sorted last.
       .in('so_doc_no', batch).order('created_at').order('id').range(from, to),
   );
   return { liveBalanceReadP, itemRowsReadP, deliverableReadP, doRowsReadP };
 }
 
-/* The three NON-SO sub-boards (ASSR legs, manual DP jobs, PMS project windows) are
-   unioned onto the board AFTER the SO rows. Their first reads depend only on c / sb
-   (not on any SO-board output), yet ran serially after the whole SO assembly — more
-   open latency. Kick them off together with the per-SO reads above so they overlap.
-   Each is wrapped ok/err: the handler awaits each inside the SAME try/catch that
-   already guards its sub-board ("log + leave the other rows untouched"), re-throwing
-   the err so that behaviour is byte-identical — only the waiting moves earlier.
-   The query text is moved verbatim from the handler; delivery-planning.board.test.ts
-   now seeds all three sub-boards so a move that broke one would fail there. */
-/* The PMS crew editor stores crew as free-form JSON on projects.setup_crew /
-   dismantle_crew — a per-lorry structure (`lorry_crew`) plus flattened top-level
-   arrays, each person a {name, phone} with NO user id (see services/projects.ts).
-   The board is a read-only mirror, so flatten the JSON to exactly what its crew
-   columns read: driver names (with phone), helper names, and lorry plates. Prefer
-   the per-lorry arm (authoritative); fall back to the flattened top-level arrays
-   an older save may carry. Any parse failure yields empty, and the caller then
-   falls back to the legacy scalar driver/lorry join. */
 type CrewPersonJson = { name?: unknown; phone?: unknown };
 export function flattenProjectCrew(json: string | null): {
   drivers: Array<{ name: string; phone: string | null }>;
@@ -143,22 +119,12 @@ export function kickOffSubBoardReads(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- sb is the scm service client, as in kickOffBoardReads
   sb: any,
   recentClosedSince: string,
-  /** true for a ?docs= row refresh: SO rows only, the three sub-boards are not read. */
   skip: boolean,
 ) {
   if (skip) {
     const none = Promise.resolve({ err: SUB_BOARD_SKIPPED } as const);
     return { assrRowsP: none, dpResP: none, projRowsP: none };
   }
-  /* Each read is built AND awaited inside an async try/catch so a SYNCHRONOUS throw
-     (e.g. c.env.DB absent — the handler used to call these inside the sub-board
-     try/catch, which caught that) becomes an {err} result, never an unhandled throw
-     out of this kick-off. The handler re-throws {err} inside the SAME try/catch that
-     already guards each sub-board, so a failed read still just logs + leaves the
-     other rows — byte-identical to before, only started earlier. */
-  // Explicit lowercase aliases → deterministic snake_case result keys
-  // (sidesteps any driver camelCasing). OPEN cases, plus recently-closed ones
-  // (leg on/after recentClosedSince) so done legs can reach the Delivered tab.
   const assrRowsP = (async () => {
     try {
       return { ok: await c.env.DB.prepare(assrBoardUnionSql(c, recentClosedSince)).all<{
@@ -180,8 +146,6 @@ export function kickOffSubBoardReads(
         so_state: string | null; so_postcode: string | null; so_country: string | null;
         so_ref_src: string | null; so_custso_src: string | null;
         ref_no: string | null; delivery_order: string | null;
-        // Attached in JS by the row builder (not SELECTed): company_code for the DO
-        // resolver, do_numbers the resolver writes back.
         company_code?: string | null; do_numbers?: string | null;
       }>() } as const;
     } catch (e) { return { err: e } as const; }
@@ -189,9 +153,6 @@ export function kickOffSubBoardReads(
 
   const dpResP = (async () => {
     try {
-      /* PAGED, ordered by id: this read used to stop at .limit(1000) with no order, so
-         once manual DP jobs (DELIVERED ones are kept) passed 1,000 the board silently
-         dropped an arbitrary set of them. */
       const dpRes = await paginateAll<Record<string, unknown>>((from, to) => scopeToAllowedCompanies(
         sb.from('dp_orders')
           .select('id, dp_no, job_type, party_name, contact_phone, address1, address2, address3, address4, city, postcode, state, requested_date, status, trip_id, delivery_message_status, time_range, remark, from_name')

@@ -1,16 +1,3 @@
-// /delivery-returns — customer returning previously-delivered goods.
-//
-// Rebuilt 2026-05-29 as a faithful clone of the Delivery Order API
-// (apps/api/src/routes/delivery-orders-mfg.ts), which is itself an SO clone:
-// editable SO-style header, line-item CRUD, a recomputeTotals rollup, a
-// convert-from-DO endpoint, and ROBUST + IDEMPOTENT inventory INCREASE on
-// create.
-//
-// A Delivery Return = goods coming BACK, so processing one ADDS stock — the
-// mirror image of the DO's deductInventoryForDo. The plain per-category rollup
-// is copied from the DO recomputeTotals.
-//
-// Mounted at '/delivery-returns' in apps/api/src/index.ts.
 
 import { yymmFor } from '../../services/documentRefs';
 import { Hono, type Context } from 'hono';
@@ -61,7 +48,6 @@ import {
 export const deliveryReturns = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryReturns.use('*', supabaseAuth);
 
-/** Strip header + line cost/margin in place for a non-finance caller. */
 function gateDrFinance(
   c: Parameters<typeof canViewScmFinance>[0],
   deliveryReturn: unknown,
@@ -89,25 +75,10 @@ const nextNum = async (sb: any, c: any): Promise<string> => {
   return mintMonthlyDocNo(sb, 'delivery_returns', 'return_number', `${p}DR-${yymm}`);
 };
 
-/* Re-derive the DR header's per-category revenue/cost totals + grand total from
-   its line items. Mirrors the DO recomputeTotals plain per-category rollup.
-   Called after every item mutation.
-
-   Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
-   recomputeTotals (mfg-sales-orders.ts), which carries the full rationale: a
-   read it cannot vouch for must not become a written total, and it aborts by
-   LOGGING because this roll-up only runs AFTER its triggering line write has
-   committed (a throw becomes a 500 the client retries into a duplicate line).
-   See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputeTotals(sb: any, deliveryReturnId: string) {
   const { data: items, error: itemsErr } = await sb.from('delivery_return_items')
     .select('item_group, line_total_sen, line_cost_sen')
     .eq('delivery_return_id', deliveryReturnId);
-  /* A failed READ is not an empty return, and `?? []` cannot tell them apart —
-     it folded a transient blip into a ZERO header AND a ZERO refund_sen on a
-     return whose lines were intact, i.e. a refund owed to a customer silently
-     became no refund. The ERROR is the signal, never the emptiness: a genuinely
-     empty return resolves error === null with data === [] and MUST still zero. */
   if (itemsErr) {
     /* eslint-disable-next-line no-console */
     console.error('[dr-recompute] item read failed — header left unchanged:', deliveryReturnId, itemsErr.message);
@@ -141,37 +112,24 @@ async function recomputeTotals(sb: any, deliveryReturnId: string) {
     total_margin_sen: margin,
     margin_pct_basis: total > 0 ? Math.round((margin / total) * 10000) : 0,
     line_count: (items ?? []).length,
-    // The refund total tracks the returned line value (kept for the legacy
-    // refund_sen column the list + report still read).
     refund_sen: total,
     updated_at: new Date().toISOString(),
   }).eq('id', deliveryReturnId);
-  /* The write's own result was discarded until 2026-07-17: a rejected UPDATE left
-     the header STALE with nothing logged and every caller reporting success. */
   if (updErr) {
     /* eslint-disable-next-line no-console */
     console.error('[dr-recompute] header update failed — totals left STALE:', deliveryReturnId, updErr.message);
   }
 }
 
-/* The stock writes live in lib/delivery-return-stock.ts. These are the
-   non-atomic entry points (line edit / delete, and create / cancel under
-   DELIVERY_RETURN_MODE=two-step): the core on `sb`, then the after-commit work. */
 async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, performedBy: string): Promise<string[]> {
   const core = await drStockInCore(sb, deliveryReturnId, performedBy);
   await afterDrStockIn(sb, core.written, performedBy);
   return core.errors;
 }
-/* Oversell retro-cost (0154): returned goods are a stock IN like any other, so a
-   prior "ship anyway" DO that went out at RM0 in this warehouse can now be costed
-   from the re-opened lots. Needs the committed lots; best-effort. */
 async function afterDrStockIn(sb: any, written: DrStockResult['written'], performedBy: string): Promise<void> {
   if (written.length > 0) await reconcileUncostedAfterIn(sb, written, performedBy);
 }
 
-/* The create's stock IN. DELIVERY_RETURN_MODE=atomic (default): one transaction;
-   a rollback deletes the just-created return and answers 503, and the
-   idempotency claim is released so the retry runs again. */
 async function bookCreatedDrStock(c: any, sb: any, h: { id: string; return_number: string }, userId: string): Promise<{ refused: Response } | { movementErrors: string[] }> {
   const drTx = stockTxFor(c.env, 'DELIVERY_RETURN_MODE');
   if (!drTx) return { movementErrors: await increaseInventoryForReturn(sb, h.id, userId) };
@@ -191,24 +149,16 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
 }
 async function afterDrResync(sb: any, deliveryReturnId: string, written: DrStockResult['written'], performedBy: string): Promise<void> {
   if (written.length > 0) {
-    /* A resync that RAISES the returned qty opens a lot: same retro-cost as the
-       create (negative deltas are filtered out inside). */
     await reconcileUncostedAfterIn(sb, written, performedBy);
-    /* Returned-stock level changed → re-walk SO allocation. Best-effort. */
     try {
       const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
       await recomputeAllocationAfterSave(sb, 'post-dr-resync');
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-dr-resync failed:', e); }
   }
-  /* DR 3B — the return qty changed, so the SO's NET delivered changed too:
-     re-open it (DELIVERED → READY_TO_SHIP) or re-cover it. Unconditional, so the
-     SO status always tracks the lines. */
   await reopenSoFromReturn(sb, deliveryReturnId, performedBy);
 }
 
 
-/* warehouseCodeMap (Agent D 2026-05-31, TASK #32) — warehouse_id → display
-   CODE for the per-line Warehouse column on the DR detail GET. Read-only. */
 async function warehouseCodeMap(
   sb: any,
   ids: Array<string | null | undefined>,
@@ -224,16 +174,6 @@ async function warehouseCodeMap(
 }
 
 
-/* DR 3B (Wei Siang 2026-06-01) — reconcile the Sales Order(s) behind a Delivery
-   Return. A return brings goods back, so the SO is no longer fully delivered and
-   must re-open (DELIVERED → READY_TO_SHIP) to owe + re-ship that qty;
-   syncSoDeliveredFromDo now nets returns out of coverage, so calling it here is
-   what drives the release (and the reverse — re-advance to DELIVERED — when a
-   return is cancelled/reduced). Resolves the SO doc no(s) two ways: the DR
-   header's delivery_order_id → delivery_orders.so_doc_no (fast path), falling
-   back to tracing the DR lines' do_item_id → DO line → so_item → doc_no when the
-   header link is missing. Best-effort + idempotent; safe to call on every DR
-   mutation (create / add-line / edit / delete / cancel). */
 async function reopenSoFromReturn(
   sb: any,
   deliveryReturnId: string,
@@ -301,12 +241,6 @@ async function doReturnableRemaining(sb: any, doIds: string[]): Promise<DoRemain
   return { ok: true, lines: returnableRemainingFrom(base.lines) };
 }
 
-/* Over-return guard for the bulk create POST. Every DO-linked line must respect
-   the returnable pool (delivered − returned). Callers reject lines
-   with no doItemId BEFORE calling this (bug #16 — "no DO, no Return"), so any line
-   reaching here is DO-linked. Mirrors the convert-from-DO picker's per-line check
-   so the New-Return form is not a back door that returns more than was delivered.
-   Returns a 409 body to reject, or null to allow. */
 type DrOverRemainingRefusal =
   | { status: 409; body: { error: string; message: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } }
   | { status: 503; body: { error: string; message: string } };
@@ -329,10 +263,6 @@ async function checkDrOverRemaining(
     .from('delivery_order_items')
     .select('id, delivery_order_id')
     .in('id', ids);
-  /* WAS `return null` — "load failure → don't block; the insert will surface
-     real errors". It does not: the insert is a plain INSERT with no cap of its
-     own, so the only thing standing between a blip and an over-return WAS this
-     read. A guard that answers "allowed" when it could not run is not a guard. */
   if (error) return { status: 503, body: remainingUnavailableResponse(`delivery_order_items: ${error.message}`) };
   const doIds = [...new Set((rows ?? []).map((r: { delivery_order_id: string }) => r.delivery_order_id))] as string[];
   const remaining = await doReturnableRemaining(sb, doIds);
@@ -354,19 +284,6 @@ async function checkDrOverRemaining(
   };
 }
 
-/* Build one delivery_return_items insert row from a client line payload.
-   Shared by POST / (bulk create), POST /:id/items (single add), and the
-   convert-from-DO copy. Computes line_total / line_cost / margin so
-   recomputeTotals can roll them up.
-
-   `sourceCostByDoItem` (lib/source-cost) is the server's own read of the SOURCE
-   DO line's unit_cost_sen. When the line is DO-linked it WINS over the
-   client's `unitCostSen` unconditionally — a return must be booked at the cost
-   the DO actually shipped at, and that is a historical snapshot, not a catalog
-   lookup. Ignoring the client here is what makes stripping the cost off
-   /returnable-do-lines safe: a non-finance caller now echoes nothing that can
-   reach the column (the #632 trap, disarmed at its root rather than trusted not
-   to fire). A free-hand line has no source row, so it keeps the client value. */
 function buildItemRow(
   deliveryReturnId: string,
   it: Record<string, unknown>,
@@ -378,7 +295,6 @@ function buildItemRow(
   const doItemId = (it.doItemId as string | undefined) ?? undefined;
   const sourceCost = doItemId ? sourceCostByDoItem?.get(doItemId) : undefined;
   const unitCost = sourceCost !== undefined ? sourceCost : Number(it.unitCostSen ?? 0);
-  // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qty * unitPrice) - discount);
   const lineCost = qty * unitCost;
   const itemGroup = (it.itemGroup as string) ?? null;
@@ -406,34 +322,15 @@ function buildItemRow(
   };
 }
 
-// ── List ────────────────────────────────────────────────────────────────
 export async function deliveryReturnListHandler(c: Context<{ Bindings: Env; Variables: Variables }>) {
   const sb = c.get('supabase');
-  /* Row-level visibility scope — the SAME rule and the SAME source of truth as
-     the SO / DO / SI list handlers (lib/salesScope): view-all callers
-     (`scm.so.view_all` or a director position via canViewAllSales) are
-     unrestricted; everyone else sees SELF + their full manager_id downline.
-     DR was the one sales document that row-scoped NOBODY, so every salesperson
-     read every other salesperson's returns while the sibling lists denied them.
-     A NULL salesperson_id row is NOT visible to a scoped caller — `.in()` never
-     matches NULL, the same way SO/DO/SI already behave, and salesScope's
-     salesDocOutOfScope rules null out-of-scope explicitly. An unattributed
-     return stays visible to every view-all caller, who can assign its
-     salesperson via PATCH /:id and hand it back to the rep's list.
-     NOTE: must pass the REAL Houzs integer user id (houzsUser) — user.id here
-     is the bridge's pinned system staff uuid, and feeding that to the scope
-     lookup is the documented non-admin 500. */
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
-  /* The screen read — the list's filter + order, shared with GET /export/rows
-     (lib/delivery-return-list-read.ts), capped at 500. */
   const filters = readDeliveryReturnListFilters((k) => c.req.query(k));
   const { data, error } = await orderDeliveryReturnList(
     filterDeliveryReturnList(sb.from('delivery_returns').select(HEADER), filters, c, scopeIds),
   ).limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const rows = (data ?? []) as unknown as Array<DrLineHeader & Record<string, unknown>>;
-  /* The SO number and the book's Agent spelling are ancillary: a failed read
-     leaves them blank and must not 500 the list (the export refuses instead). */
   await stampDrListSoDocNo(sb, c, rows);
   await stampDrListBookSpellings(sb, c, rows);
   gateDrListFinance(rows, canViewScmFinance(c));
@@ -443,7 +340,6 @@ export async function deliveryReturnListHandler(c: Context<{ Bindings: Env; Vari
 }
 deliveryReturns.get('/', deliveryReturnListHandler);
 
-// ── Returnable DO lines (line-level partial-return picker) ────────────────
 /* Commander 2026-05-30 (Phase B) — feeds the line-level DO→Delivery Return
    picker. Returns each DO LINE that can still be returned (remaining > 0),
    where remaining = delivered − returned (derived live — invoicing does NOT
@@ -469,9 +365,6 @@ deliveryReturns.get('/returnable-do-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit) — see resolveCandidateDoIds.
   const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c), 'delivered');
-  /* Same reasoning as the invoiceable picker: an empty list is a claim that
-     nothing delivered is still returnable, and a failed read is not entitled to
-     make it. Refuse to render. */
   if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
   if (candidates.doIds.length === 0) return c.json({ lines: [] });
   const remaining = await doReturnableRemaining(sb, candidates.doIds);
@@ -485,7 +378,6 @@ deliveryReturns.get('/returnable-do-lines', async (c) => {
   return c.json({ lines });
 });
 
-// ── Detail ──────────────────────────────────────────────────────────────
 deliveryReturns.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i] = await Promise.all([
@@ -494,22 +386,12 @@ deliveryReturns.get('/:id', async (c) => {
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
   if (!h.data) return c.json({ error: 'not_found' }, 404);
-  /* Own/downline sales scope (lib/salesScope.ts) — mirror the list scope above,
-     exactly as the DO and SI details do. A scoped seller must not read another
-     salesperson's return by enumerating ids; out-of-scope → 404, indistinguishable
-     from a missing one. Directors/view-all bypass. HEADER carries salesperson_id
-     already. Runs BEFORE the warehouse resolution so an out-of-scope id costs no
-     extra queries. */
   {
     const sp = (h.data as { salesperson_id?: number | string | null }).salesperson_id;
     if (await salesDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), sp)) {
       return c.json({ error: 'not_found' }, 404);
     }
   }
-  /* Per-line Warehouse column (Agent D, TASK #32): resolve the SAME warehouse
-     the return IN puts stock back into (DO/SO line → DO header → DR header →
-     default) so the operator sees which warehouse each line restocks.
-     Display-only. */
   const rawItems = (i.data ?? []) as unknown as Array<{ id: string; do_item_id?: string | null } & Record<string, unknown>>;
   const headerWh = (h.data as { warehouse_id?: string | null }).warehouse_id ?? null;
   const lineWh = await resolveDrLineWarehouses(sb, rawItems, headerWh, activeCompanyId(c));
@@ -518,16 +400,11 @@ deliveryReturns.get('/:id', async (c) => {
     const wid = lineWh.get(it.id) ?? null;
     return { ...it, warehouse_id: wid, warehouse_code: wid ? (codeMap.get(wid) ?? null) : null };
   });
-  /* Finance gate — cost / margin (header + per line) reach ONLY a finance-viewer.
-     The refund/total everyone is meant to see (local_total_sen / refund_sen /
-     line_total_sen) are deliberately NOT stripped. */
   gateDrFinance(c, h.data, items);
   // Stamp each line's supplier fabric code so the on-screen line reads
   // "BF-01 (PC151-01)" — same READ enrichment as the SO/PO/DO/SI details
   // (owner 2026-07-24). ONE batched query; fail-soft.
   await enrichLinesWithFabricSupplierCode(sb, c, items);
-  /* The money side (backlog A1): where the credit note stands, from the notes
-     actually linked. A failed read says so instead of "awaiting". */
   const co = requireActiveCompanyId(c);
   const credit = co.ok ? await loadReturnCredit(sb, co.companyId, id, null) : null;
   const creditNote = credit?.ok
@@ -536,8 +413,6 @@ deliveryReturns.get('/:id', async (c) => {
   return c.json({ deliveryReturn: { ...(h.data as unknown as Record<string, unknown>), credit_note_state: creditNote.state }, items, creditNote });
 });
 
-/* Insert the DR header from a client body. Shared by POST / and the
-   convert-from-DO endpoint. Returns the inserted header row (HEADER cols). */
 async function insertHeader(sb: any, userId: string, body: Record<string, unknown>, c: any) {
   const phoneRaw = (body.phone as string | undefined) ?? null;
   const emPhoneRaw = (body.emergencyContactPhone as string | undefined) ?? null;
@@ -566,7 +441,7 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
   return insertWithDocNoRetry<{ id: string; return_number: string }>(
     () => nextNum(sb, c),
     (returnNumber) => sb.from('delivery_returns').insert({
-    company_id: activeCompanyId(c), // multi-company: stamp the active company
+    company_id: activeCompanyId(c),
     return_number: returnNumber,
     do_doc_no: (body.doDocNo as string) ?? null,
     delivery_order_id: (body.deliveryOrderId as string) ?? null,
@@ -600,9 +475,6 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
     warehouse_id: (body.warehouseId as string) ?? null,
     currency: (body.currency as string) ?? 'MYR',
-    /* A return = goods are RECEIVED back the moment it's created. Skip the
-       PENDING→RECEIVED→INSPECTED hand-walk: start at RECEIVED and increase
-       stock right after the items insert. */
     status: 'RECEIVED',
     received_at: new Date().toISOString(),
     notes: (body.notes as string) ?? null,
@@ -611,38 +483,6 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
   );
 }
 
-/* CROSS-COMPANY GUARD for the DO -> DR conversion.
-
-   companyScope.ts names four converters of this shape (SO->DO, SO->SI, DO->SI,
-   PO->GRN) and every one of them refuses a source document from another
-   company. DO -> DR is a FIFTH and had no check at all: both create paths take
-   the source DO from the request and insertHeader stamps `activeCompanyId(c)`,
-   so a 2990 delivery returned while the switcher said Houzs minted a HOUZS
-   return — Houzs doc number, Houzs company_id — which then writes the stock IN
-   and re-opens the source SO against Houzs' books for goods Houzs never sold.
-
-   REFUSE, not inherit, for the same reason as the SI converter: the return is
-   minted under the ACTIVE company's numbering, so inheriting would leave the
-   doc number and the company_id disagreeing. Unresolved company / NULL source
-   company degrade to allowed — the three-state sentinel, as everywhere. */
-/* ONE CALLER LEFT: the bare-create POST / below. The /from-do + /from-dos
-   converter used this too and no longer does — it scopes its source reads
-   instead, so a cross-company DO is not visible to it and a refusal there could
-   never fire. POST / keeps the refusal because its source DO arrives as an
-   OPTIONAL body field on a path that also serves manual, DO-less returns: there
-   is no single source read to scope, and the ids come from two places (the
-   header deliveryOrderId and each line's doItemId).
-
-   DELEGATES to crossCompanySourceRefusal (scm/lib/companyScope.ts) since
-   2026-08-13. This was its own copy of the rule, and grns.ts had a third —
-   three implementations of one invariant, each named differently, which is
-   precisely why four conversions were guarded and seven were not with nothing
-   in the code saying which was which.
-
-   The shared primitive also FAILS CLOSED on a read error, which this copy did
-   not: it destructured `data` and dropped `error`, so a transient failure read
-   as "no offending source" and let the conversion through. A conversion moves
-   money; "unknown" must not resolve to "allowed". */
 async function crossCompanyDoSourceBlocked(sb: any, c: any, doIds: string[]) {
   const res = await crossCompanySourceRefusal(sb, c, 'delivery_orders', doIds, 'do_number');
   if (res && 'loadError' in res) {
@@ -654,9 +494,6 @@ async function crossCompanyDoSourceBlocked(sb: any, c: any, doIds: string[]) {
   return res?.blocked ?? null;
 }
 
-// ── Create ──────────────────────────────────────────────────────────────
-// Accepts the full DO-cloned header + line items. A return is RECEIVED on
-// creation → stock is increased immediately (idempotent).
 export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   /* company-scope: the only by-id write here is the ROLLBACK — the header this
      handler inserted moments earlier is deleted when the child insert fails.
@@ -670,10 +507,6 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
   let items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
   if (!Array.isArray(items) || items.length === 0) return c.json({ error: 'items_required' }, 400);
 
-  /* Each line's quantity is read ONCE, here, and every reader below (the
-     over-return cap, the unlinked scan, the insert) sees that one number. They
-     used to read it apart: the cap counted a blank as 0, the insert wrote 1,
-     and a negative line lowered "already returned" (shared/return-line-qty.ts). */
   {
     const bad = items.find((it) => parseReturnLineQty(it.qtyReturned ?? it.qty) === null);
     if (bad) {
@@ -684,7 +517,6 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
 
   const sb = c.get('supabase'); const user = c.get('user');
 
-  /* Edge #4 — itemCode catalog guard. */
   {
     const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
@@ -698,10 +530,6 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
      value later keyed from cannot differ. #2660 closed the inbound half. */
   items = await resolveItemGroups(sb, items, activeCompanyId(c) ?? null);
 
-  /* CROSS-COMPANY GUARD (see crossCompanyDoSourceBlocked) — the source DO is
-     whatever the caller names: the header's deliveryOrderId and the parent of
-     every picked DO line. Checked BEFORE the header insert so nothing has to be
-     rolled back. */
   {
     const doIds: string[] = [];
     const headerDoId = (body.deliveryOrderId as string | undefined) ?? null;
@@ -721,12 +549,6 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
     if (blocked) return c.json(blocked, 409);
   }
 
-  /* An unlinked line on a return that NAMES a Delivery Order still brings the
-     stock back IN, but counts against no DO line — so the returned pool never
-     moves and the same goods can be returned again. Same shape that let one
-     Sales Order ship twice (docs/unlinked-line-duplicate-coe.md); refused only
-     when the named DO already contains that item, so a goodwill item added to a
-     return still passes. */
   {
     const unlinked = await findUnlinkedDrLines(
       sb,
@@ -739,28 +561,19 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
         soItemId: (it.doItemId as string | undefined) ?? null,
       })),
     );
-    // Refuses on an unreadable DO too — see unlinkedScanRefusal.
     const bad = unlinkedScanRefusal(unlinked, (o) => unlinkedReturnResponse(o, 'delivery'));
     if (bad) return c.json(bad, 409);
   }
 
-  /* P1 SO-SKU spec §4.6 — SERVICE lines (delivery fee / dispose / lift) ride
-     SO→DO→SI but are NOT returnable goods: a DR line for one would write
-     phantom stock IN. Reject the whole request so the operator removes them. */
   {
     const svc = await findServiceLineCodes(sb, items.map((it) => ({
       itemCode: it.itemCode as string | null | undefined,
       itemGroup: it.itemGroup as string | null | undefined,
     })), activeCompanyId(c));
-    // A failed catalog read is not "no SERVICE lines" — refuse, don't guess.
     if (!svc.ok) return c.json(serviceGuardUnavailableResponse(svc.reason), 409);
     if (svc.codes.length > 0) return c.json(serviceLinesNotReturnableResponse(svc.codes), 409);
   }
 
-  /* Bug #16 (Commander 2026-05-31) — "no DO, no Return". Every return line MUST
-     be tied to a Delivery Order line; only goods actually shipped can come back.
-     Free-entry (doItemId=null) lines were a back door that wrote stock IN with no
-     cap — reject them outright rather than letting them through uncapped. */
   {
     const freeEntry = items.filter((it) => !((it.doItemId as string | undefined) ?? null));
     if (freeEntry.length > 0) {
@@ -772,9 +585,6 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
     }
   }
 
-  /* Remaining-to-return guard — every DO-linked line must respect the live
-     Pending pool. Mirrors the convert-from-DO picker so the New-Return form
-     can't over-return a delivered line. */
   {
     const over = await checkDrOverRemaining(sb, items);
     if (over) return c.json(over.body, over.status);
@@ -797,10 +607,6 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   const h = header as unknown as { id: string; return_number: string };
 
-  /* Re-derive every DO-linked line's cost from the SOURCE DO line, server-side.
-     The New-Return form seeds its drafts off /returnable-do-lines and posts the
-     cost back; trusting that echo is what a finance strip would have turned into
-     a silent "book at cost 0" (#632). */
   const sourceCostByDoItem = await sourceUnitCostByItemId(
     sb, 'delivery_order_items', items.map((it: Record<string, unknown>) => it.doItemId as string | undefined),
     activeCompanyId(c) ?? null);
@@ -809,13 +615,6 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
   if (iErr) { await sb.from('delivery_returns').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
   await recomputeTotals(sb, h.id);
 
-  /* Bug #3/#11 — over-return race guard. checkDrOverRemaining above is
-     read-before-write, so two parallel returns of the same DO line could both
-     pass and over-return. After inserting (and BEFORE writing any stock), re-derive
-     the live remaining for the referenced DO lines — now counting THIS DR — and
-     ROLLBACK (delete the just-created DR) if any line went negative. No inventory
-     was written yet, so the rollback is clean. Mirrors the /from-sos Edge #E
-     pattern. */
   {
     const drItemDoIds = [...new Set(items
       .map((it) => (it.doItemId as string | undefined) ?? null)
@@ -828,10 +627,6 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
       const recheck = rowsErr
         ? { ok: false as const, reason: `delivery_order_items: ${rowsErr.message}` }
         : await doReturnableRemaining(sb, doIds);
-      /* Unverifiable → undo, and say so honestly. Stock has NOT been written yet
-         (increaseInventoryForReturn runs below), so the rollback is clean and
-         the operator is out one keystroke rather than the warehouse being out a
-         phantom return. `race_conflict` is reserved for an actual race. */
       if (!recheck.ok) {
         await sb.from('delivery_return_items').delete().eq('delivery_return_id', h.id);
         await sb.from('delivery_returns').delete().eq('id', h.id);
@@ -852,30 +647,21 @@ export const createDeliveryReturnHandler = async (c: Context<{ Bindings: Env; Va
     }
   }
 
-  /* A DR = goods received back on creation → increase stock now (idempotent:
-     the existence check + UNIQUE index mean this never double-increases even
-     if the create is retried). Atomic: all or nothing, or the create is undone. */
   const booked = await bookCreatedDrStock(c, sb, h, user.id);
   if ('refused' in booked) return booked.refused;
   const { movementErrors } = booked;
 
-  /* B2C SO auto-allocation — returned goods re-enter stock; another customer's
-     pending SO might now be fulfillable. Best-effort. */
   try {
     const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
     await recomputeAllocationAfterSave(sb, 'post-dr');
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-dr failed:', e); }
 
-  /* DR 3B (Wei Siang 2026-06-01) — returned goods mean the SO is no longer
-     fully delivered; re-open it (DELIVERED → READY_TO_SHIP) so a fresh DO can
-     re-ship the returned qty. Best-effort. */
   await reopenSoFromReturn(sb, h.id, user.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
 };
 deliveryReturns.post('/', createDeliveryReturnHandler);
 
-// ── Convert picked DO LINES (partial qty) → ONE Delivery Return ────────────
 /* Commander 2026-05-30 (Phase B) — LINE-LEVEL, QUANTITY-BASED convert, mirroring
    the SO→DO /from-sos picker. Pick individual DO LINES (each with a qty
    1..remaining_to_return) of ONE customer and combine them into ONE Delivery
@@ -895,18 +681,12 @@ deliveryReturns.post('/', createDeliveryReturnHandler);
         set). recomputeTotals, then increaseInventoryForReturn (idempotent).
 
    Mounted at both /from-do and /from-dos so existing callers keep working. */
-/* Exported so the company-scope tests can drive it without the supabaseAuth
-   bridge, which cannot run in the vitest harness. Same reason
-   createPurchaseInvoiceFromGrnHandler and appendDoLinesToSalesInvoiceHandler
-   are exported; the route registration below is unchanged. */
 export const convertDoLinesToReturn = async (c: any) => {
   let body: { picks?: Array<{ doItemId?: string; qty?: number; qtyReturned?: number; condition?: string }> };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
   const sb = c.get('supabase'); const user = c.get('user');
 
-  // Collapse duplicate doItemIds (sum their qty) so a line can't appear twice.
-  // Keep the first non-empty condition seen for each line.
   const pickQtyById = new Map<string, number>();
   const conditionById = new Map<string, string>();
   for (const p of (body.picks ?? [])) {
@@ -918,24 +698,7 @@ export const convertDoLinesToReturn = async (c: any) => {
   }
   if (pickQtyById.size === 0) return c.json({ error: 'picks_required' }, 400);
 
-  // 1. Resolve each picked DO line → its parent DO, then derive remaining.
   const pickedIds = [...pickQtyById.keys()];
-  /* SOURCE LOAD, SCOPED — the picked DO LINES are where the caller's ids enter
-     this converter, so this is the read that decides what a conversion can see.
-     Scoped, so another company's doItemId resolves to NO ROW: the invariant is
-     structural rather than a comparison a later edit could drop.
-     REPLACED the crossCompanyDoSourceBlocked call that stood right below and can
-     no longer fire — doIds is now derived only from rows this predicate returned,
-     and the DO header read below is scoped too.
-
-     THE COST: a hand-crafted request naming the other company's DO line gets
-     `do_item_not_found` instead of "that delivery belongs to 2990, switch
-     company" — true from this company's view, unhelpful from the operator's.
-     Accepted for the same reason the PO's /:id/convert-from-so accepts it:
-     naming the other company would need an UNSCOPED read of a document this
-     handler otherwise never touches. The bare-create POST / above still uses the
-     refusal, because there the source DO arrives as a body field on a path that
-     also serves manual returns with no DO at all. */
   const { data: pickedItemRows, error: pErr } = await scopeToCompany(sb
     .from('delivery_order_items')
     .select('id, delivery_order_id')
@@ -948,13 +711,9 @@ export const convertDoLinesToReturn = async (c: any) => {
 
   const doIds = [...new Set([...idToDo.values()])];
   const remainingResult = await doReturnableRemaining(sb, doIds);
-  /* Pre-write refusal — nothing has been created yet, and every per-pick qty
-     below is capped by `line.remaining`. Without this the empty map surfaced as
-     `do_item_not_found`, blaming the operator's pick for a read error. */
   if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
   const remainingMap = remainingResult.lines;
 
-  // 2a. Same-customer guard — every picked line must share ONE customer.
   const customers = new Set<string>();
   const customerNames = new Set<string>();
   for (const id of pickedIds) {
@@ -971,7 +730,6 @@ export const convertDoLinesToReturn = async (c: any) => {
     }, 400);
   }
 
-  // 2b. Per-line qty guard — 1..remaining_to_return.
   for (const id of pickedIds) {
     const line = remainingMap.get(id)!;
     const qty = pickQtyById.get(id)!;
@@ -988,30 +746,21 @@ export const convertDoLinesToReturn = async (c: any) => {
     }
   }
 
-  /* P1 SO-SKU spec §4.6 — SERVICE lines ride the DO (D2 final) so the picker
-     CAN surface them, but they are not returnable goods. Reject the convert
-     if any picked line is a SERVICE line. */
   {
     const svc = await findServiceLineCodes(sb, pickedIds.map((id) => {
       const line = remainingMap.get(id)!;
       return { itemCode: line.itemCode, itemGroup: line.itemGroup };
     }), activeCompanyId(c));
-    // A failed catalog read is not "no SERVICE lines" — refuse, don't guess.
     if (!svc.ok) return c.json(serviceGuardUnavailableResponse(svc.reason), 409);
     if (svc.codes.length > 0) return c.json(serviceLinesNotReturnableResponse(svc.codes), 409);
   }
 
-  // 3. Create ONE return header from the FIRST pick's DO. "First" = the DO of
-  //    the earliest-sorted picked line so the result is deterministic.
   const sortedPicks = pickedIds
     .map((id) => remainingMap.get(id)!)
     .sort((a, b) => a.doNumber.localeCompare(b.doNumber) || a.doItemId.localeCompare(b.doItemId));
   const firstDoId = sortedPicks[0]!.deliveryOrderId;
   const distinctDoNumbers = [...new Set(sortedPicks.map((l) => l.doNumber))].sort();
 
-  // Pull the FIRST DO's header for the return header snapshot. SCOPED: the
-  // header is the second half of the same source document, so it is read under
-  // the same predicate as the lines above.
   const { data: doHeader, error: dhErr } = await scopeToCompany(sb.from('delivery_orders')
     .select('id, do_number, debtor_code, debtor_name, phone, email, salesperson_id, agent, ' +
             'customer_type, building_type, branding, venue, venue_id, ref, customer_so_no, ' +
@@ -1060,8 +809,6 @@ export const convertDoLinesToReturn = async (c: any) => {
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   const h = header as unknown as { id: string; return_number: string };
 
-  // 3b. One return line per pick — qty_returned = the picked qty, do_item_id
-  //     set for the remaining-formula link. Carry cost so margins survive.
   const rows = sortedPicks.map((line) => buildItemRow(h.id, {
     doItemId: line.doItemId,
     itemCode: line.itemCode,
@@ -1071,8 +818,6 @@ export const convertDoLinesToReturn = async (c: any) => {
     qtyReturned: pickQtyById.get(line.doItemId)!,
     condition: conditionById.get(line.doItemId) ?? 'NEW',
     unitPriceSen: line.unitPriceSen,
-    // Carry the DO line's discount (hardcoding 0 overstated the refund);
-    // mirrors the SI convert-from-DO path.
     discountSen: line.discountSen,
     unitCostSen: line.unitCostSen,
     variants: line.variants,
@@ -1081,16 +826,8 @@ export const convertDoLinesToReturn = async (c: any) => {
   if (iErr) { await sb.from('delivery_returns').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
   await recomputeTotals(sb, h.id);
 
-  /* Bug #3/#11 — over-return race guard (mirrors the bulk POST / above). The
-     per-line qty check at step 2b is read-before-write, so two parallel converts
-     of the same DO line could each pass and over-return. After inserting (and
-     BEFORE writing any stock), re-derive the live remaining for the referenced DO
-     lines — now counting THIS DR — and ROLLBACK (delete the just-created DR) if any
-     picked line went negative. No inventory was written yet → clean rollback. */
   {
     const recheck = await doReturnableRemaining(sb, doIds);
-    /* Same call as the bulk path: undo rather than keep a return whose ceiling
-       could not be re-derived, and never under the race message. */
     if (!recheck.ok) {
       await sb.from('delivery_return_items').delete().eq('delivery_return_id', h.id);
       await sb.from('delivery_returns').delete().eq('id', h.id);
@@ -1110,14 +847,10 @@ export const convertDoLinesToReturn = async (c: any) => {
     }
   }
 
-  // Goods received back → increase stock (idempotent; atomic: all or nothing, or the create is undone).
   const booked = await bookCreatedDrStock(c, sb, h, user.id);
   if ('refused' in booked) return booked.refused;
   const { movementErrors } = booked;
 
-  /* DR 3B (Wei Siang 2026-06-01) — re-open the SO this return came from
-     (DELIVERED → READY_TO_SHIP) so the returned qty can be re-shipped on a
-     fresh DO. Best-effort. */
   await reopenSoFromReturn(sb, h.id, user.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, lineCount: rows.length, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
@@ -1125,7 +858,6 @@ export const convertDoLinesToReturn = async (c: any) => {
 deliveryReturns.post('/from-do', convertDoLinesToReturn);
 deliveryReturns.post('/from-dos', convertDoLinesToReturn);
 
-// ── Header PATCH (editable SO/DO-style fields) ─────────────────────────────
 deliveryReturns.patch('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -1160,8 +892,6 @@ deliveryReturns.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
-  /* A cleared date input posts "" and this loop wrote it through to a date
-     column, which Postgres rejects and 500s the save. */
   coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
@@ -1171,7 +901,6 @@ deliveryReturns.patch('/:id', async (c) => {
   return c.json({ ok: true, id });
 });
 
-// ── Item CRUD ─────────────────────────────────────────────────────────────
 export const addDeliveryReturnItemHandler = async (c: Context<{ Bindings: Env; Variables: Variables }, '/:id/items'>) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -1179,14 +908,12 @@ export const addDeliveryReturnItemHandler = async (c: Context<{ Bindings: Env; V
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
-  /* Same one-read quantity rule as the create path (shared/return-line-qty.ts). */
   {
     const q = parseReturnLineQty(it.qtyReturned ?? it.qty);
     if (q === null) return c.json({ error: 'invalid_qty', message: returnLineQtyMessage(it.itemCode as string, it.qtyReturned ?? it.qty) }, 400);
     it = { ...it, qtyReturned: q };
   }
 
-  /* Bug #16 — "no DO, no Return": a single-added line must also reference a DO line. */
   if (!((it.doItemId as string | undefined) ?? null)) {
     return c.json({
       error: 'do_link_required',
@@ -1194,7 +921,6 @@ export const addDeliveryReturnItemHandler = async (c: Context<{ Bindings: Env; V
     }, 409);
   }
 
-  /* Edge #4 — itemCode catalog guard. */
   {
     const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
@@ -1204,13 +930,11 @@ export const addDeliveryReturnItemHandler = async (c: Context<{ Bindings: Env; V
      stored group is what the stock movement is keyed from. */
   it = (await resolveItemGroups(sb, [it], activeCompanyId(c) ?? null))[0]!;
 
-  /* P1 SO-SKU spec §4.6 — SERVICE lines are not returnable goods. */
   {
     const svc = await findServiceLineCodes(sb, [{
       itemCode: it.itemCode as string | null | undefined,
       itemGroup: it.itemGroup as string | null | undefined,
     }], activeCompanyId(c));
-    // A failed catalog read is not "no SERVICE lines" — refuse, don't guess.
     if (!svc.ok) return c.json(serviceGuardUnavailableResponse(svc.reason), 409);
     if (svc.codes.length > 0) return c.json(serviceLinesNotReturnableResponse(svc.codes), 409);
   }
@@ -1218,7 +942,6 @@ export const addDeliveryReturnItemHandler = async (c: Context<{ Bindings: Env; V
   const { data: header } = await scopeToCompanyId(sb.from('delivery_returns').select('id').eq('id', id), co.companyId).maybeSingle();
   if (!header) return c.json(NOT_THIS_COMPANY, 404);
 
-  /* Over-return guard for the single-add path too. */
   {
     const over = await checkDrOverRemaining(sb, [it]);
     if (over) return c.json(over.body, over.status);
@@ -1243,12 +966,6 @@ export const addDeliveryReturnItemHandler = async (c: Context<{ Bindings: Env; V
   const { data, error } = await sb.from('delivery_return_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
-  /* Adding a return line must put its goods back into stock, same as the line
-     edit/delete paths below — otherwise on-hand stays short by the added qty.
-     Idempotent + best-effort (resync targets net-IN = sum of current lines). */
-  /* REPORTED: writeMovements never throws, so this catch caught nothing and a
-     failed stock resync returned a clean 200. Same contract the CREATE path
-     already uses. */
   let resyncErrs: string[] = [];
   try { resyncErrs = await resyncInventoryForReturn(sb, id, c.get('user')?.id); }
   catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
@@ -1263,16 +980,11 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  /* Edge #4 — itemCode catalog guard (only when caller is changing it). */
   if (it.itemCode !== undefined) {
     const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
 
-  /* Audit 2026-06-11 M10 — scope the line to THIS return: a mismatched itemId
-     must 404, not edit another DR's line while the recompute + stock resync
-     run against this one. Company scope layered on top so the line can't belong
-     to another company's return either. */
   const { data: prev } = await scopeToCompanyId(sb.from('delivery_return_items')
     .select('qty_returned, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, uom, variants, notes, condition, do_item_id')
     .eq('id', itemId).eq('delivery_return_id', id), co.companyId).maybeSingle();
@@ -1294,20 +1006,15 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     it.itemGroup = resolved?.itemGroup ?? null;
   }
 
-  /* P1 SO-SKU spec §4.6 — block edits that would TURN a return line into a
-     SERVICE line (code/group swap). Effective = patch value ?? stored value. */
   if (it.itemCode !== undefined || it.itemGroup !== undefined) {
     const svc = await findServiceLineCodes(sb, [{
       itemCode: (it.itemCode ?? prev.item_code) as string | null | undefined,
       itemGroup: (it.itemGroup ?? prev.item_group) as string | null | undefined,
     }], activeCompanyId(c));
-    // A failed catalog read is not "no SERVICE lines" — refuse, don't guess.
     if (!svc.ok) return c.json(serviceGuardUnavailableResponse(svc.reason), 409);
     if (svc.codes.length > 0) return c.json(serviceLinesNotReturnableResponse(svc.codes), 409);
   }
 
-  /* An edit that names a quantity must name a real one: a 0 or negative edit
-     would lower "already returned" and re-open the DO line for another return. */
   let qty = Number(prev.qty_returned);
   if ((it.qtyReturned ?? it.qty) !== undefined) {
     const q = parseReturnLineQty(it.qtyReturned ?? it.qty);
@@ -1319,10 +1026,6 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     if (held) return c.json({ error: held.error, message: held.message }, held.status);
   }
 
-  /* Over-return cap (parity with create + add-line; was the one DR back door).
-     An edited qty must not push the DO line past its remaining (delivered −
-     invoiced − returned). The line's OWN current qty is already in `returned`, so
-     only the INCREASE is checked against remaining; a reduction always passes. */
   {
     const doItemId = (prev as { do_item_id?: string | null }).do_item_id ?? null;
     const delta = qty - Number(prev.qty_returned ?? 0);
@@ -1334,20 +1037,9 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
 
   const unitPrice = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : Number(prev.unit_price_sen);
   const discount = it.discountSen !== undefined ? Number(it.discountSen) : Number(prev.discount_sen);
-  /* A caller who cannot READ the cost must not WRITE it. The detail GET now
-     strips unit_cost_sen for a non-finance caller, and DeliveryReturnDetail
-     seeds each line draft straight off that payload (`unit_cost_sen ?? 0`) and
-     posts the value back here on save — so trusting the client would let the
-     stripped field round-trip as a genuine 0 and wipe the line's cost basis
-     (recomputeTotals would then roll the DR's cost to 0 and its margin to the
-     full refund). This route accepts ANY defined value, unlike the SO PATCH,
-     whose `explicitCost > 0` precedence makes a 0 fall through to the stored
-     cost — which is why the same strip was safe there (#625). Keep the stored
-     cost for a non-finance caller; a finance caller is unaffected. */
   const unitCost = (canViewScmFinance(c) && it.unitCostSen !== undefined)
     ? Number(it.unitCostSen)
     : Number(prev.unit_cost_sen);
-  // Audit 2026-06-20 — clamp like the PO create path (negative-money guard).
   const lineTotal = Math.max(0, (qty * unitPrice) - discount);
   const lineCost = qty * unitCost;
 
@@ -1362,16 +1054,12 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
   }
-  /* Description 2 is always the server-generated variant summary. */
   {
     const effGroup = (it.itemGroup ?? prev.item_group) as string | null | undefined;
     const effVariants = (it.variants ?? prev.variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  /* The EDIT half of the back door. A null doItemId cannot be TYPED here ("no DO,
-     no Return") but still ARRIVES — do_item_id is ON DELETE SET NULL — and on such
-     a row the cap above is skipped. See unlinked-line-edit-guard. */
   {
     const repoint = await unlinkedEditRefusal(sb, 'delivery-return', {
       parent: { table: 'delivery_returns', column: 'delivery_order_id', id, companyId: co.companyId },
@@ -1385,11 +1073,6 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
   const { error } = await scopeToCompanyId(sb.from('delivery_return_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
-  /* A DR put goods back into stock on create; an edited qty must re-sync that
-     stock or on-hand stays inflated. Idempotent + best-effort. */
-  /* REPORTED: writeMovements never throws, so this catch caught nothing and a
-     failed stock resync returned a clean 200. Same contract the CREATE path
-     already uses. */
   let resyncErrs: string[] = [];
   try { resyncErrs = await resyncInventoryForReturn(sb, id, user?.id); }
   catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
@@ -1400,10 +1083,6 @@ deliveryReturns.delete('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* Audit 2026-06-11 M10 — scope the line to THIS return: a mismatched itemId
-     must 404, not delete another DR's line while the recompute + stock resync
-     run against this one. Company scope layered on top so the line can't belong
-     to another company's return either. */
   {
     const { data: line } = await scopeToCompanyId(sb.from('delivery_return_items')
       .select('id').eq('id', itemId).eq('delivery_return_id', id), co.companyId).maybeSingle();
@@ -1416,31 +1095,12 @@ deliveryReturns.delete('/:id/items/:itemId', async (c) => {
   const { error } = await scopeToCompanyId(sb.from('delivery_return_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
-  /* Deleting a returned line must take its re-stocked goods back out, or on-hand
-     stays inflated by the removed qty. Idempotent + best-effort. */
-  /* REPORTED: writeMovements never throws, so this catch caught nothing and a
-     failed stock resync returned a clean 200. Same contract the CREATE path
-     already uses. */
   let resyncErrs: string[] = [];
   try { resyncErrs = await resyncInventoryForReturn(sb, id, user?.id); }
   catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
   return c.json({ ok: true, movementErrors: resyncErrs.length ? resyncErrs : undefined });
 });
 
-// ── Status transition ──────────────────────────────────────────────────────
-// Kept simple per spec: a return is RECEIVED on create (stock already added);
-// CANCELLED is allowed. Other statuses (INSPECTED / REFUNDED / CREDIT_NOTED /
-// REJECTED) remain valid enum values and stamp their timestamp.
-//
-// Migration 0107 — CANCELLED reverses the inventory IN a DR wrote on create
-// (a DR put goods BACK into stock; cancelling must take them out again), via
-// resyncInventoryForReturn with a CANCELLED target of zero — the same delta-based
-// helper that also handles line edit/delete, so the three rollback paths can't
-// drift. It writes batch-scoped IN/OUT for sofa lots and a FIFO-neutral signed
-// ADJUSTMENT otherwise, all tagged source_doc_type='ADJUSTMENT' so they sidestep
-// the uq_inv_mov_dr_source unique index. Idempotent by construction: a re-run
-// finds delta 0. The cancelled return's qty also returns to Pending automatically
-// (the do-line-remaining formula filters non-cancelled DRs).
 export const patchDeliveryReturnStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
@@ -1449,40 +1109,14 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
-  /* NORMALISE FIRST, as the Delivery Order handler this document sits beside
-     already does (`String(body.status).trim().toUpperCase()`,
-     delivery-orders-mfg.ts) — and as consignment-returns.ts, whose own
-     `dr_cancelled_final` comment cites THIS handler as its model, now does too.
-     The asymmetry was inside this file: resyncInventoryForReturn uppercases the
-     PERSISTED status (:448) while every gate below compared the INCOMING status
-     raw.
-
-     A lowercase 'cancelled' missed the already-cancelled echo, missed the
-     ATOMIC `.neq('status','CANCELLED')` single-flight, fell into the plain
-     `else` write, and never called resyncInventoryForReturn — so the return's
-     inventory IN was NEVER drained back out while the return read as cancelled.
-     That is the Sales Invoice bug (SI_STATUS_CANON) with stock in place of
-     revenue, and delivery-orders-mfg.ts records the same class shipping for real
-     on the DO ("Cancel DO and Mark signed on the V2 detail page both post
-     LOWERCASE, so both had been dead since that page shipped").
-
-     No status whitelist added: `delivery_return_status` is a real vocabulary
-     but it is not declared anywhere this handler can import, and a guessed list
-     would refuse a legitimate status. Recommended separately. */
   const toStatus = String(body.status).trim().toUpperCase();
 
-  // Read the current status so the CANCELLED reversal is idempotent.
   const { data: cur } = await scopeToCompanyId(sb.from('delivery_returns').select('status').eq('id', id), co.companyId).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
-  // Already cancelled → echo back without re-reversing (would double-deduct).
   if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     return c.json({ deliveryReturn: { id, status: 'CANCELLED' } });
   }
-  /* Audit 2026-06-10 #3 (IMPORTANT) — a CANCELLED DR is FINAL. Un-cancelling
-     left the cancel's stock drain in place (resync only runs on the CANCELLED
-     transition), so the books said "returned" while the shelf stayed empty.
-     Raise a NEW Delivery Return instead. */
   if (prevStatus === 'CANCELLED') {
     return c.json({
       error: 'dr_cancelled_final',
@@ -1515,9 +1149,6 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
     .update(ts).eq('id', id), co.companyId).eq('status', prevStatus)
     .select('id, status').maybeSingle()
     .then((r: unknown) => r as DrFlipResult, (e: { message: string; code?: string }) => ({ data: null, error: e }));
-  /* DELIVERY_RETURN_MODE=atomic: a cancel's flip and its stock drain are ONE
-     transaction (lib/delivery-return-stock.ts); a flip that matched nothing comes
-     back as `flip` and is answered below exactly like the two-step write. */
   const drTx = toStatus === 'CANCELLED' ? stockTxFor(c.env, 'DELIVERY_RETURN_MODE') : null;
   let drained: DrStockResult['written'] | null = null;
   let flipped: DrFlipResult;
@@ -1543,32 +1174,14 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   }
   const data = updated as { id: string; status: string };
 
-  // Cancelling a DR → drain the inventory IN it wrote on create back out, via
-  // resyncInventoryForReturn (target net 0). It writes a FIFO-neutral signed
-  // ADJUSTMENT (unindexed by the DR source key, carrying variant_key) — we CANNOT
-  // reuse reverseMovements: its balancing OUT reuses the DR's (source_doc_type,
-  // source_doc_id, item_code, variant_key) key, which the partial UNIQUE index
-  // uq_inv_mov_dr_source (migration 0102, keyed WITHOUT movement_type) rejects →
-  // the insert silently fails and the returned stock stays added.
-  // Hoisted: the response below is OUTSIDE this block, so a block-scoped
-  // declaration would leave the cancel path unable to report its failures.
   let resyncErrs: string[] = [];
   if (toStatus === 'CANCELLED') {
-    // Unified rollback: target net = 0 for a cancelled DR, so the resync drains
-    // back out exactly the stock still booked by this return (the create IN minus
-    // any line-edit adjustments). Same code path as line edit/delete — they can't
-    // drift. Idempotent + best-effort.
-    /* REPORTED: writeMovements never throws, so this catch caught nothing and a
-       failed stock resync returned a clean 200. Same contract the CREATE path
-       already uses. */
     resyncErrs = [];
-    if (drained) await afterDrResync(sb, id, drained, user.id); // atomic: the drain already committed with the flip
+    if (drained) await afterDrResync(sb, id, drained, user.id);
     else {
       try { resyncErrs = await resyncInventoryForReturn(sb, id, user.id); }
       catch (e) { resyncErrs = [`return resync threw: ${(e as Error)?.message ?? 'unknown'}`]; }
     }
-    /* DR cancel pulled stock back out → other READY SOs that relied on it may
-       now regress to PENDING. Re-walk allocation. Best-effort. */
     try {
       const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
       await recomputeAllocationAfterSave(sb, 'post-dr-cancel');

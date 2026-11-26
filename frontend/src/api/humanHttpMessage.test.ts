@@ -1,10 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { humanHttpMessage } from "./client";
 
-// The operator must never be shown a machine code. The backend sends errors as
-// { error: "<code>", message: "<sentence>" } (middleware/idempotency.ts), and
-// this mapper used to return `error` verbatim — so a key collision surfaced as
-// the literal string "idempotency_in_flight".
 describe("humanHttpMessage", () => {
   test("a curated error CODE maps to plain language, never the raw code", () => {
     const body = JSON.stringify({
@@ -14,9 +10,6 @@ describe("humanHttpMessage", () => {
     const msg = humanHttpMessage(409, body);
     expect(msg).not.toContain("idempotency_in_flight");
     expect(msg).not.toContain("_");
-    // It must read as "in progress", NOT as a failure — telling the operator it
-    // failed at the moment it is going through invites the double-submit the
-    // idempotency key exists to prevent.
     expect(msg).toMatch(/already going through/i);
   });
 
@@ -35,11 +28,6 @@ describe("humanHttpMessage", () => {
         JSON.stringify({ error: "idempotency_unavailable", message: "fallback" }),
       ),
     ).toMatch(/nothing was sent/i);
-    /* key_reused is answered on a payload-hash mismatch ALONE, so the claim it
-       collided with may hold a COMMITTED 201. The copy therefore sends the
-       operator to CHECK — a refresh is what surfaces the document that may
-       already exist. "Nothing was saved, press Save again" was tried and
-       reverted on 2026-08-18: it turns a retype into a second document. */
     const reused = humanHttpMessage(
       409,
       JSON.stringify({ error: "idempotency_key_reused", message: "fallback" }),
@@ -90,17 +78,10 @@ describe("humanHttpMessage", () => {
   });
 
   test("the 503 wording keeps the phrases isColdPool503 matches on", () => {
-    // Cold-pool retry keys off this sentence; changing it silently disables the
-    // mutation retry that rides out a Hyperdrive cold start.
     expect(humanHttpMessage(503, "")).toMatch(/briefly unavailable|try again in a moment/i);
   });
 
   test("a frozen save reads as PAUSED, not as an outage — `reason` is read", () => {
-    // scm/lib/write-freeze.ts refuses a frozen write with 503 + the explanation.
-    // This mapper read only error/message/detail, so the explanation was dropped
-    // and staff were shown the generic 503 line — an outage sentence for a
-    // deliberate business decision. Worse, that sentence is what isColdPool503
-    // matches, so the client silently re-sent the refused save four more times.
     const body = JSON.stringify({
       error: "write_frozen",
       reason: "Saving is paused while the AutoCount data is brought across.",
@@ -112,8 +93,6 @@ describe("humanHttpMessage", () => {
   });
 
   test("`reason` alone is enough — the SCM client's field is honoured here too", () => {
-    // vendor/scm/lib/authed-fetch.ts has always read `reason`, which is why SCM
-    // pages behaved better than the rest of the app on the same refusal.
     const body = JSON.stringify({
       error: "write_frozen",
       reason: "Saving is paused while the AutoCount data is brought across.",
@@ -122,8 +101,6 @@ describe("humanHttpMessage", () => {
   });
 
   test("a leaked SQLite/D1 constraint error is NOT shown — falls to the status map", () => {
-    // A backend catch that echoes `e.message` on a UNIQUE violation used to
-    // surface the raw driver string. It must never reach the operator.
     const body = JSON.stringify({
       error: "D1_ERROR: UNIQUE constraint failed: project_team.project_id, project_team.user_id",
     });
@@ -142,8 +119,6 @@ describe("humanHttpMessage", () => {
   });
 
   test("a bare HTTP reason phrase is neutralised to the friendly status sentence", () => {
-    // "Not found"/"Forbidden"/"Unauthorized" verbatim are the status code in
-    // words — replace with the plain sentence, never echo the machine phrase.
     expect(humanHttpMessage(404, JSON.stringify({ error: "Not found" }))).toBe(
       "We couldn't find what you were looking for.",
     );
@@ -156,8 +131,6 @@ describe("humanHttpMessage", () => {
   });
 
   test("a genuine sentence that merely contains a number is still shown as-is", () => {
-    // The internals guard must not swallow a legitimate message — only DB/driver
-    // vocabulary is suppressed, not ordinary sentences with digits.
     const body = JSON.stringify({ error: "Order 12345 has already been invoiced." });
     expect(humanHttpMessage(409, body)).toBe("Order 12345 has already been invoiced.");
   });

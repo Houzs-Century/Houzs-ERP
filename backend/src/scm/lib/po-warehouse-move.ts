@@ -1,19 +1,3 @@
-/* A PO's new ship-to warehouse takes its lines with it (sister fix Conts-ERP #783).
- *
- * The GRN made from the outstanding-lines picker receives into each LINE's
- * warehouse while the GRN made from the PO uses the header's, so a header-only
- * change sent the same PO's goods to two warehouses depending on the button.
- *
- * Called by the header PATCH (routes/mfg-purchase-orders.ts) BEFORE it writes
- * the header: if the header write then fails, a retry still sees the old header
- * warehouse, finds nothing left on it, and just saves the header.
- *   - lines still on the OLD header warehouse move to the new one;
- *   - a line deliberately set to another warehouse keeps it, and a line with no
- *     warehouse already follows the header;
- *   - a line with goods already received is never moved: the change is refused
- *     and says why. A live GRN is refused earlier by the identity lock
- *     (shared/po-identity-lock.ts); this covers received_qty left without one.
- * Reads and writes carry the company predicate (scopeToCompanyId). */
 import { scopeToCompanyId } from './companyScope';
 
 type Refusal = { status: 409 | 500; body: Record<string, unknown> };

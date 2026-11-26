@@ -23,8 +23,6 @@ import {
 const backdrop: CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.28)',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
-  // 3001 — above every page modal (~1000) AND just above the confirm (3000),
-  // so a notify raised over a confirm still shows on top. Wei Siang 2026-06-20.
   zIndex: 3001, padding: 'var(--space-4)',
 };
 const card: CSSProperties = {
@@ -52,7 +50,6 @@ export type NotifyOpts = {
   title: string;
   body?: ReactNode;
   okLabel?: string;
-  /** 'error' tints the title red (for failures); 'info' (default) keeps it ink. */
   tone?: 'info' | 'error';
 };
 
@@ -74,13 +71,10 @@ type NotifyFn = (opts: NotifyOpts) => Promise<void>;
 
 const NotifyContext = createContext<NotifyFn | null>(null);
 
-/* Mount once at the app root. Holds the live message state, renders the modal,
-   and hands every descendant a notify() through context. */
 export function NotifyProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<(NotifyOpts & { resolve: () => void }) | null>(null);
   const notify = useCallback<NotifyFn>(
     (opts) => new Promise<void>((resolve) => {
-      // A new message supersedes any open one (resolve the old immediately).
       setState((prev) => { prev?.resolve(); return { ...opts, resolve }; });
     }),
     [],
@@ -102,7 +96,6 @@ export function NotifyProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/* Show an in-app message: `await notify({ title, body })` (or fire-and-forget). */
 export function useNotify(): NotifyFn {
   const notify = useContext(NotifyContext);
   if (!notify) throw new Error('useNotify must be used within <NotifyProvider>');

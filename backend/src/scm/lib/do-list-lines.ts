@@ -80,9 +80,6 @@ const byLinePosition = (a: LineRow, b: LineRow): number => {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 };
 
-/* "Detail Description 2" is the text composed from the line's variants (owner
-   2026-09-15), the stored text only where the variants compose nothing — the same
-   rule lib/so-list-lines.ts applies to a sales order line. */
 function lineDescription2(itemGroup: string | null, variants: unknown, stored: string | null): string | null {
   const summary = variants && typeof variants === 'object' && !Array.isArray(variants)
     ? buildVariantSummary(itemGroup, variants as Record<string, unknown>).trim()
@@ -126,8 +123,6 @@ export async function attachDoLines(
   const ids = [...new Set(rows.map((r) => r.id))];
   if (ids.length === 0) return { error: null, lineCount: 0 };
 
-  /* The company predicate on the LINE read too: a parent id is not company
-     scope (CLAUDE.md R105 b). */
   const lineRead = await chunkIn<LineRow>(ids, (batch, from, to) =>
     scopeToCompany(sb.from('delivery_order_items').select(opts.charges ? `${DO_LINE_READ_COLS}, line_total_sen` : DO_LINE_READ_COLS), c)
       .in('delivery_order_id', batch).order('delivery_order_id', { ascending: true }).order('id', { ascending: true })
@@ -135,14 +130,11 @@ export async function attachDoLines(
   if (lineRead.error) return { error: `lines: ${lineRead.error.message}`, lineCount: 0 };
   const all = lineRead.data;
 
-  /* AutoCount's number — not in the list's HEADER select. The Pending ledger's
-     header columns ride the same read, so doLineRemaining does not repeat it. */
   const acNo = await lookupByIds<DoRemainingHeader & { linked_ac_docno: string | null }>(ids, (batch, from, to) =>
     scopeToCompany(sb.from('delivery_orders').select('id, linked_ac_docno, do_number, status, debtor_code, debtor_name'), c)
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
   if (acNo.error) return { error: `delivery order numbers: ${acNo.error}`, lineCount: 0 };
 
-  /* Invoiced / Returned / Uninvoiced — the app's own Pending ledger. Fails closed. */
   const pending = await doLineRemaining(sb, ids, 'invoiceable', [...acNo.byId.values()]);
   if (!pending.ok) return { error: `invoiced quantities: ${pending.reason}`, lineCount: 0 };
 
@@ -163,8 +155,6 @@ export async function attachDoLines(
     invoiceNos.set(l.do_item_id, (invoiceNos.get(l.do_item_id) ?? new Set()).add(si.invoice_number));
   }
 
-  /* The Sales Order line each DO line was raised from (company-scoped), and the
-     purchase orders raised for that SO line — AutoCount's "PO Doc No.". */
   const so = await lookupByIds<{ id: string; doc_no: string | null }>(
     all.map((l) => l.so_item_id),
     (batch, from, to) => scopeToCompany(sb.from('mfg_sales_order_items').select('id, doc_no'), c)
@@ -218,7 +208,6 @@ export async function attachDoLines(
       ac_debtor_code: inBook ? (text(r.debtor_code) ?? AC_DEBTOR_CODE) : text(r.debtor_code),
       ac_agent: inBook ? resolveAcAgent(r.agent, staffName) : (text(r.agent) ?? staffName),
     };
-    /* The delivery warehouse lives on the DO header; AutoCount's short code. */
     const location = bookSpellingOrOwn(
       warehouseLabel(r.warehouse_id ? wh.byId.get(r.warehouse_id) : null) ?? text(r.sales_location), LOCATION_MAP);
     const lines: DoListLine[] = [...(byDo.get(r.id) ?? [])].sort(byLinePosition).map((l) => {

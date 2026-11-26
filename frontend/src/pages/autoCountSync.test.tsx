@@ -27,12 +27,6 @@ import { AutoCountSync } from "./AutoCountSync";
 import type { AcOutboxResponse, AcOutboxRow } from "../lib/autocountOutbox";
 
 afterEach(cleanup);
-/* BRACES, not a concise arrow. `mockReset()` returns the mock, and vitest calls
-   a function returned from beforeEach as that test's TEARDOWN — so
-   `beforeEach(() => apiGet.mockReset())` invokes api.get after every test, and
-   the rejection armed by the load-failure test below surfaced as that test
-   failing with "the queue is unreachable" thrown from nowhere it could see.
-   Proven 2026-08-15; see BUG-HISTORY. */
 beforeEach(() => { apiGet.mockReset(); apiPost.mockReset(); });
 
 const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
@@ -67,10 +61,6 @@ const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
   counts_complete: true,
   meta: {
     max_attempts: 6,
-    /* The server still ships these and the page no longer prints them — they
-       were written for a workflow log. Left in the fixture on purpose: the
-       "no coding words" test below would pass for the wrong reason if the
-       fixture quietly stopped carrying the sentence that says "cron". */
     state_meaning: { pending: "Queued. The 5-minute cron will send it." },
     skip_kinds: [{ kind: "keyless-line", remedy: "backfill linked_ac_dtlkey" }],
   },
@@ -93,52 +83,24 @@ async function mount(body: AcOutboxResponse | Error, path = "/autocount-sync") {
 
 const chip = (name: RegExp) => screen.getByRole("button", { name });
 
-/* `data-ac-row`, not `li`: the list is windowed now and the windowing component
-   owns the element that wraps each row. A test that reaches for the wrapper is
-   asserting the virtualiser's markup, which is not this page's contract.
-   `data-ac-doc` is looked at FIRST because the register prints a document number
-   twice on a healthy row — in *Document* and, identically, in *In the book as* —
-   so `getByText` finds two nodes and throws. The text fallback stays for
-   anything that is not a register cell. */
 const cardOf = (docNo: string): HTMLElement => {
   const cell = [...document.querySelectorAll<HTMLElement>("[data-ac-doc]")]
     .find((el) => el.textContent === docNo);
   return (cell ?? screen.getByText(docNo)).closest("[data-ac-row]") as HTMLElement;
 };
 
-/**
- * Open a row by its always-visible reason line — the line IS the opener.
- *
- * Asked for by `data-ac-why` rather than by "the first collapsed button in the
- * row", which stopped being unambiguous when the register gave the *Sends* cell
- * its own `aria-expanded` for the send history. Two openers on one row is the
- * normal shape now, and a test that picks by position picks whichever the
- * markup happens to put first.
- */
 async function openRow(docNo: string) {
   const card = cardOf(docNo);
   await userEvent.click(card.querySelector("[data-ac-why]") as HTMLElement);
   return cardOf(docNo);
 }
 
-/**
- * Everything on a card EXCEPT the collapsed technical block.
- *
- * Asked STRUCTURALLY, because "not on screen" cannot be asked any other way
- * here: jsdom does not apply the user-agent stylesheet, so a closed `<details>`
- * still contributes its whole content to `textContent` and a plain
- * `expect(body.textContent).not.toContain(…)` would be red no matter where the
- * text sits. `data-ac-technical` is a test hook the way `data-ac-row` already
- * is — it names the contract (this is the part behind the disclosure), not the
- * styling.
- */
 const plainTextOf = (el: HTMLElement): string => {
   const copy = el.cloneNode(true) as HTMLElement;
   for (const n of copy.querySelectorAll("[data-ac-technical]")) n.remove();
   return copy.textContent;
 };
 
-/** Open the fold that history sits behind. */
 async function openReplacedGroup() {
   await userEvent.click(
     screen.getByRole("button", { name: /replaced documents?, kept as a record/ }),
@@ -153,7 +115,6 @@ const rows = [
     needs_attention: true,
     reason: "refused, nothing sent (MissingLocationError): line 2 carries no warehouse",
     reason_kind: "missing-location", remedy: "set the warehouse on the line" }),
-  /* WAITING with tries left, so the server offers it a Send now. */
   row({ id: "p", doc_no: "SO-P", doc_type: "SO", status: "pending", state: "pending", attempts: 2,
     can_send_now: true,
     reason: "AcSyncService threw: timeout opening the book" }),
@@ -177,14 +138,9 @@ describe("AutoCountSync — is anything stuck, first", () => {
 
   it("says sending is switched off instead of reporting a stopped sync as healthy", async () => {
     await mount(payload({ writeback: { value: "off", on: false, scope: "off" } }));
-    /* Once: the verdict (headline) says it. The second line under the strips that
-       repeated it — the writeback bar — was removed in the 2026-08-21 declutter. */
     expect((await screen.findAllByText(/Sending to AutoCount is switched off/)).length).toBe(1);
   });
 
-  /* The writeback bar that spelled out a typo'd switch value ("set to 'On ',
-     which does not read as on") was removed in the 2026-08-21 declutter. The
-     headline still says the sync is off; the value-level hint is gone by design. */
 });
 
 describe("AutoCountSync — the counts are on something you can click", () => {
@@ -205,16 +161,11 @@ describe("AutoCountSync — the counts are on something you can click", () => {
     expect(chip(/Delivery orders\s*1/)).toBeTruthy();
     expect(chip(/Invoices\s*1/)).toBeTruthy();
     expect(chip(/Goods received\s*1/)).toBeTruthy();
-    /* Not "Purchase orders" plus an invented row — a type with nothing in it
-       still shows, at zero, so the strip is the same shape every time. */
     expect(chip(/Purchase orders\s*0/)).toBeTruthy();
     expect(chip(/Supplier invoices\s*0/)).toBeTruthy();
   });
 
   it("asks the server again when a status chip is clicked, and recounts the types", async () => {
-    /* Click "In AutoCount" (sent), NOT "Not accepted": the page now DEFAULTS to
-       the Not accepted (attention) tab, so clicking it would be a no-op and never
-       ask the server again. In AutoCount is a real state change from the default. */
     apiGet.mockImplementation((url: string) =>
       Promise.resolve(url.includes("state=sent")
         ? payload({
@@ -235,12 +186,8 @@ describe("AutoCountSync — the counts are on something you can click", () => {
     await userEvent.click(chip(/In AutoCount\s*1/));
 
     expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=sent");
-    /* The type counts are of the rows now on screen, so they MOVED — that is the
-       point of putting them on the chips rather than on a tile. */
     expect(await screen.findByRole("button", { name: /Sales orders\s*1/ })).toBeTruthy();
     expect(chip(/Delivery orders\s*0/)).toBeTruthy();
-    /* The status counts did NOT move: they are the server's, exact and
-       whole-company, regardless of what is being listed. */
     expect(chip(/All\s*5/)).toBeTruthy();
   });
 
@@ -259,9 +206,6 @@ describe("AutoCountSync — the counts are on something you can click", () => {
 });
 
 describe("AutoCountSync — the reason is on the row", () => {
-  /* THE HEADLINE IS NEVER HIDDEN. He rejected a design where the whole reason
-     sat behind a "Why not" click, and shortening the row must not smuggle that
-     back in — so the headline is on the row, and it is the thing you click. */
   it("keeps the plain-language headline on a held-back row without any click", async () => {
     await mount(busy);
     await screen.findByText("DO-K");
@@ -285,8 +229,6 @@ describe("AutoCountSync — the reason is on the row", () => {
     expect(within(opened).getByText(/Set the warehouse on that line/)).toBeTruthy();
   });
 
-  /* The distinction the owner asked for: the ERP refused this one itself, so
-     nothing ever reached the account book. One layer down, not flattened. */
   it("says AutoCount was not asked when the ERP stopped the document itself", async () => {
     await mount(busy);
     await screen.findByText("DO-K");
@@ -318,9 +260,6 @@ describe("AutoCountSync — the reason is on the row", () => {
     expect(within(card).getByText("AutoCount said nothing")).toBeTruthy();
   });
 
-  /* A refusal nobody has words for yet is a code path that grew a new refusal.
-     The raw note is the answer in that one case, so THAT row arrives open —
-     shortening every other row must not take this back. */
   it("arrives open when the refusal has no plain wording yet", async () => {
     await mount(payload({
       rows: [row({ status: "skipped", state: "skipped", needs_attention: true,
@@ -332,16 +271,10 @@ describe("AutoCountSync — the reason is on the row", () => {
     expect(screen.getByRole("button", { expanded: true })).toBeTruthy();
   });
 
-  /* Folded away by default since 2026-08-16 — see the superseded block at the
-     bottom of this file. Everything it said about the row is still true, and it
-     is still all there; it is one click further away. */
   it("marks a replaced refusal as a record rather than something to act on", async () => {
     await mount(busy);
     await screen.findByText("SO-F");
     await openReplacedGroup();
-    /* The badge, the one-line status and the headline all say it, which is the
-       point — they used to say "Sent again", "Already sent again under a newer
-       row" and "Already sent again — this row is history". */
     expect(within(cardOf("IV-R")).getByText("Replaced")).toBeTruthy();
     expect(
       within(cardOf("IV-R")).getByText(/Replaced by a newer send — nothing to do on this one/),
@@ -359,10 +292,6 @@ describe("AutoCountSync — the reason is on the row", () => {
     expect(within(card).getByText(/timeout opening the book/)).toBeTruthy();
   });
 
-  /* The account book's own number is on the ROW now, in its own column, rather
-     than folded into a sentence — and `GR-S` came back as `GR-00123`, so this
-     one is also the flagged case. The unflagged case is in the register block
-     at the bottom of this file. */
   it("proves an arrived document with the account book's own number", async () => {
     await mount(busy);
     await screen.findByText("GR-S");
@@ -394,9 +323,6 @@ describe("AutoCountSync — no coding words anywhere", () => {
   it("names each operation and each type in words", async () => {
     await mount(busy);
     await screen.findByText("DO-K");
-    /* EXACT matches now: the operation has its own column (*What was sent*) and
-       the type has another (*Type*), so neither is a fragment of a longer
-       sentence any more. The words are still what is asserted. */
     expect(within(cardOf("DO-K")).getByText("Delivery order from a sales order")).toBeTruthy();
     expect(within(cardOf("DO-K")).getByText("Delivery order")).toBeTruthy();
     expect(within(cardOf("GR-S")).getByText("Goods received from a purchase order")).toBeTruthy();
@@ -404,9 +330,6 @@ describe("AutoCountSync — no coding words anywhere", () => {
     expect(within(cardOf("SO-F")).getByText("Sales order")).toBeTruthy();
   });
 
-  /* The five tiles are gone. Their subtitles were the only place these phrases
-     appeared, so their absence is the check that the redesign actually landed
-     rather than being added beside the old one. */
   it("no longer carries the five dead summary tiles", async () => {
     await mount(busy);
     await screen.findByText("SO-F");
@@ -423,8 +346,6 @@ describe("AutoCountSync — filters and failure", () => {
 
   it("ignores a hand-edited state the server would refuse", async () => {
     await mount(payload(), "/autocount-sync?state=planning");
-    /* Falls back to the page's DEFAULT, which is the attention filter — not to
-       everything, which is what an unknown value used to land on. */
     expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=attention");
   });
 
@@ -433,7 +354,6 @@ describe("AutoCountSync — filters and failure", () => {
     expect(await screen.findByText("SO-F")).toBeTruthy();
   });
 
-  /* A page written because a state went unseen must not swallow its own. */
   it("states a load failure instead of rendering an empty table", async () => {
     await mount(new Error("the queue is unreachable"));
     expect(await screen.findByText(/The queue could not be read/)).toBeTruthy();
@@ -483,8 +403,6 @@ describe("AutoCountSync — Send again", () => {
     await screen.findByText("SO-F");
     const offered = cardOf("SO-F");
     expect(within(offered).getByRole("button", { name: "Send again" })).toBeTruthy();
-    /* DO-K is held back and can_requeue is false on it — no button rather than
-       a button that always answers no. */
     const notOffered = cardOf("DO-K");
     expect(within(notOffered).queryByRole("button", { name: "Send again" })).toBeNull();
   });
@@ -495,15 +413,9 @@ describe("AutoCountSync — Send again", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Send again" }));
     expect(apiPost).toHaveBeenCalledWith("/api/scm/autocount-outbox/f/requeue");
     expect(await screen.findByText(/Sent back to the queue/)).toBeTruthy();
-    /* An accepted re-send makes a NEW row, so the page re-reads rather than
-       patching the one it has. */
     expect(apiGet.mock.calls.length).toBeGreaterThan(1);
   });
 
-  /* THE BRANCH THAT GETS FORGOTTEN. A refusal RESOLVES — it is the server
-     answering — and its sentence is the whole value of pressing the button when
-     the answer is "AutoCount already has it". Rendering only the accepted half
-     is "the button does nothing" wearing a success path. */
   it("prints the refusal on the row instead of looking like nothing happened", async () => {
     apiPost.mockResolvedValue(requeueAnswer({
       accepted: false,
@@ -540,9 +452,6 @@ describe("AutoCountSync — Send again", () => {
 });
 
 describe("AutoCountSync — an accepted re-send stops giving orders about the old refusal", () => {
-  /* "To fix: go and change it in AutoCount" on a document that has just been
-     sent back to the queue is a FALSE instruction, and it would sit there for a
-     whole round trip waiting on the re-read. It comes off immediately. */
   it("takes the old reason off the row the moment the document is on its way", async () => {
     apiPost.mockResolvedValue({
       accepted: true, code: "requeued",
@@ -559,11 +468,9 @@ describe("AutoCountSync — an accepted re-send stops giving orders about the ol
 
     expect(await screen.findByText(/Sent back to the queue/)).toBeTruthy();
     const after = cardOf("SO-F");
-    /* The whole reason goes, opener and all — not just the part behind it. */
     expect(within(after).queryByText("To fix")).toBeNull();
     expect(within(after).queryByText("AutoCount replied")).toBeNull();
     expect(within(after).queryByText(/AutoCount would not take this document/)).toBeNull();
-    /* Replaced by what to do NOW, keyed by the outcome code. */
     expect(within(after).getByText("To do")).toBeTruthy();
     expect(within(after).getByText(/next five-minute send/)).toBeTruthy();
   });
@@ -602,24 +509,15 @@ describe("AutoCountSync — a thousand documents", () => {
   it("opens on the documents that need attention, not on everything", async () => {
     await mount(busy);
     expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=attention");
-    /* "Not accepted" now names BOTH the filter chip and the in-force heading
-       (the 4-tab simplification merged the old "Needs attention" heading wording
-       into the same label as the tab). Both are spans, so a single-match query is
-       ambiguous; asserting at least one is present keeps the intent — the label
-       is on screen — while line 583 already proves the ATTENTION filter is the one
-       asked for. */
     expect((await screen.findAllByText("Not accepted", { selector: "span" })).length).toBeGreaterThan(0);
   });
 
   it("keeps everything one click away", async () => {
     await mount(busy);
     await userEvent.click(await screen.findByRole("button", { name: /All\s*5/ }));
-    /* No `state` on the query is how the route is asked for everything. */
     expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox");
   });
 
-  /* THE MAJORITY OF A LONG LIST. A document already in the account book has
-     nothing wrong with it and nothing to say, so it says nothing. */
   it("gives a document already in AutoCount one line and nothing to open", async () => {
     await mount(busy);
     await screen.findByText("GR-S");
@@ -628,22 +526,14 @@ describe("AutoCountSync — a thousand documents", () => {
     expect(within(card).queryByRole("button", { expanded: true })).toBeNull();
     expect(within(card).queryByText("To fix")).toBeNull();
     expect(within(card).queryByText("AutoCount replied")).toBeNull();
-    /* It still SAYS the thing — in the register's fifth column rather than in a
-       sentence. Nothing to open is not the same as nothing to read. */
     expect(within(card).getByText("GR-00123")).toBeTruthy();
   });
 
-  /* The number the owner actually complained about. 400 rows in the DOM is the
-     page he called unusable; a windowed list mounts the visible slice. */
   it("does not put several hundred rows into the page at once", async () => {
     await mount(payload({
       rows: manyRows(400),
       counts: { pending: 0, sent: 320, failed: 80, skipped: 0, requeued: 0, attention: 80, archived: 0, total: 400 },
     }));
-    /* `SO-1`, not `SO-0`: the register sorts by WHEN, newest first, and the 320
-       arrived documents carry a `sent_at` an hour after everything else's
-       `created_at`, so they are the top of the list. `SO-0` is one of the 80
-       refusals and is 320 rows down. */
     await screen.findByText("SO-1");
     const mounted = document.querySelectorAll("[data-ac-row]").length;
     expect(mounted).toBeGreaterThan(0);
@@ -670,10 +560,6 @@ describe("AutoCountSync — a thousand documents", () => {
    these is one.
    ─────────────────────────────────────────────────────────────────────────── */
 describe("AutoCountSync — no machine prose in the plain-language block", () => {
-  /* recordParentlessCreate's sentence AS THE QUEUE STILL HOLDS IT. The writer
-     stopped producing it in this same change; that fixes nothing on his screen,
-     because scm.autocount_outbox is append-only and last_error is never
-     rewritten. Rows already in the table keep these words for good. */
   const PARENTLESS =
     "created with no source delivery order, so there is no source document to transfer from. "
     + "AutoCount builds a DO / GRN / Invoice only by transferring a source document's lines "
@@ -691,8 +577,6 @@ describe("AutoCountSync — no machine prose in the plain-language block", () =>
     await mount(heldBack);
     await screen.findByText("HC-IV-2608-004");
     const card = await openRow("HC-IV-2608-004");
-    /* Opened, so everything the row has to say is on screen — and none of it is
-       this. */
     expect(plainTextOf(card)).not.toContain("AddPartialTransferDetail");
     expect(plainTextOf(card)).not.toContain("SDK");
   });
@@ -702,7 +586,6 @@ describe("AutoCountSync — no machine prose in the plain-language block", () =>
     expect(await screen.findByText(/There is no earlier document to carry across/)).toBeTruthy();
   });
 
-  /* The distinction the owner asked for by name survives the tidy-up. */
   it("still says AutoCount was never asked about it", async () => {
     await mount(heldBack);
     await screen.findByText("HC-IV-2608-004");
@@ -721,9 +604,6 @@ describe("AutoCountSync — no machine prose in the plain-language block", () =>
 });
 
 describe("AutoCountSync — AutoCount's sentence stays, its evidence folds", () => {
-  /* AcSyncService started appending the account book's own numbers per line on
-     2026-08-16. It is the diagnostic that refuted the standing explanation for
-     these two delivery orders — and it is four lines of Qty=1.00000000. */
   const WITH_DUMP =
     "Gave up after 6 attempts. Last error: Invalid transfer item. || source SO lines as the book "
     + "holds them: 905348 on SO HC-SO-2608-002 [AK-ULTIMATE MATT (K)] Qty=1.00000000 "
@@ -766,16 +646,11 @@ describe("AutoCountSync — AutoCount's sentence stays, its evidence folds", () 
     expect(technical).toContain("outstanding=1.00000000");
   });
 
-  /* AutoCount named no field on this row, and the lines were measured correct
-     against the live book the same day. An order to fix them is worse than
-     silence. */
   it("does not send anybody to fix a field AutoCount never named", async () => {
     await mount(refused);
     await screen.findByText("HC-DO-2608-002");
     const card = await openRow("HC-DO-2608-002");
     expect(within(card).queryByText(/Put right whatever AutoCount named/)).toBeNull();
-    /* The To fix line itself, not the disclosure's label, which names the same
-       person for the same reason. */
     expect(within(card).getByText(/Pass it to whoever looks after the AutoCount link/))
       .toBeTruthy();
     expect(within(card).getByText(/nothing on this document for you to change/)).toBeTruthy();
@@ -783,8 +658,6 @@ describe("AutoCountSync — AutoCount's sentence stays, its evidence folds", () 
 });
 
 describe("AutoCountSync — history is not half the list", () => {
-  /* His screen: fifteen rows, SIX of them already sent again, with
-     HC-DO-2608-001 and HC-DO-2608-002 each appearing twice. */
   const fifteen = payload({
     counts: { pending: 0, sent: 3, failed: 4, skipped: 2, requeued: 6, attention: 6, archived: 0, total: 15 },
     rows: [
@@ -808,7 +681,6 @@ describe("AutoCountSync — history is not half the list", () => {
   it("keeps the six replaced documents out of the list", async () => {
     await mount(fifteen, "/autocount-sync?state=all");
     await screen.findByText("HC-DO-2608-100");
-    /* Nine live rows on screen, none of them a record. */
     expect(document.querySelectorAll("[data-ac-row]").length).toBe(9);
     expect(screen.queryByText(/Replaced by a newer send/i)).toBeNull();
   });
@@ -827,9 +699,6 @@ describe("AutoCountSync — history is not half the list", () => {
     expect(document.querySelectorAll("[data-ac-row]").length).toBe(15);
   });
 
-  /* The dedicated "Replaced" tab was removed 2026-08-21 (four-tab simplification).
-     Replaced documents are history and now appear folded under "All" — the test
-     below covers that folded presentation. */
   it("does not tell a reader to try another filter when the matches are all history", async () => {
     await mount(payload({
       counts: { pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 2, attention: 0, archived: 0, total: 2 },
@@ -850,8 +719,6 @@ describe("AutoCountSync — history is not half the list", () => {
 describe("AutoCountSync — a load failure is the page's sentence, not the transport's", () => {
   it("says its own line, and quotes what the transport said under it", async () => {
     await mount(new Error("AutoCount service responded 502"));
-    /* One sentence the page owns, whole — not a colon and then whatever a fetch
-       layer produced. */
     expect(await screen.findByText(
       "The queue could not be read, so nothing below is the current picture.",
     )).toBeTruthy();
@@ -873,7 +740,6 @@ describe("AutoCountSync — one document, one row", () => {
   const sent = (over: Partial<AcOutboxRow>): AcOutboxRow =>
     row({ status: "sent", state: "sent", ac_doc_no: "SO-00002", ...over });
 
-  /** His six rows, in the order the route returns them: newest first. */
   const hisScreen = payload({
     counts: { pending: 0, sent: 3, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 3 },
     rows: [
@@ -892,7 +758,6 @@ describe("AutoCountSync — one document, one row", () => {
     ],
   });
 
-  /* THE DEFECT, AS A NUMBER: four rows for one sales order, rendered as one. */
   it("renders one sales order once, however many times it was sent", async () => {
     await mount(hisScreen, "/autocount-sync?state=sent");
     await screen.findAllByText("HC-SO-2608-002");
@@ -900,8 +765,6 @@ describe("AutoCountSync — one document, one row", () => {
     expect(screen.getAllByText("HC-SO-2608-002")).toHaveLength(1);
   });
 
-  /* AND THE COUNTS SAY THE SAME NUMBER. "6 of 17 documents" over six rows for
-     three documents was the other half of what he read. */
   it("counts documents on the strips and in the line under them", async () => {
     await mount(hisScreen, "/autocount-sync?state=sent");
     await screen.findAllByText("HC-SO-2608-002");
@@ -910,42 +773,25 @@ describe("AutoCountSync — one document, one row", () => {
     expect(chip(/Every type\s*3/)).toBeTruthy();
   });
 
-  /* THE SENDS ARE THE AUDIT TRAIL AND NONE OF THEM IS DROPPED. 0277 exists so
-     "what did we tell AutoCount, when, and what did it answer" is a SELECT a
-     year later; a page that hid three of the four would be a worse defect than
-     the one being fixed. */
   it("keeps every send, one click under the document", async () => {
     await mount(hisScreen, "/autocount-sync?state=sent");
     await screen.findAllByText("HC-SO-2608-002");
     const card = cardOf("HC-SO-2608-002");
     const opener = within(card).getByRole("button", { name: /3 earlier sends for this document/ });
-    /* Folded on arrival — the row is one line until it is asked. */
     expect(card.querySelectorAll("[data-ac-send]").length).toBe(0);
     await userEvent.click(opener);
     expect(cardOf("HC-SO-2608-002").querySelectorAll("[data-ac-send]").length).toBe(3);
   });
 
-  /* The row is drawn from the NEWEST send: the document's current state is what
-     happened last to it, not what happened first. */
   it("shows where the document stands now, not where it started", async () => {
     await mount(hisScreen, "/autocount-sync?state=sent");
     await screen.findAllByText("HC-SO-2608-002");
     const card = cardOf("HC-SO-2608-002");
-    /* *What was sent* is the newest send's operation. The TYPE is beside it in
-       its own column, which is why the operation no longer repeats it. */
     expect(within(card).getByText("Change to the document")).toBeTruthy();
     expect(within(card).getByText("Sales order")).toBeTruthy();
     expect(within(card).queryByText("New sales order")).toBeNull();
   });
 
-  /* A document sent once has no second OPENER at all — the majority row must
-     not grow a control it has nothing to put behind.
-
-     `queryByRole("button")` used to stand in for that, and stopped being able
-     to on 2026-09-08 when the row grew a control that opens nothing: Clear
-     takes a finished document off the list. So the property is asserted
-     directly now — there is no reason to expand and no history to unfold —
-     which is what the sentence above always meant. */
   it("gives a document sent once nothing extra to open", async () => {
     await mount(hisScreen, "/autocount-sync?state=sent");
     await screen.findByText("HC-SO-2608-003");
@@ -955,10 +801,6 @@ describe("AutoCountSync — one document, one row", () => {
     expect(within(card).queryByRole("button", { expanded: true })).toBeNull();
   });
 
-  /* AND THE CONTROL THAT REPLACED THE OLD ASSERTION IS THERE. The owner asked
-     twice for three finished test documents to stop appearing on this page;
-     this is the button that does it, and a test that only checked what is
-     ABSENT would have let it quietly disappear. */
   it("offers Clear on a document whose work is finished", async () => {
     await mount(hisScreen, "/autocount-sync?state=sent");
     await screen.findByText("HC-SO-2608-003");
@@ -966,7 +808,6 @@ describe("AutoCountSync — one document, one row", () => {
   });
 });
 
-/* A count the server could not finish must not read as a count. */
 describe("AutoCountSync — a partial count says so", () => {
   it("says the numbers are a floor when the queue was too long to scan", async () => {
     await mount(payload({
@@ -1010,8 +851,6 @@ describe("AutoCountSync — Send now", () => {
     await mount(busy);
     await screen.findByText("SO-P");
     expect(within(cardOf("SO-P")).getByRole("button", { name: "Send now" })).toBeTruthy();
-    /* SO-F has given up: its action is Send again, which starts a fresh set of
-       attempts. Offering both would be two buttons meaning "send it". */
     expect(within(cardOf("SO-F")).queryByRole("button", { name: "Send now" })).toBeNull();
     expect(within(cardOf("SO-P")).queryByRole("button", { name: "Send again" })).toBeNull();
   });
@@ -1039,8 +878,6 @@ describe("AutoCountSync — Send now", () => {
     apiPost.mockRejectedValue(new Error("Network request failed"));
     await mount(busy);
     await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
-    /* The documented failure class this repo names: a refusal that reaches
-       nobody reads as "the button does nothing". */
     expect(await within(cardOf("SO-P")).findByText(/never got through/i)).toBeTruthy();
   });
 
@@ -1058,15 +895,11 @@ describe("AutoCountSync — Send now", () => {
     await mount(busy);
     await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
     const card = cardOf("SO-P");
-    /* The two reasons are different facts and the page must not flatten them:
-       one document was BEHIND, the other was ABSENT. */
     expect(await within(card).findByText(/SO-A — AutoCount had an older version, sent\./)).toBeTruthy();
     expect(within(card).getByText(/DO-B — AutoCount did not have it yet, sent\./)).toBeTruthy();
   });
 
   it("shows an ancestor that FAILED, not only the ones that worked", async () => {
-    /* The dangerous shape: the pressed row succeeds while an ancestor did not.
-       Reporting only the press would read as "all done". */
     apiPost.mockResolvedValue(sendNowAnswer({
       ancestors_sent: [{ doc_type: "SO", doc_no: "SO-A", code: "still-refused", reason: "missing" }],
     }));
@@ -1076,8 +909,6 @@ describe("AutoCountSync — Send now", () => {
   });
 
   it("says nothing about ancestors when the press moved none", async () => {
-    /* An empty heading on every ordinary press would be noise, and noise is how
-       the useful case stops being read. */
     apiPost.mockResolvedValue(sendNowAnswer({ ancestors_sent: [] }));
     await mount(busy);
     await userEvent.click(await screen.findByRole("button", { name: "Send now" }));
@@ -1094,21 +925,6 @@ describe("AutoCountSync — Send now", () => {
   });
 });
 
-/* ───────────────────────────────────────────────────────────────────────────
-   THE REGISTER — 2026-08-21.
-
-   The owner reviewed a mockup at the size the queue actually is and chose the
-   dense-table direction over the card list. What is asserted below is the
-   CONTRACT that change was signed off on, not the markup: the eight columns are
-   there and named, the fifth one is silent on a match and loud on a mismatch,
-   the days break the register up, the footer says how much is on screen, and
-   the two lenses that were added narrow the page without narrowing the request.
-
-   Four rulings from the earlier rounds are asserted elsewhere in this file and
-   MUST keep passing: the headline stays on a problem row unclicked, the page
-   opens on Needs attention, a document in the account book has nothing to open,
-   and several hundred rows do not all go into the DOM.
-   ─────────────────────────────────────────────────────────────────────────── */
 describe("AutoCountSync — eight columns", () => {
   it("heads the register with the eight the owner approved, in order", async () => {
     await mount(busy);
@@ -1129,9 +945,6 @@ describe("AutoCountSync — eight columns", () => {
     expect(within(card).getByText("Delivery order from a sales order")).toBeTruthy();
   });
 
-  /* The try count was DELIBERATELY not made a column — it reads as a dash on
-     nearly every row. It is not lost: it is a sentence inside the problem row's
-     own block, where it says whether the queue is still working on this. */
   it("keeps the try count inside the problem row, not in a column of dashes", async () => {
     await mount(busy);
     await screen.findByText("SO-F");
@@ -1141,9 +954,6 @@ describe("AutoCountSync — eight columns", () => {
   });
 });
 
-/* THE COLUMN THAT EARNS THE TABLE ITS KEEP.
-   `HC-PO-2608-001` is in AED_HOUZS as `PO-009968` and nobody saw it for three
-   days, because no screen held the two numbers up against each other. */
 describe("AutoCountSync — In the book as", () => {
   const inBook = (over: Partial<AcOutboxRow>): AcOutboxRow => row({
     status: "sent", state: "sent", op: "create_so", sent_at: "2026-08-15T01:00:00.000Z", ...over,
@@ -1174,15 +984,10 @@ describe("AutoCountSync — In the book as", () => {
     expect(card.querySelector("[data-ac-book-flag]")).toBeTruthy();
   });
 
-  /* A document already in the account book has nothing to OPEN — that ruling
-     does not move — so the flag has to be readable without a click, and the
-     sentence spelling it out has to reach the reader some other way. */
   it("flags it without giving the row anything to open", async () => {
     await mount(twoBooked, "/autocount-sync?state=sent");
     await screen.findByText("HC-PO-2608-001");
     const card = cardOf("HC-PO-2608-001");
-    /* Nothing to EXPAND — the flag is readable where it sits. The row does
-       carry Clear, which opens nothing. */
     expect(card.querySelector("[data-ac-why]")).toBeNull();
     expect(card.querySelector("[title*='PO-009968']")).toBeTruthy();
   });
@@ -1222,8 +1027,6 @@ describe("AutoCountSync — days, the footer and the two lenses", () => {
     expect(screen.getByText("Sorted by When, newest first")).toBeTruthy();
   });
 
-  /* THE SORT IS A LENS, not a request: pressing it must not re-ask the server,
-     which pages by recency and would answer a different question. */
   it("turns the order round without asking the server again", async () => {
     await mount(threeDays, "/autocount-sync?state=sent");
     await screen.findAllByText("SO-A");
@@ -1233,14 +1036,11 @@ describe("AutoCountSync — days, the footer and the two lenses", () => {
     expect(apiGet.mock.calls.length).toBe(before);
   });
 
-  /* AND SO IS THE DATE RANGE. Both live in the URL on desktop, per CLAUDE.md. */
   it("keeps the date range in the URL and narrows the loaded page only", async () => {
     await mount(threeDays, "/autocount-sync?state=sent");
     await screen.findAllByText("SO-A");
     const before = apiGet.mock.calls.length;
     await userEvent.click(screen.getByRole("button", { name: "Today" }));
-    /* Every fixture row is dated 2026-08-14/15, so Today empties the register
-       — which is the proof the lens is applied at all. */
     expect(await screen.findByText(/Nothing here/)).toBeTruthy();
     expect(apiGet.mock.calls.length).toBe(before);
     for (const call of apiGet.mock.calls) expect(String(call[0])).not.toContain("range");
@@ -1263,10 +1063,6 @@ describe("AutoCountSync — days, the footer and the two lenses", () => {
  * refusal is the reason, and it does not pretend the document has been sent.
  */
 describe("AutoCountSync — matching a held-back document's lines up", () => {
-  /* ITS OWN PAYLOAD, not an extra row on the shared one: four tests above count
-     the chips and the per-type totals of `busy` exactly, and a sixth row there
-     would make them fail for a reason that has nothing to do with what they
-     assert. */
   const keyless = payload({
     rows: [
       row({ id: "kl", doc_no: "SO-KL", doc_type: "SO", op: "edit", status: "skipped", state: "skipped",
@@ -1285,8 +1081,6 @@ describe("AutoCountSync — matching a held-back document's lines up", () => {
     await mount(keyless);
     await screen.findByText("SO-KL");
     expect(within(cardOf("SO-KL")).getByRole("button", { name: "Match up lines" })).toBeTruthy();
-    /* A missing warehouse is a different refusal with a different remedy — the
-       operator sets the warehouse; there is nothing to match. */
     expect(within(cardOf("DO-K2")).queryByRole("button", { name: "Match up lines" })).toBeNull();
   });
 
@@ -1314,28 +1108,12 @@ describe("AutoCountSync — matching a held-back document's lines up", () => {
   });
 });
 
-/* ── THE OFFICE MACHINE'S OWN LOG ───────────────────────────────────
-   `Invalid transfer item.` names nothing, and ten delivery orders carried those
-   eleven words through six attempts each while the host wrote the sentence that
-   explains them into a log file nobody could reach. These four pin the panel
-   that reaches it: it does NOT call the office machine until asked, it lifts the
-   answering line out of the wall of text, it says the tunnel is down rather than
-   rendering empty, and it never reads an empty match as "nothing is wrong".
-
-   THE MOCK IS ARMED AFTER `mount`, NOT BEFORE, and that ordering is the test.
-   `mount` ends with `apiGet.mockResolvedValue(body)`, which REPLACES any
-   implementation set before it — arming first left the host-log call answering
-   the outbox payload, whose `lines` is undefined, so the empty-match test passed
-   for entirely the wrong reason. Arming after is safe precisely because of the
-   property the first test asserts: nothing calls that route until the panel is
-   opened. */
 describe("the host log panel", () => {
   const SHORTFALL =
     "  valid-transfer-item check: AutoCount kept FEWER rows than keys given - the shortfall IS the invalid transfer item(s)";
   const ORDINARY = "  SO->DO shape: the ERP named 3 line(s)";
   const OPEN_IT = /What the office machine said/;
 
-  /** Answer the host-log route with these lines; everything else keeps the list. */
   const armHostLog = (lines: string[]) => {
     const list = payload();
     apiGet.mockImplementation((url: string) =>
@@ -1344,9 +1122,6 @@ describe("the host log panel", () => {
         : Promise.resolve(list));
   };
 
-  /* UNANNOTATED on purpose: `mock.calls` is `any[][]`, so a tuple annotation on
-     the destructured parameter matches no overload of `filter`. Inference gives
-     the right thing and writes no `any` for the linter to count. */
   const hostLogCalls = () =>
     apiGet.mock.calls.filter((call) => typeof call[0] === "string" && call[0].includes("/host-log")).length;
 
@@ -1359,8 +1134,6 @@ describe("the host log panel", () => {
     await mount(payload());
     armHostLog([ORDINARY, SHORTFALL]);
     await userEvent.click(screen.getByRole("button", { name: OPEN_IT }));
-    /* The MEANING, not the log line — both carry the same words, so the assertion
-       names the element that explains rather than the one that quotes. */
     expect(await screen.findByText(/AutoCount refused some of the lines/)).toBeTruthy();
   });
 
@@ -1374,8 +1147,6 @@ describe("the host log panel", () => {
     expect(await screen.findByText(/did not answer/)).toBeTruthy();
   });
 
-  /* A tail that matched nothing is not a clean bill of health — the failure
-     being chased may simply be older than the tail. */
   it("an empty match reads as 'nothing matched', never as 'nothing is wrong'", async () => {
     await mount(payload());
     armHostLog([ORDINARY]);

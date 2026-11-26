@@ -26,12 +26,8 @@ const URL_SECRET = 'https://autocount.example-tunnel.test';
 const KEY_SECRET = 'k3y-that-must-never-be-echoed';
 const ENV = { AC_SYNC_URL: URL_SECRET, AC_SYNC_KEY: KEY_SECRET };
 
-/** Every request the route made, so "read-only" is observed and not asserted. */
 let CALLS: { url: string; method: string; key: string | null; body: string | null }[] = [];
 
-/** A host that answers `/health` with a given status and body, like http.sys
- *  does — the JSON-ness of the body is part of the signal, so it is sent as
- *  text exactly as the service (or the tunnel in front of it) would. */
 function hostAnswering(status: number, body: string) {
   return async (url: string | URL | Request, init?: RequestInit) => {
     CALLS.push({
@@ -44,9 +40,6 @@ function hostAnswering(status: number, body: string) {
   };
 }
 
-/** Nothing answers at all — the tunnel is down or the machine is off. The
- *  message deliberately QUOTES the address, which is what a real fetch
- *  implementation does and why the route strips it. */
 function hostGone() {
   return async (url: string | URL | Request) => {
     CALLS.push({ url: String(url), method: 'POST', key: null, body: null });
@@ -56,8 +49,6 @@ function hostGone() {
 
 function appWith(perms: string[]) {
   const app = new Hono<{ Variables: { user: { id: number; permissions: string[] } } }>();
-  /* Only the two fields the gate reads — the same fixture shape
-     systemHealthRestCeiling.test.ts uses for this file's other admin routes. */
   app.use('*', async (c, next) => { c.set('user', { id: 1, permissions: perms }); await next(); });
   app.route('/', health);
   return app;
@@ -106,12 +97,10 @@ describe('/autocount/host-build — which build is answering', () => {
     expect(CALLS).toHaveLength(1);
     expect(CALLS[0].url).toBe(`${URL_SECRET}/health`);
     expect(CALLS[0].key).toBe(KEY_SECRET);
-    // Read-only: the payload is empty, so nothing can be interpreted as a document.
     expect(CALLS[0].body).toBe('{}');
   });
 
   it('CATCHES an exe older than the build fields — the answer that used to be unreachable', async () => {
-    // What a pre-2026-08-15 AcSyncService answers: ok, book, service, nothing else.
     const { body } = await ask(hostAnswering(200, JSON.stringify({ ok: true, book: 'AED_HOUZS', service: 'AcSyncService' })));
     expect(body.verdict).toBe('BUILD_NOT_REPORTED');
     expect(body.status).toBe('unknown');
@@ -120,8 +109,6 @@ describe('/autocount/host-build — which build is answering', () => {
   });
 
   it('separates "sent no build keys" from "sent them as null"', async () => {
-    // The C# sets both to null rather than omitting them when it cannot stat
-    // itself — a NEW build that could not read its own file, not an old one.
     const { body } = await ask(hostAnswering(200, JSON.stringify({ ok: true, book: 'AED_HOUZS', builtAt: null, mvid: null })));
     expect(body.verdict).toBe('BUILD_UNREADABLE');
     expect(body.status).toBe('unknown');
@@ -149,7 +136,6 @@ describe('/autocount/host-build — which build is answering', () => {
   });
 
   it('does NOT call a stopped service a refusal — a gateway status with no JSON', async () => {
-    // Cloudflare answers an unreachable origin with text/plain `error code: 502`.
     const { body } = await ask(hostAnswering(502, 'error code: 502'));
     expect(body.verdict).toBe('HOST_DID_NOT_ANSWER');
     expect(body.hostStatus).toBe(502);
@@ -179,7 +165,6 @@ describe('/autocount/host-build — which build is answering', () => {
     expect(res.status).toBe(503);
     expect(body.configured).toBe(false);
     expect(body.verdict).toBe('NOT_CONFIGURED');
-    // Nothing was asked of anything.
     expect(CALLS).toHaveLength(0);
   });
 
@@ -190,8 +175,6 @@ describe('/autocount/host-build — which build is answering', () => {
   });
 
   it('never lets AC_SYNC_URL or AC_SYNC_KEY reach the response', async () => {
-    // The transport error QUOTES the address, so this is the path that would
-    // leak it if the strip were removed.
     const gone = await ask(hostGone());
     expect(JSON.stringify(gone.body)).not.toContain(URL_SECRET);
     expect(JSON.stringify(gone.body)).not.toContain(KEY_SECRET);

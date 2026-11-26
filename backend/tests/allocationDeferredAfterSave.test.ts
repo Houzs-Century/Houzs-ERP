@@ -97,7 +97,7 @@ describe('no save route waits for the whole-company sweep', () => {
       .map((x) => `${x.f.replace('../', '')}:${x.n}`)
       .sort();
     expect(inline).toEqual([
-      'src/scm/lib/so-stock-allocation.ts:2', // its own comments
+      'src/scm/lib/so-stock-allocation.ts:1', // its own comment
       'src/scm/lib/stock-allocation-job.ts:1',
       'src/scm/routes/mfg-sales-orders.ts:1',
     ]);

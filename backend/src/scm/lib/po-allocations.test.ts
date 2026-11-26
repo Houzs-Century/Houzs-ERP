@@ -48,8 +48,6 @@ describe('specMatches — the allocation candidate/gate spec filter (owner 2026-
   });
 
   it('dye-lot is EXCLUDED: the supplier-fabric-code parens is fabric identity, but no dye-lot field enters the signature', () => {
-    // buildVariantSummary carries no dye-lot key, so two lines identical but for
-    // a (notional) dye-lot still match — owner ruling: fabric+spec, not dye-lot.
     const withExtraUnknownKey = { ...sofaA, dyeLot: 'M2402-19' };
     expect(specMatches({ itemGroup: 'sofa', variants: sofaA }, { itemGroup: 'sofa', variants: withExtraUnknownKey })).toBe(true);
   });

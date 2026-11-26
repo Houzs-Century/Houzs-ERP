@@ -58,8 +58,6 @@ const po = {
 };
 const supplier = { id: 'sup-1', code: '400-H004', name: 'Supplier' };
 
-/** The write-back ON for company 1, which is the only state worth testing here:
- *  with it off, nothing queues for anybody and the test would pass vacuously. */
 const onFor1 = (extra: Record<string, Row[]> = {}) =>
   fakeSb({
     app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
@@ -118,11 +116,6 @@ describe('a repair client queues nothing', () => {
   });
 
   test('it writes no `skipped` row either — a repair leaves NO trace in the queue', async () => {
-    /* A skipped row is the ERP saying "I consciously will not send this", which
-       is a statement about a document a person saved. A repair never asked the
-       question, so answering it would put our import work in front of an
-       operator as though it were business activity. The whole row is absent,
-       not merely un-sent. */
     const sb = markRepairClient(onFor1({
       mfg_sales_orders: [], mfg_sales_order_items: [],
     }));
@@ -156,10 +149,6 @@ describe('the marker cannot arrive from a request', () => {
   });
 
   test('a body that spells the marker as a STRING key does not set it', () => {
-    /* The marker is a symbol, and JSON has no symbols. This is the property
-       that makes "impossible to set by accident from a UI request" structural
-       rather than a convention: a request body, a query string and a header can
-       only ever produce string keys. */
     const hostile = JSON.parse(JSON.stringify({
       'Symbol(houzs.ac.repairClient)': true,
       __repairClient: true,

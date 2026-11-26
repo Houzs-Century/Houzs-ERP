@@ -77,9 +77,6 @@ const { fetchMock } = vi.hoisted(() => {
       spreads: [{ lineId: 'g-u2', kind: 'upkeep', accountCode: '900-U010', accountName: 'UPKEEP OF LORI - VPC 9058', day: '2026-10-14', docNo: 'JE-2610-1345', notes: 'LABOUR CHARGE TO FIX AWNING', amountSen: 30_000, months: 1, isDefault: true, perMonthSen: 30_000, inRangeSen: 30_000, lastMonth: '2026-10' }],
       ownTrips: 2, inHousePerTripSen: 1_035_446, tripsProblem: null,
       areaRates: [{ key: 'kualalumpur', label: 'Kuala Lumpur', region: 'KL', rateSen: 40_000, defaultRateSen: 40_000, isDefault: true }],
-      /* Each month, made up: VNB9058 petrol RM 500, repairs RM 300, instalment RM 2,521; VPC9058 petrol RM 1,000 on a line
-         that says VNB 9058; VQE9058 RM 100 a month of a RM 600 repair booked in the first month and spread over 6;
-         VRH9058 nothing; driver pay Not tied, so that Spread is the P&L's Total In-house Expenses (RM 20,708.91). */
       lorrySpend: [
         {
           plate: 'VNB9058', ours: true, byMonth: Object.fromEntries(months.map((mm) => [mm, 332_100])), totalSen: 332_100 * months.length,
@@ -132,7 +129,6 @@ describe('P&L', () => {
     draw();
     const table = await screen.findByRole('table', { name: 'Logistics P&L' });
     for (const h of ['Penang', 'KL', 'SBH & SWK', 'SGD', 'Total']) expect(within(table).getAllByText(h).length).toBeGreaterThan(0);
-    /* Penang: 17,230.32 ÷ 574,344.00 = 3.0%. */
     expect(rowText(table, 'Transport Income (3% of DO)')).toContain('17,230.323.0%');
     expect(rowText(table, 'Transport Income (1% of fair sales)')).toContain('3,864.00');
     expect(rowText(table, 'Delivery Order')).toContain('574,344.00100.0%');
@@ -172,12 +168,10 @@ describe('By region & trip', () => {
     const table = await screen.findByRole('table', { name: 'Delivery cost by region and trip' });
     expect(rowText(table, 'VNB9058')).toContain('1 trip · 1 DO');
     expect(rowText(table, 'MSJ TRANSPORT SERVICE')).toContain('15,970.00');
-    /* No region: four dashes, then the Total. */
     expect(rowText(table, '3PL bill lines on no DO yet')).toMatch(/----380\.00$/);
     expect(rowText(table, 'Total delivery cost')).toContain('38,058.91');
     expect(rowText(table, 'Logistics P&L · TOTAL EXPENSE (from the books)')).toContain('38,058.91');
     expect(rowText(table, 'Difference')).toMatch(/0\.00$/);
-    /* A lorry's figure opens its trips. */
     fireEvent.click(within(within(table).getByText('VPC9058').closest('tr')!).getByRole('button', { name: '5,177.23' }));
     expect(within(table).getByText(new RegExp(`/03$`))).toBeTruthy();
   });
@@ -203,12 +197,10 @@ describe('Spend by lorry', () => {
     expect(rowText(table, 'Petrol, toll & parking')).toContain('500.00500.00');
     expect(rowText(table, 'Instalment (HP)')).toContain('2,521.002,521.00');
     expect(rowText(table, 'Total VNB9058')).toContain('3,321.003,321.00');
-    /* Booked in full this month; the P&L takes RM 100 of it a month. */
     expect(rowText(table, 'Total VQE9058')).toContain('600.00100.00');
     expect(rowText(table, 'VRH9058')).toContain('nothing in the books');
     expect(rowText(table, 'Total Not tied to a lorry')).toContain('16,287.9116,287.91');
     expect(rowText(table, 'Total in-house spend')).toContain('21,208.9120,708.91');
-    /* The P&L checks the Spread column only. */
     expect(rowText(table, 'Logistics P&L · Total In-house Expenses (from the books)')).toMatch(/-20,708\.91$/);
     expect(rowText(table, 'Difference (Spread less the P&L)')).toMatch(/-0\.00$/);
     expect(screen.getByRole('group', { name: 'Spend by lorry totals' }).textContent).toContain('Actual21,209');

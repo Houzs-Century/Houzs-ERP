@@ -1,5 +1,3 @@
-/* 2990-0022: after a model rename the SKU Master Model column shows the new
- * name (base_model is still the old code, e.g. 8210) and the filter offers it. */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';

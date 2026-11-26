@@ -1,11 +1,3 @@
-// Tests for the R3 write-path guard: force a real unit cost onto a POSITIVE
-// ADJUSTMENT / STOCK_TAKE so the FIFO trigger never opens a permanent RM0 lot
-// (docs/inventory-costing-integrity-audit.md R3; detector check-costless-stock.mjs).
-//
-// The trigger firing on real Postgres is NOT exercised here (the vitest pool binds
-// no PG — same limitation as fifo-out-consume / stock-transfer-atomic). These cover
-// the PURE decision the callers feed the trigger: the weighted-avg derivation, the
-// last-known fallback, consignment exclusion, and the no-priced-lot 422 path.
 import { describe, expect, test } from 'vitest';
 import {
   weightedAvgOpenCostSen,
@@ -23,12 +15,10 @@ const lot = (
 
 describe('weightedAvgOpenCostSen — refAvgCost basis (Sigma qty*cost / Sigma qty)', () => {
   test('averages priced open lots, weighted by remaining qty', () => {
-    // 2 @ RM5.30 + 3 @ RM5.40 = (2*530 + 3*540) / 5 = 2680 / 5 = 536
     expect(weightedAvgOpenCostSen([lot(530, 2), lot(540, 3)])).toBe(536);
   });
 
   test('rounds to integer sen', () => {
-    // (1*100 + 1*101) / 2 = 100.5 -> 101 (Math.round)
     expect(weightedAvgOpenCostSen([lot(100, 1), lot(101, 1)])).toBe(101);
   });
 
@@ -42,9 +32,7 @@ describe('weightedAvgOpenCostSen — refAvgCost basis (Sigma qty*cost / Sigma qt
   });
 
   test('EXCLUDES consignment (PC_RECEIVE) lots from the average', () => {
-    // Only the RM6.00 owned lot counts; the supplier-owned PC_RECEIVE lot is out.
     expect(weightedAvgOpenCostSen([lot(600, 4), lot(9999, 10, 'PC_RECEIVE')])).toBe(600);
-    // With ONLY a consignment priced lot, there is no owned basis -> null.
     expect(weightedAvgOpenCostSen([lot(9999, 10, 'PC_RECEIVE')])).toBeNull();
   });
 });
@@ -53,7 +41,7 @@ describe('lastKnownCostSen — heal the all-consumed SKU', () => {
   test('picks the most-recently received priced lot regardless of remaining qty', () => {
     const rows = [
       lot(500, 0, 'GRN', '2026-01-01T00:00:00.000Z'),
-      lot(700, 0, 'GRN', '2026-06-01T00:00:00.000Z'), // newest priced, fully consumed
+      lot(700, 0, 'GRN', '2026-06-01T00:00:00.000Z'),
       lot(600, 0, 'GRN', '2026-03-01T00:00:00.000Z'),
     ];
     expect(lastKnownCostSen(rows)).toBe(700);

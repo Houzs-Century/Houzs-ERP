@@ -62,16 +62,12 @@ export async function deliverDueShippedOrders(
   today: string,
   actorId: string | null,
 ): Promise<DeliverDueResult> {
-  /* PAGED: a bare .limit(5000) is still cut at PostgREST's 1,000 rows, and SHIPPED
-     orders that never qualify (outstation, no driver) stay in the set for good,
-     so past 1,000 of them some due orders were never even looked at. */
   const { data: soRaw, error: soErr, truncated } = await paginateAll<Record<string, unknown>>((from, to) => sb
     .from('mfg_sales_orders')
     .select('doc_no, company_id, customer_state, customer_country')
     .eq('status', 'SHIPPED')
     .order('doc_no')
     .range(from, to));
-  // A failed read is not "no SHIPPED orders" — deliver nothing this run.
   if (soErr) return { scanned: 0, delivered: 0, skipped: 0 };
   // eslint-disable-next-line no-console
   if (truncated) console.warn('[deliver-due-shipped] more SHIPPED orders than one paged read; the rest wait for the next run');
@@ -83,20 +79,17 @@ export async function deliverDueShippedOrders(
   let skipped = 0;
   for (const so of sos) {
     try {
-      // Live (non-DRAFT/CANCELLED) DOs for this SO, latest delivery date first.
       const { data: doRaw, error: doErr } = await sb
         .from('delivery_orders')
         .select('id, do_date, driver_id')
         .eq('so_doc_no', so.doc_no)
         .not('status', 'in', DO_NOT_DELIVERED_IN_LIST)
         .order('do_date', { ascending: false, nullsFirst: false });
-      if (doErr) { skipped++; continue; } // can't read its DOs → don't deliver
+      if (doErr) { skipped++; continue; }
       const dos = (doRaw ?? []) as Array<{ id: string; do_date: string | null; driver_id: string | null }>;
       if (dos.length === 0) { skipped++; continue; }
       const latest = dos[0]!;
 
-      // A driver must be assigned — DO header driver_id OR a crew row driver, the
-      // same crew the board / run-sheet reads.
       let hasDriver = !!latest.driver_id;
       if (!hasDriver) {
         const { data: crew, error: crewErr } = await sb
@@ -104,15 +97,13 @@ export async function deliverDueShippedOrders(
           .select('driver_1_id, driver_2_id, driver_1_name, driver_2_name')
           .eq('do_id', latest.id)
           .maybeSingle();
-        if (crewErr) { skipped++; continue; } // can't confirm the driver → don't deliver
+        if (crewErr) { skipped++; continue; }
         const c = (crew ?? {}) as Record<string, string | null>;
         hasDriver = !!(c.driver_1_id || c.driver_2_id || (c.driver_1_name ?? '').trim() || (c.driver_2_name ?? '').trim());
       }
 
-      // Deliver only once the DO's delivery date has passed and a driver is on it.
       if (!isShippedOrderDeliveredNow({ doDate: latest.do_date, today, hasDriver })) { skipped++; continue; }
 
-      // Deliver — generation-guarded so a concurrent edit cannot double-apply.
       const gen = await advanceSoGeneration(sb, so.doc_no, { status: 'DELIVERED' }, { status: 'SHIPPED' });
       if (!gen.applied) { skipped++; continue; }
       await sb.from('mfg_so_status_changes').insert({

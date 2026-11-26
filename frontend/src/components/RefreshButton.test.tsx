@@ -4,17 +4,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RefreshButton } from "./RefreshButton";
 import { clearAll } from "../api/cache";
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Global refresh button (components/RefreshButton.tsx).
-
-   What these pin is the ORDER, because that is the whole difference between a
-   refresh and a decoration. api/cache.ts is a 15-second memory cache in front
-   of api.get(); if TanStack is invalidated FIRST, every refetch it triggers is
-   answered out of that cache and the user gets the same rows back — a button
-   that spins, reports success, and changes nothing for 15 seconds. Nothing
-   else in the suite would catch that: the click handler runs, no error is
-   thrown, and both functions were called.
-   ──────────────────────────────────────────────────────────────────────────── */
 
 vi.mock("../api/cache", () => ({ clearAll: vi.fn() }));
 
@@ -25,7 +14,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/** Render with a throwaway client, recording the sequence of cache drops. */
 function setup(invalidateImpl?: () => Promise<void>) {
   const calls: string[] = [];
   const queryClient = new QueryClient({
@@ -66,8 +54,6 @@ describe("RefreshButton", () => {
     fireEvent.click(button);
 
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
-    // refetchType "active" is what makes a background page fresh on its NEXT
-    // mount instead of serving a pre-refresh cache entry.
     expect(invalidateSpy).toHaveBeenCalledWith({ refetchType: "active" });
   });
 
@@ -83,13 +69,8 @@ describe("RefreshButton", () => {
     fireEvent.click(button);
     fireEvent.click(button);
 
-    // Still exactly one round trip — a double-tap must not stack refetches of
-    // every active query on the page.
     expect(calls).toEqual(["clearApiCache", "invalidateQueries"]);
 
-    // Plain DOM property, not toBeDisabled(): this repo has no
-    // @testing-library/jest-dom, so that matcher is undefined and waitFor
-    // swallows the "not a function" throw until it times out.
     release();
     await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
   });

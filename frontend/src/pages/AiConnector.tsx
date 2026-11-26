@@ -1,11 +1,3 @@
-// ---------------------------------------------------------------------------
-// /ai-connector — System > AI Connector. Everyone: connect your own Claude /
-// ChatGPT (your own permissions), request access, see and stop your
-// connections. Admin (ai_connector.manage, the Owner via "*"): approve people,
-// see who is connected and what was looked up, disconnect anyone, run the leak
-// check, and switch AI actions (meetings, email; confirm first) on or off. Every rule is the server's (routes/mcpAdmin.ts); this lays it out.
-// Desktop and phone (AuthGate renders it standalone on the phone shell).
-// ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
 import { Bot, Copy, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
@@ -67,6 +59,7 @@ function ConnectorUrl({ url }: { url: string }) {
         onClick={() => {
           void navigator.clipboard.writeText(url).then(() => {
             setCopied(true);
+            // eslint-disable-next-line houzs/no-imperative-timers -- a UI delay: the Copied label reverts after 1.5s
             setTimeout(() => setCopied(false), 1500);
           });
         }}

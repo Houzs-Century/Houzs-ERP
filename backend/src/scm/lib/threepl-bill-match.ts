@@ -25,19 +25,13 @@ import type { BillLineKind, PrintedOrder, TransportBillLine } from './threepl-bi
 
 /** The system numbers a printed order may stand for. */
 export type OrderKeys = {
-  /** mfg_sales_orders.doc_no candidates. */
   soNos: string[];
-  /** delivery_orders.do_number candidates. */
   doNos: string[];
-  /** The customer's slip (Ref No.) tokens, normalised as the evening report's. */
   slips: string[];
-  /** After-sales service numbers (ASSR/2607-047) — a service case, not a DO. */
   assr: string[];
 };
 
-/* A handwritten "SO" after the day ("3/10-80-010540", "7|0-S0-003361"). */
 const SO_MISREAD = /(^|[^A-Z0-9])(?:S0|5O|50|80|S8|SD)-(?=\d)/g;
-/* Prefixes the slip tokenizer must not take for a customer's slip. */
 const NOT_A_SLIP = /^(SO|DO|IV|INV|CN|DN|PO|GR|ASSR|RM|NO|SVC)\d/;
 
 const pad6 = (digits: string): string => digits.padStart(6, '0');
@@ -47,8 +41,6 @@ export function orderKeys(o: PrintedOrder): OrderKeys {
   const soNos = new Set<string>();
   const doNos = new Set<string>();
   const assr = new Set<string>();
-  /* A number printed with its company is that company's; only a bare one is
-     either company's. */
   const PREFIXED = /\b(2990|HC)-(SO|DO)-(\d{4}-\d{3})\b/g;
   for (const m of t.matchAll(PREFIXED)) (m[2] === 'SO' ? soNos : doNos).add(`${m[1]}-${m[2]}-${m[3]}`);
   const bare = t.replace(PREFIXED, ' ');
@@ -106,7 +98,6 @@ export type MatchedLine = {
   date: string | null;
   kind: BillLineKind;
   amountSen: number | null;
-  /** The numbers as printed, for the screen. */
   printed: string[];
   dos: DoCandidate[];
   status: LineStatus;
@@ -158,9 +149,7 @@ export function foldTrips(lines: readonly MatchedLine[]): MatchedLine[] {
 export type DoCharge = {
   doId: string;
   billedSen: number;
-  /** The bill's own words for this DO, one per line it appears on. */
   lines: string[];
-  /** Part of one price shared with other DOs (a trip). */
   split: boolean;
 };
 

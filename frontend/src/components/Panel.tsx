@@ -12,19 +12,11 @@ interface Props {
   children: ReactNode;
   footer?: ReactNode;
   width?: number;
-  /** When true, Esc and X-click route through `onAttemptClose` (typically a
-   *  confirm dialog) instead of `onClose`. The page is responsible for
-   *  calling `onClose` itself if the user confirms the discard. */
   dirty?: boolean;
-  /** Called when the user attempts to dismiss while `dirty`. Required when
-   *  `dirty` is set; ignored otherwise. */
   onAttemptClose?: () => void;
-  /** Render as a centered modal (page-middle floating card) instead of
-   *  the right-side drawer. `width` becomes the card's max width. */
   centered?: boolean;
 }
 
-/** Selector for "anything keyboard-tabbable" used by the focus trap. */
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -52,12 +44,8 @@ export function Panel({
   onAttemptClose,
 }: Props) {
   const panelRef = useRef<HTMLDivElement | null>(null);
-  // An open panel the caller marked dirty is unsaved work for any AUTOMATIC
-  // reload (lib/unsavedWork.ts) — the same fact its own close guard acts on.
   useUnsavedWork(open && dirty === true);
 
-  // Route Esc + X click through the dirty guard when set; otherwise close
-  // directly. `onClose` callers (e.g. on submit success) bypass this.
   function attemptClose() {
     if (dirty && onAttemptClose) {
       onAttemptClose();
@@ -66,7 +54,6 @@ export function Panel({
     }
   }
 
-  // Keyboard handling: Esc dismiss + Tab focus cycling inside the panel.
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
@@ -102,9 +89,6 @@ export function Panel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, dirty, onAttemptClose, onClose]);
 
-  // Focus management: capture the previously-focused element on open, focus
-  // the first focusable inside the panel after the slide-in begins, restore
-  // focus when the panel closes.
   useEffect(() => {
     if (!open) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -130,12 +114,7 @@ export function Panel({
         centered
           ? "fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-200"
           : "fixed inset-y-0 right-0 z-50 flex transition-transform duration-200",
-        // Drawer: width is set inline but capped to leave a 24 px gutter
-        // on the left at narrow widths so the panel reads as a sheet, not
-        // a full-screen takeover.
         !centered && "max-w-[calc(100vw-1.5rem)] sm:max-w-[100vw]",
-        // pointer-events-none when closed so the off-screen panel can't
-        // intercept clicks on the underlying canvas.
         open
           ? cn("pointer-events-auto", centered ? "opacity-100" : "translate-x-0")
           : cn("pointer-events-none", centered ? "opacity-0" : "translate-x-full"),
@@ -163,7 +142,6 @@ export function Panel({
         )}
         style={centered ? { maxWidth: width } : undefined}
       >
-        {/* Brass accent rail at the very left edge of the panel */}
         <span className="pointer-events-none absolute left-0 top-0 h-full w-[2px] bg-gradient-to-b from-accent/0 via-accent/60 to-accent/0" />
         <div className="flex items-start justify-between border-b border-border px-4 py-4 sm:px-6 sm:py-5">
           <div>
@@ -193,7 +171,6 @@ export function Panel({
     </div>
   );
 
-  // SSR safety: createPortal requires a real DOM target.
   if (typeof document === "undefined") return null;
   return createPortal(node, document.body);
 }
@@ -202,11 +179,8 @@ interface SectionProps {
   title: ReactNode;
   children: ReactNode;
   muted?: boolean;
-  /** Optional control rendered top-right of the section header. */
   action?: ReactNode;
-  /** Optional small leading icon in the header (lucide, ~13px). */
   icon?: ReactNode;
-  /** Optional left accent strip colour class (e.g. "bg-accent", "bg-synced"). */
   accent?: string;
 }
 

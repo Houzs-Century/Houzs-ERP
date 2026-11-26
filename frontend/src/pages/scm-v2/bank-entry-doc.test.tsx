@@ -31,7 +31,6 @@ describe("the orders in an entry's document", () => {
       { text: '2990-DraftOR-2610-019', order: false }, { text: ' · ', order: false }, { text: '2990-SO-2609-016', order: true },
     ]);
     expect(orderLinkParts('HC-SO-013512')).toEqual([{ text: 'HC-SO-013512', order: true }]);
-    /* Money moved off a cancelled order names both orders. */
     expect(orderLinkParts('2990-SO-2611-019 ← 2990-SO-2609-003').filter((p) => p.order).map((p) => p.text))
       .toEqual(['2990-SO-2611-019', '2990-SO-2609-003']);
     expect(orderLinkParts('2990-HPV-2610-026').some((p) => p.order)).toBe(false);
@@ -61,7 +60,6 @@ describe('opening the order', () => {
 
   test('a Ctrl-click opens a browser window and leaves this page as it is', () => {
     render(<MemoryRouter><EntryDocument text="2990-SO-2609-016" /></MemoryRouter>);
-    /* The browser would open the window; jsdom cannot, so its default stops here. */
     document.addEventListener('click', (e) => e.preventDefault(), { once: true, capture: true });
     fireEvent.click(screen.getByRole('link', { name: '2990-SO-2609-016' }), { ctrlKey: true });
     expect(opened.intents).toEqual([]);

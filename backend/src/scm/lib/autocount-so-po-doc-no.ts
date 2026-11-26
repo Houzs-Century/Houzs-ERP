@@ -62,7 +62,6 @@ export interface SoPoDocNoEditBody {
   DocType: 'SO';
   DocNo: string;
   Header: { UDF: { ToPONo: string } };
-  /** Always empty: the host's line loop does nothing, so no line is touched. */
   Lines: [];
 }
 
@@ -112,7 +111,6 @@ export async function queueSoPoDocNos(
           body: composeSoPoDocNoEdit(so.linked_ac_docno, poDocNos) as unknown as Record<string, unknown>,
           selfDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: soDocNo },
         },
-        /* NULL, as every edit: two purchase orders are two changes, applied in order. */
         dedupeKey: null,
         createdBy: null,
       });

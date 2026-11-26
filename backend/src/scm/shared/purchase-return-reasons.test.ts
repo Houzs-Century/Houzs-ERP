@@ -33,8 +33,6 @@ describe('the catalogue', () => {
     expect(isPurchaseReturnReasonCode(null)).toBe(false);
   });
 
-  /* Rows raised before 2026-09-28 hold free text. Showing it verbatim keeps the
-     history readable; hiding it would lose the only thing those rows say. */
   it('labels a code, and prints an older row\'s free text as it stands', () => {
     expect(purchaseReturnReasonLabel('WRONG_COLOUR')).toBe('Wrong colour');
     expect(purchaseReturnReasonLabel('supplier sent the wrong fabric')).toBe('supplier sent the wrong fabric');
@@ -53,9 +51,7 @@ describe('kind and reason are one decision', () => {
   it('a repair return says REPAIR, and only a repair return may', () => {
     expect(kindMatchesReason('REPAIR', 'REPAIR')).toBe(true);
     expect(kindMatchesReason('CREDIT', 'DAMAGED')).toBe(true);
-    // Would chase a credit note for goods the supplier is fixing.
     expect(kindMatchesReason('CREDIT', 'REPAIR')).toBe(false);
-    // Would expect goods back that were sent for good.
     expect(kindMatchesReason('REPAIR', 'DAMAGED')).toBe(false);
   });
 

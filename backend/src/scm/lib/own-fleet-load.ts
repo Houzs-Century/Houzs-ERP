@@ -23,8 +23,6 @@ import { customerKeyOf, type OwnDo, type OwnTrip } from './own-fleet-runs';
 import type { DeliveryFacts } from './delivery-rate-card';
 
 type Row = Record<string, unknown>;
-// These scm tables are not all in the generated Supabase types; the same narrow
-// bridge as delivery-rate-cards.ts rc().
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = (sb: unknown): any => sb;
 const str = (v: unknown): string | null => (v == null || v === '' ? null : String(v));
@@ -37,7 +35,6 @@ export interface ThreePlBill {
   doId: string;
   runDate: string;
   facts: DeliveryFacts | null;
-  /** One entry per carrier that billed it. */
   charges: Array<{ carrierId: string; billedSen: number }>;
 }
 
@@ -60,7 +57,6 @@ export const myDayOf = (iso: string | null): string | null => {
 };
 const nextDay = (ymd: string): string => new Date(Date.parse(`${ymd}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
-/** A failed read stops the work: a guess would be a wrong cost shown as right. */
 async function need<T>(what: string, p: PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
   const r = await p;
   if (r.error) throw new Error(`${what}: ${r.error.message}`);
@@ -80,13 +76,11 @@ export async function loadOwnFleet(input: {
   const { sb, scope, payingCompanyId, from, to, zoneMap } = input;
   const byCo = (companyId: unknown, doc: unknown) => `${Number(companyId)}|${String(doc ?? '')}`;
 
-  // 1. The lorry master (shared): a crew's plate resolves to its lorry.
   const lorries = await need<Row>('lorries', paginateAll<Row>((lo, hi) =>
     scope(db(sb).from('lorries').select('id, plate, is_internal')).order('id').range(lo, hi)));
   const lorryById = new Map(lorries.map((l) => [String(l.id), l]));
   const lorryIdByPlate = new Map(lorries.map((l) => [normalizePlate(str(l.plate)), String(l.id)]));
 
-  // 2. Our own Delivery Planning trips in the window, and their stops.
   const tripRows = await need<Row>('trips', paginateAll<Row>((lo, hi) =>
     scope(db(sb).from('trips').select('id, company_id, trip_no, trip_date, lorry_id'))
       .eq('is_outsourced', false).neq('status', 'CANCELLED').gte('trip_date', from).lte('trip_date', to)
@@ -97,7 +91,6 @@ export async function loadOwnFleet(input: {
   const stopsByTrip = new Map<string, Row[]>();
   for (const s of stopRows) (stopsByTrip.get(String(s.trip_id)) ?? stopsByTrip.set(String(s.trip_id), []).get(String(s.trip_id))!).push(s);
 
-  // 3. The orders that may have run in the window: SOs due in it, DOs dated or delivered in it.
   const dueRows = await need<Row>('orders due', paginateAll<Row>((lo, hi) =>
     scope(db(sb).from('mfg_sales_orders').select('doc_no'))
       .or(`and(amended_delivery_date.gte.${from},amended_delivery_date.lte.${to}),and(amended_delivery_date.is.null,customer_delivery_date.gte.${from},customer_delivery_date.lte.${to})`)
@@ -109,7 +102,6 @@ export async function loadOwnFleet(input: {
       .order('id').range(lo, hi)));
   const soDocs = [...new Set([...dueRows.map((r) => String(r.doc_no)), ...datedDos.map((d) => str(d.so_doc_no)).filter((x): x is string => !!x)])];
 
-  // 4. Every live DO of those orders (the newest is the one Last Mile shows), and the orders.
   const siblingDos = await need<Row>('delivery orders of the orders', chunkIn<Row>(soDocs, (b, lo, hi) =>
     scope(db(sb).from('delivery_orders').select(DO_COLS)).in('so_doc_no', b).neq('status', 'CANCELLED').order('id').range(lo, hi)));
   const soRows = await need<Row>('orders', chunkIn<Row>(soDocs, (b, lo, hi) =>
@@ -126,8 +118,6 @@ export async function loadOwnFleet(input: {
       || (String(d.created_at ?? '') === String(had.created_at ?? '') && String(d.id) > String(had.id));
     if (newer) latestLive.set(k, d);
   }
-  /* The dates doRunDate picks from: the order's due date when this is the DO
-     Last Mile shows, else the day it was delivered, else its DO date. */
   const datesOf = (d: Row) => {
     const so = str(d.so_doc_no) ? soByKey.get(byCo(d.company_id, d.so_doc_no)) : undefined;
     return {
@@ -143,7 +133,6 @@ export async function loadOwnFleet(input: {
     .filter((x): x is { d: Row; dates: ReturnType<typeof datesOf>; runDate: string } => !!x.runDate && x.runDate >= from && x.runDate <= to);
   const ranIds = ran.map((x) => String(x.d.id));
 
-  // 5. Their crews, their 3PL bills, and any live trip that carries them.
   const [crewRows, chargeRows, carriedBy] = await Promise.all([
     need<Row>('crews', chunkIn<Row>(ranIds, (b, lo, hi) =>
       scope(db(sb).from('delivery_order_crew').select('do_id, lorry_id, lorry_plate')).in('do_id', b).order('do_id').range(lo, hi))),
@@ -159,7 +148,6 @@ export async function loadOwnFleet(input: {
   const crewByDo = new Map(crewRows.map((r) => [String(r.do_id), r]));
   const billed = new Set(chargeRows.map((r) => String(r.do_id)));
 
-  // 6. The DO stops of our own trips: those orders ran that day, on that lorry.
   const tripDoIds = new Set(stopRows.filter((s) => String(s.stop_type ?? '').toUpperCase() === 'DELIVERY' && str(s.do_id)).map((s) => String(s.do_id)));
   const missing = [...tripDoIds].filter((id) => !doById.has(id));
   if (missing.length) {
@@ -199,7 +187,6 @@ export async function loadOwnFleet(input: {
     };
   });
 
-  // 7. The paying company's 3PL bills on orders that ran in the window.
   const charges = new Map<string, Map<string, number>>();
   for (const r of chargeRows) {
     if (Number(r.company_id) !== payingCompanyId) continue;
@@ -209,7 +196,6 @@ export async function loadOwnFleet(input: {
   }
   const threePlRan = ran.filter((x) => charges.has(String(x.d.id)));
 
-  // 8. Each order's facts: its lines (sets / items) and its address (zone).
   const docKeys = new Map<string, { companyId: number; doc: string }>();
   for (const d of ownDos) if (d.so) docKeys.set(byCo(d.companyId, d.so), { companyId: d.companyId, doc: d.so });
   for (const { d } of threePlRan) if (str(d.so_doc_no)) docKeys.set(byCo(d.company_id, d.so_doc_no), { companyId: Number(d.company_id), doc: String(d.so_doc_no) });
@@ -221,7 +207,6 @@ export async function loadOwnFleet(input: {
   }
   const lineRows = await need<Row>('order lines', chunkIn<Row>(factDocs, (b, lo, hi) =>
     scope(db(sb).from('mfg_sales_order_items').select('doc_no, company_id, item_group, qty, cancelled')).in('doc_no', b).order('doc_no').range(lo, hi)));
-  /* Each DO's own goods value (do-goods.ts), for a card's Per DO charge. */
   const doGoods = await loadDoGoods(scope, sb, [...ownDos.map((d) => d.doId), ...threePlRan.map(({ d }) => String(d.id))]);
   if (!doGoods.ok) throw new Error(`delivery order lines: ${doGoods.reason}`);
   const linesBySo = new Map<string, SetLine[]>();
@@ -229,7 +214,6 @@ export async function loadOwnFleet(input: {
     const k = byCo(l.company_id, l.doc_no);
     (linesBySo.get(k) ?? linesBySo.set(k, []).get(k)!).push(setLineOf(l));
   }
-  /* A DO's facts: its order's lines and address, and its own goods value. */
   const factsOf = (doId: string, companyId: number, doc: string | null): DeliveryFacts | null => {
     const so = doc ? soByKey.get(byCo(companyId, doc)) : undefined;
     if (!so || !doc) return null;

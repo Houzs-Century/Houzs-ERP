@@ -23,10 +23,6 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export type DockReason = "applied" | "manual-exists" | "absent-day" | "no-shortfall";
 
-/* Hookka's guards, in order: a MANUAL dock is HR's word and stays; a day with
- * no logged hours is an absence, charged in full by payroll, so an hour-dock
- * on top would charge it twice (any AUTO row is removed); under 0.05 h is
- * rounding (a stale AUTO row is removed); otherwise the AUTO row is set. */
 export async function applyDayDock(db: Db, companyId: number, employeeId: number, workDate: string, shortfallHours: number, note: string): Promise<DockReason> {
   const existing = (
     await db
@@ -101,17 +97,10 @@ async function syncAutoOtClaim(
       .insert(hr_ot_claims)
       .values({ company_id: companyId, employee_id: employeeId, work_date: workDate, start_min: plan.startMin, end_min: plan.endMin, note, status: "PENDING", source: "AUTO", created_by: null });
   } catch (e) {
-    /* The one-AUTO-row-per-day unique index: a concurrent sync already inserted
-       it, which is the row this call would have written. */
     if ((e as { code?: string } | null)?.code !== "23505" && !String((e as Error | null)?.message ?? "").includes("duplicate key")) throw e;
   }
 }
 
-/* A closed punch puts its hours on Working Hours and docks its short hours.
- * One AUTO row in the employee's own department (Hookka split by production
- * line scans; Century has none). A forgotten clock-out closed by the system
- * counts the standard day and docks nothing, as in Hookka. A day HR has typed
- * hours for keeps them; its dock is still re-judged from the punch. */
 export async function syncDayFromPunch(db: Db, companyId: number, attendanceId: number): Promise<void> {
   const day = (await db.select().from(hr_attendance).where(and(eq(hr_attendance.company_id, companyId), eq(hr_attendance.id, attendanceId))).limit(1)).at(0);
   if (!day?.clock_in_at || !day.clock_out_at) return;
@@ -126,8 +115,6 @@ export async function syncDayFromPunch(db: Db, companyId: number, attendanceId: 
   const cfg = (await payRulesResolver(db, companyId))(day.work_date);
   const shift = await shiftRulesResolver(db, companyId, day.work_date, day.work_date);
   const base = shift.rulesFor(day.work_date, day.employee_id);
-  // A grouped employee's shift (and its hours) is authoritative; an ungrouped
-  // one keeps the global shift with their own working_hours_per_day.
   const rules = shift.hasGroup(day.employee_id) ? base : rulesForEmployeeHours(base, Number(emp.hours));
   const inMin = minutesFromWorkDate(day.work_date, asDate(day.clock_in_at));
   const outMin = minutesFromWorkDate(day.work_date, asDate(day.clock_out_at));
@@ -151,8 +138,6 @@ export async function syncDayFromPunch(db: Db, companyId: number, attendanceId: 
       });
     }
   }
-  /* Sunday and public-holiday work is all OT, so nothing is short. Hookka's
-     punch dock missed this (only its settle skipped those days). */
   const holiday = await db
     .select({ d: hr_public_holidays.holiday_date })
     .from(hr_public_holidays)
@@ -191,11 +176,6 @@ export async function runAutoClockOut(env: Env): Promise<{ companies: number; cl
 
 export type SettleResult = { period: string; employees: number; days: number; docked: number; cleared: number; manualKept: number };
 
-/* Settle a month (Hookka POST /settle-period): for every employee active in
- * it and every elapsed working day they logged hours on, dock the larger of
- * the punch shortfall and the under-logged hours (standard day minus logged).
- * Days with no hours are absences (payroll charges the day; no dock). Re-run
- * safe: only AUTO rows change. */
 export async function settlePeriod(db: Db, companyId: number, period: string, today: string): Promise<SettleResult> {
   const [y, m] = period.split("-").map(Number);
   const first = `${period}-01`;

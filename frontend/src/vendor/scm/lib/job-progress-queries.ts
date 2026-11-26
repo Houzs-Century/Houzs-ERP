@@ -1,5 +1,3 @@
-/* Every job's On the way / Arrived / Done (scm.job_progress), one read shared by
-   the driver's phone and the desktop Last Mile map. */
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { authedFetch } from "./authed-fetch";

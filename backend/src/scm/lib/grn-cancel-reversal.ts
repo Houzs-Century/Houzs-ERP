@@ -20,11 +20,6 @@ import { ownBucketKey } from './stock-bucket-key';
 /** The GRN line columns the reversal reads. */
 export type GrnCancelLine = {
   purchase_order_item_id: string | null;
-  /* Nullable on purpose: this is read straight off scm.grn_items, whose column
-     accepts NULL, and the `?? 0` guards below are the only thing standing
-     between a null qty and a movement row. Typing it `number` because the
-     caller's cast says so is what makes the linter call those guards
-     redundant. */
   qty_accepted: number | null;
   item_code: string;
   material_name: string | null;
@@ -58,12 +53,8 @@ export type GrnCancelReversalContext = {
  */
 export function buildGrnCancelReversals(
   lines: readonly GrnCancelLine[],
-  /** purchase_order_item_id -> source PO number. `resolvePoBatchByItem`. */
   batchByItem: ReadonlyMap<string, string>,
   ctx: GrnCancelReversalContext,
-  /** The GRN's own IN keys by canonical form (lib/stock-bucket-key.ts
-   *  loadOwnBucketKeys). Each OUT reverses the exact bucket the IN wrote, even
-   *  under an older spelling of the spec. Null = use the computed key. */
   ownInKeys: ReadonlyMap<string, string> | null,
 ) {
   return lines
@@ -83,7 +74,6 @@ export function buildGrnCancelReversals(
         source_doc_id: ctx.grnId,
         source_doc_no: ctx.grnNumber,
         performed_by: ctx.performedBy,
-        // Only carry batch_no when the IN had one (omit -> non-batched lines stay plain FIFO).
         ...(batch_no != null ? { batch_no } : {}),
         notes: 'GRN cancelled — reversing receipt',
       };

@@ -1,7 +1,3 @@
-/* The forecast line keys live twice, across the FE/BE boundary: the server's
- * rules (backend/src/services/eventForecast.ts, which accepts and stores them)
- * and this page's copy (forecastLayers.ts, which names and saves them). They
- * cannot share a module, so this pins them equal, in order. */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

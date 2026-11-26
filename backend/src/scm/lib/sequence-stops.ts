@@ -1,14 +1,3 @@
-// ---------------------------------------------------------------------------
-// sequence-stops.ts — Fleet Module A2: shape a proposed, time-windowed route for
-// ONE trip. PURE, unit-tested. Reuses the Phase-3 nearest-neighbour sequencer
-// (propose-route.ts) verbatim — this file is only the wire-shaping around it, so
-// A2's per-trip sequencing and Phase-3's drawer emit the SAME structure.
-//
-// Given a trip's stops (each with a service duration + delivery window from the
-// residence rules) and the depot->stops travel matrix (from maps.ts), produce
-// the ordered sequence with per-stop arrival / start / finish CLOCK times, ETA
-// OFFSETS (seconds from depart, for the trip_stops write), and totals. No I/O.
-// ---------------------------------------------------------------------------
 
 import {
   proposeRoute,
@@ -19,7 +8,6 @@ import {
 export interface SequenceStopInput {
   ref: string;
   serviceMinutes: number;
-  /** Minutes-from-midnight window bounds, or null (no bound). */
   earliestMin: number | null;
   latestMin: number | null;
 }
@@ -37,10 +25,7 @@ export interface SequencedStop {
   earliestTime: string | null;
   latestTime: string | null;
   windowViolated: boolean;
-  /** Seconds from the trip's depart to this stop's arrival — the eta_offset_s the
-   *  schedule write-path persists onto trip_stops (mig 0134). */
   etaOffsetS: number;
-  /** Drive metres / seconds on the leg that ARRIVES at this stop (mig 0134). */
   legDistanceM: number;
   legDurationS: number;
 }
@@ -89,7 +74,6 @@ export function buildSequenceProposal(input: {
     earliestTime: minutesToTime(st.earliestMin),
     latestTime: minutesToTime(st.latestMin),
     windowViolated: st.windowViolated,
-    // Offset from the trip's depart (never a wall clock — the trip start can move).
     etaOffsetS: Math.max(0, Math.round((st.arrivalMin - departMin) * 60)),
     legDistanceM: Math.max(0, Math.round(st.distanceMetres)),
     legDurationS: Math.max(0, Math.round(st.travelMinutes * 60)),

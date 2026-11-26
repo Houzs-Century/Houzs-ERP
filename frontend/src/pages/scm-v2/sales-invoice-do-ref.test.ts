@@ -13,9 +13,6 @@ import { describe, expect, test } from "vitest";
 
 type SiHeader = { do_number?: string | null; delivery_order_id?: string | null };
 
-/* The function under test, mirrored from SalesInvoiceDetailV2.tsx. Kept here
-   rather than imported because the page pulls the whole app shell; the VALUE
-   being pinned is the rule, and the rule is one line. */
 const doOf = (h: SiHeader): string => h.do_number || "—";
 
 describe("the invoice names its delivery order", () => {
@@ -24,7 +21,6 @@ describe("the invoice names its delivery order", () => {
       .toBe("HC-DO-2608-004");
   });
 
-  /* RED on the unfixed tree: it returned "065c5051". */
   test("NEVER prints a uuid fragment — a dash is the honest answer", () => {
     const shown = doOf({ delivery_order_id: "065c5051-aaaa-bbbb-cccc-ddddeeeeffff" });
     expect(shown).toBe("—");
@@ -37,14 +33,10 @@ describe("the invoice names its delivery order", () => {
     expect(doOf({ do_number: null, delivery_order_id: null })).toBe("—");
   });
 
-  /* An empty string is what a stamp that found no row leaves behind; it must
-     read as "nothing", not as a blank cell that looks stamped. */
   test("an empty stamp is a dash, not an empty cell", () => {
     expect(doOf({ do_number: "" })).toBe("—");
   });
 
-  /* THE FIELD NAME IS THE FIX. `do_doc_no` is the delivery-return column and
-     reading it here is what produced a permanently-undefined value. */
   test("does not read the delivery-return field name", () => {
     const wrongShape = { do_doc_no: "HC-DO-2608-004" } as unknown as SiHeader;
     expect(doOf(wrongShape)).toBe("—");

@@ -44,9 +44,6 @@ export async function autoFinalInvoiceForOrder(
   if (!st.ok) return { ok: false, status: 'read_failed', reason: `settings: ${st.reason}` };
   if (!st.settings.enabled) return { ok: true, status: 'switched_off' };
 
-  /* A live invoice already on the order — raised by hand, or by an earlier
-     run — is the final invoice; nothing is raised beside it. A draft or a
-     cancelled one is no invoice (si-order-deposit's own reading). */
   const { data: sis, error: siErr } = await sb.from('sales_invoices')
     .select('id, status').eq('so_doc_no', p.docNo).eq('company_id', p.companyId);
   if (siErr) return { ok: false, status: 'read_failed', reason: `order invoices: ${siErr.message}` };
@@ -57,8 +54,6 @@ export async function autoFinalInvoiceForOrder(
   const code = await companyCodeById(sb, p.companyId);
   if (!code) return { ok: false, status: 'read_failed', reason: `company ${p.companyId} has no code to number under` };
 
-  /* The order's deliveries that an invoice may be raised from (the same gate
-     the picker applies), then every line with quantity still unbilled. */
   const { data: dos, error: doErr } = await sb.from('delivery_orders')
     .select('id, status').eq('so_doc_no', p.docNo).eq('company_id', p.companyId);
   if (doErr) return { ok: false, status: 'read_failed', reason: `deliveries: ${doErr.message}` };
@@ -107,7 +102,6 @@ export async function autoFinalInvoiceBestEffort(
   }
 }
 
-/* ── The backlog: orders delivered before the switch was on ──────────────── */
 
 
 export type DeliveredUninvoiced = { docNo: string; deliveredOn: string | null };
@@ -123,11 +117,6 @@ export async function deliveredUninvoiced(
   sb: Db,
   companyId: number,
 ): Promise<{ ok: true; orders: DeliveredUninvoiced[] } | { ok: false; reason: string }> {
-  /* Every read here is PAGED. `.limit(2000)` was still cut at PostgREST's 1,000
-     rows, so the backlog (and the "N delivered, not invoiced" count) stopped at
-     the first 1,000 delivered orders by number; and an unpaged 200-order batch
-     could drop invoice rows, making an invoiced order look uninvoiced. A
-     truncated read refuses rather than answer with part of the book. */
   const so = await paginateAll<{ doc_no: string }>((from, to) => sb.from('mfg_sales_orders')
     .select('doc_no, status')
     .eq('company_id', companyId)

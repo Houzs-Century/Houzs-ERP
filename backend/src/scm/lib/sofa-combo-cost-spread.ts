@@ -1,19 +1,3 @@
-/* The master sofa-combo COST spread (Commander 2026-05-29), as one pure rule.
-
-   A sofa is a set of per-module lines. When the lines of one base model match
-   a MASTER combo (sofa_combo_pricing, supplier_id NULL), the set's cost is the
-   combo's cost, spread across the matched lines in proportion to their own
-   cost. Lines outside the match keep their own cost.
-
-   Three rules the 2026-11-17 check of 17 over-costed 2990 orders added:
-     - the combo that covers the most pieces wins (pickCostComboMatch);
-     - a one-slot, several-code combo never prices cost (isOnePieceSetCombo);
-     - the lines are taken in a fixed order (by id), so a re-price on another
-       day matches the same lines. Read in database order, two saves of
-       2990-SO-2610-046 put a set price on each seat in turn and the order
-       carried the set twice.
-   The combos passed in must be cost-priced (loadMasterSofaComboCosts) and
-   standing on the day priced (combosStandingOn). */
 
 import { mytDateOf } from './my-time';
 import {
@@ -71,7 +55,7 @@ export function planComboCostSpread(
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   for (const l of sofa) {
     const { baseModel, sizeCode } = splitSofaCode(l.item_code);
-    if (!sizeCode) continue; // bare model code: nothing to match
+    if (!sizeCode) continue;
     const key = baseModel.toUpperCase();
     const arr = groups.get(key) ?? [];
     arr.push(l);
@@ -86,8 +70,6 @@ export function planComboCostSpread(
     if (heights.size !== 1) continue;
     const height = [...heights][0]!;
     if (!height) continue;
-    // Same base model only (Audit 2026-06-11 I2): module codes are a shared
-    // vocabulary, so another Model's combo must never price this set.
     const pool = combos.filter((cmb) => cmb.baseModel.toUpperCase() === bm);
     if (pool.length === 0) continue;
     const match = pickCostComboMatch(
@@ -100,9 +82,6 @@ export function planComboCostSpread(
     if (!match) continue;
     const matched = match.matchedIndices.flatMap((i) => members.slice(i, i + 1));
     if (matched.length === 0) continue;
-    // The combo price is ONE set and line_cost_sen is a LINE total: a uniform
-    // qty q books q sets; mixed qtys have no clean set count, so the combo is
-    // skipped and the per-module costs stand (never under-book).
     const qtySet = new Set(matched.map((m) => Math.max(1, m.qty || 1)));
     if (qtySet.size !== 1) continue;
     const comboTotal = match.comboPriceSen * [...qtySet][0]!;
@@ -115,11 +94,7 @@ export function planComboCostSpread(
 
 /** A sofa piece of a set that changed after its order date (rule 2). */
 export interface ChangedSetPiece extends ComboCostLine {
-  /** The piece's own line cost, no set price: its own unit cost on the day
-   *  that prices it, times its quantity. */
   own_cost_sen: number;
-  /** True for a piece no later product change touched: it is priced on the
-   *  order date. */
   unchanged: boolean;
 }
 

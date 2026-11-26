@@ -116,7 +116,6 @@ const blankToNull = (v: string | null | undefined): string | null => {
 
 export function toOutstandingPoRecord(r: PoFeedRow): OutstandingPoRecord {
   return {
-    // The book's number when the PO has one, so the sheet's key does not change.
     DocNo: r.linked_ac_docno ?? r.po_number,
     ErpDocNo: r.po_number,
     SODocNo: r.so_ac_docno ?? r.so_doc_no ?? null,

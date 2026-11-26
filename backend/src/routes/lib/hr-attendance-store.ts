@@ -1,6 +1,3 @@
-/* Database reads and the forgotten-punch close shared by the phone punch
- * (routes/attendance.ts), the Attendance tab (routes/hr-attendance.ts) and
- * the hr-auto-clockout cron. Drizzle throughout. */
 import { and, asc, eq, isNotNull, isNull, lt } from "drizzle-orm";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_attendance_settings, hr_pay_rule_versions, hr_punch_sites } from "../../db/schema";
@@ -60,11 +57,6 @@ export async function loadAttendanceSettings(db: Db, companyId: number): Promise
   return { requireSelfie: !!row?.require_selfie, requireOnSite: !!row?.require_on_site };
 }
 
-/* Close every open punch whose clock-in is AUTO_CLOSE_AFTER_HOURS old, at
- * the shift end of its work date (Hookka's autoCloseForgottenPunch). The
- * UPDATE re-checks clock_out_at IS NULL, so a clock-out racing the close
- * wins and a second run changes nothing. employeeId narrows it to one person
- * (their next punch); null sweeps the company. */
 export async function closeForgottenPunches(db: Db, companyId: number, employeeId: number | null, now: Date): Promise<number[]> {
   const cutoff = new Date(now.getTime() - AUTO_CLOSE_AFTER_HOURS * 3600_000).toISOString();
   const open = await db

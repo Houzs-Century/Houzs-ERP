@@ -1,6 +1,3 @@
-/* POS Items > Add by category: the pure part of the picker. The counts come
- * from `POST /api/pos-admin/items/add-all { dry_run: true }`; a tick adds the
- * category's products and keeps its POS items, an untick leaves them out. */
 import { mfgCategoryLabel } from "../../vendor/shared/product-categories";
 
 export type CategoryCount = { category: string; to_add: number; active: number; off: number; no_price: number };

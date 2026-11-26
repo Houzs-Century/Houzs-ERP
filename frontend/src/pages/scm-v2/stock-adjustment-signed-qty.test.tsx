@@ -20,20 +20,16 @@ type AdjustCall = {
   batchNo?: string;
   variantKey?: string;
 };
-// One entry per LINE of the posted document, flattened with its warehouse so
-// the per-sign assertions read the same as before the form posted documents.
 const adjustCalls: AdjustCall[] = [];
 const postCalls: Array<{ warehouseId: string; lines: Array<Omit<AdjustCall, 'warehouseId' | 'qtyDelta'> & { qty: number }> }> = [];
 
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: { id: 1 }, can: () => false }) }));
 vi.mock('../../vendor/scm/lib/stock-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/stock-queries')>()),
-  // A single open lot: plain (no variant, no batch), 50 on hand.
   useInventoryBuckets: (itemCode: string | null, warehouseId: string | null) => ({
     data: itemCode && warehouseId ? [{ warehouse_id: warehouseId, variant_key: '', batch_no: null, product_name: 'Chair', qty: 50 }] : [],
     isLoading: false,
   }),
-  // Current balance 12 at w1 so a decrease of 4 stays positive (no below-zero path).
   useInventoryProductBreakdown: (itemCode: string | null) => ({
     data: { balances: itemCode ? [{ warehouse_id: 'w1', item_code: itemCode, qty: 12 }] : [] },
     isLoading: false,
@@ -93,11 +89,7 @@ const setWarehouse = () =>
   fireEvent.change(screen.getByLabelText(/^Warehouse \*/) as HTMLSelectElement, { target: { value: 'w1' } });
 const pickSku = () =>
   fireEvent.change(screen.getByPlaceholderText('Type or pick a SKU code…'), { target: { value: 'CH-1' } });
-// The Qty box is type="text" (a signed-integer field that keeps its raw text
-// apart from the number) — select it by its aria-label, not the input type.
 const qtyInputs = () => Array.from(document.querySelectorAll('tbody input[aria-label^="Qty for"]')) as HTMLInputElement[];
-// Focus before typing — the field keeps its raw text apart from the number only
-// while focused (as a real user does), then re-syncs to the number on blur.
 const setQty = (value: string, i = 0) => {
   const el = qtyInputs()[i]!;
   fireEvent.focus(el);
@@ -119,7 +111,6 @@ describe('New Stock Adjustment — signed qty encodes the direction', () => {
 
     expect(adjustCalls).toHaveLength(1);
     expect(adjustCalls[0]!.qtyDelta).toBe(3);
-    // Increase of an ACCESSORY: no variant group, and no bucket is picked.
     expect(adjustCalls[0]!.variantKey).toBeUndefined();
     expect(adjustCalls[0]!.variants).toBeUndefined();
     expect(adjustCalls[0]!.itemGroup).toBeUndefined();
@@ -132,17 +123,14 @@ describe('New Stock Adjustment — signed qty encodes the direction', () => {
     setQty('-4');
     setReason();
 
-    // With an open lot present, a decrease must say which lot — Save is blocked.
     expect((screen.getByRole('button', { name: /Save Adjustment/ }) as HTMLButtonElement).disabled).toBe(true);
 
-    // Pick the (plain) lot, then Save posts the negative delta.
     fireEvent.change(screen.getByLabelText(/Take from for/) as HTMLSelectElement, { target: { value: JSON.stringify(['', null]) } });
     save();
     await screen.findByRole('dialog');
 
     expect(adjustCalls).toHaveLength(1);
     expect(adjustCalls[0]!.qtyDelta).toBe(-4);
-    // The plain lot's variant_key is '' → sent as undefined (backend reads '').
     expect(adjustCalls[0]!.variantKey).toBeUndefined();
   });
 
@@ -160,12 +148,9 @@ describe('New Stock Adjustment — signed qty encodes the direction', () => {
     draw();
     setWarehouse();
     pickSku();
-    // User has "100"; puts the cursor before the 1 and types "0" → "0100".
     setQty('0100');
     setReason();
-    // The raw text survives while focused (no reformat mid-type) …
     expect(qtyInputs()[0]!.value).toBe('0100');
-    // … and normalises on blur, with the numeric value never corrupted.
     fireEvent.blur(qtyInputs()[0]!);
     expect(qtyInputs()[0]!.value).toBe('100');
 
@@ -179,13 +164,11 @@ describe('New Stock Adjustment — signed qty encodes the direction', () => {
     draw();
     setWarehouse();
     pickSku();
-    // Typing the minus first must not be swallowed (the old NaN→0 wiped it).
     setQty('-');
     expect(qtyInputs()[0]!.value).toBe('-');
     setQty('-5');
     expect(qtyInputs()[0]!.value).toBe('-5');
     setReason();
-    // A decrease with an open lot must pick which lot before Save.
     fireEvent.change(screen.getByLabelText(/Take from for/) as HTMLSelectElement, { target: { value: JSON.stringify(['', null]) } });
     save();
     await screen.findByRole('dialog');
@@ -196,23 +179,18 @@ describe('New Stock Adjustment — signed qty encodes the direction', () => {
   test('mixed lines: a +3 increase and a −2 decrease post as ONE document, signs intact', async () => {
     draw();
     setWarehouse();
-    // Line 1 — increase +3.
     pickSku();
     setQty('3', 0);
     setReason(0);
-    // Line 2 — add, decrease −2, pick the lot.
     fireEvent.click(screen.getAllByRole('button', { name: /Add line/i })[0]!);
     fireEvent.change(screen.getAllByPlaceholderText('Type or pick a SKU code…')[1]!, { target: { value: 'CH-1' } });
     setQty('-2', 1);
     setReason(1);
-    // Only the decrease line (line 2) shows a "Take from" picker; the +3
-    // increase line has none, so this is the single one on screen.
     fireEvent.change(screen.getByLabelText(/Take from for/) as HTMLSelectElement, { target: { value: JSON.stringify(['', null]) } });
 
     save();
     await screen.findByRole('dialog');
 
-    // BUG-66: one POST carrying both lines, so they share one document number.
     expect(postCalls).toHaveLength(1);
     expect(adjustCalls.map((c) => c.qtyDelta)).toEqual([3, -2]);
     expect(within(screen.getByRole('dialog')).getByText(/HC-SA-2610-001 saved/)).toBeTruthy();

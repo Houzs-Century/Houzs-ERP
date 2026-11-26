@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// ConsignmentNoteFromOrder — LINE-LEVEL, QUANTITY-BASED Consignment Order →
-// Consignment Note picker. Mirrors DeliveryOrderFromSo on the consignment side:
-// the operator picks individual Consignment Order LINES, each with a deliver qty
-// 1..outstanding (outstanding = ordered − already-noted, derived LIVE by the
-// server). A line can be noted across several Consignment Notes until its
-// outstanding reaches 0.
-//
-// A debtor-lock keeps the merge clean: once one line is ticked, lines of a
-// DIFFERENT debtor grey out — a note is for ONE debtor.
-//
-// Continue stashes the picked lines in the scoped SCM handoff store and
-// opens the normal New Consignment Note form prefilled for review (?fromPicks=1).
-//
-// Routing: /scm/consignment-notes/from-order.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';

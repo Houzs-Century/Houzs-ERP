@@ -45,7 +45,6 @@ interface Props {
   sections: GanttSection[];
   sectionProgress: GanttSectionProgress[];
   tasks: GanttTask[];
-  /** Click handler — flips back to the list view + scrolls the row in. */
   onTaskClick?: (taskId: number) => void;
 }
 
@@ -56,7 +55,6 @@ function isoOnly(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 function startOfWeek(d: Date): Date {
-  // Monday-anchored weeks (matches PnlCalendar elsewhere).
   const x = new Date(d);
   const day = x.getUTCDay();
   const diff = day === 0 ? -6 : 1 - day;
@@ -81,10 +79,6 @@ export function ProjectGantt({
   tasks,
   onTaskClick,
 }: Props) {
-  // ── Compute timeline range ─────────────────────────────────
-  // Anchor to project dates, but extend ±1 week if any task's
-  // due_date falls outside so it stays visible (off-plan column gets
-  // a muted background).
   const range = useMemo(() => {
     const anchors: number[] = [];
     if (projectStartDate) anchors.push(new Date(projectStartDate).getTime());
@@ -93,13 +87,11 @@ export function ProjectGantt({
       if (t.due_date) anchors.push(new Date(t.due_date).getTime());
     }
     if (anchors.length === 0) {
-      // Default to ±2 weeks around today.
       const today = new Date();
       anchors.push(addDays(today, -14).getTime(), addDays(today, 14).getTime());
     }
     const min = Math.min(...anchors);
     const max = Math.max(...anchors);
-    // Snap to Monday weeks, padded one week on each side.
     const start = startOfWeek(addDays(new Date(min), -7));
     const end = addDays(startOfWeek(addDays(new Date(max), 7)), 6);
     const totalDays = diffDays(start, end) + 1;
@@ -112,7 +104,6 @@ export function ProjectGantt({
   const today = isoOnly(new Date());
   const todayDate = new Date(today);
 
-  // ── Group tasks per lane ───────────────────────────────────
   const lanes = useMemo(() => {
     const out: Array<{
       id: number;
@@ -140,7 +131,6 @@ export function ProjectGantt({
     return out;
   }, [sections, sectionProgress, tasks]);
 
-  // Pre-compute week labels.
   const weeks = useMemo(() => {
     const out: { label: string; offsetDays: number }[] = [];
     for (let w = 0; w < range.totalWeeks; w++) {
@@ -153,10 +143,6 @@ export function ProjectGantt({
     return out;
   }, [range]);
 
-  // Holiday bands depend only on the date range, not on any lane — so compute
-  // the holiday-day list ONCE here instead of re-scanning every day for every
-  // lane in the render below (was O(lanes × days): ~3,650 getHolidaysOn calls
-  // for a 1-year × 10-lane chart, every render).
   const holidayBands = useMemo(() => {
     const out: { i: number; title: string }[] = [];
     for (let i = 0; i < range.totalDays; i++) {
@@ -166,13 +152,6 @@ export function ProjectGantt({
     return out;
   }, [range]);
 
-  // ALL HOOKS ABOVE THIS LINE. These two useMemos sat below the empty states
-  // until 2026-08-17, so a chart that rendered "no tasks yet" first and then
-  // gained a task called two more hooks on the second render than the first —
-  // React error #310. `range` is memoised above and never depends on either
-  // guard, so hoisting them changes nothing about what they compute.
-  //
-  // Empty states
   if (tasks.length === 0) {
     return (
       <div className="rounded-md border border-dashed border-border bg-bg/40 px-4 py-8 text-center text-[12px] text-ink-muted">
@@ -191,8 +170,7 @@ export function ProjectGantt({
     );
   }
 
-  // ── Helpers for column / position math ─────────────────────
-  const dayWidth = 24; // px
+  const dayWidth = 24;
   const chartWidth = range.totalDays * dayWidth;
 
   function leftFor(iso: string): number {
@@ -211,10 +189,8 @@ export function ProjectGantt({
     return t.due_date < today;
   }
 
-  // ── Render ────────────────────────────────────────────────
   return (
     <div className="rounded-md border border-border bg-surface">
-      {/* Header bar — labels which range we're rendering. */}
       <div className="flex items-center justify-between gap-3 border-b border-border-subtle px-3 py-2 text-[11px] text-ink-muted">
         <span>
           <span className="font-mono text-ink">
@@ -231,14 +207,10 @@ export function ProjectGantt({
       </div>
 
       <div className="thin-scroll overflow-x-auto">
-        {/* Row layout: a fixed-width lane label column on the left,
-            then the chart canvas. We use grid-template-columns so
-            the lane labels stay aligned across header + body. */}
         <div
           className="grid"
           style={{ gridTemplateColumns: `140px ${chartWidth}px` }}
         >
-          {/* Week label row */}
           <div className="border-b border-border-subtle bg-bg/40" />
           <div
             className="relative border-b border-border-subtle bg-bg/40"
@@ -255,7 +227,6 @@ export function ProjectGantt({
             ))}
           </div>
 
-          {/* Lane rows */}
           {lanes.map((lane) => {
             const denom = lane.progress
               ? lane.progress.total - lane.progress.na
@@ -270,8 +241,6 @@ export function ProjectGantt({
                 ? "bg-synced/10"
                 : "bg-accent-soft/20";
 
-            // Section "track" — hairline from earliest to latest task
-            // due_date in this lane (only when the lane has 2+ tasks).
             const dated = lane.tasks
               .filter((t) => t.due_date)
               .sort((a, b) => (a.due_date! < b.due_date! ? -1 : 1));
@@ -280,7 +249,6 @@ export function ProjectGantt({
               dated.length > 1 ? dated[dated.length - 1].due_date! : null;
 
             return [
-              // Lane label
               <div
                 key={`label-${lane.id}`}
                 className={cn(
@@ -296,7 +264,6 @@ export function ProjectGantt({
                   </span>
                 )}
               </div>,
-              // Lane chart row
               <div
                 key={`row-${lane.id}`}
                 className={cn(
@@ -305,9 +272,6 @@ export function ProjectGantt({
                 )}
                 style={{ minHeight: 36 }}
               >
-                {/* Off-plan shading — bands left of planStart and
-                    right of planEnd. Helps admins see at a glance
-                    which tasks are off-schedule. */}
                 {planStart && (
                   <div
                     aria-hidden
@@ -333,9 +297,6 @@ export function ProjectGantt({
                   />
                 )}
 
-                {/* Holiday bands — share PnlCalendar's getHolidaysOn so
-                    the Gantt inherits the same calendar awareness
-                    without parallel data. */}
                 {holidayBands.map(({ i, title }) => (
                   <div
                     key={`hol-${i}`}
@@ -346,7 +307,6 @@ export function ProjectGantt({
                   />
                 ))}
 
-                {/* Per-section track (hairline). */}
                 {trackStart && trackEnd && (
                   <div
                     aria-hidden
@@ -358,7 +318,6 @@ export function ProjectGantt({
                   />
                 )}
 
-                {/* Today marker. */}
                 {todayDate >= range.start && todayDate <= range.end && (
                   <div
                     aria-hidden
@@ -367,11 +326,8 @@ export function ProjectGantt({
                   />
                 )}
 
-                {/* Diamonds. */}
                 {lane.tasks.map((task) => {
                   if (!task.due_date) {
-                    // No due date — render a faint floating chip on the
-                    // far left so the task isn't invisible.
                     return (
                       <button
                         key={task.id}
@@ -407,7 +363,6 @@ export function ProjectGantt({
                         .join(" · ")}
                       className={cn(
                         "group absolute top-1/2 grid h-5 w-5 -translate-x-1/2 -translate-y-1/2 place-items-center rotate-45 rounded-sm border-2 transition-all",
-                        // Status colour
                         status === "done" &&
                           "border-synced bg-synced text-white",
                         status === "na" &&
@@ -420,7 +375,6 @@ export function ProjectGantt({
                         status === "pending" &&
                           overdue &&
                           "animate-pulse border-err bg-err text-white",
-                        // Hover lift
                         "hover:scale-110 hover:shadow-stone"
                       )}
                       style={{ left }}
@@ -448,7 +402,6 @@ export function ProjectGantt({
         </div>
       </div>
 
-      {/* Legend */}
       <div className="flex flex-wrap items-center gap-3 border-t border-border-subtle bg-bg/40 px-3 py-2 text-[10px] text-ink-muted">
         <span className="inline-flex items-center gap-1">
           <span className="inline-block h-2.5 w-2.5 rotate-45 rounded-sm border border-accent bg-surface" />

@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// skuImportTemplate — a blank sheet for creating SKUs through Import SKUs
-// (2990-0025, Sim: "need have import template for item master create").
-//
-// The import already creates a SKU for a code it does not hold; what a person
-// lacked was a file to start from. Export SKUs is a lean PRICE sheet with no
-// description / model / branding / status, so it was the wrong start for a
-// new item. Sheet 1 is the header row only — the importer reads the first
-// sheet and its first row as headers — so an example row can never be imported
-// by mistake. Sheet 2 says what goes in each column.
-// ----------------------------------------------------------------------------
 import type { SheetData } from 'write-excel-file';
 import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../../vendor/shared/product-categories';
 import type { BatchImportResult } from '../../../vendor/scm/lib/mfg-products-queries';

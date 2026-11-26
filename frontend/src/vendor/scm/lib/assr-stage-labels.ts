@@ -1,34 +1,3 @@
-// ----------------------------------------------------------------------------
-// assr-stage-labels — the ONE answer to "what word does a reader see for an
-// ASSR service-case stage?".
-//
-// WHY THIS FILE EXISTS. The stage vocabulary was hand-written in five places
-// and the customer-facing one was the copy that never got `voided`:
-//
-//   · caseTracking.ts `customerStatusFor` — a switch over nine stages plus six
-//     legacy aliases, no `voided` arm, `default: { label: stage }`. So the
-//     PORTAL — the one surface a customer reads — printed the raw database slug
-//     `voided`. Worse than one bad case: portal.ts builds the salesperson
-//     stepper by mapping ALL_STAGES through it, and `voided` is in ALL_STAGES
-//     (assr.ts), so the raw slug appeared as a STEP LABEL on every sales-portal
-//     view, not only on voided cases.
-//   · assr_print.ts `STAGE_LABEL` — "Voided — Not Valid"
-//   · assrFormIntake.ts `SHEET_STATUS` — "Voided", a third spelling
-//   · vendor/scm/lib/assr/stages.ts `ASSR_STAGES.long` — no voided at all
-//     (correctly: it is not a pipeline step) so mobile bolted a literal on top
-//
-// Three different answers for one stage, and the one the customer saw was not
-// even English. Nobody was careless: `customerStatusFor` predates `voided`, and
-// the next four writers each needed a word in a layer that could not reach it.
-//
-// The pair of paths is load-bearing, not decorative. check-shared-mirrors.mjs
-// enumerates backend/src/scm/shared and looks each basename up in
-// frontend/src/vendor/shared and frontend/src/vendor/scm/lib — non-recursively,
-// by basename. Landing the map at exactly those two paths puts the existing
-// --strict CI gate in front of any future drift between them, with no new
-// script. Keep the two files BYTE-IDENTICAL; that is what the gate reads.
-// No imports here, for the same reason.
-// ----------------------------------------------------------------------------
 
 export type AssrStageColor = "grey" | "blue" | "amber" | "violet" | "green";
 
@@ -44,32 +13,19 @@ export type AssrStageColor = "grey" | "blue" | "amber" | "violet" | "green";
  * — it is insurance, not behaviour.
  */
 export const ASSR_STAGE_LABEL: Record<string, string> = {
-  // Live stages, in workflow order (Nico 2026-08-11: Solution decides the fix,
-  // then Verification inspects it — Solution comes FIRST).
   pending_review: "Pending Review",
   pending_solution: "Pending Solution",
   under_verification: "Under Verification",
-  // Renamed from "Supplier Pickup / Return" (Nico 2026-09-04): the stage now
-  // spans three legs — customer pickup, supplier pickup, supplier return — so
-  // the name stays neutral and the sub-status names the actor.
   pending_supplier_pickup: "Pickup / Return",
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Pending Delivery / Service",
   completed: "Completed",
-  // Terminal alt-outcome, NOT a pipeline step — it is deliberately absent from
-  // the ordered stepper (ASSR_STAGES) and present here, because "is this a step
-  // in the funnel" and "what word do we print for it" are different questions.
   voided: "Voided — Not Valid",
-  // Retired stage values — see the doc comment above.
   pending_inspection: "Under Verification",
   pending_item_pickup: "Pickup / Return",
   registration: "Pending Review",
   triage: "Under Verification",
   action: "Pending Solution",
-  // `logistics` reads "Pending Item Pickup" and NOT the supplier wording above.
-  // Both pre-existing copies said exactly this, so it is not drift and is not
-  // being silently rewritten here; it is a retired v1 label that predates the
-  // 0110 fold and is recorded rather than tidied.
   logistics: "Pending Item Pickup",
   resolution: "Pending Delivery / Service",
   closed: "Completed",
@@ -89,7 +45,6 @@ export const ASSR_STAGE_LABEL: Record<string, string> = {
  */
 export const ASSR_CUSTOMER_STAGE_LABEL: Record<string, string | undefined> = {
   pending_supplier_pickup: "Pending Supplier Pickup",
-  // Retired alias of the row above (mig 0110) — kept on the same wording.
   pending_item_pickup: "Pending Supplier Pickup",
 };
 
@@ -102,9 +57,6 @@ export const ASSR_STAGE_COLOR: Record<string, AssrStageColor | undefined> = {
   pending_item_ready: "violet",
   pending_delivery_service: "violet",
   completed: "green",
-  // Grey, which is what `voided` already resolved to through the missing-arm
-  // default. The pill palette has no red; the printed report and the desktop
-  // banner carry the red treatment, and this fix changes the WORD only.
   voided: "grey",
   pending_inspection: "blue",
   pending_item_pickup: "violet",
@@ -137,9 +89,6 @@ export function assrCustomerStatus(stage: string | null | undefined): {
   const key = stage ?? "";
   const override = ASSR_CUSTOMER_STAGE_LABEL[key];
   return {
-    // `key ? … : "Unknown"` and not `… || "Unknown"`: an empty/absent stage is
-    // the only value that becomes "Unknown". Anything else the table has not
-    // heard of comes back as itself, exactly as the switch's `default` did.
     label: override ?? (key ? assrStageLabel(key) : "Unknown"),
     color: ASSR_STAGE_COLOR[key] ?? "grey",
   };

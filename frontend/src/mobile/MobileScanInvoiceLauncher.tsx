@@ -1,8 +1,3 @@
-// The "Scan invoice" entry rendered above the mobile Purchase Invoices list
-// (MobileModuleList's aboveList) — the mobile sibling of the desktop list's
-// "Scan invoice" menu item. Kept in its own tiny module so it can be imported
-// eagerly with the list while the heavy scanner screen (MobileScanInvoice) stays
-// lazy-loaded until the operator actually opens it.
 
 export function ScanInvoiceLauncher({ onClick }: { onClick: () => void }) {
   return (

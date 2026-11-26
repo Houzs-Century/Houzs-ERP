@@ -63,7 +63,6 @@ describe('performanceSheet', () => {
     expect(s.tables[1]!.rows[7]!.cells).toEqual([-4345000, -1164.9]);
     expect(s.notes).toEqual(performanceNotes(r));
     expect(s.fmt).toBe(fmtPerf);
-    /* L1 folds the category's rows away, as on the screen. */
     expect(performanceSheet(r, { level: 1 }).tables[1]!.rows.map((x) => x.label)).not.toContain('590-0000 · RENT RECEIVED');
   });
 
@@ -76,7 +75,6 @@ describe('performanceSheet', () => {
     expect(notes[2]).toContain('free gifts');
     const missing = performanceNotes({ ...r, operatingExpense: { ...r.operatingExpense, accountFound: false, accountName: null, bookedSen: 0 } });
     expect(missing[1]).toContain('Account 900-O001 is not in this company\'s chart, so nothing was replaced');
-    /* No covered account (Houzs): no sentence about them. */
     expect(notes.some((n) => n.includes('also covers'))).toBe(false);
     /* 2990's transport is inside the rate (owner 2026-10-06): one sentence names it and what was left out. */
     const covered = performanceNotes({ ...r, operatingExpense: { ...r.operatingExpense, also: [{ code: '900-T004', name: 'TRANSPORTATION FEE' }], alsoBookedSen: 1260720 } });

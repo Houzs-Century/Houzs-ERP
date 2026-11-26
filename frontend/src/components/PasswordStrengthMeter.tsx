@@ -1,15 +1,7 @@
 import { validatePasswordStrength } from "../lib/passwordStrength";
 
-/**
- * Four-segment strength bar + first-failing-rule hint. Pairs with the
- * shared validator in lib/passwordStrength.ts (same rules enforced
- * server-side) so what the bar approves, the API accepts.
- *
- * Renders nothing until the user starts typing — an empty field showing
- * a red bar reads as an error before anyone has done anything wrong.
- */
 
-const SEGMENT_FILL = ["#dc2626", "#d97706", "#2563eb", "#059669"]; // score 1-4
+const SEGMENT_FILL = ["#dc2626", "#d97706", "#2563eb", "#059669"];
 const SEGMENT_EMPTY = "#e7e2d8";
 const SCORE_LABEL: Record<number, string> = {
   1: "Acceptable",

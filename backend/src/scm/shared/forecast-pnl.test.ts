@@ -57,11 +57,11 @@ describe('validateGrid', () => {
 
 describe('monthFigures', () => {
   const OCT = {
-    '500-0003': { amtSen: 8_000_000 }, '500-0001': { amtSen: 2_000_000 }, '520-0000': { amtSen: -50_000 },   // sales 99,500.00
-    '601-0003': { bp: 5500 }, '601-0001': { amtSen: 900_000 },                                                // 54,725.00 + 9,000.00
-    '590-0000': { bp: 100 },                                                                                  // 995.00
-    '900-S100': { bp: 1200 }, '900-T003': { amtSen: 120_000 },                                                // 11,940.00 + 1,200.00
-    '950-0000': { bp: 300 },                                                                                  // 2,985.00
+    '500-0003': { amtSen: 8_000_000 }, '500-0001': { amtSen: 2_000_000 }, '520-0000': { amtSen: -50_000 },
+    '601-0003': { bp: 5500 }, '601-0001': { amtSen: 900_000 },
+    '590-0000': { bp: 100 },
+    '900-S100': { bp: 1200 }, '900-T003': { amtSen: 120_000 },
+    '950-0000': { bp: 300 },
   };
 
   it('a percent line takes sales × bp / 10000, an amount line its share of sales; totals follow the P&L', () => {
@@ -70,8 +70,8 @@ describe('monthFigures', () => {
     expect(forecastSalesSen(OCT, ACCOUNTS)).toBe(9_950_000);
     const by = new Map(f.lines.map((l) => [l.code, l]));
     expect(by.get('601-0003')).toMatchObject({ amountSen: 5_472_500, bp: 5500, keyed: 'percent', block: 'costOfSales' });
-    expect(by.get('601-0001')).toMatchObject({ amountSen: 900_000, bp: 905, keyed: 'amount' });      // 9,000 / 99,500 = 9.05%
-    expect(by.get('900-T003')).toMatchObject({ amountSen: 120_000, bp: 121 });                         // 1.21%
+    expect(by.get('601-0001')).toMatchObject({ amountSen: 900_000, bp: 905, keyed: 'amount' });
+    expect(by.get('900-T003')).toMatchObject({ amountSen: 120_000, bp: 121 });
     expect(by.get('520-0000')).toMatchObject({ amountSen: -50_000, bp: -50, block: 'tradingIncome' });
     expect(f.totals).toEqual({
       tradingIncomeSen: 9_950_000,
@@ -83,7 +83,6 @@ describe('monthFigures', () => {
       taxationSen: 298_500,
       netProfitSen: 2_064_500,
     });
-    /* Lines come in the accounts' order; a line not keyed is not a line. */
     expect(f.lines.map((l) => l.code)).toEqual(['500-0003', '500-0001', '520-0000', '601-0003', '601-0001', '590-0000', '900-S100', '900-T003', '950-0000']);
   });
 
@@ -107,11 +106,8 @@ describe("a line with a basis — a purchase account bound to its group's sales"
     const f = monthFigures(OCT, {}, BOUND);
     expect(f.salesSen).toBe(10_000_000);
     const by = new Map(f.lines.map((l) => [l.code, l]));
-    /* 55% of the SOFA sales (80,000), not of the 100,000 whole. */
     expect(by.get('601-0003')).toMatchObject({ amountSen: 4_400_000, bp: 5500, basisSen: 8_000_000, keyed: 'percent' });
-    /* 9,000 of the BEDDING sales (20,000) = 45%, not 9% of the whole. */
     expect(by.get('601-0001')).toMatchObject({ amountSen: 900_000, bp: 4500, basisSen: 2_000_000, keyed: 'amount' });
-    /* Transport is a share of everything sold. */
     expect(by.get('900-T003')).toMatchObject({ amountSen: 1_200_000, bp: 1200, basisSen: 10_000_000 });
     expect(f.totals.costOfSalesSen).toBe(5_300_000);
     expect(f.totals.grossProfitSen).toBe(4_700_000);
@@ -124,7 +120,6 @@ describe("a line with a basis — a purchase account bound to its group's sales"
     const by = new Map(f.lines.map((l) => [l.code, l]));
     expect(by.get('601-0001')).toMatchObject({ amountSen: 0, bp: 5500, basisSen: 0 });
     expect(by.get('601-0003')).toMatchObject({ amountSen: 100_000, bp: 125, basisSen: 8_000_000 });
-    /* A basis of two sales lines adds them; an empty basis list is the whole sales. */
     const two = monthFigures({ '500-0003': { amtSen: 8_000_000 }, '500-0001': { amtSen: 2_000_000 }, '601-0001': { bp: 1000 } }, {},
       ACCOUNTS.map((a) => (a.code === '601-0001' ? { ...a, basis: ['500-0001', '500-0003'] } : a)));
     expect(two.lines.find((l) => l.code === '601-0001')).toMatchObject({ amountSen: 1_000_000, basisSen: 10_000_000 });
@@ -144,18 +139,12 @@ describe('a new month', () => {
   });
 });
 
-/* A purchase account's month split by supplier (step 1 of the Hookka forecast
-   port, 2026-11-24; Hookka tests/forecast-suppliers.test.mjs and
-   forecast-supplier-pct.test.mjs, ported). Each supplier is an amount or a %;
-   an account with any supplier figure that month IS their sum and its own cell
-   is superseded; one without keeps its own; a supplier % is of the account's
-   own basis, as the account's own % is. Made-up figures. */
 describe('the purchase accounts are the purchases under Cost of Goods Sold', () => {
   const cogs = (name: string) => ({ section: 'COST OF GOODS SOLD', name });
   it('a line an item group posts its purchases to, or one the chart names a purchase; never a return, stock, carriage, or a line outside cost of sales', () => {
     expect(isPurchaseOfChart(cogs('PURCHASES OF BEDDING'), true)).toBe(true);
-    expect(isPurchaseOfChart(cogs('SERVICE COSTS'), true)).toBe(true);                  // bound: its purchase invoices land there
-    expect(isPurchaseOfChart(cogs('PURCHASE - TRANSPORT'), false)).toBe(true);           // named a purchase, not bound
+    expect(isPurchaseOfChart(cogs('SERVICE COSTS'), true)).toBe(true);
+    expect(isPurchaseOfChart(cogs('PURCHASE - TRANSPORT'), false)).toBe(true);
     expect(isPurchaseOfChart(cogs('PURCHASE OF SOFA'), false)).toBe(true);
     expect(isPurchaseOfChart(cogs('PURCHASES RETURN'), false)).toBe(false);
     expect(isPurchaseOfChart(cogs('STOCKS AT THE BEGINNING OF YEAR - DISPLAY'), false)).toBe(false);
@@ -177,7 +166,6 @@ describe('a purchase line split by supplier', () => {
     { code: '615-0000', name: 'CARRIAGE INWARDS', section: 'COST OF GOODS SOLD', type: 'EXPENSE' },
     { code: '900-T003', name: 'TRANSPORT', section: 'EXPENSES', type: 'EXPENSE' },
   ];
-  /* Sales 100,000.00; sofa purchases 40% of sales, bedding 10%, carriage 700.00. */
   const LINES = { '500-0003': { amtSen: 6_000_000 }, '500-0001': { amtSen: 4_000_000 }, '601-0003': { bp: 4000 }, '601-0001': { bp: 1000 }, '615-0000': { amtSen: 70_000 } };
   const by = (f: ReturnType<typeof monthFigures>) => new Map(f.lines.map((l) => [l.code, l]));
 
@@ -193,7 +181,6 @@ describe('a purchase line split by supplier', () => {
     expect(l.get('615-0000')).toMatchObject({ amountSen: 70_000, keyed: 'amount' });
     expect(f.totals.costOfSalesSen).toBe(6_070_000);
     expect(f.totals.grossProfitSen).toBe(3_930_000);
-    /* Cleared again, the line reads its own 40% again. */
     const back = by(monthFigures(LINES, { '601-0003': {} }, ACC));
     expect(back.get('601-0003')).toMatchObject({ amountSen: 4_000_000, keyed: 'percent', bySupplier: [] });
   });
@@ -201,7 +188,6 @@ describe('a purchase line split by supplier', () => {
   it("a supplier % is worked out against the month's sales beside the amounts; Other sits last", () => {
     const f = monthFigures(LINES, { '601-0003': { [OTHER_SUPPLIER]: { amtSen: 100_000 }, 's-9': { bp: 500 }, 's-1': { amtSen: 3_000_000 } } }, ACC);
     const line = by(f).get('601-0003')!;
-    /* 5% of 100,000.00 = 5,000.00, beside 30,000.00 and 1,000.00: 36,000.00 = 36%. */
     expect(line.bySupplier.map((s) => [s.supplierId, s.amountSen, s.bp, s.keyed])).toEqual([
       ['s-1', 3_000_000, 3000, 'amount'], ['s-9', 500_000, 500, 'percent'], [OTHER_SUPPLIER, 100_000, 100, 'amount'],
     ]);
@@ -212,7 +198,6 @@ describe('a purchase line split by supplier', () => {
   it("a supplier % on a line bound to its group's sales is of that group's sales, as the line's own % is", () => {
     const bound = ACC.map((a) => (a.code === '601-0001' ? { ...a, basis: ['500-0001'] } : a));
     const line = by(monthFigures(LINES, { '601-0001': { 's-1': { bp: 2500 } } }, bound)).get('601-0001')!;
-    /* 25% of the 40,000.00 bedding sales, not of the 100,000.00 whole. */
     expect(line).toMatchObject({ amountSen: 1_000_000, bp: 2500, basisSen: 4_000_000, keyed: 'suppliers' });
   });
 

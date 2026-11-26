@@ -105,9 +105,6 @@ export type AuditAuthor = 'person' | 'machine';
  *  to omit it and silently get "person" for every row. */
 export type AuditAuthorRow = {
   actor_name_snapshot: string | null;
-  /* Read for nothing but the record. Present in the type so a caller passing a
-     whole audit row type-checks, and so the docblock above has somewhere to
-     point when the next person asks why it is not consulted. */
   actor_id?: string | null;
 };
 
@@ -145,9 +142,6 @@ export function auditMachineSql(column: string): string {
   if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/.test(column)) {
     throw new Error(`auditMachineSql: not a plain column reference: ${column}`);
   }
-  /* ILIKE 'system%' is the same test as classifyAuditAuthor's
-     startsWith on a lower-cased string; COALESCE makes a NULL name FALSE here,
-     which is "person", matching the JS side's permissive direction. */
   return `(COALESCE(${column}, '') ILIKE '${AUDIT_MACHINE_NAME_PREFIX}%')`;
 }
 

@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// scm/lib/do-rack-cycle — the rack ledger of a delivery order reverted to Draft
-// and shipped again.
-//
-// A ship takes the goods off their racks (warehouse_rack_movements STOCK_OUT,
-// reason DO_RACK_OUT_REASON) and a revert or cancel puts them back (STOCK_IN,
-// reason DO_RACK_IN_REASON). Both writers guard on "a row with my reason already
-// exists for this DO number", so after one revert the re-ship found the old
-// STOCK_OUT and took nothing off the racks, and a second revert found the old
-// STOCK_IN and put nothing back. Same cycle rule as the stock ledger
-// (do-stock-cycle.ts): once every unit has come back, the ship-and-return pair is
-// re-tagged DO_RACK_REVERTED_REASON, so the DO reads as never racked out. The
-// re-tag is ONE update, so the pair cannot be half retired.
-// ----------------------------------------------------------------------------
 
 import { DO_RACK_OUT_REASON } from './do-shipped-from-stamp';
 
@@ -22,7 +8,6 @@ type Row = { movement_type: string; quantity: number | null };
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- PostgREST client or the transaction adapter */
 async function readCycle(sb: any, doNo: string, companyId: number | null): Promise<{ outs: number; ins: number; outRows: number; inRows: number } | string> {
-  /* The DO number is not company scope; with no company known nothing is read or re-tagged. */
   if (companyId == null) return 'no company on the delivery order';
   const { data, error } = await sb.from('warehouse_rack_movements').select('movement_type, quantity')
     .eq('company_id', companyId).eq('source_doc_no', doNo).in('reason', [DO_RACK_OUT_REASON, DO_RACK_IN_REASON]);

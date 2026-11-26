@@ -1,7 +1,3 @@
-/* Sales Order audit vocabulary — the keys recordSoAudit / diffFields emit.
-   Split out of SalesOrderDetail.tsx when the History drawer became the shared
-   AuditHistoryPanel; unmapped keys fall back to humaniseKey, so this list is a
-   quality improvement rather than a correctness requirement. */
 
 import type { AuditLabelDictionary } from '../../components/audit/audit-labels';
 
@@ -41,8 +37,6 @@ const FIELDS: Record<string, string> = {
   unitCostSen: 'Unit cost', totalSen: 'Line total',
   lineCount: 'Lines', localTotalSen: 'Total', cancelled: 'Cancelled',
   remark: 'Remark', salespersonId: 'Salesperson', customerType: 'Customer type',
-  /* Written by the bulk share / withdraw (2026-09-09). Without it the History
-     drawer printed the raw key beside a real change to who can see the order. */
   collaboratorStaffIds: 'Shared with',
   emergencyContactName: 'Emergency name', emergencyContactPhone: 'Emergency phone',
   emergencyContactRelationship: 'Emergency relationship',
@@ -51,8 +45,6 @@ const FIELDS: Record<string, string> = {
   /* A transfer moves the Fair Day with the fair (owner 2026-10-20). */
   fairDate: 'Fair Day',
   salesLocation: 'Sales location', ref: 'Ref No.', poDocNo: 'PO doc no',
-  /* Coverage-audit additions (2026-07) — keys emitted by the DO amend mirror,
-     Delivery Planning /fields + /schedule and payment/automation entries. */
   amendDateFromCustomer: 'Amend date (customer)', amendedDeliveryDate: 'Amended delivery date',
   amendReason: 'Amend reason', amendReasonFromCustomer: 'Amend reason (customer)', deliveryState: 'Delivery region',
   possessionDate: 'Possession date', houseType: 'House type',
@@ -63,15 +55,9 @@ const FIELDS: Record<string, string> = {
   stockStatus: 'Stock status', photoAdded: 'Photo added', photoRemoved: 'Photo removed',
   photosCleaned: 'Photos removed', tbcVariants: 'Variants updated', sofaBuild: 'Sofa build',
   pwpCode: 'PWP code', pwpRewardsReverted: 'PWP rewards reverted', pwpCodesDeleted: 'PWP codes deleted',
-  /* Emitted by POST /:docNo/payments/:id/slip (2026-08-07) — the after-the-fact
-     proof attach. from=null reads as an attach, from=<key> as a replacement. */
   slipKey: 'Payment proof',
 };
 
-/* EXPORTED because the mobile SO timeline renders the same audit rows and must
-   not hold a second opinion about which of them are money — the two sets were
-   byte-identical copies until 2026-09-09, and `audit:duplicated-decisions` is
-   what noticed. One question, one home; mobile imports this. */
 export const SO_AUDIT_MONEY_FIELDS = new Set([
   'unitPriceSen', 'discountSen', 'totalSen', 'depositSen',
   'localTotalSen', 'unitCostSen', 'amountSen',

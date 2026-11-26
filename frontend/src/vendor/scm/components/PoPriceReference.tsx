@@ -20,7 +20,6 @@ import { comparePiLinePrice } from '../lib/pi-po-price-rule';
 export function PoPriceReference({ poUnitPriceSen, piUnitPriceSen, fmt, align = 'left' }: {
   poUnitPriceSen: number | null | undefined;
   piUnitPriceSen: number;
-  /* Formats sen in the DOCUMENT's currency — the host page knows which. */
   fmt: (sen: number) => string;
   align?: 'left' | 'right';
 }) {

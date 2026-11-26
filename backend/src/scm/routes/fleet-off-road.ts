@@ -1,25 +1,3 @@
-/* Off the road — staff take a lorry out of service and put it back, from the lorry.
-
-   scm.lorry_maintenance (mig 0053) has always been the availability table: Fleet
-   Health's OUT_OF_SERVICE status, the delivery-planning fleet board and Lorry
-   Capacity's repair days all read it. Until this file only two machines wrote it
-   (a scheduled lorry-service DP job, and Repair Days on Lorry Capacity), so a
-   lorry that went to the workshop unplanned could not be marked anywhere.
-
-   The table holds DATES, both NOT NULL, and no "ended" column. Two consequences,
-   chosen so no reader has to change:
-   - no expected return is stored as OPEN_ENDED_TO, a far date every reader's
-     `from <= day <= to` test already treats as "still off";
-   - "back on the road" makes the lorry usable TODAY: a window that began before
-     today ends yesterday; one that begins today or later never covered a whole
-     day and is removed (the audit row keeps what it was).
-
-   Windows written by a DP job or by Repair Days are owned by those screens and
-   are refused here: the DP cancel and the Repair Days editor find their rows by
-   the reason string, so changing them from here would desync the owner.
-
-   Kept out of fleet-maintenance.ts, which is at its file-size ceiling; mounted on
-   the same prefix in index.ts. */
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm } from "../lib/houzs-perms";
@@ -33,7 +11,6 @@ import type { Env, Variables } from "../env";
 export const fleetOffRoad = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 export const OPEN_ENDED_TO = "9999-12-31";
-/* lorry-capacity.ts DASHBOARD_REASON; not exported there. */
 const REPAIR_DAYS_REASON = "Repair days (dashboard)";
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 

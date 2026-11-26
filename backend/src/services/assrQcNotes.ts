@@ -1,7 +1,3 @@
-// Pending Item Ready QC details (Operation Dept 2026-11-09): QC inspection date,
-// who did the QC and the findings. Stored 1:1 in assr_case_qc_notes, not on
-// assr_cases, for the same reason as assrVerificationNotes.ts: the case list and
-// detail read c.* and the D1 test mirror caps a result set at 100 columns.
 import type { Env } from "../types";
 import { logActivity } from "./assr";
 

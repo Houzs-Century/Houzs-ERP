@@ -34,7 +34,6 @@ async function finishDebounce() {
 }
 
 describe("GlobalSearch", () => {
-  // The status words load on first use; have them in hand before the clock is faked.
   beforeAll(async () => {
     await loadSearchStatusVocabulary();
     await preloadGlobalSearchPalette();
@@ -115,7 +114,6 @@ describe("GlobalSearch", () => {
     await finishDebounce();
 
     const listbox = screen.getByRole("listbox", { name: "Search results" });
-    // All five doc types render, in the group order defined by groupHits.
     expect(within(listbox).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "PO-0001Acme Supplier",
       "GRN-0001Acme Supplier · PO PO-0001",
@@ -124,14 +122,12 @@ describe("GlobalSearch", () => {
       "PINV-0001Acme Supplier",
     ]);
 
-    // Group headers carry the ERP labels.
     expect(screen.getByRole("group", { name: "Purchase Orders" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "GRNs" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Delivery Orders" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Sales Invoices" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Purchase Invoices" })).toBeTruthy();
 
-    // A GRN hit opens its detail route by id (UUID param, not doc number).
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(screen.getByTestId("location").textContent).toBe("/scm/grns/grn-1");

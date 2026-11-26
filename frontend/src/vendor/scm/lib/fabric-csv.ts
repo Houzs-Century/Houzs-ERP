@@ -26,9 +26,9 @@ import {
 type ColKind = 'text' | 'int' | 'tier';
 
 export type CsvColumn = {
-  csv:    string;                   // header label
-  field:  keyof FabricTrackingRow;  // DB row field
-  apiKey: string;                   // body key for bulk-upsert
+  csv:    string;
+  field:  keyof FabricTrackingRow;
+  apiKey: string;
   kind:   ColKind;
 };
 
@@ -52,9 +52,6 @@ export const CSV_COLUMNS: CsvColumn[] = [
   { csv: 'lead_time_days',          field: 'lead_time_days',          apiKey: 'leadTimeDays',         kind: 'int' },
 ];
 
-/* The table's own toolbar export (FabricsTable, "Fabrics-<date>.csv") writes the
-   on-screen labels and "Price 2", not these keys and PRICE_2. Staff export from
-   whichever button they see first, so that file must import too (BUG-88). */
 const TABLE_EXPORT_HEADERS: Record<string, string> = {
   code:          'fabric_code',
   internal_code: 'fabric_code', // the column's label since #5861 (2990-0069)
@@ -67,8 +64,6 @@ const HEADER_TO_API: Partial<Record<string, CsvColumn>> = Object.fromEntries(
   CSV_COLUMNS.map((c) => [c.csv, c]),
 );
 
-// "Price 2" / "PRICE_2" / "P2" / "2" / "Price 3 (HL)" -> PRICE_n; blank or the table's "—" -> null.
-// undefined = not a tier at all.
 function parseTier(raw: string): FabricTier | null | undefined {
   if (raw === '' || raw === '—' || raw === '-') return null;
   const m = /^(?:price[\s_]*|p)?([1234])(?:\s*\((?:hl|fl)\))?$/i.exec(raw);
@@ -94,13 +89,8 @@ export type ParsedImport = {
   warnings: string[];
 };
 
-// Map a parsed grid (row 0 = headers, the rest = data) into the camelCase row
-// shape bulk-upsert expects. The single normalisation point for BOTH the CSV
-// and the Excel path — do not duplicate this logic in either caller.
 function parseGridRows(grid: string[][]): ParsedImport {
   if (grid.length < 1) return { rows: [], errors: ['The file is empty'], warnings: [] };
-  /* Case and space-vs-underscore never matter (bugs/0605); the table export's
-     labels are aliases (BUG-88). */
   const header = resolveImportHeaders(grid[0] ?? [], CSV_COLUMNS.map((c) => c.csv), TABLE_EXPORT_HEADERS);
   if (!header.includes('fabric_code')) {
     return { rows: [], errors: ['Header must include a fabric_code (or Internal Code) column'], warnings: [] };
@@ -163,16 +153,12 @@ export function parseCsv(text: string): ParsedImport {
   return parseGridRows(parseCSV(text));
 }
 
-// Excel -> the SAME row shape as parseCsv: first sheet, every cell as the text
-// Excel shows, so parseGridRows re-parses the int columns exactly as for CSV.
 export async function parseWorkbook(buffer: ArrayBuffer): Promise<ParsedImport> {
   const first = (await readWorkbookSheets(buffer, false)).at(0);
   if (!first) return { rows: [], errors: ['The workbook has no sheets'], warnings: [] };
   return parseGridRows(first.map((r) => (Array.isArray(r) ? r.map((c) => String(c ?? '')) : [])));
 }
 
-// One entry point for the file picker. A workbook SheetJS cannot open becomes a
-// readable error rather than an unhandled rejection.
 export async function parseImportFile(file: File): Promise<ParsedImport> {
   if (isWorkbookFile(file.name)) {
     try {

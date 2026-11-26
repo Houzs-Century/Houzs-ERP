@@ -5,16 +5,6 @@ import type { ProductCostAnchor } from '../../vendor/scm/lib/mfg-products-querie
 
 const fmtRmSen = (sen: number): string => fmtSen(sen);
 
-/* Product Maintenance Cost — the anchor display (auto-derive stage 2b). Shows the
-   SKU's derived cost, WHICH supplier it is anchored to, and the state:
-     · ok       — anchored to <supplier>, "highest full set (N of M)".
-     · conflict — amber "took highest" (suppliers differ).
-     · empty    — red "Missing price — fix in Binding" (opens the supplier).
-     · service  — "not supplier-derived".
-   The cost figure is finance-gated server-side (costSen null when hidden). Editing
-   the cost is not done here (owner ruling: cost derives from the supplier side);
-   the CTA jumps to the supplier so the price can be fixed at its source. Lives in
-   its own file so Products.tsx (at its size ceiling) does not grow. */
 export const CostAnchorCard = ({
   anchor, onOpenSupplier, fallbackSupplierId,
 }: {
@@ -118,7 +108,6 @@ export const CostAnchorCard = ({
       </section>
     );
   }
-  // ok | conflict
   const conflict = anchor.state === 'conflict';
   const figText = anchor.costSen != null ? fmtRmSen(anchor.costSen) : '—';
   return (

@@ -1,6 +1,3 @@
-// Shared building blocks of the module Overview pages (Procurement, Logistic,
-// Project): a titled panel, compact table cells and a segmented toggle. The
-// period picker is DashboardPeriod.tsx.
 import { useState, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 

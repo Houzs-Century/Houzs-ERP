@@ -84,22 +84,10 @@ import { poHasDownstream } from "../scm/lib/downstream-lock";
 import { enqueueEdit } from "../scm/lib/autocount-outbox";
 import { sheetUsageCounter, type SheetUsageVars } from "../lib/sheet-sync-usage";
 
-/** `sheetAuthed` is set once the shared secret matched; `usageRows` is how
- *  many records the handler is about to answer with. Both feed the usage
- *  counter and nothing else. */
 const app = new Hono<{ Bindings: Env; Variables: SheetUsageVars }>();
 
-/**
- * Per-endpoint usage counters (scm.sheet_sync_usage). The owner's audit of the
- * sheet's scripts (2026-09-24) needs "how often, and how much" to survive
- * longer than three months, which is the one question nothing here could
- * answer — see the migration's header for why neither the sheet's own log nor
- * Analytics Engine can stand in. Counted only once the shared secret matched,
- * so a wrong key still touches no database at all.
- */
 app.use("*", sheetUsageCounter);
 
-/** The company the sheet's secret speaks for. */
 const SHEET_KEY_COMPANY = "HOUZS";
 
 async function badSheetKey(c: any): Promise<Response | null> {
@@ -115,10 +103,6 @@ async function badSheetKey(c: any): Promise<Response | null> {
   return c.json({ error: "unauthorized" }, 401);
 }
 
-/** BUG-49: the sheet's 2990 pull appends 2990 orders onto the same tabs, and a
- *  date edited on those rows has to reach the ERP too. SHEET_SYNC_KEY speaks for
- *  HOUZS only, so those rows write back with the 2990 pull's own key, which
- *  opens 2990's orders and nothing else. Only POST /updates accepts it. */
 async function updatesKeyCompany(c: any): Promise<string | Response> {
   const provided = c.req.header("X-Intake-Key") || "";
   const key2990 = c.env.SHEET_SYNC_KEY_2990 || "";
@@ -129,8 +113,6 @@ async function updatesKeyCompany(c: any): Promise<string | Response> {
   return (await badSheetKey(c)) ?? SHEET_KEY_COMPANY;
 }
 
-/** The secret's company id, or the refusal to send. Never degrades to "no
- *  predicate": on a master-less install there is nothing this feed may serve. */
 async function sheetCompanyId(c: any, code = SHEET_KEY_COMPANY): Promise<{ id: number } | { refusal: Response }> {
   const keyCo = await intakeCompany(c.env.DB, code);
   if (keyCo.id == null) {
@@ -147,11 +129,6 @@ async function sheetCompanyId(c: any, code = SHEET_KEY_COMPANY): Promise<{ id: n
   return { id: keyCo.id };
 }
 
-/**
- * Run one feed statement and map its heads to sheet records. The lines exist
- * only to derive Remarks 2 for orders whose header carries none; a failed read
- * refuses the whole page rather than writing blank remarks into the sheet.
- */
 async function loadRecords(
   c: any,
   sql: string,
@@ -200,8 +177,6 @@ app.get("/so-since", async (c) => {
     count: records.length,
     limit,
     since,
-    // The checkpoint the sheet should store once every row of this page is
-    // written; null when the page is empty (keep the old one).
     next_since: records.length ? records[records.length - 1]!.LastModified : null,
     has_more: records.length >= limit,
     records,
@@ -312,16 +287,11 @@ app.post("/prune-check", async (c) => {
     }
   }
 
-  // Key each found order by BOTH its ERP number and its sheet key, so an input
-  // that used either one resolves.
   const deliveredSet = new Set<string>([...SO_DELIVERED_OR_BEYOND]);
   const stateByKey = new Map<string, { ErpDocNo: string; Remark2: string | null; Ready: boolean; Status: string; Deletable: boolean }>();
   for (const h of heads) {
     const remark2 = resolveSheetRemark2(h.remark2, linesByDoc.get(h.doc_no) ?? []);
     const ready = isSheetReady(remark2);
-    // Delete only an UNDELIVERED order whose stock is not in. A delivered /
-    // invoiced / closed order is a record — never pruned, even if its (possibly
-    // frozen) line flags read not-ready.
     const deletable = !ready && !deliveredSet.has(h.status);
     const st = { ErpDocNo: h.doc_no, Remark2: remark2, Ready: ready, Status: h.status, Deletable: deletable };
     stateByKey.set(h.doc_no, st);
@@ -400,16 +370,12 @@ app.get("/em-transporter", async (c) => {
   const co = await sheetCompanyId(c);
   if ("refusal" in co) return co.refusal;
 
-  // SO rows: East live orders (company-scoped ?1), each marked Ready. The
-  // Region re-check drops a Singapore-addressed SRW order the SQL let through.
   const loaded = await loadRecords(c, FEED_EM_TRANSPORTER_SQL, [co.id]);
   if ("refusal" in loaded) return loaded.refusal;
   const soRecords = loaded.records
     .filter((r) => r.Region === "EAST")
     .map((r) => ({ ...r, Kind: null as AssrLegKind | null, Appendable: r.Ready }));
 
-  // ASSR legs: own-team legs (all companies, by owner ruling — not
-  // company-scoped), full state from the epoch; keep only the East ones.
   let legRecords: Array<AssrLegRecord & { Appendable: boolean }> = [];
   try {
     const res = (await c.env.DB.prepare(FEED_ASSR_LEGS_SQL).bind(FEED_EPOCH, FEED_MAX_LIMIT).all()) as { results?: AssrFeedRow[] };
@@ -444,7 +410,6 @@ app.post("/em-transporter-updates", async (c) => {
   const raw = Array.isArray(body?.updates) ? (body.updates as unknown[]) : null;
   if (!raw) return c.json({ error: "bad_body", message: "expected { updates: [{ DocNo, ... }] }" }, 400);
 
-  // One row per DocNo (last wins); drop blank DocNos.
   const byDoc = new Map<string, Record<string, unknown>>();
   for (const u of raw) {
     const rec = (u ?? {}) as Record<string, unknown>;
@@ -455,9 +420,6 @@ app.post("/em-transporter-updates", async (c) => {
   if (!rows.length) return c.json({ error: "no_updates" }, 400);
   if (rows.length > EM_WRITEBACK_MAX) return c.json({ error: "too_many", max: EM_WRITEBACK_MAX }, 413);
 
-  // Bind order MUST match emTransporterUpdateSql: per row (DocNo, then each
-  // EM_WRITEBACK_COLS value), then company_id last. Blank -> null (keeps
-  // existing); a date is normalised, and an unparseable one becomes null.
   const binds: unknown[] = [];
   for (const [doc, rec] of rows) {
     binds.push(doc);
@@ -482,7 +444,6 @@ app.post("/em-transporter-updates", async (c) => {
   return c.json({
     count: results.length,
     updated: updated.length,
-    // A DocNo with no live order, or no live DO to carry freight, lands here.
     not_updated: results.filter((r) => !r.updated).map((r) => r.DocNo),
     results,
   });
@@ -514,8 +475,6 @@ async function assrCasePage<R>(c: Context<{ Bindings: Env; Variables: SheetUsage
   c.set("usageRows", records.length);
   return c.json({
     count: records.length,
-    // The page is a CASE page; the checkpoint and has_more are measured in
-    // cases so paging is correct even though each case emits up to three legs.
     cases: cases.length,
     limit,
     since,
@@ -527,9 +486,6 @@ async function assrCasePage<R>(c: Context<{ Bindings: Env; Variables: SheetUsage
 
 app.get("/assr-legs", (c) => assrCasePage(c, FEED_ASSR_LEGS_SQL, toAssrLegRecords));
 
-/* BUG-54: every open case's name / phone / address, own-team gate or not, so a
-   contact corrected in the ERP reaches the leg rows the sheet already carries.
-   The Apps Script writes these onto existing rows only and never appends. */
 app.get("/assr-contacts", (c) => assrCasePage(c, FEED_ASSR_CONTACTS_SQL, (row) => [toAssrContactRecord(row)]));
 
 type SheetUpdate = { DocNo?: unknown; Remark4?: unknown; ExpiryDate?: unknown };
@@ -549,8 +505,6 @@ app.post("/updates", async (c) => {
   const co = await sheetCompanyId(c, keyCode);
   if ("refusal" in co) return co.refusal;
 
-  // Validate every row first; the writable ones go to the database as ONE
-  // statement (see updateFromSheetSql for why one round trip matters here).
   const results: Array<Record<string, unknown>> = updates.map(() => ({}));
   const rows: Array<{ i: number; docNo: string; remark4: string | null; expiry: string | null }> = [];
   updates.forEach((u, i) => {
@@ -559,11 +513,7 @@ app.post("/updates", async (c) => {
       results[i] = { DocNo: null, skipped: "no_doc_no" };
       return;
     }
-    // A Remark4 that is PRESENT is written as-is, blank included — clearing
-    // col A is a real edit. An ABSENT Remark4 keeps the ERP's value.
     const remark4 = u.Remark4 == null ? null : String(u.Remark4).trim();
-    // A blank date keeps the ERP's date: the old daily PO sync nulled dates
-    // stored as text, and this leg must not repeat that.
     const expiry = normSheetDate(u.ExpiryDate);
     if (u.ExpiryDate != null && String(u.ExpiryDate).trim() && !expiry) {
       results[i] = { DocNo: docNo, skipped: "bad_date" };
@@ -578,8 +528,6 @@ app.post("/updates", async (c) => {
   });
 
   if (rows.length) {
-    // The same Doc. No. twice in one batch would update one row twice in a
-    // single statement; the LAST occurrence wins, as it would row by row.
     const byDoc = new Map<string, (typeof rows)[number]>();
     for (const r of rows) byDoc.set(r.docNo, r);
     const batch = [...byDoc.values()];
@@ -647,16 +595,10 @@ app.post("/po-dates", async (c) => {
   if (!updates) return c.json({ error: "bad_request", message: "updates[] required" }, 400);
   if (updates.length > UPDATES_MAX) return c.json({ error: "too_many", max: UPDATES_MAX }, 413);
   if (!isSupabaseConfigured(c.env)) return c.json({ error: "supabase not configured" }, 503);
-  // A preview: everything up to the write is done and reported, nothing is
-  // written or queued. The cutover's first push is run this way so the owner
-  // sees what the tab would change before it changes it.
   const dryRun = body.dry_run === true;
   const co = await sheetCompanyId(c);
   if ("refusal" in co) return co.refusal;
 
-  // Validate every row first. A blank date KEEPS the ERP's date (clearing a
-  // supplier date is done in the ERP, as the phase-1 rule for col O); a row
-  // with nothing to write is skipped before any read.
   const results: Array<Record<string, unknown>> = updates.map(() => ({}));
   const wanted = new Map<string, { i: number[]; dates: Partial<Record<2 | 3 | 4, string>> }>();
   updates.forEach((u, i) => {
@@ -681,8 +623,6 @@ app.post("/po-dates", async (c) => {
       return;
     }
     results[i] = { DocNo: docNo, skipped: "no_order" };
-    // The same Doc. No. on several lines: later rows fill slots earlier ones
-    // left blank and override the ones they name (last wins per slot).
     const w = wanted.get(docNo) ?? { i: [], dates: {} };
     w.i.push(i);
     Object.assign(w.dates, dates);
@@ -713,8 +653,6 @@ app.post("/po-dates", async (c) => {
       report({ skipped: "po_not_outstanding", status: h.status });
       continue;
     }
-    // Only a date that actually moved is written, so a daily push of the whole
-    // tab queues nothing for a PO whose dates the ERP already holds.
     const moved = (Object.entries(w.dates) as Array<[string, string]>)
       .map(([slot, date]) => [Number(slot) as 2 | 3 | 4, date] as const)
       .filter(([slot, date]) => h[SUPPLIER_DATE_SLOT_COL[slot]] !== date);
@@ -767,8 +705,6 @@ app.post("/po-dates", async (c) => {
       }
       written[SUPPLIER_DATE_SLOT_COL[slot]] = date;
     }
-    // ERP -> AutoCount, once per PO that moved (even a half-applied one: the
-    // book should hold whatever the ERP now holds).
     let queued = false;
     if (Object.keys(written).length) {
       try {

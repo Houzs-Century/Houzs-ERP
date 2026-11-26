@@ -104,10 +104,6 @@ export function JobBody({ jobRef, inStopDrawer }: { jobRef: JobRef; inStopDrawer
   const qc = useQueryClient();
   const base = jobApiPath(jobRef);
   const q = useDeliveryJob(jobRef);
-  /* Same upload-on-pick block as the phone (lib/fieldPhotos.ts). Not stamped:
-     the office uploads photos it was sent, so the time burned in would be the
-     office's, not the photo's. Limits mirror delivery-job-progress.ts: 10 to
-     complete, 20 in all once completed. */
   const hadPhotos = q.data?.progress?.pod_photo_keys?.length ?? 0;
   const photoContext = fieldPhotoContext({ kind: "job", key: jobKey(jobRef) });
   const picked = useFieldPhotos({

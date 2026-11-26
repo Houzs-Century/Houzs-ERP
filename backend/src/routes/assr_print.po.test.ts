@@ -1,9 +1,3 @@
-/* BUG-91 (Farra 2026-10-08): "PO number tak show masa print, tapi dalam ERP
- * memang sudah ada PO NO". The list's PO column merges the SO's supplier
- * Order POs (`order_pos`) with the case's own service PO (`po_no`); the printed
- * Office and Supplier copies read `po_no` alone, which a case created from an
- * ERP sales order leaves empty. So the screen showed HC-PO-… and the paper a
- * dash. The copies now print the same merged value the list column does. */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 
@@ -73,9 +67,6 @@ describe('ASSR print — PO No (BUG-91)', () => {
   });
 });
 
-/* BUG-92 (Farra 2026-10-08): "bila reason dan remark berbeza so sangat
- * confusing". The supplier copy printed the trip's Reason and the item's
- * case-wide Supplier remark side by side; from the 2nd return on they disagreed. */
 describe('ASSR supplier copy — remark is the trip Reason (BUG-92)', () => {
   const remarks = (html: string) =>
     [...html.matchAll(/<span class="td remark">([^<]*)<\/span>/g)].map((m) => m[1]);

@@ -19,9 +19,6 @@ describe("chatRequestPatch — what a WhatsApp tap may write on the SO", () => {
   });
 
   it("amend: the customer's reason lands in ITS column, never in the staff's amend_reason", () => {
-    // amend_reason is the board's preset list ("Our strict quality control
-    // checks" …), the reason WE give when postponing; a customer tap used to
-    // overwrite it (2026-10-14).
     const p = chatRequestPatch("amend", "15/10/2026", "Date Unavailable");
     expect(p.amend_reason_from_customer).toBe("Date Unavailable");
     expect(p).not.toHaveProperty("amend_reason");
@@ -79,8 +76,6 @@ describe("chatRequestPatch — what a WhatsApp tap may write on the SO", () => {
   });
 
   it("never names a schedule or lifecycle column", () => {
-    // The board plans trips off customer_delivery_date / amended_delivery_date;
-    // a customer tap must not be able to move them. Pin the two lists apart.
     for (const col of CHAT_WRITABLE_SO_COLUMNS) {
       expect(CHAT_FORBIDDEN_SO_COLUMNS as readonly string[]).not.toContain(col);
     }
@@ -125,8 +120,6 @@ describe("parseCallbackRefs — the orders one tap applies to", () => {
   });
 
   it("drops an unresolved Connect placeholder and anything outside the doc-number alphabet", () => {
-    // An older ERP send has no refs_all, so Connect interpolates the literal
-    // "{refs_all}"; the primary still stands alone.
     expect(parseCallbackRefs("HC-SO-1", "{refs_all}")).toEqual(["HC-SO-1"]);
     expect(parseCallbackRefs("HC-SO-1", "HC-SO-2,x) or (1=1")).toEqual(["HC-SO-1", "HC-SO-2"]);
   });

@@ -31,7 +31,6 @@ describe('Finance typed words in upper case', () => {
     expect(screen.getByLabelText('Account no.').hasAttribute('data-upper')).toBe(false);
   });
 
-  /* Each form, and the fields in it that carry the mark (the text right after `data-upper`). */
   const MARKED: Array<[string, string[]]> = [
     ['pages/scm-v2/PaymentVoucherNew.tsx', ['type="text" value={payeeName}', 'value={notes}', 'className={styles.fieldInput} value={officialNote}', 'type="text" value={l.description}']],
     ['pages/scm-v2/PaymentVoucherDetail.tsx', ['type="text" value={payeeName}', 'value={notes}', 'type="text" value={l.description}']],

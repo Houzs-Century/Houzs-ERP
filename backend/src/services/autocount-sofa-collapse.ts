@@ -1,43 +1,3 @@
-// ----------------------------------------------------------------------------
-// autocount-sofa-collapse — divergence D9.
-//
-// THE SHAPE MISMATCH. The ERP models a sofa build as ONE LINE PER COMPARTMENT
-// ({model}-1A(LHF), {model}-CNR, {model}-2A(RHF) ...). AutoCount holds ONE LINE
-// PER SOFA, with the build written into Desc2 as free text. Pushing the ERP's
-// lines straight through would put three items on an AutoCount order that has
-// one, and the compartment codes do not exist in the account book at all.
-//
-// THE INVERSE IS NOT A DECODER. Reconstructing the owner's Desc2 grammar from a
-// compartment list is lossy — measured on the live book, a naive inverse got
-// 86.2% of builds right, and a tuned one still corrupted 0.59% (14 builds in
-// 2392) by, for example, turning "1ER + 1EL" into a side-swapped build that
-// reads perfectly plausibly and ships the wrong sofa. So the inverse is NOT the
-// primary path:
-//
-//   1. ECHO. The original AutoCount Desc2 is already stored verbatim on every
-//      compartment line (both importers write l.Desc2 into description2). If it
-//      still decodes to everything the ERP row holds — the compartments AND the
-//      seat size, the colour and the specials — the build has not been edited
-//      and the ORIGINAL TEXT is by definition the faithful answer. Zero
-//      reconstruction, zero risk. Matching on the piece list ALONE would echo a
-//      re-coloured sofa's old colour into the account book, which is a wrong
-//      line, not a missing one.
-//   2. COMPOSE, only when the echo no longer decodes to what the ERP has — i.e.
-//      the operator actually changed the build.
-//   3. GATE, always. Whatever text is about to be sent is fed back through the
-//      SAME decoder the importers use, and is REFUSED unless it reproduces the
-//      compartment sequence, the seat size, the colour and the specials. This
-//      is what turns "0.59% corrupting" into "0% corrupting, 1.3% refused".
-//
-// A REFUSAL IS THE DESIGNED OUTCOME, not an error path. It surfaces as a
-// 'skipped' outbox row carrying the reason (the row shape the D13 fix added),
-// and the document simply does not sync until a human looks. A wrong line in a
-// licensed account book cannot be removed on a PO at all.
-//
-// PURE. No database, no AutoCount, no clock. Its only dependency is the shared
-// decoder the cutover importers use — deliberately the same module, because a
-// second copy that drifts would make the gate prove nothing.
-// ----------------------------------------------------------------------------
 import { SPECIAL_ORDER_POINTER } from './autocount-desc2-abbrev';
 import { liveColour } from '../scm/shared/variant-summary';
 import { parseSofa, type SofaParse } from '../../scripts/lib/parse-sofa.mjs';
@@ -83,14 +43,11 @@ export interface CollapsibleLine {
 }
 
 export interface CollapsedLine extends CollapsibleLine {
-  /** Indexes into the input array that were folded into this one line. */
   sourceIndexes: number[];
-  /** 'passthrough' for a line that is not a sofa compartment at all. */
   via: 'passthrough' | 'echo' | 'compose';
 }
 
 export interface SofaRefusal {
-  /** Indexes into the input array that could not be collapsed. */
   sourceIndexes: number[];
   itemCodes: string[];
   reason: string;
@@ -121,58 +78,17 @@ const up = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase(
 const sameSeq = (a: string[], b: string[]) =>
   a.length === b.length && a.every((v, i) => up(v) === up(b[i]));
 
-/** A sofa build carries recliner/power semantics iff a compartment says so. */
 function hasMechanism(compartments: string[]): boolean {
   return compartments.some((c) => /\((R|P)\)/i.test(c));
 }
 
-// ── the inverse: compartments -> the owner's structure tokens ───────────────
 
-/**
- * The token that decodes back to `comp` at position `i` of `n` pieces.
- *
- * Two of these are the measured corrections that took a naive inverse from
- * 86.2% to 98.7%, and they are not stylistic:
- *   - an armed END piece must be written nEL / nER, never a bare digit. A bare
- *     digit decodes left-then-right by POSITION, so "1ER + 1EL" round-tripped
- *     as a side-swapped sofa.
- *   - an armless piece must be written nNA verbatim. A bare digit only becomes
- *     NA in a MIDDLE slot, so a lone 1NA had no bare-digit spelling at all.
- * Everything else returning null is a build this module will not spell, and the
- * caller refuses rather than approximating it.
- */
 function tokenFor(comp: string, i: number, n: number): string | null {
   const c = up(comp);
   const solo = n === 1;
   const left = i === 0;
   const right = i === n - 1;
   switch (c) {
-    /* A BARE DIGIT IS NOT A SOLO SEAT. Measured against the decoder: "1 (28\")"
-       and "2 (28\")" both decode to NOTHING at all, so the bare-digit spelling
-       was a guaranteed refusal for every single-seat build.
-
-       3S IS NOW PROPOSED, and the measurement that used to forbid it is the
-       reason it is SAFE to propose. Re-measured 2026-09-10 over the ten models
-       these refusals name: "3S (28\")" decodes to [2A(LHF), 1A(RHF)] — a
-       DIFFERENT sofa — in all twenty, and bare "3S" decodes to [3S] in all
-       twenty. Same for "3S + 1S + 2S". So the spelling is right exactly when
-       there is no seat size to attach, and the gate below is what knows which
-       case it is: a sized build composes "3S (28\")", fails the decode and is
-       refused precisely as before. Withholding the token refused BOTH cases,
-       and HC-SO-001640 [3S] and HC-SO-001472 [3S, 1S, 2S] — neither of which
-       carries a seat size — were refused for the sized case's reason.
-
-       THE `solo` GUARD ON 1S AND 2S IS GONE, and only that. Measured the same
-       way and in the same shape — WITH the size suffix a real build carries,
-       which is what a first pass without it got wrong — "1S (28\")",
-       "2S (28\")" and "1S + 2S (28\")" decode back to exactly themselves, 20 of
-       20 each. So a plain-seat pair had no spelling for no reason, and
-       HC-SO-003189 [1S, 2S] is refused by that and nothing else.
-
-       PROPOSING A SPELLING IS SAFE BY CONSTRUCTION: `composeSofaDesc2` hands
-       every composed string to `decodesTo`, and a build whose text does not
-       decode back to exactly itself is REFUSED rather than written. A wrong
-       proposal costs a refusal; a missing one costs a document. */
     case '1S': return '1S';
     case '2S': return '2S';
     case '3S': return '3S';
@@ -189,20 +105,6 @@ function tokenFor(comp: string, i: number, n: number): string | null {
     case '2B(LHF)': return left ? '2B' : null;
     case '1B(RHF)': return left ? null : '1B';
     case '2B(RHF)': return left ? null : '2B';
-    /* A CHAISE ON THE SIDE ITS POSITION DENIES. A bare `L` is sided by
-       POSITION — the book's own convention — so where position already says the
-       right thing it is still written `L` and nothing about the existing corpus
-       moves. Where position would say the OPPOSITE, the explicit `LL` / `LR`
-       says it outright, exactly as `1EL` / `1ER` already do for an armed end.
-
-       That spelling used to be `null`, and three sales orders were refused for
-       it: HC-SO-007399 [2A(RHF), L(LHF)], HC-SO-008460 [L(RHF), 2A(LHF)] and
-       HC-SO-007958 [L(RHF), 1NA, 2A(LHF)].
-
-       The decoder learned `LL` / `LR` in the same change, and it could only be
-       taught safely because the book has never used either: 41,953 committed
-       Desc2 values, not one of them. The fingerprint over all 15,950 SO values
-       is byte-identical before and after. */
     case 'L(LHF)': return left ? 'L' : 'LL';
     case 'L(RHF)': return left ? 'LR' : 'L';
     case '1S(R)': return solo ? '1R' : null;
@@ -240,9 +142,6 @@ export function composeSofaDesc2(
   if (attrs.colour) text += ` / COL: ${attrs.colour}`;
   for (const s of attrs.specials ?? []) {
     const v = String(s ?? '').trim();
-    /* A special that carries a '+' would look like a second structure segment
-       and trip the decoder's own split guard, blanking the pieces. Refuse the
-       whole compose rather than emit text that decodes to nothing. */
     if (!v) continue;
     if (v.includes('+') || v.includes('/')) return null;
     text += ` / ${v}`;
@@ -255,9 +154,6 @@ export const AC_DESC2_MAX = 100;
 
 const specialKey = (s: string) => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/NILON/g, 'NYLON');
 
-/** The same pieces, in any order. Used ONLY by the last-resort echo — every
- *  other comparison in this file is order-sensitive, because the order of a
- *  sofa's pieces IS the sofa. */
 function sameMultiset(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   const count = (xs: string[]) => xs.reduce<Map<string, number>>(
@@ -342,15 +238,6 @@ export function decodesTo(
   if (up(re.color) !== up(expect.colour)) {
     return { ok: false, why: `colour decodes as ${re.color ?? 'none'}, expected ${expect.colour ?? 'none'}` };
   }
-  /* THE POINTER IS NOT A SPECIAL, so it is not checked like one.
-     `parseSofa` reads specials from a FIXED vocabulary — nylon, wooden arm,
-     recliner and the rest — because it was written to decode the account book's
-     own text. It will never read `Special Order: Refer to ERP` back as a
-     special, so comparing it through `sameSpecials` refuses every document the
-     owner's rung was added to rescue.
-     What the gate asks instead is the only thing that matters about a pointer:
-     IS IT THERE. The pieces, the size and the colour above are still compared
-     exactly, and they are what a wrong answer would build. */
   const expected = expect.specials ?? [];
   const pointing = expected.length === 1 && expected[0] === SPECIAL_ORDER_POINTER;
   if (pointing) {
@@ -378,13 +265,6 @@ function readSpecials(v: Record<string, unknown> | null | undefined): string[] {
   return s.map((x) => String(x ?? '').trim()).filter(Boolean);
 }
 
-/**
- * The longest whole-word prefix every compartment description shares.
- *
- * The house naming convention is "SOFA {model} {compartment}", so three
- * compartment rows agree on "SOFA 9028" and disagree after it. Nothing is
- * invented: the result is a substring of every input, or null.
- */
 function sharedDescription(lines: CollapsibleLine[]): string | null {
   const parts = lines.map((l) => String(l.description ?? '').trim());
   if (parts.some((p) => !p)) return null;
@@ -399,23 +279,9 @@ function sharedDescription(lines: CollapsibleLine[]): string | null {
   return text || null;
 }
 
-/**
- * One run of consecutive compartment lines sharing a model and a Desc2 becomes
- * one AutoCount line — or N identical ones, when the run is an EXACT repeat of
- * the decoded build. The repeat check is arithmetic, not a heuristic: the run
- * must be the decoded piece list repeated a whole number of times, in order.
- * Anything else refuses, because guessing where one sofa ends and the next
- * begins is precisely the mistake that puts a wrong line in the account book.
- */
 function collapseRun(
   run: { line: CollapsibleLine; index: number; compartment: string }[],
   model: string,
-  /* Did the ACCOUNT BOOK group these lines, by their shared DtlKey, rather than
-     this file's adjacency rule? Required rather than defaulted, because it
-     decides which side states the ARRANGEMENT: a gathered run reaches here in
-     the ERP's insertion order, which says nothing about how the sofa is built,
-     while the book's text says exactly that. Defaulting it either way makes one
-     of the two callers silently wrong (CLAUDE.md, BUG CLASS optional-param-noop). */
   bookGrouped: boolean,
   /* Pieces of ANOTHER model the book holds on this line, as `CNR 8069`
      (docs/bugs/0913). Every one is written into the text and must be present in
@@ -466,12 +332,6 @@ function collapseRun(
     text: string,
     via: 'echo' | 'compose',
   ): CollapsedLine => {
-    /* EVERY compartment must carry the key, not just some of them. A build where
-       one row has a key and the next has none is a persistLineKeys that failed
-       half way, or a backfill that matched one compartment — evidence that the
-       mapping is broken, not evidence of line identity. Taking the one key that
-       is present would edit an AutoCount line on the strength of a row that
-       disagrees. */
     const present = slice.map((r) => r.line.linked_ac_dtlkey);
     const keys = present.every((k) => k != null)
       ? new Set(present.map((k) => String(k)))
@@ -482,86 +342,31 @@ function collapseRun(
       description: sharedDescription(slice.map((r) => r.line)),
       description2: text,
       qty,
-      /* The importer put the AutoCount line price on the FIRST compartment and
-         zero on the rest, so the sum is the original unit price. Summing rather
-         than reading the first also stays right if an operator later spread it. */
       unit_price_sen: slice.reduce((s, r) => s + (Number(r.line.unit_price_sen) || 0), 0),
       location: slice[0].line.location ?? null,
       delivery_date: slice[0].line.delivery_date ?? null,
       variants: slice[0].line.variants ?? null,
-      /* One AutoCount line has ONE DtlKey. Only a single value shared by the
-         whole build is line identity; anything else is NULL, which composeEdit
-         refuses loudly. A wrong DtlKey edits somebody else's line. */
       linked_ac_dtlkey: keys.size === 1 ? [...keys][0] : null,
       sourceIndexes: slice.map((r) => r.index),
       via,
     };
   };
 
-  /* What the ERP row ACTUALLY holds, which is not always what the imported text
-     says. Absent fields fall back to the decode, so a row the importer never
-     enriched compares equal to its own Desc2 rather than looking edited. */
   const v = (run[0].line.variants ?? {}) as Record<string, unknown>;
   const sizeRaw = v.seatHeight != null ? String(v.seatHeight).trim() : (ps.size ?? null);
   const size = sizeRaw ? sizeRaw.replace(/["']+$/, '') : null;
-  /* THE LIVE COLOUR, not the dead row's obituary. The fabric library renumbered
-     itself on 2026-08-11 and left `[superseded by X on 2026-08-11]` written into
-     each old row's own LABEL — 39 characters of bookkeeping in the middle of a
-     build specification. `buildVariantSummary` has stripped it since that day;
-     THIS renderer did not, and it is the one three sofa orders go through, which
-     is why they were still refused after the fix that was supposed to clear
-     them: HC-SO-008460 at 112 characters, HC-SO-012513 at 113, HC-SO-012629 at
-     117, against a field that holds 100.
-
-     It is applied to the EXPECTATION as well as to the text, because `colour` is
-     the one value handed to both composeSofaDesc2 and decodesTo. That is the
-     property that keeps the round-trip honest rather than merely passing: the
-     gate compares the decoded colour against the same live name the text was
-     written with. Two documents were refused on exactly that mismatch —
-     HC-SO-004725 and HC-SO-007958, whose composed text lost the brackets the
-     expectation still carried. */
   const colourRaw = v.colourLabel != null && String(v.colourLabel).trim()
     ? String(v.colourLabel).trim()
     : (ps.color ?? null);
   const colour = colourRaw ? liveColour(colourRaw) : null;
   const specials = readSpecials(v).length ? readSpecials(v) : ps.specials;
 
-  /* 0. WHEN THE BOOK GROUPED THESE LINES, THE BOOK'S ORDER IS THE SOFA.
-     A gathered run arrives in the ERP's INSERTION order, and that order states
-     nothing about how the sofa is built: HC-SO-001526's two ends arrive
-     [2A(RHF), 1A(LHF)] while the book holds `1EL + 2ER`. Composing from the
-     insertion order round-trips happily and writes the MIRROR of the sofa the
-     book records — the classic wrong answer on this subject, and one nothing
-     downstream would catch.
-
-     So for a gathered run whose pieces are the book's pieces as a MULTISET, the
-     ORDER is taken from the book's own text and everything below composes in
-     that order. The line's money, warehouse and dates still come from the ERP
-     rows, which are not reordered; only the arrangement comes from the book,
-     which is the one thing a row order cannot state. Size, colour and specials
-     are still compared EXACTLY, so a real edit to any of them recomposes. */
   const pieces = bookGrouped && sameMultiset(build, compartments) ? build : compartments;
 
-  /* 1. ECHO — the stored text still decodes to exactly what the ERP holds.
-     THE COMPARTMENTS ARE NOT THE WHOLE BUILD. A fabric colour, a seat height or
-     a special order can change while the piece list does not, and echoing then
-     would send AutoCount the text the sofa USED to be — a stale line in the
-     account book with nothing anywhere recording that the edit was dropped.
-     Whatever the ERP disagrees with its own imported text about falls through to
-     compose, which either spells the current build or refuses it visibly. */
-  /* The length gate belongs to the text that is actually SENT, and this branch
-     is the only one that sends the STORED text. It used to sit at the top of
-     this function, where it refused a document whose stored line text was long
-     even though the composer was about to replace it with something short:
-     HC-SO-013339's stored Desc2 is 107 characters and the text it would have
-     written is 30. Over-long stored text now falls through to compose, which
-     either spells the build inside the column or refuses it visibly. */
   if ((reps > 0 || pieces !== compartments)
     && desc2.length <= AC_DESC2_MAX
     && namesForeign(desc2)
     && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
-    /* A gathered run is ONE build by the book's own key, so it emits one line;
-       the repeat arithmetic below is for a run that holds N identical sofas. */
     if (pieces !== compartments) return { lines: [mkLine(run, desc2, 'echo')] };
     const out: CollapsedLine[] = [];
     for (let k = 0; k < reps; k += 1) {
@@ -595,9 +400,6 @@ function collapseRun(
      rewrite of it. */
   const attempt = (sp: string[]): { text: string } | { why: string } => {
     const spelled = composeSofaDesc2(pieces, { size, colour, specials: sp });
-    /* The decoder skips a segment it has no word for, so a foreign piece's name
-       rides after the specials without changing what the text decodes to; the
-       gate below still reads the pieces, size, colour and specials exactly. */
     const t = spelled == null ? null : [spelled, ...foreign].join(' / ');
     if (!t) {
       return {
@@ -611,13 +413,7 @@ function collapseRun(
           + `${AC_DESC2_MAX}; truncating would silently drop part of the build`,
       };
     }
-    /* The gate is asked about the text that is ACTUALLY SENT, with the specials
-       that are actually in it. Comparing pointed text against the full special
-       list would fail every time and make the second attempt dead code. */
     let g = decodesTo(t, model, pieces, { size, colour, specials: sp });
-    /* The one reordering the gate accepts: armed ends read to their own ends,
-       nothing else moved. Size, colour and specials are then compared exactly
-       against that arrangement, by the same gate. */
     const placed = g.ok ? null : armedEndsPlaced(t, model, pieces);
     if (placed) g = decodesTo(t, model, placed, { size, colour, specials: sp });
     if (!g.ok) return { why: `composed Desc2 does not survive a decode: ${g.why}` };
@@ -632,27 +428,6 @@ function collapseRun(
     if ('text' in pointed) return { lines: [mkLine(run, pointed.text, 'compose')] };
   }
 
-  /* 4. THE BOOK'S OWN TEXT, as a LAST RESORT and only on a MULTISET match.
-     The alternative here is refusing the whole document, so what this sends is
-     weighed against nothing arriving at all — and what it sends is the text the
-     account book ALREADY HOLDS. On a migrated line `description2` is the book's
-     own Desc2, copied by the importer; re-sending it changes that line by
-     nothing.
-
-     MULTISET, not sequence, and ONLY here. The ERP's line order is insertion
-     order; the book's text states the arrangement. HC-SO-000814 is the case:
-     the ERP holds [L(LHF), 2A(RHF), 1NA] and the book's text decodes to
-     [L(LHF), 1NA, 2A(RHF)] — the same three pieces, and the book's order is the
-     physical one, because an arm piece is an END and nothing follows it.
-
-     WHY IT IS NOT THE ECHO RULE AT THE TOP OF THIS FUNCTION. Relaxing THAT to a
-     multiset would let a genuine re-arrangement keep its old text — a chaise
-     moved from the left end to the right is the same pieces and a different
-     sofa, and the mirror is the classic wrong answer here. Reached only after
-     the composer has failed, this cannot hide an edit: a re-arrangement that
-     composes is written, and one that does not compose was never going to
-     reach the book at all. Size, colour and specials are still compared
-     EXACTLY, by the same decodesTo the composer answers to. */
   if (desc2.length <= AC_DESC2_MAX && sameMultiset(build, compartments)
     && namesForeign(desc2)
     && decodesTo(desc2, model, build, { size, colour, specials }).ok) {
@@ -661,14 +436,6 @@ function collapseRun(
   return { refusal: full.why };
 }
 
-/**
- * Fold every sofa compartment run in a document's line list into AutoCount's
- * one-line-per-sofa shape. Non-sofa lines pass through untouched and in order.
- *
- * Never throws. A build that cannot be collapsed faithfully appears in
- * `refusals` with a reason a human can act on; it is the CALLER's job to decide
- * that a document with any refusal does not sync (see toDetails).
- */
 /**
  * The sofas whose pieces the BOOK says are one line, and this file's own
  * adjacency rule would not put together.
@@ -738,12 +505,6 @@ function scatteredByBookLine(lines: CollapsibleLine[]): Map<number, BookGroup> {
     if (group.length < 2) continue;
     if (g.foreign.length) { out.set(group[0].index, g); continue; }
     const contiguous = group.every((x, i) => i === 0 || x.index === group[i - 1].index + 1);
-    /* Left to the adjacency rule only when that rule WILL form the run — and it
-       also breaks a run on a Desc2 change. Adjacent pieces of ONE book line whose
-       texts differ were therefore collapsed one piece at a time and refused:
-       HC-SO-013320 / HC-PO-010008, whose two 8069 pieces carry different special
-       orders after an amendment re-derived their Desc2 ("cannot spell [1A(LHF)]",
-       "cannot spell [1B(RHF)]", requeue plan run 34823021667). */
     const oneText = new Set(group.map((x) => String(x.line.description2 ?? '').trim())).size === 1;
     if (contiguous && oneText) continue;
     out.set(group[0].index, g);
@@ -791,9 +552,6 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
      * document and asks for a backfill — unchanged behaviour, deliberately. */
     const keys = run.map((x) => x.line.linked_ac_dtlkey ?? null);
     const neverSent = keys.every((k) => k == null);
-    /* Needs at least TWO compartments to mean anything: a run of one always has
-       "all distinct" keys, and a single keyed compartment is a build the book
-       holds as one line, which must still fold. */
     const alreadySeparate = keys.length > 1
       && keys.every((k) => k != null)
       && new Set(keys.map(String)).size === keys.length;
@@ -838,9 +596,6 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
   };
 
   lines.forEach((line, index) => {
-    /* A piece the BOOK has already grouped. The whole build is emitted at the
-       position of its FIRST piece so the document's line order is preserved;
-       the others are skipped, because they are already in that run. */
     if (consumed.has(index)) {
       const g = scattered.get(index);
       if (!g) return;
@@ -860,10 +615,6 @@ export function collapseSofaLines(lines: CollapsibleLine[]): CollapseResult {
       return;
     }
     const split = splitSofaCode(line.item_code);
-    /* item_group is advisory: the cutover importer sets 'sofa' on every
-       compartment, but a hand-built line may leave it null. The compartment
-       vocabulary is the real test, and a non-sofa group is a hard NO so a
-       mattress that happens to be coded {x}-2S can never be folded. */
     const isSofa = split != null && (line.item_group == null || up(line.item_group) === 'SOFA');
     if (!isSofa) {
       flush();

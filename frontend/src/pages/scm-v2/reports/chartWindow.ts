@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// chartWindow — which months a report chart shows (the owner's Claude Design,
-// batch 6 §4.1): twelve, or up to twenty-four for a longer range, ending with
-// the range's last month. The window stays put while the chosen period sits
-// inside it — clicking a month only opens that month — and moves only when
-// the period falls outside it, to the nearest edge.
-// Months are ISO first-of-month days (`2026-10-01`).
-// ----------------------------------------------------------------------------
 
 import { monthStart } from '../../../lib/dateRangePresets';
 

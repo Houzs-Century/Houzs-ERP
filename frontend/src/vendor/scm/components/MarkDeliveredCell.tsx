@@ -13,7 +13,6 @@ export type MarkDeliveredSchedule = ReturnType<typeof useScheduleDelivery>['muta
 
 export function MarkDeliveredCell({ order, onSchedule }: { order: PlanningOrder; onSchedule: MarkDeliveredSchedule }) {
   if (order.row_type !== 'assr') return <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>;
-  // A cancelled leg is already off the board, so a visible row is only pending or delivered.
   const value: 'delivered' | 'pending' = order.delivery_state === 'DELIVERED' ? 'delivered' : 'pending';
   return (
     <select

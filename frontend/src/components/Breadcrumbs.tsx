@@ -5,7 +5,6 @@ import { cn } from "../lib/utils";
 
 export interface BreadcrumbItem {
   label: string;
-  /** Omit on the trailing (current) item to render it as plain text. */
   to?: string;
 }
 

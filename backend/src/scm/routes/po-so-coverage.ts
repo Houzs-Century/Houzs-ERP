@@ -93,9 +93,6 @@ poSoCoverage.use('*', supabaseAuth);
 
 const TYPES = new Set(['po', 'grn', 'pi']);
 
-/* Resolve any of the three purchase-doc types down to its Purchase Order
-   (id + number). Company-scoped throughout: a foreign / unknown id returns null,
-   which the handler turns into an empty (but honest) origin response. */
 async function resolvePo(
   sb: any,
   c: Context<any>,
@@ -114,47 +111,18 @@ async function resolvePo(
     ).maybeSingle();
     return data?.purchase_order_id ? resolvePo(sb, c, 'po', data.purchase_order_id) : null;
   }
-  // pi → grn → po
   const { data } = await scopeToCompany(
     sb.from('purchase_invoices').select('grn_id').eq('id', id), c,
   ).maybeSingle();
   return data?.grn_id ? resolvePo(sb, c, 'grn', data.grn_id) : null;
 }
 
-/* One Assigned-SO for a PO SKU: the Sales Order and that SO's effective delivery
-   date. `locked` = STATIC (delivered→DO-linked, or a stored raise-link); false /
-   absent = FLOATING (live MRP coverage that shifts and evaporates on delivery).
-   Clickable to the SO on the frontend. */
 export type OriginAssignment = {
   soDocNo: string;
   deliveryDate: string | null;
   locked?: boolean;
-  /* WHICH of the three layers produced this row. `locked` alone says static vs
-     floating; `source` says WHY, which is what the UI needs to write the
-     difference in words rather than as a dashed border the owner can miss:
-       delivered — the goods physically shipped to that SO (linkage C)
-       linked    — a STORED purchase_order_items.so_item_id / "From SOs" note
-       mrp       — a live MRP allocation and nothing more (no stored link) */
   source?: 'delivered' | 'linked' | 'mrp';
 };
-/* Per-SKU assignment: the covering PO line's item_code and every SO assigned
-   to it. Only SKUs WITH an assignment appear (a bare stock SKU is absent, and
-   the UI shows a dash for it).
-
-   `storedLink` = at least one PO line for this SKU actually carries a stored
-   so_item_id. It is deliberately SEPARATE from the assignments: a SKU can show
-   an MRP-derived SO while its PO lines are all unlinked, and that combination —
-   an assignment on screen with nothing behind it in the database — is exactly
-   what the 2026-07-29 incident mistook for a binding.
-
-   `provenance` (2026-08-07, PR-3 of the Decision rollout) = ALWAYS the
-   layer-(b) stored-origin assignments for this SKU (`locked: true`,
-   `source: 'linked'`), REGARDLESS of which layer won the precedence — the
-   parallel "bought for" slot the Decision's display stage renders beside the
-   execution answer. `storedLink` says THAT stored links exist; `provenance`
-   says WHICH SOs they name. Empty array when the SKU has no stored origin.
-   Purely additive: `assignments` keeps today's precedence winner, so an older
-   frontend that never reads `provenance` sees exactly the old wire. */
 export type SkuOrigin = {
   itemCode: string;
   assignments: OriginAssignment[];
@@ -169,12 +137,8 @@ type SoHeaderRow = {
 };
 type SoLineRow = { doc_no: string | null; item_code: string | null };
 
-/* Effective SO delivery date — the amended date wins over the customer's
-   original. ONE reader, shared/effective-delivery.ts, the same one MRP and the
-   stock allocator now use; this file's own copy of the rule is gone. */
 const effectiveDeliveryDate = (h: SoHeaderRow): string | null => effectiveSoDelivery(h);
 
-/* Build doc_no → effective delivery date from a set of SO headers. */
 function ddByDocOf(soHeaders: SoHeaderRow[]): Map<string, string | null> {
   const ddByDoc = new Map<string, string | null>();
   for (const h of soHeaders ?? []) {
@@ -183,8 +147,6 @@ function ddByDocOf(soHeaders: SoHeaderRow[]): Map<string, string | null> {
   return ddByDoc;
 }
 
-/* Sort + de-dupe assignments for one SKU: earliest delivery date first (undated
-   last), then by SO no. */
 function sortAssignments(assignments: OriginAssignment[]): OriginAssignment[] {
   return assignments.sort((a, b) => {
     if (a.deliveryDate === b.deliveryDate) return a.soDocNo.localeCompare(b.soDocNo);
@@ -194,20 +156,12 @@ function sortAssignments(assignments: OriginAssignment[]): OriginAssignment[] {
   });
 }
 
-/* PURE core (linkage B): match the PO's SKUs to the STORED-ORIGIN SOs' lines by
-   item_code and attach each origin SO's effective delivery date. No DB.
-   - poSkus: the PO's item_codes (may repeat / be blank).
-   - soHeaders: the validated, company-owned origin SO headers.
-   - soLines: those SOs' item lines (doc_no + item_code).
-   An origin SO appears under a SKU only when it actually has a line with that
-   item_code. Returns Map<item_code, assignments> for the merge below. */
 export function buildStoredOrigins(
   poSkus: Array<string | null | undefined>,
   soHeaders: SoHeaderRow[],
   soLines: SoLineRow[],
 ): Map<string, OriginAssignment[]> {
   const ddByDoc = ddByDocOf(soHeaders);
-  // item_code → set of origin SO doc_nos that carry it (only validated SOs).
   const docsByCode = new Map<string, Set<string>>();
   for (const l of soLines ?? []) {
     const code = (l.item_code ?? '').trim();
@@ -228,23 +182,6 @@ export function buildStoredOrigins(
   return out;
 }
 
-/* PURE core (mig 0235 — allocation-aware layer (b) links): per PO line, the
-   EFFECTIVE stored so_item link(s).
-
-   A line WITH allocations: the allocations ARE the authoritative finer-grained
-   answer — their non-null so_item_ids replace the line's own single so_item_id
-   entirely (a consolidated line can now name SEVERAL SOs; and where both the
-   old link and allocations exist, allocations win, so nothing double-counts).
-   An all-stock split (every slice so_item_id NULL) therefore yields NO link —
-   the allocations overrule the stale single link by saying "stock".
-
-   A line WITHOUT allocations keeps its so_item_id — the 1:1 fast path,
-   unchanged for every PO raised through From-SO / convert / the line picker.
-
-   Returns both halves layer (b) needs: the effective so_item_ids (the b1
-   candidate docs) and which SKUs are STORED-linked (the storedLink flag the
-   2026-07-29 guess-vs-binding distinction rides on — an allocation IS a stored
-   link, so an allocated SKU counts). */
 export function effectiveStoredLinks(
   poLines: Array<{ id?: string | null; item_code: string | null; so_item_id: string | null }>,
   allocationsByItem: Map<string, Array<{ so_item_id: string | null }>>,
@@ -268,10 +205,6 @@ export function effectiveStoredLinks(
   return { soItemIds: [...soItemIds], linkedSkus };
 }
 
-/* Allocations for a set of PO line ids — the read half of the pure function
-   above. Best-effort + chunked: pre-0235 (or on any read hiccup) the map is
-   empty and every line falls back to its single so_item_id, which is exactly
-   the pre-allocation behaviour. */
 async function loadAllocationLinksForItems(
   sb: any,
   itemIds: Array<string | null | undefined>,
@@ -307,16 +240,6 @@ type DoLineRow = {
   variants: Record<string, unknown> | null;
 };
 
-/* PURE core (linkage C, the DO-lock): given the (do, code, variant) buckets a
-   PO's goods physically shipped under (batch_no = this PO number, from OUT
-   movements ∪ FIFO lot consumptions), the DO lines, and the SO resolution maps,
-   produce the STATIC Assigned-SO per SKU. A DO line counts only when it lands in
-   one of those buckets — i.e. its shipped goods came from THIS PO — matched by
-   the SAME (item_code, variant_key) bucket the ship wrote them under.
-
-   `soDocBySoItem` (so_item_id → SO doc_no) is preferred; `soDocByDo` (do id → SO
-   doc_no, the DO header's so_doc_no) is the fallback for a DO line with no
-   so_item_id. `ddByDoc` gives each SO's effective delivery date. */
 export function buildDeliveredSoLock(
   buckets: Set<string>,
   doLines: DoLineRow[],
@@ -381,9 +304,6 @@ export function mergeAssignments(
   doLock: Map<string, OriginAssignment[]>,
   storedOrigin: Map<string, OriginAssignment[]>,
   floating: Map<string, OriginAssignment[]>,
-  /* SKUs whose PO lines carry a stored so_item_id. Reported per SKU so the UI
-     can distinguish "the database binds this" from "MRP currently thinks this",
-     independently of which layer happened to win the precedence. */
   linkedSkus: Set<string>,
   pooled: boolean,
 ): SkuOrigin[] {
@@ -406,13 +326,6 @@ export function mergeAssignments(
   return out.sort((a, b) => a.itemCode.localeCompare(b.itemCode));
 }
 
-/* Resolve the STATIC DO-lock (linkage C) for a PO: which SO(s) its DELIVERED
-   goods actually shipped to. The reverse of soLineShippedSourcePos —
-   batch_no = source PO number, stamped by the GRN (mig 0120) onto the FIFO lot
-   and carried on the DO OUT movement. Best-effort + fully company-scoped: an
-   absent table / column, or a PO whose goods have not shipped, yields an empty
-   map (the line falls through to stored origin / floating). Returns
-   Map<item_code, assignments> (STATIC / locked). */
 async function resolveDeliveredSoLock(
   sb: any,
   c: Context<any>,
@@ -421,10 +334,6 @@ async function resolveDeliveredSoLock(
   const empty = { bySku: new Map<string, OriginAssignment[]>(), docNos: [] as string[] };
   if (!poNumber) return empty;
   try {
-    // (do id, item_code, variant_key) buckets whose goods came from THIS PO —
-    // batched OUT movements ∪ consumptions of this PO's lots, from the ONE
-    // shared ledger resolver (lib/source-po-trace.ts) the Delivered column also
-    // reads, so the two columns can never disagree.
     const ledger = await tracePoDeliveredLedger(sb, [poNumber]);
     const bucketKeys = ledger.bucketsByPo.get(poNumber) ?? new Set<string>();
     const doIds = new Set<string>();
@@ -436,7 +345,6 @@ async function resolveDeliveredSoLock(
     if (doIds.size === 0) return empty;
     const doIdList = [...doIds];
 
-    // The DO lines (so_item_id + SKU + variants) for those DOs — company-scoped.
     const { data: doItems } = await scopeToCompany(
       sb.from('delivery_order_items')
         .select('delivery_order_id, so_item_id, item_code, item_group, variants'), c,
@@ -444,7 +352,6 @@ async function resolveDeliveredSoLock(
     const doLines = (doItems ?? []) as DoLineRow[];
     if (doLines.length === 0) return empty;
 
-    // DO header so_doc_no (fallback when a line has no so_item_id) — company-scoped.
     const { data: doHdrs } = await scopeToCompany(
       sb.from('delivery_orders').select('id, so_doc_no'), c,
     ).in('id', doIdList);
@@ -453,7 +360,6 @@ async function resolveDeliveredSoLock(
       if (d.so_doc_no) soDocByDo.set(d.id, d.so_doc_no);
     }
 
-    // so_item_id → SO doc_no (preferred) — company-scoped.
     const soItemIds = [...new Set(doLines.map((l) => l.so_item_id).filter((x): x is string => !!x))];
     const soDocBySoItem = new Map<string, string>();
     for (let i = 0; i < soItemIds.length; i += UUID_CHUNK) {
@@ -472,7 +378,6 @@ async function resolveDeliveredSoLock(
     ];
     if (wantedDocs.length === 0) return empty;
 
-    // Effective delivery dates for the DO-locked SOs — re-validates company scope.
     const { data: soHeaders } = await scopeToCompany(
       sb.from('mfg_sales_orders')
         .select('doc_no, customer_delivery_date, amended_delivery_date'), c,
@@ -480,7 +385,6 @@ async function resolveDeliveredSoLock(
     const validDocs = new Set(
       ((soHeaders ?? []) as SoHeaderRow[]).map((h) => h.doc_no).filter((x): x is string => !!x),
     );
-    // Drop any SO doc that failed the company re-validation.
     for (const [k, v] of soDocBySoItem) if (!validDocs.has(v)) soDocBySoItem.delete(k);
     for (const [k, v] of soDocByDo) if (!validDocs.has(v)) soDocByDo.delete(k);
     const ddByDoc = ddByDocOf((soHeaders ?? []) as SoHeaderRow[]);
@@ -500,31 +404,18 @@ poSoCoverage.get('/:type/:id', async (c) => {
   const sb = c.get('supabase');
   try {
     const po = await resolvePo(sb, c, type, id);
-    // No PO behind this doc (manual PI, unresolved id, foreign company): honest
-    // empty — every line renders a dash in the Assigned SO / delivery columns.
     if (!po) {
       return c.json({ poNumber: null, poId: null, origins: [] as SkuOrigin[], delivered: [] as Array<{ itemCode: string; dos: DeliveredDo[] }> });
     }
 
-    // The covering PO's own lines: SKUs (matched by item_code) + the exact
-    // raise-link (so_item_id) where present.
     const { data: poLines } = await scopeToCompany(
       sb.from('purchase_order_items').select('id, item_code, so_item_id'), c,
     ).eq('purchase_order_id', po.poId);
     const lineRows = (poLines ?? []) as Array<{ id: string; item_code: string | null; so_item_id: string | null }>;
     const poSkus = lineRows.map((l) => l.item_code);
-    /* mig 0235 — allocations, where present for a line, are the AUTHORITATIVE
-       finer-grained links and replace that line's single so_item_id (a
-       consolidated line can name several SOs; where both exist, allocations
-       win — never both, so never a double count). Which SKUs are STORED-linked
-       is still a separate question from "did the stored-origin layer win": a
-       delivered SKU outranks it, and an MRP-only SKU can show an SO with no
-       stored link at all. */
     const allocationsByItem = await loadAllocationLinksForItems(sb, lineRows.map((l) => l.id));
     const { soItemIds, linkedSkus } = effectiveStoredLinks(lineRows, allocationsByItem);
 
-    // ── (b) STORED ORIGIN candidates (linkage B) ─────────────────────────────
-    // (b1) exact raise-link SO doc_nos (2026-07-09+ MRP-linked flow).
     let exactDocs: string[] = [];
     if (soItemIds.length) {
       const { data: rows } = await scopeToCompany(
@@ -535,19 +426,12 @@ poSoCoverage.get('/:type/:id', async (c) => {
           .map((r) => r.doc_no).filter((x): x is string => !!x)),
       ];
     }
-    // (b2) the PO's "From SOs: …" note (bulk / shared buys), via the ONE shared
-    // note extractor. Tokens are validated below by the company-scoped SO lookup.
     const { data: poHdr } = await scopeToCompany(
       sb.from('purchase_orders').select('notes'), c,
     ).eq('id', po.poId).maybeSingle();
     const noteTokens = parseProvenanceNote((poHdr as { notes?: string | null } | null)?.notes);
     const candidateDocs = [...new Set([...exactDocs, ...noteTokens])];
 
-    // ── (a) DELIVERED DO-lock (linkage C), (c) MRP floating (linkage A) ──────
-    // Both computed here; the merge applies the precedence (a > b > c, or
-    // a > c > b for a pooled company). computeMrp
-    // is the SAME single engine the SO detail reads via mrpLineCoverage — inverted
-    // by mrpReverseCoverage — so SO->PO and PO->SO can never disagree.
     const doLockRes = await resolveDeliveredSoLock(sb, c, po.poNumber);
 
     let floating = new Map<string, OriginAssignment[]>();
@@ -565,7 +449,6 @@ poSoCoverage.get('/:type/:id', async (c) => {
         const code = (a.itemCode ?? '').trim();
         if (!code || !a.soDocNo) continue;
         const inner = byCode.get(code) ?? new Map<string, string | null>();
-        // Earliest date wins if the same SO appears twice for this SKU.
         if (!inner.has(a.soDocNo) || (a.deliveryDate && (inner.get(a.soDocNo) ?? null) === null)) {
           inner.set(a.soDocNo, a.deliveryDate ?? null);
         }
@@ -583,7 +466,6 @@ poSoCoverage.get('/:type/:id', async (c) => {
       floating = new Map();
     }
 
-    // ── (b) STORED ORIGIN resolution — validate candidates, build by SKU ─────
     let storedOrigin = new Map<string, OriginAssignment[]>();
     if (candidateDocs.length > 0) {
       const { data: soHeaders } = await scopeToCompany(
@@ -609,9 +491,6 @@ poSoCoverage.get('/:type/:id', async (c) => {
       poSkus, doLockRes.bySku, storedOrigin, floating, linkedSkus,
       ASSIGNED_FOLLOWS_MRP,
     );
-    /* "Delivered" per SKU — the DO(s) that shipped this PO's goods + qty (owner
-       2026-07-31). The forward companion of the delivered-lock above; the drill-
-       down matches it into each line by item_code. */
     const deliveredBySku = await resolveDeliveredBySkuForPo(sb, c, po.poNumber);
     const delivered: Array<{ itemCode: string; dos: DeliveredDo[] }> = [...deliveredBySku.entries()]
       .map(([itemCode, dos]) => ({ itemCode, dos }))
@@ -622,41 +501,12 @@ poSoCoverage.get('/:type/:id', async (c) => {
   }
 });
 
-// ----------------------------------------------------------------------------
-// Batched Assigned-SO for a PAGE of Purchase Orders (the collapsed list column)
-//
-// The single-doc handler above answers /po-so-coverage/:type/:id per line. A
-// LIST cannot call it per row: that is an N+1 of network round-trips AND — the
-// real cost — an N+1 of computeMrp, the global MRP engine. This resolves the
-// Assigned SO for a whole page of POs in ONE pass:
-//   - computeMrp runs EXACTLY ONCE; its reverse coverage map is built once.
-//   - the DO-lock ledger reads (movements / lots / consumptions) and the
-//     stored-origin reads are batched with `.in(...)` across every PO number.
-//   - each PO's precedence merge reuses the SAME pure helpers the per-line route
-//     uses (buildDeliveredSoLock / buildStoredOrigins / mergeAssignments), so a
-//     list row and its own drill-down can never disagree.
-//
-// Returns Map<poId, PoAssignedSummary> — the PO-level rollup the header column
-// renders: the distinct SO(s) across all the PO's SKUs (a STATIC assignment wins
-// over a FLOATING one when the same SO shows for two SKUs), and whether ANY of
-// the PO's lines carries a stored so_item_id (so the column can mark an MRP-only
-// guess apart from a real link). Fully company-scoped, same as the route.
-// ----------------------------------------------------------------------------
 export type PoAssignedSummary = {
   assignedSos: OriginAssignment[];
   sourceLinked: boolean;
-  /* PR-3 (2026-08-07, additive): the distinct layer-(b) stored-origin SOs
-     across every SKU — the "bought for" slot of the list cell, parallel to and
-     never replacing `assignedSos` (which keeps today's precedence winners).
-     Deduped by SO doc_no; empty when no SKU has a stored origin. */
   provenanceSos: OriginAssignment[];
 };
 
-/* Roll a PO's per-SKU origins up to ONE distinct-SO summary for the list cell.
-   EXPORTED since 2026-08-02: the GRN / PI lists roll up the SAME per-SKU
-   origins RESTRICTED to their own document's line SKUs (header ≡ ∪(lines) —
-   a partial-receipt GRN must not inherit assignments for PO SKUs it never
-   received). */
 export function summarizeOrigins(origins: SkuOrigin[]): PoAssignedSummary {
   const byDoc = new Map<string, OriginAssignment>();
   const provByDoc = new Map<string, OriginAssignment>();
@@ -665,10 +515,8 @@ export function summarizeOrigins(origins: SkuOrigin[]): PoAssignedSummary {
     if (o.storedLink) sourceLinked = true;
     for (const a of o.assignments) {
       const prev = byDoc.get(a.soDocNo);
-      // A STATIC (locked) assignment wins over a FLOATING one for the same SO.
       if (!prev || (prev.locked === false && a.locked)) byDoc.set(a.soDocNo, a);
     }
-    // Provenance rows are all layer (b) (locked, 'linked') — first hit wins.
     for (const p of o.provenance ?? []) {
       if (!provByDoc.has(p.soDocNo)) provByDoc.set(p.soDocNo, p);
     }
@@ -692,11 +540,6 @@ export async function resolvePoSoCoverageForPos(
   return out;
 }
 
-/* The per-SKU half of the list rollup above — Map<poId, SkuOrigin[]>. The GRN /
-   PI lists consume THIS and roll up only the SKUs their own lines carry, so
-   their header cells stay ≡ the union of their drill lines.
-   `listMrp`: the bulk list enrichments pass their resolveListMrp run (the
-   15-min list snapshot, lib/list-mrp-source.ts); null = the live shared run. */
 export async function resolvePoSoCoveragePerSkuForPos(
   sb: any,
   c: Context<any>,
@@ -707,12 +550,6 @@ export async function resolvePoSoCoveragePerSkuForPos(
   const ids = [...new Set(poIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return out;
 
-  /* PO headers (number + "From SOs:" notes) — company-scoped, and CHUNKED
-     because `ids` is a whole LIST PAGE: the GRN and PO lists hand this their
-     `poIdsForPage`, which is up to 500 uuids off a `.limit(500)` read. 500 uuids
-     is a ~19KB request line, so the read that decides a header's coverage cell
-     would 400 in a tenant large enough to fill a page and work everywhere else.
-     Order-independent — both maps below are keyed by PO id. */
   const { data: poHdrs } = await chunkIn<{ id: string; po_number: string | null; notes: string | null }>(
     ids,
     (batch, from, to) => scopeToCompany(
@@ -729,11 +566,6 @@ export async function resolvePoSoCoveragePerSkuForPos(
   if (validIds.length === 0) return out;
   const poNumbers = [...new Set([...poNumberById.values()].filter(Boolean))];
 
-  /* PO lines — SKUs + so_item_id links, grouped by PO — company-scoped. Chunked
-     for the same reason as the header read, and PAGED as a consequence: 500 POs
-     carry well over the 1000-row response cap, so the un-paged form was ALSO
-     dropping lines silently once a page filled — a PO whose lines fell off the
-     end rendered with no coverage rather than with an error. */
   /* PERF (2026-08-17). The two most expensive reads in this function — the MRP
      engine (section c, ~100 round trips of its own) and the delivered ledger
      (section a) — take NOTHING from the stored-origin chain that runs between
@@ -774,10 +606,6 @@ export async function resolvePoSoCoveragePerSkuForPos(
     rows.push(l);
     lineRowsByPo.set(l.purchase_order_id, rows);
   }
-  /* mig 0235 — one batched allocations read for EVERY line on the page, then
-     the same per-line rule the single-doc route applies: allocations, where
-     present, replace that line's single so_item_id (allocations win — no
-     double count); a line without any keeps the 1:1 fast path. */
   const allocationsByItem = await loadAllocationLinksForItems(
     sb, poLines.map((l) => l.id),
   );
@@ -795,8 +623,6 @@ export async function resolvePoSoCoveragePerSkuForPos(
     }
   }
 
-  // ── (b) STORED ORIGIN — candidate SO doc_nos per PO ───────────────────────
-  // b1: exact raise-link (so_item_id → doc_no).
   const soItemDoc = new Map<string, string>();
   const soItemArr = [...allSoItemIds];
   for (let k = 0; k < soItemArr.length; k += UUID_CHUNK) {
@@ -817,13 +643,11 @@ export async function resolvePoSoCoveragePerSkuForPos(
     if (!doc) continue;
     for (const poId of pos) { candidateDocsByPo.get(poId)!.add(doc); allCandidateDocs.add(doc); }
   }
-  // b2: the PO's "From SOs: …" note (bulk / shared buys), via the shared parser.
   for (const id of validIds) {
     for (const tok of parseProvenanceNote(notesById.get(id) ?? null)) {
       candidateDocsByPo.get(id)!.add(tok); allCandidateDocs.add(tok);
     }
   }
-  // Validate every candidate against company-owned SOs + carry each one's date + lines.
   const ddByDoc = new Map<string, string | null>();
   const validDocs = new Set<string>();
   const soHeaderByDoc = new Map<string, SoHeaderRow>();
@@ -856,7 +680,6 @@ export async function resolvePoSoCoveragePerSkuForPos(
     }
   }
 
-  // ── (c) MRP FLOATING — computeMrp runs ONCE for the whole page ────────────
   const floatingByPo = new Map<string, Map<string, OriginAssignment[]>>();
   try {
     const mrpResult = (await mrpProm)();
@@ -882,11 +705,8 @@ export async function resolvePoSoCoveragePerSkuForPos(
       }
       floatingByPo.set(poNum, m);
     }
-  } catch { /* MRP unavailable — floating stays empty; stored/delivered still show */ }
+  } catch { }
 
-  // ── (a) DELIVERED → DO-lock — batched across every PO number on the page,
-  //    from the ONE shared ledger resolver (the same pass the Delivered
-  //    columns read — lib/source-po-trace.ts). ──
   let bucketsByPo = new Map<string, Set<string>>();
   const doIds = new Set<string>();
   try {
@@ -898,7 +718,7 @@ export async function resolvePoSoCoveragePerSkuForPos(
         if (doId) doIds.add(doId);
       }
     }
-  } catch { /* ledger unreadable — DO-lock simply yields nothing */ }
+  } catch { }
 
   const doLockByPo = new Map<string, Map<string, OriginAssignment[]>>();
   if (doIds.size > 0) {
@@ -922,7 +742,6 @@ export async function resolvePoSoCoveragePerSkuForPos(
         if (d.so_doc_no) soDocByDo.set(d.id, d.so_doc_no);
       }
     }
-    // so_item_id → SO doc_no (preferred over the DO header fallback).
     const soDocBySoItem = new Map<string, string>();
     const dlSoItemIds = [...new Set(doLines.map((l) => l.so_item_id).filter((x): x is string => !!x))];
     for (let k = 0; k < dlSoItemIds.length; k += UUID_CHUNK) {
@@ -935,7 +754,6 @@ export async function resolvePoSoCoveragePerSkuForPos(
         if (r.doc_no) soDocBySoItem.set(r.id, r.doc_no);
       }
     }
-    // Effective dates for the DO-locked SOs — re-validates company scope.
     const wantedDocs = [...new Set([...soDocBySoItem.values(), ...soDocByDo.values()].filter(Boolean))];
     const doLockDd = new Map<string, string | null>();
     const validLockDocs = new Set<string>();
@@ -960,7 +778,6 @@ export async function resolvePoSoCoveragePerSkuForPos(
     }
   }
 
-  // ── Precedence merge per PO (a > b > c > none; a > c > b when pooled) ──
   const pooled = ASSIGNED_FOLLOWS_MRP;
   for (const id of validIds) {
     const poNum = poNumberById.get(id) ?? '';
@@ -988,17 +805,6 @@ export async function resolvePoSoCoveragePerSkuForPos(
   return out;
 }
 
-// ----------------------------------------------------------------------------
-// "Delivered" — the FORWARD companion of the Assigned-SO delivered-lock: which
-// Delivery Order(s) have SHIPPED a purchase document's goods, and how many units
-// per DO. A DO ships a PO's goods when its OUT carries batch_no = the PO number
-// (sofa / drop-ship) OR it consumed a FIFO lot stamped batch_no = the PO number
-// (plain-FIFO bed frame / mattress / accessories, GRN-stamped per 0120). The
-// exact same batch_no linkage the Assigned-SO reads — read here in the shipping
-// direction. Cancelled DOs are EXCLUDED (a cancelled DO did not deliver).
-// Company-scoped: the DO headers are re-read scopeToCompany'd, so a foreign DO
-// never leaks and its qty never counts.
-// ----------------------------------------------------------------------------
 export type DeliveredDo = {
   doNo: string;
   qty: number;
@@ -1013,14 +819,7 @@ export type PoDeliveredSummary = { deliveredDos: DeliveredDo[] };
 const sortDeliveredDos = (dos: DeliveredDo[]): DeliveredDo[] =>
   dos.sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true }));
 
-/* The ledger read itself (qty per (po, do) + per (po, do, code) + the DO-lock's
-   bucket keys) lives in lib/source-po-trace.ts (tracePoDeliveredLedger) — ONE
-   shared pass with the double-count guard (consumptions primary, batched OUT
-   movements fill the drop-ship gap only). This file only shapes its output. */
 
-/* Non-cancelled do_number (+ its SO doc_no, for the per-SO pairing) for a set
-   of DO ids — company-scoped, batched. A CANCELLED DO is deliberately absent
-   (it did not deliver). */
 async function nonCancelledDoNumbers(
   sb: any,
   c: Context<any>,
@@ -1042,9 +841,6 @@ async function nonCancelledDoNumbers(
   return doNoById;
 }
 
-/* LIST rollup: Map<poId, PoDeliveredSummary> — the distinct non-cancelled DO(s)
-   that shipped each PO's goods + qty per DO. Same shape the PO / GRN / PI list
-   header cell renders. */
 export async function resolveDeliveredDosForPos(
   sb: any,
   c: Context<any>,
@@ -1053,9 +849,6 @@ export async function resolveDeliveredDosForPos(
   const out = new Map<string, PoDeliveredSummary>();
   const ids = [...new Set(poIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return out;
-  /* Chunked: `ids` is a whole PO list page (up to 500 uuids off the legacy
-     `.limit(500)`), which is a ~19KB request line un-batched. Keyed by id, so
-     merging batches cannot change the map. */
   const { data: poHdrs } = await chunkIn<{ id: string; po_number: string | null }>(
     ids,
     (batch, from, to) => scopeToCompany(
@@ -1078,7 +871,7 @@ export async function resolveDeliveredDosForPos(
     const dos: DeliveredDo[] = [];
     for (const [doId, qty] of inner.entries()) {
       const hdr = doNoById.get(doId);
-      if (!hdr) continue; // foreign / cancelled DO — never counts as delivered
+      if (!hdr) continue;
       dos.push({ doNo: hdr.doNo, qty, soDocNo: hdr.soDocNo });
     }
     if (dos.length > 0) out.set(id, { deliveredDos: sortDeliveredDos(dos) });
@@ -1086,10 +879,6 @@ export async function resolveDeliveredDosForPos(
   return out;
 }
 
-/* Per-CODE list rollup — Map<poId, Map<item_code, DeliveredDo[]>>. The GRN / PI
-   lists roll THIS up over their own document's line codes only, so a partial-
-   receipt GRN's "Delivered" cell shows the DO(s) of the goods IT received —
-   never the parent PO's whole history (header ≡ ∪(lines), 2026-08-02). */
 export async function resolveDeliveredByCodeForPos(
   sb: any,
   c: Context<any>,
@@ -1098,8 +887,6 @@ export async function resolveDeliveredByCodeForPos(
   const out = new Map<string, Map<string, DeliveredDo[]>>();
   const ids = [...new Set(poIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return out;
-  /* Chunked — same page-sized `ids` and the same reasoning as
-     resolveDeliveredDosForPos above. */
   const { data: poHdrs } = await chunkIn<{ id: string; po_number: string | null }>(
     ids,
     (batch, from, to) => scopeToCompany(
@@ -1138,9 +925,6 @@ export async function resolveDeliveredByCodeForPos(
   return out;
 }
 
-/* DRILL-DOWN per-SKU: Map<item_code, DeliveredDo[]> for ONE PO — the DO(s) that
-   shipped each SKU + qty. Feeds the single-doc /po-so-coverage/:type/:id
-   response's `delivered`, matched by SKU into each drill-down line. */
 async function resolveDeliveredBySkuForPo(
   sb: any,
   c: Context<any>,
@@ -1153,8 +937,6 @@ async function resolveDeliveredBySkuForPo(
   const doNoById = await nonCancelledDoNumbers(sb, c, [...doIds]);
   const byDo = qtyByPoDoCode.get(poNumber);
   if (!byDo) return out;
-  // (code → (doNo → chip)) so the same SKU across two DOs shows both; each chip
-  // carries its DO's SO doc_no for the drill's per-SO pairing.
   const byCode = new Map<string, Map<string, DeliveredDo>>();
   for (const [doId, codeQty] of byDo.entries()) {
     const hdr = doNoById.get(doId);

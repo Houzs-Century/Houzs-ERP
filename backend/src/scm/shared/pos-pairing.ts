@@ -1,12 +1,3 @@
-/* The Houzs POS pairing code: what POS Admin > Terminals > Pair device hands
- * out and what the device types (or receives in the ?pair= link). Eight
- * characters from an alphabet without 0/O/1/I, shown as XXXX-XXXX; the ERP
- * stores only its SHA-256 and it expires in minutes.
- *
- * ONE home. backend/src/scm/shared/pos-pairing.ts is the original and
- * frontend/src/vendor/shared/pos-pairing.ts its byte-identical copy
- * (check-shared-mirrors.mjs); the POS app imports the vendored copy.
- */
 
 export const PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const PAIRING_LENGTH = 8;

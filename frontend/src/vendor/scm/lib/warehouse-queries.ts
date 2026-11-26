@@ -1,13 +1,3 @@
-// Vendored SLICE of apps/backend/src/lib/warehouse-queries.ts — only the Rack
-// type + useRacks() the GRN pages read (the optional per-line destination Rack
-// picker on New GRN, and the GRN detail's rack-label resolution). The full
-// source module (rack CRUD, movements, summary KPIs, stock-in/out) is not
-// pulled in — the GRN pages never call it.
-//
-// HOUZS VENDOR NOTE: the source `import { supabase } from './supabase'` was
-// imported but NEVER referenced (all reads go through authedFetch); DROPPED here
-// exactly as in the vendored inventory-queries slice. useRacks is copied
-// verbatim, routed through the vendored authedFetch (→ /api/scm/warehouse).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -34,8 +24,6 @@ export type Rack = {
   warehouse_id: string;
   rack: string;
   position: string | null;
-  /* Manual floor-plan zone override (e.g. "ZONE A"); null = derive from the
-     rack number (WAREHOUSE_ZONES in warehouse-floorplan.ts). */
   zone: string | null;
   status: RackStatus;
   reserved: boolean;
@@ -55,7 +43,6 @@ export type RackSummary = {
 
 export type WarehouseOption = { id: string; code: string; name: string };
 
-/* ── Rack grid + KPI summary ──────────────────────────────────────────── */
 export function useRacks(opts?: { warehouseId?: string }) {
   return useQuery({
     queryKey: ['warehouse', 'racks', opts ?? {}],
@@ -71,11 +58,6 @@ export function useRacks(opts?: { warehouseId?: string }) {
   });
 }
 
-/* ── Cross-company rack view (READ ONLY) ──────────────────────────────────
-   The same physical warehouse exists as one record per company; this feed
-   WIDENS across every company the caller may see and tags each rack with its
-   company + warehouse code, so the UI can show one combined list. Writes stay
-   on the per-company endpoints. */
 export type CrossCompanyRack = Rack & {
   company_id: number | null;
   company_code: string | null;
@@ -99,27 +81,7 @@ export function useCrossCompanyRacks() {
   });
 }
 
-/* ── Rack CRUD ────────────────────────────────────────────────────────────
-   HOUZS VENDOR — Desktop Racks & Bins page (feat/desktop-rack-management). The
-   original slice pulled in only the useRacks() READ hook (the GRN pages never
-   wrote racks). The desktop Racks page is the create surface the GRN per-line
-   picker was missing, so the write mutations are pulled in here, verbatim in
-   shape against the existing backend routes:
-     POST   /warehouse/racks       — single { warehouseId, rack, position?,
-                                       reserved?, notes? } OR seed
-                                       { warehouseId, count, prefix? }
-     PATCH  /warehouse/racks/:id    — { rack?, position?, notes?, reserved? }
-     DELETE /warehouse/racks/:id    — only when the rack is empty (backend 409)
-   Every mutation invalidates the ['warehouse','racks'] query family so the grid
-   + KPI summary refetch. */
 
-/* Scope — which warehouse RECORD(s) the rack(s) are created into. A rack shared
-   across warehouses is materialised as one row per target (fan-out on create),
-   so pass a single warehouseId (back-compat), a chosen set (warehouseIds), or
-   allWarehouses:true. Exactly one of the three is used, resolved server-side.
-   alsoSiblingCompanies widens the fan-out to the other companies' warehouse
-   records carrying the same code (one building, one record per company), each
-   row stamped with its own company. */
 export type RackScope =
   (| { warehouseId: string }
    | { warehouseIds: string[] }
@@ -128,8 +90,6 @@ export type RackScope =
 
 export type CreateRackBody =
   | (RackScope & { rack: string; position?: string; zone?: string; reserved?: boolean; notes?: string })
-  /* Seed: `count` alone keeps the flat "<prefix> 1..N"; add `series` +
-     `levels` for the aisle.level grid (shared/rack-labels.ts). */
   | (RackScope & { count: number; prefix?: string; series?: string; levels?: number });
 
 export function useCreateRack() {
@@ -167,19 +127,6 @@ export function useDeleteRack() {
   });
 }
 
-/* ── Stock in / out / transfer + movement ledger ───────────────────────────
-   HOUZS VENDOR — Warehouse (Rack/REC) desktop experience (feat/rec-warehouse-
-   desktop-p1). The rich 3-tab Warehouse page needs the stock-flow mutations and
-   the movement ledger read the plain Racks & Bins grid never used. All hit the
-   existing backend routes verbatim in shape:
-     POST /warehouse/stock-in  — { rackId, itemCode, productName?, sizeLabel?,
-                                   customerName?, sourceDocNo?, qty?, notes?, reason? }
-     POST /warehouse/stock-out — { itemId, reason? }
-     POST /warehouse/transfer  — { fromItemId, toRackId, qty? }  (same warehouse)
-     GET  /warehouse/movements — ?type&from&to&warehouseId&limit
-   Every mutation invalidates the whole ['warehouse'] query family so BOTH the
-   rack grid (['warehouse','racks']) and the ledger (['warehouse','movements'])
-   refetch. */
 
 export type RackMovementType = 'STOCK_IN' | 'STOCK_OUT' | 'TRANSFER';
 

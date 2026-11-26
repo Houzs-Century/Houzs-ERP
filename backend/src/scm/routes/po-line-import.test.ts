@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-/* The IO half of the PO line import: that every read and every write carries the
-   company predicate (the service role bypasses RLS, so the predicate IS the
-   isolation — R105), that the PO-level date goes through the cascade, and that
-   one purchase order queues one AutoCount edit however many of its lines moved. */
 
 const enqueueEdit = vi.fn(async () => true);
 const recomputePoExpectedAt = vi.fn(async () => undefined);
@@ -85,7 +81,6 @@ describe('company scope', () => {
     expect(p.lineChanges.map((c) => c.lineId)).toEqual([L1]);
     const dataReads = ops.filter((o) => o.op === 'select' && (o.table === 'purchase_orders' || o.table === 'purchase_order_items'));
     const unscoped = dataReads.filter((o) => !o.filters.some(([c, k, v]) => c === 'company_id' && k === 'eq' && v === 1));
-    /* The ONE unscoped read is the "does this id exist elsewhere" probe, and it asks for ids only. */
     expect(unscoped).toHaveLength(1);
     expect(unscoped[0]!.filters).toEqual([['id', 'in', [LX]]]);
   });

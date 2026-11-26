@@ -6,7 +6,6 @@ export interface HubCard {
   label: string;
   description?: string;
   icon: LucideIcon;
-  /** Optional trailing count chip (e.g. open cases). */
   count?: number;
   onClick: () => void;
 }
@@ -26,10 +25,6 @@ export function HubGrid({ cards }: { cards: HubCard[] }) {
           <button
             key={c.key}
             onClick={c.onClick}
-            // Warm the destination chunk on hover, mirroring the sidebar: the SCM
-            // hubs key each card by its route path, so the click lands on an
-            // already-fetched chunk instead of the skeleton flash. A no-op for a
-            // card whose key isn't a known route (other hubs), so it's safe here.
             onMouseEnter={() => prefetchRoute(c.key)}
             className="group flex flex-col gap-2.5 rounded-xl border border-border bg-surface p-4 text-left shadow-stone transition-all duration-150 hover:-translate-y-px hover:border-primary hover:shadow-slab"
           >

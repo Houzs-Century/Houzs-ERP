@@ -1,36 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-line-relink — carry the SO-line links across a delete-and-reinsert.
-//
-// THREE tables reference scm.mfg_sales_order_items.id with a FK declared
-// `ON DELETE SET NULL` (backend/scripts/scm-schema/2990s-full-schema.sql):
-//
-//   purchase_order_items.so_item_id   :1747   ← decides drop-ship / MRP binding
-//   delivery_order_items.so_item_id   :1651
-//   sales_invoice_items.so_item_id    :1767
-//
-// So the instant an SO line row is DELETEd, the database silently wipes every
-// downstream document's only record of which SO line it served. For a genuine
-// line removal that is correct — the line is gone, so the link is meaningless.
-// For a delete-and-REINSERT (the TBC sofa exchange replaces a whole sofa build
-// with a new set of module lines) it is data loss wearing a routine operation's
-// clothes: the PO that is on its way to fulfil that build stops being findable
-// from the SO, the drop-ship offer disappears, and the shipment can never bind
-// its incoming batch.
-//
-// `snapshotSo` in so-revision.ts already froze this mapping for the amendment
-// engine (its `poLinks` blob). This module is the same idea generalised: freeze
-// BEFORE the delete, decide what to restore with a PURE function, apply after
-// the reinsert — plan / apply separated the way oversell-retrocost.ts is, so
-// the decision is testable without a database.
-//
-// WHAT IS DELIBERATELY NOT RESTORED: an old line whose SKU has no counterpart
-// in the new set. A sofa exchange that genuinely swaps a 2-seater module for a
-// 3-seater has changed what was ordered; inventing a link to a different SKU
-// would be worse than the null, because every consumer downstream (drop-ship
-// batch resolution, MRP coverage, costing) trusts the link to mean "this PO
-// line is FOR that SO line". Those are returned as `dropped` so the caller can
-// say so out loud instead of losing them silently.
-// ----------------------------------------------------------------------------
 
 export const SO_LINK_TABLES = [
   'purchase_order_items',
@@ -61,9 +28,7 @@ export type SoLineIdentity = {
 };
 
 export type SoLineRelinkPlan = {
-  /** Rewrite these rows' so_item_id onto the replacement line. */
   restore: Array<{ table: SoLinkTable; rowId: string; soItemId: string }>;
-  /** No replacement carries this SKU — the link is genuinely gone. */
   dropped: Array<{ table: SoLinkTable; rowId: string; oldSoItemId: string; itemCode: string | null }>;
 };
 
@@ -84,14 +49,8 @@ export function soLineVariantSig(variants: unknown): string {
   return String(raw).trim().toUpperCase();
 }
 
-/** Bucket identity: the SKU AND the variant. The NUL separator cannot appear in
- *  either half, so no pair of (code, variant) can collide with another. */
 const bucketKey = (l: SoLineIdentity): string => `${normCode(l.itemCode)}\u0000${(l.variantSig ?? '').trim().toUpperCase()}`;
 
-/* Deterministic order within one SKU bucket: line_no when the document is
-   numbered, then id. Both sides are ordered the same way, so the k-th old line
-   of a SKU pairs with the k-th new line of that SKU — which is what makes a
-   two-module build with two identical modules map 1:1 instead of at random. */
 function orderedIds(lines: SoLineIdentity[]): Map<string, string[]> {
   const byCode = new Map<string, SoLineIdentity[]>();
   for (const l of lines) {
@@ -123,11 +82,8 @@ export function planSoLineRelink(
   const oldByCode = orderedIds(oldLines);
   const newByCode = orderedIds(newLines);
 
-  // old SO line id -> replacement SO line id, paired ordinally inside each SKU.
   const oldToNew = new Map<string, string>();
   const codeOfOld = new Map<string, string>();
-  /* Reported to the caller as a human ITEM CODE, never the bucket key — the
-     dropped list is read by a person deciding what to re-link by hand. */
   const humanCode = new Map<string, string>(oldLines.filter((l) => l.id).map((l) => [l.id, normCode(l.itemCode)]));
   for (const [code, oldIds] of oldByCode) {
     const newIds = newByCode.get(code) ?? [];
@@ -171,7 +127,7 @@ export async function snapshotSoLineLinks(sb: any, soItemIds: string[]): Promise
       for (const r of (data ?? []) as Array<{ id: string; so_item_id: string | null }>) {
         if (r.id && r.so_item_id) out.push({ table, rowId: r.id, soItemId: r.so_item_id });
       }
-    } catch { /* table absent in this deployment — nothing to carry */ }
+    } catch { }
   }
   return out;
 }

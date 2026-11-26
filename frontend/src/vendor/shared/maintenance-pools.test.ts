@@ -10,13 +10,11 @@ import { describe, expect, it } from 'vitest';
 
 import { restrictPricedToPool, restrictStringsToPool } from './maintenance-pools';
 
-/** Verbatim from production: scm.product_models.allowed_options.gaps. */
 const PROD_GAPS_POOL = [
   '4"', '5"', '6"', '7"', '8"', '9"', '10"',
   '11”', '12“', '13”', '14“', '15”', '16“',
   '17”', '18“', '19”', '20“',
 ];
-/** What the editor emits for the same values (SoLineCard: `${d + l + g}"`). */
 const EDITOR_GAPS = ['4"', '8"', '11"', '15"', '20"'];
 
 describe('restrictStringsToPool — typographic quotes', () => {
@@ -25,8 +23,6 @@ describe('restrictStringsToPool — typographic quotes', () => {
   });
 
   it('before folding, the raw comparison dropped exactly the curly ones', () => {
-    // The old behaviour, kept as an executable record of what was wrong: three
-    // of five options vanished from a pool that lists all five.
     const raw = EDITOR_GAPS.filter((o) => PROD_GAPS_POOL.includes(o));
     expect(raw).toEqual(['4"', '8"']);
   });

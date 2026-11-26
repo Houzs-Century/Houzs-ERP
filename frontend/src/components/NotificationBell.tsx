@@ -16,23 +16,12 @@ import {
 } from "./useAnnouncementBanner";
 import { requiresAcknowledgement } from "./announcementCategory";
 
-// Loaded on the first open, so the popover's code is not in the always-loaded shell.
 const BellPopover = lazy(() => import("./NotificationBellPopover"));
 
 interface Props {
   collapsed: boolean;
-  /** Where the popover should appear relative to the bell button.
-   *  "down" anchors the popover below the button (top navbar usage);
-   *  "up" anchors it above (sidebar usage, where the bell sits near
-   *  the bottom of the screen). Defaults to "down". */
   direction?: "up" | "down";
-  /** Horizontal edge the popover aligns to. "end" is the right side
-   *  of the button (top-navbar — prevents overflow off the right edge
-   *  of the viewport). Defaults to "start". */
   align?: "start" | "end";
-  /** Button palette. "sidebar" (default) keeps the dark-slab colours the
-   *  sidebar has always used; "navbar" is the light top-chrome variant
-   *  (2b redesign): ink icon on a quiet surface-2 hover. */
   tone?: "sidebar" | "navbar";
 }
 
@@ -64,12 +53,6 @@ export function NotificationBell({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // The BELL slice of the announcements feed: machine notices targeted at this
-  // user (source NOT NULL). Shares announcementFeedKey with every other reader
-  // of this slice, so however many bells are mounted it is fetched once. 3 min:
-  // the backend caches the banner per-user for 5 min. Silent by design: a
-  // failed poll leaves `data` undefined — an empty section, never an error
-  // state in the chrome.
   const { data: systemFeed } = useQuery({
     queryKey: announcementFeedKey("system"),
     queryFn: () =>
@@ -79,13 +62,8 @@ export function NotificationBell({
   });
   useVisiblePoll(announcementFeedKey("system"), 180_000, !!user?.id);
 
-  // The HUMAN slice through the shared hook — same cache entry as the modal
-  // and the inbox, same ack, same "have I seen this" answer.
   const human = useAnnouncementBanner({ scope: "human" });
 
-  // Server acks + ids acked from THIS popover, so Mark read clears the row (and
-  // the badge) instantly instead of a poll later. Session-lifetime only; the
-  // server ack is what persists.
   const [ackedHere, setAckedHere] = useState<Set<string>>(new Set());
   const systemNotices = useMemo(() => {
     const acked = new Set([...(systemFeed?.ackedIds ?? []), ...ackedHere]);
@@ -106,8 +84,6 @@ export function NotificationBell({
         // it does NOT self-correct. Whether a compulsory notice should refuse
         // to dismiss on a failed ack is the owner's call, not this file's.
       }
-      // Same invalidation the pop-up's ack performs — every consumer of the
-      // feed namespace (mobile badge, mobile bell) drops the notice at once.
       void qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
     },
     [qc],
@@ -119,16 +95,12 @@ export function NotificationBell({
   );
   const combinedUnread = totalUnread + systemNotices.length + humanUnread.length;
 
-  // "Mark all read": every unread system notice, every unread NON-mandatory
-  // announcement, and the project activity feed. A mandatory notice is never
-  // swept — its acknowledgement is an explicit, recorded click.
   const markAll = useCallback(async () => {
     for (const a of systemNotices) void markRead(a);
     for (const a of humanUnread) if (!requiresAcknowledgement(a)) void human.ack(a);
     await markAllRead();
   }, [systemNotices, humanUnread, markRead, human, markAllRead]);
 
-  // Close on outside click.
   useEffect(() => {
     if (!open) return;
     function onDown(e: MouseEvent) {
@@ -187,7 +159,6 @@ export function NotificationBell({
       </button>
 
       {open && (
-        // Unmounted when the bell closes, so a failed load clears on the next open.
         <LazySlot resetKey="notification-bell" fallback={null}>
         <BellPopover
           feed={feed}

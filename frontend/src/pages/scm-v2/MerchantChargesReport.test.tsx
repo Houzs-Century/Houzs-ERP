@@ -47,7 +47,6 @@ const report: MerchantChargesReport = {
   ],
   totals: { lines: 4, grossSen: 450000, feeSen: 6190, netSen: 443810, feePct: 1.4, bankChargeSen: 32400, chargeSen: 38590, chargePct: 8.6 },
 };
-/* Every read asked, in order: the table's first, then the chart's months. */
 const asked: string[] = [];
 
 vi.mock('../../vendor/scm/lib/merchant-charges-queries', async (importOriginal) => ({
@@ -77,7 +76,7 @@ describe('the Merchant charges tab', () => {
     const june = rowOf(/Jun 2026 · all merchants/);
     expect(within(june).getByText('3,500.00')).toBeTruthy();
     expect(within(june).getByText('1.3%')).toBeTruthy();
-    expect(within(june).getByText('324.00')).toBeTruthy();   // the bank's payout charge
+    expect(within(june).getByText('324.00')).toBeTruthy();
     expect(within(june).getByText('10.5%')).toBeTruthy();
     const pbb = rowOf(/^PBB · 2 reports/);
     expect(within(pbb).getByText('0.8%')).toBeTruthy();
@@ -93,7 +92,7 @@ describe('the Merchant charges tab', () => {
     expect(screen.getByText('2990HOMESB_CSV_20260606.csv')).toBeTruthy();
     expect(rowOf(/2990HOMESB_CSV_20260606\.csv/).textContent).toContain('swiped 2026/06/05 – 2026/06/06');
     expect(screen.getByText('2990HOMESB_CSV_20260620.csv')).toBeTruthy();
-    expect(screen.queryByText('2990HOMESB_CSV_20260712.csv')).toBeNull();   // July's, not opened
+    expect(screen.queryByText('2990HOMESB_CSV_20260712.csv')).toBeNull();
   });
 
   test('the range is whole months; Merchant and Lines reach the server; the merchants are named after the cards', () => {
@@ -161,7 +160,7 @@ describe('the Cash and Online rows', () => {
     expect(at(/^PBB/)).toBeLessThan(at(/^Cash/));
     expect(at(/^Cash/)).toBeLessThan(at(/^Online/));
     const cash = rowOf(/^Cash · 2 payments/);
-    expect(within(cash).getAllByText('1,200.00')).toHaveLength(2);   // gross and net, nothing taken between them
+    expect(within(cash).getAllByText('1,200.00')).toHaveLength(2);
     expect(within(cash).getAllByText('0.0%')).toHaveLength(2);
     fireEvent.click(screen.getByLabelText('Show the payments of Cash for 2026-06'));
     expect(screen.getByText('2990-SO-2606-001')).toBeTruthy();

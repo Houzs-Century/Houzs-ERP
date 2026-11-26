@@ -32,7 +32,6 @@ export interface ApBill {
   id: string; invoiceNumber: string; supplierRef: string | null; invoiceDate: string | null; totalSen: number;
   status: string; supplierId: string; supplierName: string; files: number;
   broughtInDos: number; broughtInSen: number; carrierId: string | null;
-  /** Lines kept off this bill still waiting for a person (To check). */
   waitingLines?: number;
 }
 interface Carrier { id: string; name: string }
@@ -44,7 +43,6 @@ export interface ReadDo {
 export interface ReadLine {
   index: number; text: string; date: string | null; kind: string; amountSen: number | null;
   printed: string[]; status: 'matched' | 'not_found' | 'no_number' | 'service_case' | 'not_delivery'; dos: string[];
-  /** Where the line goes as the reader sees it; null waits under To check. */
   doIds?: string[]; assign?: LineAssign | null; serviceRef?: string | null; projectId?: number | null;
 }
 interface ReadResult {
@@ -79,7 +77,6 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
   const [picked, setPicked] = useState<ApBill | null>(null);
   const [result, setResult] = useState<ReadResult | null>(null);
   const [carrierId, setCarrierId] = useState('');
-  /* The 3PL the Rate card amounts were priced on; another one needs a re-read. */
   const [pricedFor, setPricedFor] = useState('');
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [billed, setBilled] = useState<Record<string, string>>({});
@@ -109,7 +106,6 @@ export function ThreePLFromAp({ onClose, onSaved }: { onClose: () => void; onSav
     if (!carrierId) { setErr('Choose the 3PL this bill is from.'); return; }
     const rows = result.dos.filter((d) => ticked.has(d.doId)).map((d) => ({ doId: d.doId, billedSen: toSen(billed[d.doId] ?? ''), note: d.note }));
     if (rows.some((r) => r.billedSen == null)) { setErr('Enter each kept DO’s amount in RM.'); return; }
-    /* Every line is kept with where it goes; a DO line keeps only the ticked DOs. */
     const lines = result.lines.map((l) => ({
       text: l.text, date: l.date, kind: l.kind, amountSen: l.amountSen, printed: l.printed, status: l.status,
       doIds: l.doIds ?? [], assign: l.assign ?? null, serviceRef: l.serviceRef ?? null, projectId: l.projectId ?? null,

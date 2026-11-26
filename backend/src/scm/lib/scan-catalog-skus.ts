@@ -1,7 +1,3 @@
-// The SKUs the slip scan may offer the model. Same rule as the SO picker
-// (mfg-products.ts list) and validateItemCodes: a SKU under an inactive Model
-// is inactive (BUG-50), even while its own status reads ACTIVE. Offering one
-// lets the model pick a code the create then refuses on both attempts.
 
 export type ScanCatalogRow = {
   code: string;

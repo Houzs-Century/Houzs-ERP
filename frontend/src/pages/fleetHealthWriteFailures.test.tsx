@@ -1,21 +1,3 @@
-// Fleet Health — a refused write must reach the person who made it.
-//
-// WHY THIS FILE EXISTS. Six write actions in FleetHealth.tsx swallowed their
-// own rejection under the comment `/* surfaced on reload */`. That comment is
-// a claim, and it is false in the way that matters: nothing reloads. The
-// caller's `onChanged()` refetch runs only INSIDE the try, after the await, so
-// a refusal skips it — the page never refetches, never re-renders, and never
-// says anything.
-//
-// The breakdown status dropdown is the sharpest case. It is a controlled
-// `<select value={b.status}>`. React only pushes a controlled value back into
-// the DOM when a render happens; on failure nothing changes, so no render
-// happens, so the browser keeps showing the option the operator just picked.
-// The row reads "Resolved" while the server refused it and the lorry is still
-// grounded in the database.
-//
-// These tests assert the CONTRACT, not the markup: after a refused write the
-// screen says so. They fail on the pre-fix tree.
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -40,8 +22,6 @@ import {
 } from "./FleetHealth";
 
 afterEach(cleanup);
-/* Braces, not a concise arrow — a mock returned from beforeEach is treated as
-   that test's teardown and fires the mock after every test. */
 beforeEach(() => {
   apiGet.mockReset();
   apiPost.mockReset();
@@ -127,8 +107,6 @@ const component = (over: Partial<ComponentView> = {}): ComponentView => ({
   ...over,
 });
 
-/** Every refusal the fleet routes actually answer with. */
-// Shaped like the real HttpError: message already humanised, code kept in rawBody.
 const refused = () => Promise.reject(Object.assign(
   new Error("That conflicts with existing data. Please refresh and try again."),
   { isHttp: true, rawBody: JSON.stringify({ error: "illegal_transition" }) },
@@ -143,11 +121,8 @@ describe("a refused Fleet Health write is said out loud", () => {
     await userEvent.selectOptions(screen.getByRole("combobox"), "RESOLVED");
 
     expect(apiPatch).toHaveBeenCalledTimes(1);
-    // It failed, so the parent must NOT have been told anything changed …
     expect(onChanged).not.toHaveBeenCalled();
-    // … and the operator must be told, rather than left reading "Resolved".
     expect(await screen.findByText(/not allowed from the current state/i)).toBeTruthy();
-    // … and the dropdown is back on the status the server still holds.
     expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("OPEN");
   });
 

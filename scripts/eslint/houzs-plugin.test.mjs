@@ -49,6 +49,7 @@ tester.run('no-prose-comments', houzsPlugin.rules['no-prose-comments'], {
     '/* silent-write-ok: heartbeat */',
     '// @vitest-project light',
     '// @generated',
+    '// GENERATED FILE — do not edit by hand.\n// Source: data.csv\nconst a = 1; // a note the generator wrote',
     '// owner 2026-11-03: keep the blast radius\n// he approved, not the wider one\nconst a = 1;',
     '// why this reads twice\n// company-scope: the queue table has no company_id\nconst a = 1;',
   ],

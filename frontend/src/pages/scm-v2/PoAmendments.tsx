@@ -48,8 +48,6 @@ import { useStaffLookup } from '../../hooks/useStaffLookup';
 // Approved / Rejected / All — the same shared chip list as the SO amendment queue.
 const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
-/* New unique storage key — NEVER reuse another list's key. (v2: the merged
-   two-source inbox replaced the po_amendments-only grid; new column set.) */
 const PO_AMENDMENT_LIST_STORAGE_KEY = 'po-amendment-list.layout.v2';
 
 /* Opens with Requested on top across both sources (status-pill.ts owns the
@@ -57,9 +55,6 @@ const PO_AMENDMENT_LIST_STORAGE_KEY = 'po-amendment-list.layout.v2';
    this visit and is not remembered (owner 2026-09-14). */
 const OPEN_ORDER = compareAmendmentsForList<InboxRow>((a) => a.status, (a) => a.createdAt);
 
-/* `requestedBy` is a bare scm.staff uuid on both sources — resolve through the
-   shared staff roster exactly as the SO amendment / PO lists resolve their
-   people columns; search / group / sort all key off the RESOLVED name. */
 const buildColumns = (
   actorNameOf: (id: string | null | undefined, empty?: string) => string,
 ): GridColumn<InboxRow>[] => [
@@ -79,8 +74,6 @@ const buildColumns = (
     sortFn: (a, b) => a.amendmentNo.localeCompare(b.amendmentNo),
   },
   {
-    /* Which flow the row belongs to — a direct PO amendment vs the PO leg of an
-       SO amendment. Doubles as the visual cue for where double-click lands. */
     key: 'source', label: 'Source', width: 160, sortable: true, groupable: true,
     accessor: (a) => (
       <span style={{
@@ -129,7 +122,6 @@ const buildColumns = (
     searchValue: (a) => simplifiedAmendmentPill(a.status).label,
     groupValue: (a) => simplifiedAmendmentPill(a.status).label,
     exportValue: (a) => simplifiedAmendmentPill(a.status).label,
-    // Ascending = Requested -> Approved -> Rejected, not the bucket names A-Z.
     sortFn: (a, b) => amendmentBucketRank(a.status) - amendmentBucketRank(b.status),
   },
   {
@@ -168,8 +160,6 @@ export const PoAmendments = () => {
   );
   const columns = useMemo(() => buildColumns(actorNameOf), [actorNameOf]);
 
-  /* A direct amendment opens its own job card; an SO-driven row opens the SO
-     amendment job card (diff + stepper + "Revise the bound PO" gate). */
   const openRow = (a: InboxRow) => {
     navigate(amendmentJobCardPath(a));
   };
@@ -222,11 +212,8 @@ export const PoAmendments = () => {
           groupBanner={false}
           defaultSort={OPEN_ORDER}
           sortForSessionOnly
-          /* Single click: the quick view. Double-click: the job card. */
           onRowClick={(a) => setQuick({ kind: a.kind, id: a.id, label: a.amendmentNo || a.poLabel })}
           onRowDoubleClick={(a) => openRow(a)}
-          /* Closed amendments (REJECTED / withdrawn) grey out so they read as
-             dead — mirrors the SO amendment queue + the GRN cancelled treatment. */
           rowStyle={(a) => amendmentBucketOf(a.status) === 'REJECTED'
             ? { opacity: 0.6, filter: 'grayscale(0.4)' }
             : undefined}

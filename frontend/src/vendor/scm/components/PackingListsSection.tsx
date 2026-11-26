@@ -125,9 +125,6 @@ export function PackingListsSection(props: { date: string; warehouseId: string |
   );
 }
 
-/* Explains the code WITHOUT minting one: minting is a write, and opening a
-   disclosure panel must not create a public credential. The sheet itself arms
-   the token when it is printed. */
 function QrNote({ origin }: { origin: string }) {
   const runOrigin = origin ? `${origin.replace(/\/+$/, '')}/d/…` : '';
   return (

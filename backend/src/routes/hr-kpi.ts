@@ -73,9 +73,6 @@ async function readBody(c: Ctx): Promise<Record<string, unknown>> {
 }
 const roleOf = (v: unknown): KpiRole => (v === "STAFF" ? "STAFF" : "SUPERVISOR");
 
-/* The default storekeeper-supervisor template. Metric names, targets and
- * weights are operational (safe in a public repo); the payout amounts are
- * pay-sensitive, so the default carries 0 and HR fills them in the app. */
 const DEFAULT_METRICS: { name: string; target: string; weightBp: number }[] = [
   { name: "Inventory Accuracy Rate", target: "99.5%+ accuracy; zero errors", weightBp: 1500 },
   { name: "Damage Accountability & Product Integrity", target: "Zero internal breakage; solves stock hiccups without affecting trip targets", weightBp: 1500 },
@@ -129,7 +126,6 @@ const tierOut = (t: typeof hr_kpi_tiers.$inferSelect) => ({
   sortOrder: t.sort_order,
 });
 
-/* ── config ────────────────────────────────────────────────────────────── */
 
 hrKpi.get("/kpi/config", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -260,7 +256,6 @@ hrKpi.delete("/kpi/tiers/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── reviews ───────────────────────────────────────────────────────────── */
 
 const reviewOut = (r: typeof hr_kpi_reviews.$inferSelect) => ({
   id: r.id,
@@ -274,7 +269,6 @@ const reviewOut = (r: typeof hr_kpi_reviews.$inferSelect) => ({
   amountSen: r.amount_sen === null ? null : Number(r.amount_sen),
 });
 
-/** Recompute from stored metrics/tiers and the given ratings for a role. */
 async function scoreReview(db: ReturnType<typeof getDb>, companyId: number, scores: KpiRating[], role: KpiRole) {
   const [metrics, tiers] = await Promise.all([loadMetrics(db, companyId), loadTiers(db, companyId)]);
   return computeKpi(metricDefs(metrics), scores, tierDefs(tiers), role);

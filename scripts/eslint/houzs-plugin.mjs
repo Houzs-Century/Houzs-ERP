@@ -106,6 +106,8 @@ const noProseComments = {
     const { sourceCode } = context;
     return {
       Program() {
+        const first = sourceCode.getAllComments()[0];
+        if (first?.loc.start.line === 1 && /^(GENERATED FILE|@generated)\b/i.test(commentText(first))) return;
         let group = null;
         const flush = () => {
           if (group) {

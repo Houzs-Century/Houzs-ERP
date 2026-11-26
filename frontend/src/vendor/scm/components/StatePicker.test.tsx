@@ -1,17 +1,3 @@
-// Guards the 2026-08-13 clipping fix: the state list is portalled to <body> and
-// positioned from the input's rect, instead of being absolutely positioned
-// inside a field whose ancestors clip their overflow.
-//
-// WHAT THIS CANNOT PROVE. jsdom does no layout, so nothing here demonstrates
-// pixels are no longer cut off — that was checked in a browser. What IS
-// mechanically checkable is the property the clip depended on: the panel node
-// being a descendant of the clipping ancestor. A node parented to <body> with
-// position:fixed cannot be clipped by an overflow rule inside the form, so
-// asserting the portal + the fixed geometry is the honest half of the fix.
-//
-// Unmount is handled by the global afterEach(cleanup) in src/test-setup.ts.
-// This file must NOT clear document.body by hand — that races RTL's own portal
-// node removal (see SearchableSelect.test.tsx and BUG-HISTORY).
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -31,12 +17,10 @@ vi.mock('../lib/localities-queries', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/localities-queries')>();
   return {
     ...actual,
-    // The real hook is a react-query call; only `.data` / `.isLoading` are read.
     useLocalities: (() => ({ data: ROWS, isLoading: false })) as unknown as typeof actual.useLocalities,
   };
 });
 
-/** jsdom reports a zero rect for everything, so describe the input's box. */
 function stubInputRect(top: number, left = 40, width = 200, height = 28) {
   const rect = {
     top,
@@ -52,7 +36,6 @@ function stubInputRect(top: number, left = 40, width = 200, height = 28) {
   vi.spyOn(HTMLInputElement.prototype, 'getBoundingClientRect').mockImplementation(() => rect);
 }
 
-/** The form's own clipping ancestor — the shape that caused the bug. */
 function renderPicker(props: Partial<Parameters<typeof StatePicker>[0]> = {}) {
   const picked: Array<[string, string | null]> = [];
   const view = render(
@@ -88,7 +71,7 @@ describe('StatePicker dropdown placement', () => {
     fireEvent.focus(input());
 
     const list = panel();
-    expect(list.style.top).toBe('132px'); // rect.bottom (128) + 4px gap
+    expect(list.style.top).toBe('132px');
     expect(list.style.left).toBe('40px');
     expect(list.style.width).toBe('200px');
     /* 'auto', not '' — the unused edge must be WRITTEN. An absent property is
@@ -99,7 +82,7 @@ describe('StatePicker dropdown placement', () => {
   });
 
   test('flips above the input when there is not enough room below', () => {
-    stubInputRect(700); // bottom 728 of a 768px viewport
+    stubInputRect(700);
     renderPicker();
     fireEvent.focus(input());
 
@@ -109,7 +92,6 @@ describe('StatePicker dropdown placement', () => {
        class keep `top: 100%`, pinning both edges of a fixed element and
        squeezing it to 2px on the bottom edge of the window (docs/bugs/0521). */
     expect(list.style.top).toBe('auto');
-    // Anchored by its bottom edge so it grows upward: innerHeight - rect.top + gap.
     expect(list.style.bottom).toBe(`${window.innerHeight - 700 + 4}px`);
   });
 
@@ -119,8 +101,6 @@ describe('StatePicker dropdown placement', () => {
     fireEvent.focus(input());
     expect(panel().style.top).toBe('332px');
 
-    // A scroll inside the page, not on window — only a capture-phase listener
-    // sees it, and that is what keeps the list glued to the field.
     stubInputRect(120);
     fireEvent.scroll(screen.getByTestId('clipper'));
     expect(panel().style.top).toBe('152px');
@@ -165,7 +145,6 @@ describe('StatePicker behaviour survives the portal', () => {
     fireEvent.focus(input());
 
     const penang = screen.getAllByRole('option').find((o) => o.textContent === 'Penang')!;
-    // preventDefault on mousedown is what stops the blur-close beating the pick.
     const prevented = !fireEvent.mouseDown(penang);
     expect(prevented).toBe(true);
     expect(picked).toEqual([['Penang', 'Malaysia']]);
@@ -176,7 +155,6 @@ describe('StatePicker behaviour survives the portal', () => {
     stubInputRect(100);
     const { picked } = renderPicker();
     fireEvent.focus(input());
-    // Malaysia first: Johor, Kuala Lumpur, Penang, Selangor, then China, Singapore.
     fireEvent.keyDown(input(), { key: 'ArrowDown' });
     fireEvent.keyDown(input(), { key: 'Enter' });
     expect(picked).toEqual([['Kuala Lumpur', 'Malaysia']]);

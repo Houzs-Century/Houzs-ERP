@@ -9,8 +9,6 @@ const BORDER = "border-b border-border-subtle";
 interface ExpandedRowsProps<T> extends CellPlacement {
   row: T;
   expandable: NonNullable<DataTableProps<T>["expandable"]>;
-  /* The parent row's getRowClassName class, so a state the page paints on the
-     row (a muted cancelled document) covers what opens under it too. */
   rowClassName: string | undefined;
   columns: Column<T>[];
   totalColSpan: number;

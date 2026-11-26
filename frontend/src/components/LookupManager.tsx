@@ -44,52 +44,30 @@ export interface LookupRow {
 }
 
 export interface LookupExtraField {
-  /** Column key on the row (e.g. "sla_hours", "level", "rate"). */
   key: string;
-  /** Placeholder + title for the add input + each row's input. */
   addLabel: string;
   rowTitle?: string;
-  /** Default value (for placeholder when blank). */
   placeholder?: string;
-  /** Step / min for the numeric input. */
   step?: string;
   min?: number;
-  /** Width class for the input. */
   width?: string;
 }
 
 interface Props {
-  /** Full base URL, e.g. "/api/assr/lookups/issue-categories" */
   apiPath: string;
   title: string;
   description: string;
-  /** Optional single extra numeric column. Add multiple later if needed. */
   extra?: LookupExtraField;
 }
 
 export function LookupManager({ apiPath, title, description, extra }: Props) {
   const toast = useToast();
   const dialog = useDialog();
-  // `apiPath` MUST be in deps. useQuery keys on `fetcher.toString()` — the
-  // arrow function's SOURCE TEXT — and `apiPath` is closed over, so it does not
-  // appear there. Every LookupManager on the page therefore produced a
-  // byte-identical key and they all shared one cache entry: Service Settings
-  // mounts five (ServiceSettings.tsx:87,92,97,103,108) and all five rendered
-  // whichever list resolved first, under five different headings. The bug is
-  // invisible to the component — it renders exactly what it was handed.
   const q = useQuery<{ data: LookupRow[] }>("lookup-manager-options",
     () => api.get(`${apiPath}?include_inactive=1`),
     [apiPath],
   );
 
-  /* An edit here has to reach the FORMS that consume the list, not just this
-     panel. They are different cache entries on purpose: this manager keys on
-     "lookup-manager-options" (see the comment above — five managers on one page
-     collided when they shared a key), while the intake and detail forms in
-     ServiceCases key on the endpoint path itself. So q.reload() refreshes this
-     table and nothing else, and an open form kept serving the pre-edit list.
-     Invalidation ignores staleTime and forces an active refetch, which is also
-     what lets those consumers hold a long staleTime safely. */
   function refreshShared() {
     q.reload();
     void queryClient.invalidateQueries({ queryKey: ["uq", apiPath] });

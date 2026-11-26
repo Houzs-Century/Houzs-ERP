@@ -10,8 +10,5 @@ export function soReopenable(status: string | null, linkedAcDocno: string | null
   return String(status ?? '').toUpperCase() === 'CANCELLED' && String(linkedAcDocno ?? '').trim() !== '';
 }
 
-/* The status PATCH's so_cancelled_final sentence. Under 200 characters: the
-   client (authed-fetch.ts isPlain) drops a longer reason and shows a generic
-   409 instead, which is how "Reopen" came to fail with no explanation. */
 export const SO_CANCELLED_FINAL_REASON =
   'Cancelled in the ERP, so this Sales Order is final: its stock and vouchers were released. Only an order carried over from AutoCount can be reopened. Use Copy as new instead.';

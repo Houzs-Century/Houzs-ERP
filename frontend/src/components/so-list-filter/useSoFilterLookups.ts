@@ -1,10 +1,3 @@
-// The names a filter row needs: people for "Created by / Salesperson — is
-// <person>", warehouses for "Warehouse is <warehouse>", and the labels a row
-// prints for an applied uuid. People come from the COMPANY-SCOPED pickable
-// roster (the list every salesperson picker uses) and resolve through the
-// display roster so someone who has left still reads as a name. Warehouses come
-// from the company-scoped warehouse list, inactive ones included — an old order
-// can sit in a warehouse that has since been closed.
 import { useMemo } from "react";
 import { usePickableStaff } from "../../vendor/scm/lib/admin-queries";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";

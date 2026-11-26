@@ -1,23 +1,3 @@
-/* ── Server-callable core: create DRAFT GRN(s) by converting PO line items ──
-   The multi-select PO->GRN conversion — supplier bucketing, doc-no minting,
-   line mapping, over-receipt rollback, header-total recompute — factored out of
-   createGrnsFromPoItemsHandler (routes/grns.ts) so a caller with NO Hono request
-   (the OCR scan-queue consumer) can raise the SAME draft the UI raises. Mirrors
-   the convertSosToPosCore / createDraftPosFromPicks split (mfg-purchase-orders):
-   the HTTP route wires its real context through verbatim, and the headless entry
-   below builds a synthetic one from Env.
-
-   Lives in its own module (not grns.ts) purely to keep that already-large route
-   file under its size ceiling; the private helpers it reuses (recordGrnCreate /
-   resolveGrnFx / verifyGrnOverReceipt / recomputeGrnTotals) are imported back
-   from grns.ts, which is a runtime-safe cycle (every use is at call time).
-
-   DRAFT-ONLY, by construction: this never calls postGrnAndRollup, so it moves NO
-   stock and rolls up NO PO received_qty. Posting stays in the HTTP handler (the
-   UI create is auto-posted), where the zero-cost gate and its rollback also live
-   — the CREATE audit row is written there too, AFTER the post clears, so a bucket
-   the post rolls back never leaves an orphan CREATE row. Callers of this core
-   record their own CREATE at the moment their draft becomes final. */
 import { yymmFor } from '../../services/documentRefs';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Env, Variables } from '../env';
@@ -36,21 +16,13 @@ import { effectiveDelivery } from '../shared';
 
 export type GrnFromPoItemsContext = {
   req: { json(): Promise<unknown> };
-  /* supabase keeps the REAL client type so the query-builder callbacks below
-     infer (an `any` turns every `.map((r) => ...)` into an implicit-any). */
   get(key: 'supabase'): Variables['supabase'];
   get(key: 'user'): { id: string };
-  /* Multi-company (mig 0061). Undefined pre-migration / cold-start / headless,
-     so scoping + stamping no-op exactly as scopeToCompany documents. */
   get(key: 'companyId'): number | undefined;
   get(key: 'allowedCompanyIds'): number[] | undefined;
-  /** STRING or undefined, never an object — see companyDocPrefix's doc-prefix scar. */
   get(key: 'companyCode'): string | undefined;
 };
 
-/* One created DRAFT GRN. `poIds` / `poNumbers` carry EVERY source PO the bucket
-   received against (multi-PO -> one GRN), so the caller can enqueue the
-   AutoCount PO->GR transfer naming all of them. */
 export type DraftGrnFromPoItems = {
   id: string;
   grnNumber: string;
@@ -77,14 +49,6 @@ export async function createDraftGrnsFromPoItemsCore(
   const picks = body.picks ?? [];
   if (picks.length === 0) return { ok: false, status: 400, body: { error: 'picks_required' } };
 
-  /* SOURCE LOAD, SCOPED — the picked PO LINES are where the caller's ids enter,
-     so this read is what the conversion can see. Another company's poItemId
-     resolves to NO ROW and falls out at the per-pick `item_not_found` below; the
-     parent PO rides the `!inner` embed, so it cannot arrive from outside the
-     company either. That is also why the firstCrossCompanyPo refusal that used
-     to stand below the validation loop can no longer fire.
-     THE COST: `item_not_found` rather than "belongs to 2990, switch company" —
-     same trade as /:id/convert-from-so. */
   const ids = picks.map((p) => p.poItemId);
   const { data: itemsData, error: itemsErr } = await scopeToCompany(sb
     .from('purchase_order_items')
@@ -109,7 +73,6 @@ export async function createDraftGrnsFromPoItemsCore(
     divan_price_sen: number; leg_height_inches: number | null; leg_price_sen: number;
     custom_specials: unknown; line_suffix: string | null; special_order_price_sen: number;
     discount_sen: number; delivery_date: string | null;
-    // Migration 0180 — per-line revised dates for the effective GRN line date.
     supplier_delivery_date_2: string | null;
     supplier_delivery_date_3: string | null;
     supplier_delivery_date_4: string | null;
@@ -120,7 +83,6 @@ export async function createDraftGrnsFromPoItemsCore(
   const byId = new Map<string, ItemRow>();
   for (const r of itemList) byId.set(r.id, r);
 
-  // Validate every pick — qty > 0 and qty ≤ remaining.
   for (const p of picks) {
     const row = byId.get(p.poItemId);
     if (!row) return { ok: false, status: 400, body: { error: 'item_not_found', poItemId: p.poItemId } };
@@ -134,9 +96,6 @@ export async function createDraftGrnsFromPoItemsCore(
     }
   }
 
-  /* One probe for the whole batch, not one per bucket: every bucket below writes
-     to the same sink, and a refusal here leaves the entire multi-GRN receive
-     untouched rather than half-created. */
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', action: 'CREATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return { ok: false, status: 409, body: auditUnavailableBody() as unknown as Record<string, unknown> };
 
@@ -145,15 +104,8 @@ export async function createDraftGrnsFromPoItemsCore(
   // supplier's lines may span several POs; the GRN header references the first
   // PO (grns.purchase_order_id is single-FK) while each grn_item keeps its own
   // purchase_order_item_id, so received_qty still rolls up to EVERY source PO.
-  /* `poIds` alongside `poNumbers` because the AutoCount transfer names its
-     sources by ERP ROW, not by printed number: enqueueConvert resolves each
-     ref through linked_ac_docno, and `primaryPoId` alone would name one of
-     the several purchase orders this bucket actually received. */
   type Bucket = { supplierId: string; primaryPoId: string; poIds: Set<string>; poNumbers: Set<string>; warehouseId: string | null; currency: string | null; lines: Array<{ row: ItemRow; qty: number }> };
   const buckets = new Map<string, Bucket>();
-  // Also split by ship-to warehouse: posting books every line into the GRN
-  // header's warehouse, so a delivery order naming a Sarawak PO and a KL PO
-  // must not land on one GRN. The manual picker already locks one warehouse.
   for (const p of picks) {
     const row = byId.get(p.poItemId)!;
     const key = `${row.po.supplier_id}|${row.po.purchase_location_id ?? ''}`;
@@ -167,24 +119,15 @@ export async function createDraftGrnsFromPoItemsCore(
     buckets.set(key, cur);
   }
 
-  // Generate GRN numbers sequentially within this batch.
   const yymm = yymmFor();
-  // Seed from max(suffix), NOT count — count+1 is non-self-healing (a mid-month
-  // delete re-mints a surviving number → UNIQUE collision). Derive the next
-  // suffix via mintMonthlyDocNo, then counter starts one below it.
   const cp = companyDocPrefix(c);
   const firstNext = await mintMonthlyDocNo(sb, 'grns', 'grn_number', `${cp}GRN-${yymm}`);
   let counter = parseInt(firstNext.slice(`${cp}GRN-${yymm}-`.length), 10) - 1;
 
-  const receivedAt = dateOrNull(body.receivedDate) ?? todayMyt(); // "" is not undefined: nullish left it for Postgres, and a failed bucket here is dropped silently
+  const receivedAt = dateOrNull(body.receivedDate) ?? todayMyt();
   const created: DraftGrnFromPoItems[] = [];
-  // Track any bucket rolled back by the post-insert over-receipt verification so
-  // the caller can surface a 409 with the same error shape the add-line path uses.
   let overReceipt: { poItemId: string; requested: number; remaining: number } | null = null;
 
-  /* R2 money-path guard — validate EVERY bucket's currency up front, before any
-     GRN is inserted, so an un-rated foreign PO can't leave a partially-committed
-     batch. Each bucket inherits its primary PO currency with no operator rate. */
   for (const bucket of buckets.values()) {
     const rateGuard = await assertForeignRatePostable(sb, { currency: bucket.currency ?? undefined, operatorRate: undefined, docLabel: 'GRN' });
     if (!rateGuard.ok) return { ok: false, status: 422, body: rateGuard.body as unknown as Record<string, unknown> };
@@ -192,11 +135,9 @@ export async function createDraftGrnsFromPoItemsCore(
 
   for (const bucket of buckets.values()) {
     counter += 1;
-    /* Migration 0082 — GRN currency = its primary PO's; rate auto-fills from the
-       master; allocation_method defaults QTY. MYR ⇒ rate 1, no-op. */
     const bucketFx = await resolveGrnFx(sb, bucket.primaryPoId, bucket.currency ?? undefined, undefined);
     const grnPayload = {
-      company_id: activeCompanyId(c), // multi-company: stamp the active company
+      company_id: activeCompanyId(c),
       purchase_order_id: bucket.primaryPoId,
       supplier_id: bucket.supplierId,
       received_at: receivedAt,
@@ -209,21 +150,8 @@ export async function createDraftGrnsFromPoItemsCore(
         : `Received from ${[...bucket.poNumbers].join(', ')}`,
       delivery_note_ref: body.deliveryNoteRef?.trim() || null,
       created_by: user.id,
-      /* Explicit, never the column default: scm.grns.status defaults to
-         'POSTED' in production, so an insert that omits it lands a header that
-         reads "inventory received" while no IN was written and no PO
-         received_qty rolled up. The scan queue never posts, so its GRNs stayed
-         in that state and could not be cancelled (the reversal guard finds no
-         stock to take back). The HTTP convert posts right after this insert;
-         postGrnAndRollup flips DRAFT -> POSTED. */
       status: 'DRAFT',
     };
-    /* Audit (ported from 2990 b30f0bb1) — the GRN suffix is an in-memory counter
-       off a non-locking COUNT snapshot, so a CONCURRENT multi-GRN receive can
-       mint the same grn_number (UNIQUE). A collision previously hit
-       `if (hErr) continue` and SILENTLY DROPPED the bucket (its inventory-IN
-       lost, caller still got 201). Retry on 23505: re-derive the next free
-       suffix from a fresh live count + bump. */
     let h: { id: string; grn_number: string; company_id: number } | null = null;
     for (let attempt = 0; attempt < 8 && !h; attempt += 1) {
       const grnNumber = `${cp}GRN-${yymm}-${String(counter).padStart(3, '0')}`;
@@ -249,10 +177,7 @@ export async function createDraftGrnsFromPoItemsCore(
         qty_accepted: qty,
         qty_rejected: 0,
         unit_price_sen: row.unit_price_sen,
-        /* Migration 0101 — GRN line money: qty_received * unit - discount. */
-        // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
         line_total_sen: Math.max(0, (qty * row.unit_price_sen) - discountSen),
-        // PR #44 — preserve variants from PO line
         item_group: row.item_group,
         description: row.description,
         description2: row.description2,
@@ -267,8 +192,6 @@ export async function createDraftGrnsFromPoItemsCore(
         line_suffix: row.line_suffix,
         special_order_price_sen: row.special_order_price_sen ?? 0,
         discount_sen: discountSen,
-        /* Deliverable 5 — carry the PO line's delivery date into the GRN line.
-           Migration 0180 — use the EFFECTIVE (latest revised) line date. */
         delivery_date: effectiveDelivery(
           row.delivery_date,
           row.supplier_delivery_date_2,
@@ -282,12 +205,6 @@ export async function createDraftGrnsFromPoItemsCore(
       await sb.from('grns').delete().eq('id', h.id);
       continue;
     }
-    /* Post-insert over-receipt verification — the per-pick pre-check above is a
-       read-then-write race with concurrent receives. Re-sum live received per PO
-       line; if THIS bucket's GRN broke a cap, roll it back (delete its lines +
-       header) and record the over-receipt so the caller 409s. A DRAFT does not
-       yet consume PO headroom, but this GRN's own lines always count against the
-       cap, so a single over-receiving pick is still caught here. */
     const over = await verifyGrnOverReceipt(sb, h.id, bucket.lines.map(({ row }) => row.id));
     if (over) {
       await sb.from('grn_items').delete().eq('grn_id', h.id);
@@ -295,7 +212,6 @@ export async function createDraftGrnsFromPoItemsCore(
       overReceipt = over;
       continue;
     }
-    // Migration 0101 — populate header money rollups from the inserted lines.
     await recomputeGrnTotals(sb, h.id);
     created.push({
       id: h.id,
@@ -311,40 +227,22 @@ export async function createDraftGrnsFromPoItemsCore(
   return { ok: true, created, overReceipt };
 }
 
-/* ── createDraftGrnFromPoItems — headless PO->GRN for the OCR scan queue ──────
-   Runs the SAME core an operator's click runs (bucketing, doc-no minting, line
-   mapping, over-receipt rollback) with NO request: the scan job captures the
-   caller's identities at enqueue and replays them here through a synthetic
-   context, exactly as createDraftSalesOrder / createDraftPosFromPicks do.
-
-   ALWAYS DRAFT — this raises the receipt for a human to confirm; it never posts
-   stock. The CREATE audit row IS written here (draft-safe: nothing to post, so
-   no post-time rollback to outlive), so a scanned draft is not anonymous. */
 export async function createDraftGrnFromPoItems(
   env: Env,
   opts: {
-    /** scm auth-bridge identity, stamped created_by on the GRN header. */
     userId: string;
-    /** public users bigint, the audit-row WHO. Undefined → unattributed. */
     houzsUserId?: number | null;
-    /** The company the scan was raised under. Undefined → unresolved, and the
-     *  stamping / scoping no-op exactly as pre-migration. */
     companyId?: number | null;
     allowedCompanyIds?: number[] | null;
-    /** MUST be the company CODE string, never the company row — companyDocPrefix
-     *  stringifies whatever it is handed (the "[object Object]-..." scar). */
     companyCode?: string | null;
     picks: Array<{ poItemId: string; qty: number }>;
     notes?: string | null;
     receivedDate?: string | null;
     allocationMethod?: unknown;
-    /** The supplier's delivery order number, shown in the GRN's Delivery Note field. */
     deliveryNoteRef: string | null;
   },
 ): Promise<CreateDraftGrnsFromPoItemsResult> {
   const svc = getSupabaseService(env);
-  /* EXPLICIT per key, no fall-through — a fall-through is how the scan job once
-     handed a company OBJECT to companyDocPrefix and minted a bad doc number. */
   const syntheticGet = (key: string): unknown => {
     if (key === 'supabase') return svc;
     if (key === 'user') return { id: opts.userId };
@@ -357,9 +255,6 @@ export async function createDraftGrnFromPoItems(
     req: { json: async () => ({ picks: opts.picks, notes: opts.notes ?? undefined, receivedDate: opts.receivedDate ?? undefined, allocationMethod: opts.allocationMethod, deliveryNoteRef: opts.deliveryNoteRef ?? undefined }) },
     get: syntheticGet as unknown as GrnFromPoItemsContext['get'],
   });
-  /* Record CREATE per draft, at the moment it becomes final (there is no post
-     here, so this is that moment). Uses the houzsUser captured at enqueue as the
-     WHO; degrades to an unattributed row when absent, like recordPoCreate. */
   if (res.ok) {
     const actor = opts.houzsUserId != null ? ({ id: opts.houzsUserId } as unknown as Variables['houzsUser']) : undefined;
     for (const draft of res.created) {

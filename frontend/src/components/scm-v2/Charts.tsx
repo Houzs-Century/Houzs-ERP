@@ -15,7 +15,6 @@ export interface Slice { label: string; value: number; color: string | null }
 /** A donut with its legend: each slice's figure and share. */
 export function Donut({ data, format, center, size, onPick, picked }: {
   data: Slice[]; format: Fmt; center: { value: string; label: string } | null; size: number;
-  /** Click a legend row (e.g. list its cases below); omitted = a plain legend. */
   onPick?: (label: string) => void;
   picked?: string | null;
 }) {
@@ -63,7 +62,6 @@ export function Donut({ data, format, center, size, onPick, picked }: {
 
 export interface Series { name: string; color: string }
 
-/** The container's width in px, so a chart draws at real size and its text stays readable. */
 function useWidth(fallback: number) {
   const ref = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(fallback);
@@ -77,9 +75,6 @@ function useWidth(fallback: number) {
   return [ref, w] as const;
 }
 
-/** Vertical columns per period, side by side or stacked, with an optional line on top. */
-/** `valueLabels`: print each bar's figure above it (keep it off when bars are many and narrow). */
-/** A short money label for an axis tick: 1.2M, 345K, 900. */
 const tickMoney = (v: number): string => {
   const a = Math.abs(v);
   const t = a >= 1e6 ? `${(a / 1e6).toFixed(a >= 1e7 ? 0 : 1)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}K` : a.toFixed(0);
@@ -100,7 +95,6 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
    *  usual actual-vs-forecast convention (owner 2026-11-19). Null = all actual. */
   forecast: { share: readonly number[] } | null;
 }) {
-  /* Several lines share one scale: they are meant to be the same kind of figure. */
   const lines: readonly ChartLine[] = line == null ? [] : Array.isArray(line) ? line : [line as ChartLine];
   const first = lines.at(0) ?? null;
   const [ref, W] = useWidth(420);
@@ -181,7 +175,6 @@ export function Columns({ labels, series, values, format, stacked, line, highlig
         {lines.map((ln) => {
           const pt = (v: number, i: number) => `${padL + i * slot + slot / 2},${ly(v)}`;
           const isFc = (i: number) => !!forecast && (forecast.share[i] ?? 0) > 0;
-          /* Solid between two actual points, dashed into and through a forecast one. */
           const segs = ln.values.flatMap((v, i) => {
             const prev = ln.values[i - 1];
             return i > 0 && v != null && prev != null ? [{ d: `${pt(prev, i - 1)} ${pt(v, i)}`, dashed: isFc(i) || isFc(i - 1) }] : [];

@@ -68,8 +68,6 @@ describe("an other debtor's credit note", () => {
 });
 
 describe('the credit note sheet', () => {
-  /* The design's A4 family (batch 5 step 10): CUSTOMER beside NOTE DETAILS, the
-     lines without our accounts, TOTAL CREDIT, the words, Issued by. */
   test('a customer credit note names the customer, the order, the deposit invoice it closes and the final invoice', async () => {
     const draws = await render();
     expect(has(draws, 'CREDIT NOTE')).toBe(true);
@@ -83,7 +81,6 @@ describe('the credit note sheet', () => {
     expect(has(draws, ': 2990-SI-2609-001')).toBe(true);
     expect(has(draws, ': Posted')).toBe(true);
     expect(has(draws, 'Deposit invoice 2990-DI-2609-001 applied to 2990-SI-2609-001')).toBe(true);
-    /* Our accounts stay off the customer's paper. */
     expect(has(draws, '509-0000')).toBe(false);
     expect(has(draws, 'TOTAL CREDIT')).toBe(true);
     expect(has(draws, 'RINGGIT (IN WORDS)')).toBe(true);

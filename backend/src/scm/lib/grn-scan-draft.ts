@@ -1,9 +1,3 @@
-// ---------------------------------------------------------------------------
-// grn-scan-draft — from a delivery order as read (GrnExtracted) to a DRAFT GRN
-// or a needs-review note. Shared by the scan pipeline (routes/scan-gr.ts) and the
-// "teach codes" re-run, which matches the stored read again without a new OCR
-// call. NEVER posts stock; NEVER creates a standalone GRN.
-// ---------------------------------------------------------------------------
 
 import { todayMyt } from './my-time';
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
@@ -32,8 +26,6 @@ export const toScanned = (l: GrnExtracted['lines'][number]): ScannedGrnLine => (
   rack: l.rack,
 });
 
-// A plain-language note for a NEEDS-REVIEW job (no GRN created): tell the
-// operator what we saw, line by line, so they can receive from the PO by hand.
 export function buildNeedsReviewNote(parsed: GrnExtracted, match: GrnMatchResult, allPos: PoStatusRef[], scanSupplierId: string | null): string {
   const head = buildNeedsReviewHead(parsed, match, allPos, scanSupplierId);
   if (match.qtyMismatch) return `${head} What we read: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`;
@@ -60,7 +52,6 @@ function buildNeedsReviewHead(parsed: GrnExtracted, match: GrnMatchResult, allPo
   if (poMatched) {
     return `We read ${po}${doRef} but could not line its items up to open PO ${poMatched} automatically. Please open that PO and receive against it.`;
   }
-  // The header named a PO of ours that cannot take it (DGSN26002263: HC-PO-2610-091 already received).
   const why = parsed.poNo ? printedPoWhy(parsed.poNo, allPos, scanSupplierId) : null;
   if (why) return `We read ${po}${doRef}, but ${why}, so no receipt was created. Please check the PO before receiving by hand.`;
   return `We could not match ${po}${doRef} to an open purchase order automatically. Please open the PO and create the goods receipt from it.`;
@@ -90,8 +81,6 @@ export type ScanMatchContext = {
   match: GrnMatchResult;
 };
 
-// Load everything the matcher needs for this company and run it. Codes taught
-// for the resolved supplier (scm.supplier_scan_codes) join the bindings.
 export async function matchScan(svc: SupabaseClient, companyId: number | null, parsed: GrnExtracted): Promise<ScanMatchContext> {
   const [openLines, bindings, suppliers, allPos, companies] = await Promise.all([
     loadOpenPoLines(svc, companyId),
@@ -118,12 +107,9 @@ export async function draftFromScan(
 ): Promise<ScanDraftOutcome> {
   const { match, allPos, supplierId, otherCompany } = await matchScan(svc, job.companyId, parsed);
   if (match.picks.length === 0) {
-    // No confident PO line — never fabricate a standalone GRN or a wrong link.
     return { kind: 'needs_review', note: otherCompany ?? buildNeedsReviewNote(parsed, match, allPos, supplierId) };
   }
 
-  // Resolve the company doc prefix from the captured company (headless — no
-  // request context). companyCodeById reads public.companies.
   const companyCode = await companyCodeById(svc, job.companyId);
   const doRef = parsed.doNo ? `D.O. ${parsed.doNo}` : 'scanned delivery order';
   const weakNote = match.weakMatch
@@ -137,9 +123,6 @@ export async function draftFromScan(
   const soNote = sets > 0
     ? `Check the pieces: ${sets} delivery order ${sets === 1 ? 'row was' : 'rows were'} read as a set and received as every piece of ${[...new Set(match.soMatches.map((m) => m.soDocNo))].join(', ')} on the PO.`
     : null;
-  // Scanned lines the operator must add by hand, by name, so the draft itself
-  // says what is missing. A draft built from the whole PO lists what the
-  // delivery order says instead, since every PO line is already on it.
   const unmatchedLines = describeUnmatchedScanLines(match.unmatched, allPos, supplierId);
   const unmatchedNote = match.poFallback
     ? `Check every line: no scanned line matched ${match.poFallback} by item, so this draft lists everything still owed on ${match.poFallback.includes(',') ? 'those POs' : 'that PO'} at the PO quantity. Change it to what was delivered before posting. The delivery order lists: ${listScanLines(parsed.lines.map(toScanned).filter((l) => l.qty > 0))}`
@@ -156,10 +139,6 @@ export async function draftFromScan(
   });
 
   if (!res.ok) {
-    // The convert refused (e.g. a concurrent receive pushed a line over its
-    // cap, or the PO is no longer receivable). The delivery order is still
-    // valid — land it needs-review, not a red failure, so the operator can
-    // receive from the PO by hand.
     const reason =
       typeof res.body.reason === 'string' ? res.body.reason
       : typeof res.body.error === 'string' ? String(res.body.error)
@@ -168,7 +147,6 @@ export async function draftFromScan(
     return { kind: 'needs_review', note: `We read ${doRef} but ${reason}. Please open the PO and create the goods receipt from it.` };
   }
   if (res.created.length === 0) {
-    // Defensive — ok:true with nothing created (every bucket dropped).
     return { kind: 'needs_review', note: `We read ${doRef} but could not create the receipt automatically. Please create it from the PO.` };
   }
   const rackNote = scanRackNote(await applyScanRacks(svc, job.companyId, res.created.map((g) => g.id), match.rackQty));
@@ -191,8 +169,6 @@ export function splitNote(grnNumbers: string[]): string | null {
     : null;
 }
 
-// The rack outcome is known only once the drafts exist (their warehouse picks
-// the rack list), so it joins the note afterwards. Best-effort.
 async function appendGrnNote(svc: SupabaseClient, companyId: number | null, grnIds: string[], note: string): Promise<void> {
   const { data, error } = await scopeToCompanyIdOrOpen(svc.from('grns').select('id, notes').in('id', grnIds), companyId);
   if (error) { console.error('[scan-gr racks] note read failed:', error.message); return; }

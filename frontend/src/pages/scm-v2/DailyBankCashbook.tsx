@@ -299,7 +299,6 @@ export function DailyBankCashbook({ date, today }: { date: string; today: string
   const open = openOn(accounts, date);
   const canEdit = day?.canWrite === true;
   const total = (day?.receipts ?? []).filter((r) => r.counted).reduce((n, r) => n + r.amountSen, 0);
-  /* A receipt typed with a note, before the table: listed on its own, changed there. */
   const noted = (day?.receipts ?? []).filter((r) => r.method == null);
   const cells = (day?.receipts ?? []).filter((r) => r.method != null);
   const future = date > today;

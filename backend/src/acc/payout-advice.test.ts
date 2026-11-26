@@ -10,8 +10,6 @@
 import { describe, it, expect } from 'vitest';
 import { statusOfPayout, type ReportForPayout } from './payout-advice';
 
-/* His real figures: the advice of 10 Aug pays for three trading days, and the
-   09 Aug day is equal to the sen to that day's CSV. */
 const ADVICE = {
   netSen: 18895586,
   batches: [
@@ -42,7 +40,6 @@ describe('an advice against the reports it pays for', () => {
     expect(s.blockedBy).toBeNull();
   });
 
-  /* The state he is actually in: he has the 09 Aug file and not the other two. */
   it('names the days whose report has not been uploaded', () => {
     const s = statusOfPayout(ADVICE, [report({ id: 3 })]);
     expect(s.readyToReceive).toBe(false);
@@ -51,7 +48,6 @@ describe('an advice against the reports it pays for', () => {
     expect(s.days.filter((d) => d.state === 'REPORT_MISSING')).toHaveLength(2);
   });
 
-  /* A difference is the FINDING — both numbers, named to the file. */
   it('names both figures when a day disagrees', () => {
     const reports = all();
     reports[2] = report({ id: 3, payableSen: 9900000 });
@@ -62,8 +58,6 @@ describe('an advice against the reports it pays for', () => {
     expect(s.blockedBy).toMatch(/difference of -RM 148\.27|difference of RM -148\.27/);
   });
 
-  /* A report whose lines are not all decided has fees not yet in the books, so
-     its net is not yet the truth — the same gate the bank screen already keeps. */
   it('will not call a payout ready while a report still has lines to decide', () => {
     const reports = all();
     reports[0] = report({ id: 1, fileName: 'csv-0807.csv', periodFrom: '2026-08-07', periodTo: '2026-08-07', payableSen: 3753766, openLines: 4 });
@@ -73,8 +67,6 @@ describe('an advice against the reports it pays for', () => {
     expect(s.blockedBy).toMatch(/still have lines to decide/);
   });
 
-  /* One thing at a time, in the order they have to be dealt with: a missing
-     report cannot be compared, so it is named before a difference. */
   it('names the missing report first when both are wrong', () => {
     const s = statusOfPayout(ADVICE, [report({ id: 3, payableSen: 9900000 })]);
     expect(s.blockedBy).toMatch(/no merchant report uploaded yet/);

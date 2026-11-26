@@ -10,22 +10,6 @@ import {
   type CalendarSearchRow,
 } from "../services/calendarSearch";
 
-/**
- * GET /api/projects/calendar/search?q=&brand=&status=&organizer=
- *
- * Every calendar event matching the calendar's search + filters, across ALL
- * dates, so the calendar can jump to the previous / next match and list them
- * (the month feed only returns the visible window).
- *
- * Same visibility as the month feed: projects.calendar page access, the active
- * company predicate, and the shared crew scoping (routes/lib/calendar-visibility).
- * Capped at CALENDAR_SEARCH_CAP rows; `total` and `truncated` tell the page so
- * it can say "showing first N" instead of cutting silently.
- *
- * Own router, mounted at the exact path BEFORE the projects router in index.ts
- * (whose `/:id` routes would otherwise see "calendar"), and kept out of the big
- * routes/projects.ts, which is at its size ceiling.
- */
 const app = new Hono<{ Bindings: Env }>();
 
 app.get("/", requirePageAccess("projects.calendar"), async (c) => {
@@ -41,8 +25,6 @@ app.get("/", requirePageAccess("projects.calendar"), async (c) => {
 
   const { scopeWhere, scopeBinds } = calendarCrewScope(c);
   const coSql = activeCompanySql(c, "p.company_id");
-  // Text matching (incl. venue initials, "sccc") runs in JS on the narrow column
-  // set below; brand / status / organizer are pushed into SQL to keep it small.
   const where: string[] = [];
   const binds: unknown[] = [];
   if (filters.brand) {

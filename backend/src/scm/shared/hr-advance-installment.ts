@@ -12,7 +12,6 @@
 // owner asked for ("split into N months" and "fixed RM/month") collapse to the
 // single installmentSen the caller computes, so this one function serves both.
 
-/** Months since the epoch, so two YYYY-MM strings subtract to a month count. */
 function monthIndex(ym: string): number {
   const [year, month] = ym.split("-").map(Number);
   return year * 12 + (month - 1);

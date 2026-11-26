@@ -27,8 +27,6 @@ import {
 const backdrop: CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.28)',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
-  // 3001 — above every page modal (~1000), matching the other system dialogs
-  // so a prompt raised from inside a modal isn't hidden behind it. 2026-06-20.
   zIndex: 3001, padding: 'var(--space-4)',
 };
 const card: CSSProperties = {
@@ -69,9 +67,7 @@ export type PromptOpts = {
   placeholder?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** Return an error string to block Confirm (kept open), or null when valid. */
   validate?: (value: string) => string | null;
-  /** Render a textarea instead of a single-line input. */
   multiline?: boolean;
 };
 
@@ -130,9 +126,6 @@ type PromptFn = (opts: PromptOpts) => Promise<string | null>;
 
 const PromptContext = createContext<PromptFn | null>(null);
 
-/* Mount once at the app root. Holds the live prompt state, renders the modal,
-   and hands every descendant a prompt() through context. The `key` on
-   PromptDialog resets its internal field state for each new prompt. */
 export function PromptProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<(PromptOpts & { id: number; resolve: (v: string | null) => void }) | null>(null);
   const prompt = useCallback<PromptFn>(
@@ -164,7 +157,6 @@ export function PromptProvider({ children }: { children: ReactNode }) {
   );
 }
 
-/* Ask for a value in-app: `const v = await prompt({…}); if (v == null) return;` */
 export function usePrompt(): PromptFn {
   const prompt = useContext(PromptContext);
   if (!prompt) throw new Error('usePrompt must be used within <PromptProvider>');

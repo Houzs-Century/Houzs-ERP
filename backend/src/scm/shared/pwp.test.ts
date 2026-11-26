@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolvePwp, type PwpRule, type PwpLineInput } from './pwp';
 
-// Standard rule: buy an eligible Mattress model → redeem an eligible Bed Frame
-// model at PWP price, 1 per mattress unit.
 const RULE: PwpRule = {
   triggerCategory: 'MATTRESS',
   triggerEligibleModelIds: ['m-ok'],
@@ -13,7 +11,6 @@ const RULE: PwpRule = {
 
 type LineOpts = {
   qty?: number; name?: string; code?: string; pwp?: boolean; isReward?: boolean;
-  // 0182 (Houzs 0051) refinement inputs — mattress/bedframe size, sofa build modules.
   sizeCode?: string | null; builtCompartments?: string[];
 };
 const line = (idx: number, category: string, modelId: string | null, o: LineOpts = {}): PwpLineInput => ({
@@ -55,7 +52,7 @@ describe('resolvePwp', () => {
       line(5, 'BEDFRAME', 'b-ok', { pwp: true }),
       line(6, 'BEDFRAME', 'b-ok', { pwp: true }),
     ];
-    expect(grantedIdx([RULE], lines)).toEqual([3, 4, 5]); // idx 6 dropped
+    expect(grantedIdx([RULE], lines)).toEqual([3, 4, 5]);
   });
 
   it('no qualifying trigger → no grants', () => {
@@ -65,7 +62,7 @@ describe('resolvePwp', () => {
 
   it('trigger model NOT in the eligible list does not unlock', () => {
     const lines = [
-      line(0, 'MATTRESS', 'm-other'), // not 'm-ok'
+      line(0, 'MATTRESS', 'm-other'),
       line(1, 'BEDFRAME', 'b-ok', { pwp: true }),
     ];
     expect(grantedIdx([RULE], lines)).toEqual([]);
@@ -74,7 +71,7 @@ describe('resolvePwp', () => {
   it('reward model NOT in the eligible list is not granted', () => {
     const lines = [
       line(0, 'MATTRESS', 'm-ok'),
-      line(1, 'BEDFRAME', 'b-other', { pwp: true }), // not 'b-ok'
+      line(1, 'BEDFRAME', 'b-other', { pwp: true }),
     ];
     expect(grantedIdx([RULE], lines)).toEqual([]);
   });
@@ -95,7 +92,7 @@ describe('resolvePwp', () => {
       line(2, 'BEDFRAME', 'b-ok', { pwp: true }),
       line(3, 'BEDFRAME', 'b-ok', { pwp: true }),
     ];
-    expect(grantedIdx([rule], lines)).toEqual([1, 2]); // 3rd over allowance
+    expect(grantedIdx([rule], lines)).toEqual([1, 2]);
   });
 
   it('empty eligible lists mean the whole category qualifies', () => {
@@ -120,7 +117,6 @@ describe('resolvePwp', () => {
   });
 
   it('a multi-qty reward line is all-or-nothing against the allowance', () => {
-    // allowance 3; line A qty2 (granted, consumes 2), line B qty2 (needs 2, only 1 left → dropped)
     const lines = [
       line(0, 'MATTRESS', 'm-ok', { qty: 3 }),
       line(1, 'BEDFRAME', 'b-ok', { pwp: true, qty: 2 }),
@@ -131,15 +127,13 @@ describe('resolvePwp', () => {
 
   it('a legacy line with null modelId never matches a non-empty model list', () => {
     const lines = [
-      line(0, 'MATTRESS', null), // null can't be in ['m-ok']
+      line(0, 'MATTRESS', null),
       line(1, 'BEDFRAME', 'b-ok', { pwp: true }),
     ];
     expect(grantedIdx([RULE], lines)).toEqual([]);
   });
 });
 
-// Chairman 2026-06-02 — MULTIPLE differentiated rules for the SAME category pair
-// (MATTRESS→BEDFRAME): "2990 AKKA unlocks Aria" + "2990 KETTA unlocks Orient".
 describe('resolvePwp — multiple differentiated rules', () => {
   const RULE_A: PwpRule = { triggerCategory: 'MATTRESS', triggerEligibleModelIds: ['akka'], rewardCategory: 'BEDFRAME', eligibleRewardModelIds: ['aria'], qtyPerTrigger: 1 };
   const RULE_B: PwpRule = { triggerCategory: 'MATTRESS', triggerEligibleModelIds: ['ketta'], rewardCategory: 'BEDFRAME', eligibleRewardModelIds: ['orient'], qtyPerTrigger: 1 };
@@ -155,7 +149,6 @@ describe('resolvePwp — multiple differentiated rules', () => {
   });
 
   it('a reward is NOT granted when only the OTHER rule’s trigger was bought', () => {
-    // Bought AKKA (rule A trigger) but want Orient (rule B reward) → no.
     const lines = [
       line(0, 'MATTRESS', 'akka'),
       line(1, 'BEDFRAME', 'orient', { pwp: true }),
@@ -166,8 +159,8 @@ describe('resolvePwp — multiple differentiated rules', () => {
   it('the matching reward IS granted; the mismatched one is not', () => {
     const lines = [
       line(0, 'MATTRESS', 'akka'),
-      line(1, 'BEDFRAME', 'aria', { pwp: true }),   // rule A → granted
-      line(2, 'BEDFRAME', 'orient', { pwp: true }),  // rule B trigger absent → not granted
+      line(1, 'BEDFRAME', 'aria', { pwp: true }),
+      line(2, 'BEDFRAME', 'orient', { pwp: true }),
     ];
     expect(grantedIdx([RULE_A, RULE_B], lines)).toEqual([1]);
   });
@@ -184,9 +177,6 @@ describe('resolvePwp — multiple differentiated rules', () => {
 });
 
 
-/* Promo one-way (Loo 2026-06-06) — a rule whose trigger set == reward set
-   ("buy ARRUS, get an ARRUS free") must not let the free unit fund the next
-   free unit, while pwp rules still chain off reward lines. */
 describe('resolvePwp - promo one-way', () => {
   const PROMO: PwpRule = {
     triggerCategory: 'MATTRESS',
@@ -207,16 +197,16 @@ describe('resolvePwp - promo one-way', () => {
 
   it('a full-price ARRUS funds ONE free ARRUS (the normal sale)', () => {
     const lines = [
-      line(0, 'MATTRESS', 'arrus'),                          // paid trigger
-      line(1, 'MATTRESS', 'arrus', { pwp: true }),           // wants to be free
+      line(0, 'MATTRESS', 'arrus'),
+      line(1, 'MATTRESS', 'arrus', { pwp: true }),
     ];
     expect(grantedIdx([PROMO], lines)).toEqual([1]);
   });
 
   it('a reward ARRUS line creates NO promo slots - free cannot fund free', () => {
     const lines = [
-      line(0, 'MATTRESS', 'arrus', { isReward: true }),      // the FREE one from an earlier grant
-      line(1, 'MATTRESS', 'arrus', { pwp: true }),           // tries to ride on it
+      line(0, 'MATTRESS', 'arrus', { isReward: true }),
+      line(1, 'MATTRESS', 'arrus', { pwp: true }),
     ];
     expect(grantedIdx([PROMO], lines)).toEqual([]);
   });
@@ -228,8 +218,8 @@ describe('resolvePwp - promo one-way', () => {
 
   it('the reward ARRUS still triggers a pwp rule (chains stay allowed)', () => {
     const lines = [
-      line(0, 'MATTRESS', 'arrus', { isReward: true }),      // free mattress
-      line(1, 'BEDFRAME', 'b-ok', { pwp: true }),            // bedframe at pwp price
+      line(0, 'MATTRESS', 'arrus', { isReward: true }),
+      line(1, 'BEDFRAME', 'b-ok', { pwp: true }),
     ];
     expect(grantedIdx([PWP_BED], lines)).toEqual([1]);
   });
@@ -244,12 +234,6 @@ describe('resolvePwp - promo one-way', () => {
   });
 });
 
-/* Variant / compartment refinement (2990 migration 0182 · Houzs 0051). The
-   cutover port dropped these columns AND the gate from this module, so a refined
-   rule silently degraded to "any variant of the Model" here while the server's
-   mint/claim gates (pwp-codes.ts, mfg-sales-orders.ts) still enforced them —
-   exactly the client/server divergence the honest-pricing drift check punishes.
-   Restored 2026-07-27; these cases pin it. */
 describe('resolvePwp — 0182 refinement', () => {
   const KING_ONLY: PwpRule = { ...RULE, triggerSizeCodes: ['KING'] };
 
@@ -261,7 +245,7 @@ describe('resolvePwp — 0182 refinement', () => {
     expect(grantedIdx([KING_ONLY], queen)).toEqual([]);
 
     const king = [
-      line(0, 'MATTRESS', 'm-ok', { sizeCode: 'king' }),   // case-insensitive
+      line(0, 'MATTRESS', 'm-ok', { sizeCode: 'king' }),
       line(1, 'BEDFRAME', 'b-ok', { pwp: true }),
     ];
     expect(grantedIdx([KING_ONLY], king)).toEqual([1]);

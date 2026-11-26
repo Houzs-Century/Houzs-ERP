@@ -1,8 +1,3 @@
-// The zone map: outstation zones laid out as the peninsula sits, the Klang
-// Valley zones grouped, the East Malaysia zones (3PL only) and the postcodes no
-// rule covers, plus a side panel listing the selected zone's postcode ranges and
-// its places (the towns 3PL rate cards price there). Finding a postcode selects
-// its zone.
 import { useState, type CSSProperties } from 'react';
 import { Search } from 'lucide-react';
 import { cn } from '../../../lib/utils';
@@ -49,7 +44,6 @@ export function ZoneMapCard({ rows, map, usingDefault, byPrefix, selected, onSel
   const isNone = selected === NO_ZONE;
   const zone = isNone ? null : selected;
 
-  /* Side panel content for the selection. */
   const mine = (p: number) => (isNone ? byPrefix[p] === null : byPrefix[p] === zone);
   const panelRows = (zone ? rows.filter((r) => r.zone === zone) : []).slice().sort((a, b) => a.prefixStart - b.prefixStart);
   const builtIn = usingDefault && zone ? map.filter((m) => m.zone === zone) : [];

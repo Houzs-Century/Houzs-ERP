@@ -92,7 +92,6 @@
 // second implementation of it.
 // ----------------------------------------------------------------------------
 
-/** Company whose house-brand labels are NOT the 2990 ones. */
 const HOUZS = 'HOUZS';
 
 /**
@@ -102,28 +101,11 @@ const HOUZS = 'HOUZS';
  * this module replaces was written.
  */
 export const CATEGORY_SOURCES = {
-  /** public/scm.mfg_product_category enum members (schema + migrations 0258-0265). */
   productEnum: ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE',
                 'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET', 'FABRIC_ACCESSORY'] as const,
-  /** normCategory (backend/src/scm/lib/so-readiness.ts:66) output buckets — what
-   *  the SO list, Delivery Planning and the reports actually hand us. */
   normBuckets: ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS'] as const,
 } as const;
 
-/**
- * Category text -> the noun we are willing to print for it.
- *
- * SUBSTRING matching, in this order, because the input is not always
- * normalised: mfg_sales_order_items.item_group is free TEXT (schema:
- * "item_group" text NOT NULL) and reaches us as things like
- * "BEDFRAME - DIVAN". BEDFRAME is tested FIRST and that ordering is the rule,
- * not an accident — "BEDFRAME + MATTRESS SET" must read as a bedframe
- * (so-display-branding.test.ts pins it).
- *
- * ACCESSOR (no Y) matches accessory AND accessories, as normCategory does.
- * BEDLINE is checked before... nothing that could swallow it, but it is listed
- * after the mains so a hypothetical "BEDFRAME BEDLINES" reads as the bedframe.
- */
 const CATEGORY_NOUNS: ReadonlyArray<readonly [needle: string, noun: string]> = [
   ['BEDFRAME', 'Bedframe'],
   ['SOFA', 'Sofa'],
@@ -136,13 +118,8 @@ const CATEGORY_NOUNS: ReadonlyArray<readonly [needle: string, noun: string]> = [
   ['CARPET', 'Carpet'],
 ];
 
-/** The bucket the branded rules below switch on. Anything unrecognised is
- *  OTHER — which is a routing decision, NOT a licence to print nothing. */
 type Bucket = 'SOFA' | 'BEDFRAME' | 'MATTRESS' | 'OTHER';
 
-/** Title Case for a category we have no hand-written noun for, so a category
- *  added to the enum tomorrow still prints something true about itself
- *  ("CARPET" -> "Carpet", "BATH MAT" -> "Bath Mat") instead of "". */
 function titleCase(raw: string): string {
   return raw
     .toLowerCase()
@@ -175,15 +152,9 @@ export function brandingCategoryNoun(category: string | null | undefined): { buc
       return { bucket, noun };
     }
   }
-  /* OTHERS is normCategory's own name for "unrecognised" — printing "Others"
-     is honest; printing the raw token would leak an internal bucket name. */
   return { bucket: 'OTHER', noun: upper === 'OTHERS' ? 'Other' : titleCase(raw) };
 }
 
-/** The house sofa brand per company. Each company sells exactly one, so these
- *  are the whole SOFA rule — see THE SPEC above. Not a lookup that grows: a
- *  second sofa brand at either company makes the equation false, and the fix
- *  then is to read the SKU again, not to add a row here. */
 const SOFA_BRAND_HOUZS = 'ZANOTTI';
 const SOFA_BRAND_2990 = '2990s Sofa';
 
@@ -211,8 +182,6 @@ export function houseSofaBrandName(companyCode?: string | null): string | null {
   if (!code) return null;
   if (code === HOUZS) return SOFA_BRAND_HOUZS;
   if (code === '2990') return SOFA_BRAND_2990;
-  /* A THIRD company has no house sofa brand recorded, and inventing one is how
-     this defect happened in the first place. Unknown -> null. */
   return null;
 }
 
@@ -234,16 +203,6 @@ export const NO_ITEMS_LABEL = 'No Items';
  *                  unrecognised keeps the 2990 reading, which is what every
  *                  caller had before this argument existed.
  */
-/* The book's ways of writing "no brand". AutoCount's branding field is free
-   text and the floor types a placeholder rather than leaving it empty — 170
-   imported company-1 orders carry the literal "NONE" (measured 2026-08-31).
-   The import copies it faithfully (copy-never-compute), so it is the READERS
-   that must know a placeholder is not a brand: a header carrying one must not
-   out-rank the derived label, or a TRION bedframe renders "NONE" where the
-   catalog plainly says BEDFRAME (owner, HC-SO-013402).
-
-   Deliberately a SMALL closed list of spellings, not a heuristic: a brand this
-   business actually uses must never be swallowed ("Nonesuch" is a brand). */
 export const PLACEHOLDER_BRAND_TEXTS: ReadonlySet<string> = new Set(['NONE', 'N/A', 'NA', 'N.A.', 'NIL', 'TBC', 'KIV', '-', '--', '—']);
 
 export function isPlaceholderBrandText(text: string | null | undefined): boolean {
@@ -263,15 +222,6 @@ export function brandingLabel(
   const brand = (branding ?? '').trim();
 
   if (bucket === 'SOFA') {
-    /* The line's brand text is deliberately IGNORED for BOTH companies now.
-       2990's side has been pinned this way since 2026-05-28; Houzs joined it on
-       2026-08-18 («houzs sofa=zanotti»), which also retires the "Sofa" label
-       that the 11 unbranded 5526 SKUs used to produce.
-
-       `?? SOFA_BRAND_2990` keeps this function's own contract EXACTLY as it was
-       — an omitted or unrecognised company still reads as 2990, because a
-       label may never be blank. It is the letterhead caller, not this one, that
-       needs the null; see houseSofaBrandName above for why the two differ. */
     return houseSofaBrandName(companyCode) ?? SOFA_BRAND_2990;
   }
 
@@ -284,17 +234,8 @@ export function brandingLabel(
   }
 
   if (bucket === 'MATTRESS') {
-    /* IDENTICAL for both companies (owner: «both company also»): whatever the
-       SKU says — "2990s Mattress", "Happi.S Mattress", "AKEMI", "DUNLOPILLO" —
-       and the noun when it says nothing. `brand` is the SKU's value here, not
-       the line's; see the caller contract in THE SPEC above. Nothing is
-       synthesised: an unbranded mattress reads "Mattress" rather than being
-       claimed for a house brand. */
     return brand || noun;
   }
 
-  /* ACCESSORY / SERVICE / DINING / BEDLINES / DIFFUSER / CARPET / OTHERS, both
-     companies. The owner's point in one line: a service order still says
-     "Service". The category noun is the truthful thing we know. */
   return noun;
 }

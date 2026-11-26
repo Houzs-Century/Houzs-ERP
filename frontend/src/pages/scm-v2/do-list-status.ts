@@ -44,22 +44,17 @@ const STATUS_TONE: Record<
 > = {
   draft:       { tone: "warning", label: "Draft",       bucket: "draft" },
   loaded:      { tone: "warning", label: "Confirmed",   bucket: "loaded" },
-  // "warning" (amber) doubles as the "in-transit" tone — Badge only ships
-  // 4 tones (success/warning/error/neutral); the label carries the nuance.
   dispatched:  { tone: "warning", label: "Loaded",      bucket: "dispatched" },
   in_transit:  { tone: "warning", label: "In transit",  bucket: "in_transit" },
   // SIGNED: merged into DELIVERED (owner, 2026-08-21). No tab of its own.
   signed:      { tone: "success", label: "Delivered",   bucket: "delivered" },
   delivered:   { tone: "success", label: "Delivered",   bucket: "delivered" },
   invoiced:    { tone: "success", label: "Invoiced",    bucket: "invoiced" },
-  // Not a do_status member; kept so such a row lands in a tab, not a raw slug.
   completed:   { tone: "success", label: "Completed",   bucket: "delivered" },
   cancelled:   { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
   cancel:      { tone: "error",   label: "Cancelled",   bucket: "cancelled" },
 };
 
-/* Nullable for the same reason its Sales Order twin is: the column it reads is
-   `status?: string | null`, and the `|| ""` inside is load-bearing. */
 export const statusFor = (
   s: string | null | undefined,
 ): { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab } =>
@@ -75,28 +70,11 @@ export const statusFor = (
     bucket: "draft",
   };
 
-/* May this delivery order still be cancelled, as far as a LIST ROW can tell?
-   The two statuses `PATCH /:id/status` will never accept a cancel on: CANCELLED
-   is refused outright (`do_cancelled_final`) and INVOICED is the billed end of
-   the line.
-
-   THIS IS ONLY HALF THE ROUTE'S ANSWER, and the half a row can see. The other
-   refusal is `doHasDownstream` (backend/src/scm/lib/downstream-lock.ts), which
-   blocks a cancel once a live Sales Invoice or Delivery Return points at the
-   DO — a server-side fact no list row carries. That one reaches the operator as
-   the mutation's error notice instead. See row-menus.ts.
-
-   Null-safe by SIGNATURE, like the shared do-shipped-states predicates: the
-   list's rows are a hand-written cast over an `any` payload, so a missing
-   column must never reach `.toUpperCase()`. */
 export const doCancellableStatus = (status: string | null | undefined): boolean => {
   const s = String(status ?? "").toUpperCase();
   return s !== "CANCELLED" && s !== "INVOICED";
 };
 
-/* The Revenue card's sum over the rows on screen (gap review G16): a cancelled
-   delivery is no revenue, so it counts only on the Cancelled tab, where the
-   operator asked for exactly those. */
 export const doRevenueSen = (
   rows: ReadonlyArray<{ status: string | null; local_total_sen?: number | null }>,
   tab: StatusTab,

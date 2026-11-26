@@ -45,46 +45,46 @@ describe('postcodePrefix', () => {
 
 describe('zoneForPostcode — default Malaysian map', () => {
   const cases: Array<[string, string]> = [
-    ['10450', 'PENANG'],   // Georgetown
-    ['14000', 'PENANG'],   // Bukit Mertajam (top of range)
-    ['05000', 'KEDAH'],    // Alor Setar
-    ['09000', 'KEDAH'],    // Kulim (top of range)
-    ['30000', 'PERAK'],    // Ipoh
-    ['36000', 'PERAK'],    // Teluk Intan (top of range)
-    ['40000', 'PJ'],       // Shah Alam (Petaling district)
+    ['10450', 'PENANG'],
+    ['14000', 'PENANG'],
+    ['05000', 'KEDAH'],
+    ['09000', 'KEDAH'],
+    ['30000', 'PERAK'],
+    ['36000', 'PERAK'],
+    ['40000', 'PJ'],
     ['41000', 'KLANG'],
     ['42000', 'KLANG'],
     ['43000', 'KAJANG'],
-    ['46000', 'PJ'],       // Petaling Jaya
-    ['47500', 'PJ'],       // Subang Jaya
+    ['46000', 'PJ'],
+    ['47500', 'PJ'],
     ['48000', 'RAWANG'],
     ['50000', 'KL'],
-    ['60000', 'KL'],       // top of KL range
-    ['68000', 'KL'],       // Ampang
-    ['70000', 'NS'],       // Seremban
+    ['60000', 'KL'],
+    ['68000', 'KL'],
+    ['70000', 'NS'],
     ['73000', 'NS'],
     ['75000', 'MELAKA'],
     ['78000', 'MELAKA'],
     ['79000', 'JOHOR'],
-    ['80000', 'JOHOR'],    // JB
-    ['86000', 'JOHOR'],    // top of range
-    ['15000', 'EAST'],     // Kota Bharu
-    ['20000', 'EAST'],     // Kuala Terengganu
+    ['80000', 'JOHOR'],
+    ['86000', 'JOHOR'],
+    ['15000', 'EAST'],
+    ['20000', 'EAST'],
     ['24000', 'EAST'],
-    ['25000', 'PAHANG'],   // Kuantan
-    ['39000', 'PAHANG'],   // Cameron Highlands
-    ['49000', 'PAHANG'],   // Genting
+    ['25000', 'PAHANG'],
+    ['39000', 'PAHANG'],
+    ['49000', 'PAHANG'],
     ['69000', 'PAHANG'],
     // Owner 2026-11-11 (3PL areas aligned with Delivery Zones): the gaps the
     // carriers' cards price, and East Malaysia.
-    ['01000', 'KEDAH'],    // Kangar, Perlis
-    ['45000', 'KLANG'],    // Kuala Selangor
-    ['64000', 'KAJANG'],   // KLIA
+    ['01000', 'KEDAH'],
+    ['45000', 'KLANG'],
+    ['64000', 'KAJANG'],
     ['87000', 'LABUAN'],
-    ['88000', 'SABAH'],    // Kota Kinabalu
-    ['90000', 'SABAH'],    // Sandakan
-    ['93000', 'SARAWAK'],  // Kuching
-    ['98000', 'SARAWAK'],  // Miri
+    ['88000', 'SABAH'],
+    ['90000', 'SABAH'],
+    ['93000', 'SARAWAK'],
+    ['98000', 'SARAWAK'],
   ];
   for (const [pc, zone] of cases) {
     it(`${pc} -> ${zone}`, () => {
@@ -102,14 +102,13 @@ describe('zoneForPostcode — default Malaysian map', () => {
 });
 
 describe('zoneForPostcode — most-specific rule wins', () => {
-  // Owner carves PUCHONG (single prefix 47) out of the broad 46-47 PJ block.
   const custom: ZonePrefixRule[] = [
     ...MAP,
     { zone: 'PUCHONG', prefixStart: 47, prefixEnd: 47 },
   ];
   it('a narrower added rule overrides the broad default without deleting it', () => {
-    expect(zoneForPostcode('47100', custom)).toBe('PUCHONG'); // width 0 beats width 1
-    expect(zoneForPostcode('46000', custom)).toBe('PJ');      // still PJ
+    expect(zoneForPostcode('47100', custom)).toBe('PUCHONG');
+    expect(zoneForPostcode('46000', custom)).toBe('PJ');
   });
 });
 

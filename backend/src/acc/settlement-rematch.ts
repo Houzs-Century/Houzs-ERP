@@ -42,17 +42,11 @@ export type RematchResult =
   | {
     ok: true;
     acquirerCode: string;
-    /** Reports with at least one open line. */
     reports: number;
-    /** Open lines decided again. */
     lines: number;
-    /** Open lines matched by reference after the run — what "Confirm all" posts. */
     matched: number;
-    /** Lines that became matched, or now match a different payment. */
     newlyMatched: number;
-    /** Lines that were matched and are not any more — their payment released. */
     released: number;
-    /** Lines whose stored answer could not be written; named, never hidden. */
     failed: Array<{ rowId: number; reason: string }>;
   }
   | { ok: false; reason: string };
@@ -82,7 +76,6 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
   const open = lines.data.filter((r) => r.confirmed_at == null && r.bucket !== 'IGNORED');
   if (open.length === 0) return none;
 
-  /* What the open lines hold now — released below if the answer changes. */
   const links = await chunkIn<LinkRow, number>(open.map((r) => Number(r.id)), (batch, f, t) => sb
     .from('acc_settlement_matches').select('settlement_row_id, payment_source, payment_id')
     .eq('company_id', companyId).in('settlement_row_id', batch)
@@ -94,8 +87,6 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
     heldBy.set(id, [...(heldBy.get(id) ?? []), `${l.payment_source}:${l.payment_id}`]);
   }
 
-  /* Taken = every claimed payment EXCEPT what these open lines hold: they are
-     the ones being decided, so their payments are back on the table. */
   const settled = await loadSettledKeys(sb, companyId);
   if (!settled.ok) return { ok: false, reason: `settled payments: ${settled.reason}` };
   const reopened = new Set(links.data.map((l) => `${l.payment_source}:${l.payment_id}`));
@@ -105,8 +96,6 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
   const openBatches = (batches.data ?? [])
     .filter((b) => openBatchIds.has(Number(b.id)))
     .sort((a, b) => day(a.period_from).localeCompare(day(b.period_from)) || Number(a.id) - Number(b.id));
-  /* One window covering every open report: the matcher measures each line's
-     own distance, so a wider pool changes nothing but how often it is read. */
   const span = [
     ...open.map((r) => day(r.txn_date)),
     ...openBatches.flatMap((b) => [day(b.period_from), day(b.period_to)]),
@@ -124,8 +113,6 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
   if (!online.ok) return { ok: false, reason: online.reason };
 
   const cfg = { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days };
-  /* notesOnly: the same answer in new words — a QR line whose stored clue still
-     names the card payment it used to be offered. Only the words are written. */
   type Change = { row: LineRow; bucket: MatchBucket; matchReason: string | null; notes: string; link: PaymentCandidate[]; held: string[]; notesOnly?: boolean };
   const changes: Change[] = [];
   let matched = 0;
@@ -140,11 +127,9 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
     for (const d of decided) {
       const row = byLine.get(d.row.lineNo);
       if (!row) continue;
-      /* "Not this": a payment a person said this line is not is never its match. */
       const turnedDown = new Set(notThisOf(row.not_this));
       const refused = d.bucket === 'MATCHED' && d.matched.some((p) => turnedDown.has(keyOf(p)));
       const want = d.bucket === 'MATCHED' && !refused ? d.matched : [];
-      /* A report decided earlier in this run has taken these. */
       for (const p of want) taken.add(keyOf(p));
       const bucket: MatchBucket = refused ? 'NEEDS_CONFIRM' : d.bucket;
       if (bucket === 'MATCHED') matched += 1;
@@ -159,7 +144,6 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
     }
   }
 
-  /* A line confirmed while this ran is the ledger's now — left exactly as it is. */
   const recheck = await chunkIn<{ id: number; confirmed_at: string | null }, number>(changes.map((c) => Number(c.row.id)), (batch, f, t) => sb
     .from('acc_settlement_rows').select('id, confirmed_at')
     .eq('company_id', companyId).in('id', batch)
@@ -168,8 +152,6 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
   const confirmedMeanwhile = new Set(recheck.data.filter((r) => r.confirmed_at != null).map((r) => Number(r.id)));
   const todo = changes.filter((c) => !confirmedMeanwhile.has(Number(c.row.id)));
 
-  /* Release first, link after: the payment-once index would refuse a payment
-     moving from one open line to another while the first still held it. */
   const releaseIds = todo.filter((c) => !c.notesOnly && c.held.length > 0).map((c) => Number(c.row.id));
   for (let i = 0; i < releaseIds.length; i += 150) {
     const { error } = await sb.from('acc_settlement_matches').delete()
@@ -200,8 +182,6 @@ export async function rematchOpenLines(sb: any, companyId: number, acquirerCode:
         amount_sen: p.amountSen,
       })));
       if (error) {
-        /* The same race the upload guards: another line took the payment
-           between the read and this write. It goes to a person, never twice. */
         bucket = 'NEEDS_CONFIRM';
         notes = 'That payment was cleared by another settlement while this report was being matched again — check it by hand.';
       }

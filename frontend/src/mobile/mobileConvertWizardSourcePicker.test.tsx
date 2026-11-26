@@ -99,8 +99,6 @@ describe("MobileConvertWizard step 1 — the Delivery Order arm is unchanged", (
   });
 });
 
-/* Conts #699: SO -> DO offered an order with nothing left to deliver, and the
-   form it led to was empty. SO -> PO is not gated on delivery. */
 describe("MobileConvertWizard step 1 — SO -> DO needs something left to deliver", () => {
   const lists = () => authedFetch.mockImplementation(async (url: string) => {
     if (url.startsWith("/mfg-sales-orders?limit=200")) {

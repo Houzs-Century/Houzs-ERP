@@ -1,23 +1,3 @@
-// MfgSalesOrdersListV2 — Theme C ("Ink & Petrol") redesign of the Sales Orders
-// listing (Supply Chain). Composed with the real Houzs DS primitives:
-// PageHeader / StatCard grid / FilterPills / DataTable / Badge / Button + a
-// right slide-over detail drawer built with the same tokens.
-//
-// Scope of THIS file (Item A of the 4-part redesign):
-//   · Desktop listing (table + cards toggle)
-//   · Row/card click → quick-view detail drawer (dark header, meta grid,
-//     order lines, totals, action buttons)
-//   · Wired to the existing useMfgSalesOrders query so status tab / search
-//     narrow the same data the old grid uses. Status mutations still route
-//     through useUpdateMfgSalesOrderStatus.
-//
-// Follow-ups (separate PRs):
-//   · Full Detail page (DetailLayout + two-col grid + sticky aside)
-//   · Phone card list + FAB + PullToRefresh
-//   · iPad 340px master-detail rail
-//
-// The old ledger-style page (MfgSalesOrdersList.tsx, DataGrid-based) stays in
-// the tree; App.tsx route swap decides which one users see.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { shippedProgressColumn, ShippedProgressPill } from "./so-list-shipped-column";
@@ -118,10 +98,6 @@ import { soStreetTail } from '../../vendor/scm/lib/order-address';
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { soListBalanceSen, soListPaidSen } from "../../vendor/scm/lib/so-list-balance";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
-// Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
-// .tsx) has 60+ fields; we pluck what the redesign shows. Everything is
-// typed loosely as any-safe (nullable) because the backend legacy fields.
 
 type SoRow = HoldFields & {
   doc_no: string;
@@ -139,17 +115,8 @@ type SoRow = HoldFields & {
   first_item_branding: string | null; first_item_category: string | null;
   status: string;
   local_total_sen: number;
-  /* Stored snapshots — NOT the truth, and never read without the live
-     fallbacks below. `balance_sen` is rewritten to the gross grandTotal by
-     the backend's recomputeTotals on every edit (so it never reflects a
-     payment) and `paid_sen` is a deprecated column no writer maintains. The
-     list payload carries the ledger-derived pair; prefer them. */
   balance_sen: number;
   paid_sen: number;
-  /* Ledger-derived, from mfg_sales_orders_with_payment_totals — already in the
-     backend's LIST_COLS. paid_total_sen = Σ payments, balance_sen_live =
-     local_total − Σ payments. Same source the mobile SO list and Delivery
-     Planning read. Optional so an absent view row falls back, not crashes. */
   paid_total_sen?: number | null;
   balance_sen_live?: number | null;
   phone: string | null;
@@ -163,36 +130,21 @@ type SoRow = HoldFields & {
   customer_state: string | null;
   payment_method: string | null;
   payment_methods_summary?: string;
-  // ── Phase 2: extra fields already present on the list payload (HEADER +
-  //    server-computed), previously untyped so the columns couldn't be built.
   venue: string | null;
   note: string | null;
   customer_type: string | null;
   building_type: string | null;
   customer_country: string | null;
-  shipped_qty?: number | null;   // §0.4b — how much has LEFT
+  shipped_qty?: number | null;
   deliverable_qty?: number | null;
-  /* Server-derived here (mfg-sales-orders.ts:1800-1806); optional because an
-     older bundle carries neither. sales-order.md §0.4c and SoListStatusCell. */
   delivery_state?: "none" | "partial" | "full" | null;
-  /** Server-derived (lib/so-list-rows.ts): something is still left to put on a DO. */
   has_undelivered?: boolean | null;
-  /** Server-decided: a CANCELLED order the status PATCH will reopen (backend so-reopen.ts). */
   reopenable?: boolean | null;
   lifecycle_state?: "none" | "delivered" | "invoiced" | "returned" | null;
   do_nos?: string[] | null;
-  /** The same delivery orders and the sales invoices raised against this order,
-   *  each with the id the right-click "Print Delivery Order" needs — a PDF is
-   *  fetched by ADDRESS and `do_nos` carries only the number. Optional: a page
-   *  and the Worker deploy independently, so a bundle can talk to a worker that
-   *  does not send them yet, and the menu simply offers fewer entries. */
   do_refs?: Array<{ id: string; docNo: string }> | null;
   si_refs?: Array<{ id: string; docNo: string }> | null;
   stock_remark?: string;
-  /** System Purchase Order numbers this SO was converted into (empty when
-   *  none). Server-derived via the SO-line→PO-item→PO chain. LEGACY raise-link
-   *  since 2026-08-02 — shown in the PO No. column's tooltip when it differs
-   *  from the source union below. */
   converted_po_nos?: string[] | null;
   /** Union of the per-line source-PO chips the drill shows (owner 2026-08-02,
    *  "他拿的货是谁的货"): SHIPPED/DELIVERED consumed batches ∪ READY FIFO
@@ -200,20 +152,10 @@ type SoRow = HoldFields & {
    *  chips — an accessories/CS SO fulfilled from stock bought under another
    *  PO finally names that PO instead of a dash. */
   source_po_union?: string[] | null;
-  /** Any line shipped/allocated from a PO-less stock ADJUSTMENT — renders a
-   *  "STOCK ADJ" chip so the cell is explained, never blank. */
   source_po_adj?: boolean;
   processing_date: string | null;
   customer_delivery_date: string | null;
-  /* The AutoCount book's sales-exemption expiry (public.sales_orders.expiry_date,
-     keyed by the order's linked book doc no), server-derived in so-list-rows.ts.
-     Null for orders not in AutoCount. The "Sales Exemption Expiry Date" column
-     falls back to it when the ERP's frozen sales_exemption_expiry is empty. */
   ac_sales_exemption_expiry?: string | null;
-  // ── Phase 2 FINANCE: cost / margin / per-category subtotals + deposit. The
-  //    backend OMITS these keys entirely for non-finance callers
-  //    (canViewScmFinance), so every one is optional. margin_pct_basis is
-  //    basis points (margin/total x 10000).
   mattress_sofa_sen?: number;
   bedframe_sen?: number;
   accessories_sen?: number;
@@ -230,28 +172,21 @@ type SoRow = HoldFields & {
   deposit_sen?: number;
   currency?: string | null;
   sales_exemption_expiry?: string | null;
-  /** The order's lines, and its AutoCount spellings (so-list-lines.ts). */
   lines?: SoListLine[];
 } & Partial<SoBookHeader>;
 
 
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
-/* AutoCount's "SALES ORDER DETAILS-SALES" (SO_DEFAULT_COLUMNS) as grid keys, in
-   its order; Doc No. is always visible and pinned first. */
 const SO_AUTOCOUNT_KEYS = [
   "so_date", "reference", "salesperson", "debtor_name", "branding", "currency", "amount", "line_location",
   "balance", "processing_date", "sales_exemption_expiry", "item_group", "item_code", "detail_description",
   "detail_description_2", "uom", "unit_price", "qty", "venue",
 ];
 
-// Customer's PO / Ref number — spec: "Every list must show the customer SO
-// Ref number". Resolution order is the ONE rule in lib/customer-ref.ts.
 const refOf = (r: SoRow): string => customerRefOf(r) || "—";
-/** Still owes a delivery: not delivered in full, not closed or cancelled. */
 const soAwaitingDelivery = (r: SoRow): boolean =>
   r.delivery_state !== "full" &&
   !["delivered", "invoiced", "returned"].includes(r.lifecycle_state ?? "") &&
@@ -268,17 +203,10 @@ const soAwaitingDelivery = (r: SoRow): boolean =>
    is the shared rule; the mobile twin below uses the same one. */
 const brandOf = (r: SoRow): string => (isPlaceholderBrandText(r.branding) ? "" : (r.branding ?? "").trim())
   || brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
-/* This surface carries the line's CATEGORY, so it uses the accurate entry
-   point: colour and label then share one bucket rule and cannot disagree.
-   ../../lib/brandingTone has the whole story. */
 const brandTone = (r: SoRow): BrandTone => brandingToneForCategory(r.first_item_category);
 
 
-// ─── Salesperson dropdown / split-menu ──────────────────────────────────────
 
-/** Small controlled dropdown that renders under the "New Sales Order" split
- *  button. Simple menu — no portal, no keyboard-nav layer; the target this
- *  redesign is showing off is the visual composition, not menu wizardry. */
 function SplitDropdown({
   onFromQuotation,
   onDuplicate,
@@ -346,7 +274,6 @@ function SplitDropdown({
   );
 }
 
-// ─── Table / Cards view toggle ──────────────────────────────────────────────
 
 function ViewToggle({
   value,
@@ -382,7 +309,6 @@ function ViewToggle({
   );
 }
 
-// ─── Cards grid ─────────────────────────────────────────────────────────────
 
 function CardsGrid({ rows, onOpen }: { rows: SoRow[]; onOpen: (r: SoRow) => void }) {
   if (rows.length === 0) {
@@ -443,7 +369,6 @@ function CardsGrid({ rows, onOpen }: { rows: SoRow[]; onOpen: (r: SoRow) => void
   );
 }
 
-// ─── Detail drawer ──────────────────────────────────────────────────────────
 
 function DetailDrawer({
   row,
@@ -465,7 +390,6 @@ function DetailDrawer({
   onEdit: () => void;
   onPrint: () => void;
   onConfirm: () => void;
-  /** DRAFT only: hard-delete it (use-discard-draft-action.ts). */
   onDiscard: () => void;
   onDeliver: () => void;
   onConvertDraft: () => void;
@@ -506,18 +430,12 @@ function DetailDrawer({
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
 
-  // Totals from live line items when the detail query has resolved; fall back
-  // to header totals otherwise so the drawer still reads immediately.
-  // Nick 2026-07-09 — SST used to be ADDED at 6 % on top of subtotal, but SO
-  // prices are quoted SST-inclusive (mirrors SalesOrderDetailV2's "SST ·
-  // Inclusive" line). Adding another 6 % double-taxed the drawer's Total
-  // against the aside on the detail page. Total is now just subtotal.
   const subtotalSen =
     items.length > 0
       ? items.reduce((sum, l) => sum + (l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0)), 0)
       : row?.local_total_sen ?? 0;
   const totalSen = subtotalSen;
-  const paidSen = soListPaidSen(row); // the view paid (payments ledger), never the stored paid_sen
+  const paidSen = soListPaidSen(row);
   const outstandingSen = totalSen - paidSen;
 
   return (
@@ -528,7 +446,6 @@ function DetailDrawer({
     >
         {row && st && (
           <>
-            {/* dark header */}
             <div className="flex h-[60px] shrink-0 items-center gap-3 bg-sidebar px-5 text-sidebar-ink">
               <button
                 type="button"
@@ -556,9 +473,7 @@ function DetailDrawer({
               </Badge>
             </div>
 
-            {/* scroll body */}
             <div className="flex-1 overflow-y-auto px-5 py-5">
-              {/* customer + brand + date */}
               <div className="text-[19px] font-bold text-ink">{row.debtor_name || "—"}</div>
               <div className="mt-1.5 flex items-center gap-2.5">
                 <Badge tone={brandTone(row)} variant="soft" size="xs">
@@ -569,7 +484,6 @@ function DetailDrawer({
                 </span>
               </div>
 
-              {/* meta grid */}
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
                 <MetaItem k="Salesperson" v={salespersonName} />
                 <MetaItem k="Location" v={<LocationText row={row} />} />
@@ -588,7 +502,6 @@ function DetailDrawer({
                 />
               </dl>
 
-              {/* customer & delivery card */}
               <SectionHeading>Customer &amp; delivery</SectionHeading>
               <div className="overflow-hidden rounded-lg border border-border bg-surface">
                 <div className="flex items-center gap-3 border-b border-border-subtle px-4 py-3.5">
@@ -621,7 +534,6 @@ function DetailDrawer({
                 />
               </div>
 
-              {/* order lines */}
               <SectionHeading>Order lines</SectionHeading>
               <div className="overflow-hidden rounded-lg border border-border">
                 <div className="grid grid-cols-[minmax(0,1fr)_30px_92px_76px] gap-2 border-b border-border-subtle bg-surface-2 px-4 py-2 font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
@@ -660,8 +572,6 @@ function DetailDrawer({
                       className="grid grid-cols-[minmax(0,1fr)_30px_92px_76px] items-start gap-2 border-b border-border-subtle px-4 py-3 last:border-b-0"
                     >
                       <div className="min-w-0">
-                        {/* Weight/size tuned down to sit with the qty/amount
-                            columns instead of shouting over them. */}
                         <div className="text-[12.5px] font-medium leading-snug text-ink">
                           {primary || "—"}
                         </div>
@@ -677,9 +587,6 @@ function DetailDrawer({
                       <span className="text-right font-money text-[12.5px] font-semibold text-ink">
                         {fmtRm(amt)}
                       </span>
-                      {/* Per-line stock pill — the SAME renderer as the drill-down
-                          twin and the SO detail page (soLineStockPill), reading the
-                          coverage-healed effective status. */}
                       <span className="min-w-0">
                         <SoStockPill line={l} />
                       </span>
@@ -688,20 +595,18 @@ function DetailDrawer({
                 })}
               </div>
 
-              {/* totals */}
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
                 <TotalRow k="Subtotal" v={fmtRm(subtotalSen)} />
                 <TotalRow k="Total" v={fmtRm(totalSen)} strong />
                 {paidSen > 0 ? (
                   <TotalRow k="Paid" v={fmtRm(paidSen)} tone="success" />
                 ) : null}
-                {outstandingSen !== 0 ? ( // `> 0` hid the row on exactly the orders that need it: an over-collection is not "nothing outstanding"
+                {outstandingSen !== 0 ? (
                   <TotalRow k={outstandingSen < 0 ? "Over-collected" : "Outstanding"} v={fmtRm(outstandingSen)} tone="error" />
                 ) : null}
               </div>
             </div>
 
-            {/* footer actions */}
             <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-5 py-3">
               <Button variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>
                 Edit
@@ -711,8 +616,6 @@ function DetailDrawer({
               </Button>
               <div className="flex-1" />
               {(() => {
-                // Backend can hand back status in any case ("Draft" / "draft" /
-                // "DRAFT"); normalise once so the CTA switch works regardless.
                 const s = (row.status || "").toLowerCase();
                 if (s === "draft") {
                   /* Discard beside Confirm (owner 2026-10-13: 「这个draft - discard
@@ -738,12 +641,8 @@ function DetailDrawer({
                     </>
                   );
                 }
-                /* Not offered once nothing is left to deliver (Conts #699). */
                 if (soOffersTransferToDo(row)) {
-                  // ABSENT, not disabled, for anyone who may not operate a DO.
                   if (!canDeliver) return null;
-                  /* Renamed from "Deliver" 2026-08-17 — the SO already reports a
-                     "Delivered" STATUS, and statuses report while buttons act. */
                   return (
                     <>
                       <Button variant="secondary" onClick={onConvertDraft}>{CONVERT_TO_DO_DRAFT_LABEL}</Button>
@@ -751,9 +650,6 @@ function DetailDrawer({
                     </>
                   );
                 }
-                // Reopen a cancelled SO back to CONFIRMED — only where the
-                // server will take it (soOffersReopen); otherwise the button
-                // stays, disabled, with the reason beside it.
                 if (s === "cancelled" || s === "cancel") {
                   const reopenable = soOffersReopen(row);
                   return (
@@ -780,10 +676,7 @@ function DetailDrawer({
   );
 }
 
-// ─── Drawer sub-primitives ──────────────────────────────────────────────────
 
-/* The free-text fallback is a create-time snapshot that no relation backs — it
-   is styled apart so a guess is never indistinguishable from a real warehouse. */
 function LocationText({ row, className }: { row: SoRow; className?: string }) {
   const { label, isWarehouse } = resolveSoLocation(row);
   if (!label) return <span className={cn("text-ink-secondary", className)}>—</span>;
@@ -878,25 +771,12 @@ function TotalRow({
   );
 }
 
-// Table column key → backend sort-whitelist column. Only the mismatched key
-// ("amount" → "local_total_sen") needs a map; doc_no / so_date / debtor_name
-// / status already match the backend names 1:1. Columns not in this map that
-// are also not backend-sortable are marked `disableSort` on the column def.
 const SORT_COL_MAP: Record<string, string> = {
   amount: "local_total_sen",
 };
 
-// ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
-// Inline per-line breakdown for one SO, rendered under its parent row when the
-// chevron is toggled (2990 MfgSalesOrdersList drill-down parity, trimmed to the
-// fields the Houzs list needs). Lazy-fetches the SO detail via the same
-// useMfgSalesOrderDetail hook the drawer uses — TanStack caches it, so
-// expanding a row the drawer already opened (or re-expanding) is instant. Live
-// variant summary via buildVariantSummary, matching the drawer + SO full page.
 
 type DrillItem = {
-  /* The coverage overlay keys on it (vendor/scm/lib/so-coverage-overlay); the
-     detail payload has always carried it, this shape just never named it. */
   id?: string;
   item_code?: string;
   description?: string;
@@ -910,13 +790,13 @@ type DrillItem = {
      (the same payload this expansion fetches); the old four-column layout just
      dropped them on the floor (owner 2026-07-24: "怎么没有每一个 line 的
      stock status,还有 incoming PO?"). */
-  stock_status?: string | null; // READY | PARTIAL | PENDING (stored)
-  stock_state?: "stock" | "po" | "shortage" | null; // live MRP verdict
-  coverage_po?: string | null; // incoming PO covering this line…
-  coverage_eta?: string | null; // …and its effective ETA
-  bound_source_pos?: string[]; // the line's OWN PO (raised against this so_item) — wins
-  shipped_source_pos?: string[]; // actual source PO(s) once shipped
-  shipped_source_adj?: boolean; // shipped from a PO-less stock adjustment
+  stock_status?: string | null;
+  stock_state?: "stock" | "po" | "shortage" | null;
+  coverage_po?: string | null;
+  coverage_eta?: string | null;
+  bound_source_pos?: string[];
+  shipped_source_pos?: string[];
+  shipped_source_adj?: boolean;
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null;
   remaining_qty?: number | null;
@@ -1017,13 +897,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
                 <SoStockPill line={l} />
               </span>
               <span><ShippedProgressPill line={l} /></span>
-              {/* The ONE shared renderer, identical to the SO detail page —
-                  the four chips are documented at sales-order.md §0.8. */}
               <span className="min-w-0">
-                {/* The line's OWN incoming PO (bound_source_pos, off the same
-                    GET /:docNo payload) wins over the shipped-batch trace (owner
-                    2026-09-22) — the same rule as the detail page, so the drill
-                    and the detail never disagree. */}
                 <SoSourceChips line={l} coverage={coverageStateOf(coverageQ)} />
               </span>
             </div>
@@ -1034,7 +908,6 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
   );
 }
 
-// ─── Main page ──────────────────────────────────────────────────────────────
 
 export function MfgSalesOrdersListV2() {
   const navigate = useNavigate();
@@ -1044,14 +917,7 @@ export function MfgSalesOrdersListV2() {
   const askChoice = useChoice();
   const askConfirm = useConfirm();
   const { nameOf: salespersonNameOf } = useStaffLookup();
-  // Active company (top-bar switcher) — the header subtitle reflects it so a
-  // per-company list is never mislabelled as another company's (e.g. Houzs).
   const branding = useBranding();
-  // Finance-viewer gate — same signal the PMS finance sections use
-  // (auth/me = isFinanceViewer). The cost/margin/subtotal columns below are
-  // only DECLARED for a finance-viewer, so the column chooser never lists an
-  // always-empty finance column for a non-finance user (the backend also omits
-  // those keys from the payload — see canViewScmFinance).
   const { user, can, pageAccess } = useAuth();
   const canFinance = canViewScmCosting(user);
   // SO Maintenance (bulk import / duplicate / renumber) — the BACKEND's answer,
@@ -1066,64 +932,34 @@ export function MfgSalesOrdersListV2() {
   // Owner 2026-07-15's exclusion of non-director SALES is unchanged: the sales
   // cohort satisfies neither term of the capability.
   const canMaintain = capability(user, "scm.maintenance.open");
-  // Converting an SO into a Delivery Order is the Office department's job — the
-  // ONE gate, shared with every other DO/SI control on both platforms.
   const canDeliver = canOperateDeliveryOrders(user, can, pageAccess);
 
   const status = (params.get("status") ?? "all") as StatusTab;
-  // View toggle applies at md+; on phones we always render the card list
-  // regardless of the URL param (a 9-col DataTable is unreadable on 360dpi).
   const view = (params.get("view") ?? "table") as "table" | "cards";
   const search = params.get("q") ?? "";
-  const { filters: soFilters } = useSoListFilters(); // second-level filters (URL `f`), shared with mobile
-  // URL is state — the page index lives in `?page=` (0-based). pageSize is a
-  // fixed 50 (backend caps at 100). Both feed the server-pagination hook so
-  // search / status counts / sort span the FULL set, not the visible page.
+  const { filters: soFilters } = useSoListFilters();
   const page = Math.max(0, parseInt(params.get("page") ?? "0", 10) || 0);
   // Per-page is now the operator's choice (owner 2026-07-24), persisted per
   // list. Backend caps at 100, so the options stay ≤100.
   const [pageSize, setPageSize] = useLocalStorage<number>("scm:perpage:sales-orders", 50);
 
   const [selected, setSelected] = useState<SoRow | null>(null);
-  // Server-side sort, formatted "<col>:<dir>" for the backend whitelist
-  // (so_date/doc_no/debtor_name/status/local_total_sen/customer_delivery_date).
   const [sort, setSort] = useState<string | undefined>(undefined);
-  // Gate the list query until the DataTable has reported its localStorage-
-  // restored sort up to us (its one-shot mount effect → setSortAndReset below).
-  // Without this the first fetch fires sort-less, then the restored sort lands
-  // and immediately aborts+re-fires it — one wasted round trip on every open.
-  // The report ALWAYS arrives once (even null when nothing is persisted), so
-  // this never hangs the no-persisted-sort case.
   const [sortReady, setSortReady] = useState(false);
-  // Debounced search — the URL `q` updates on every keystroke (so the input
-  // stays controlled + shareable) but we only re-query the server 300ms after
-  // the user stops typing.
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
-  // Scan Order — handwritten slip OCR → DRAFT SO (ScanOrderModal). The modal
-  // owns the whole flow: it enqueues a BACKGROUND job per slip (the same
-  // /scan-so/enqueue path the mobile Scan screen uses) and the draft lands in
-  // this list on its own. We only toggle its visibility.
   const [showScan, setShowScan] = useState(false);
-  // Multi-select → batch "Print all". Keys are doc_no (the DataTable rowKey).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
   /* Column funnels the grid pushes down so pagination and the total run over
      the filtered set (owner 2026-09-16, every header column 2026-10-17); which
      columns, and the few that stay page-local, in ./so-list-server-funnels. */
   const [serverFunnels, setServerFunnels] = useState<SoServerFunnels>(() => soServerFunnels({}));
-  /* Each server column's funnel offers every value across the company's orders,
-     not only the loaded page's (backend lib/so-list-column-funnels.ts). */
   const funnelValues = useSoFunnelValues().data?.values;
-  /* Seed the Branding funnel with every active brand, for the same reason as the
-     customer seed below: a brand absent from the loaded page must be pickable. */
   const projectBrandsQ = useProjectBrands();
   const brandNames = useMemo(
     () => [...new Set((projectBrandsQ.data ?? []).filter((b) => b.active === 1 || b.active === true).map((b) => b.name.trim()).filter((n) => n.length > 0))],
     [projectBrandsQ.data],
   );
-  /* Seed the Customer Name funnel with every customer (not only the loaded
-     page's) so a customer whose orders are all on a later page is still
-     pickable — the point of pushing the filter server-side. */
   const customersQ = useMfgCustomers();
   const customerNames = useMemo(
     () => [...new Set((customersQ.data?.customers ?? []).map((c) => c.name).filter((n): n is string => !!n))],
@@ -1149,10 +985,6 @@ export function MfgSalesOrdersListV2() {
     hasError: Boolean(error),
   });
   const listLoading = isLoading || searchTransition.isSearching;
-  // The list below is replaced by a pending panel while a search is in flight,
-  // and these tiles summarise the SAME payload - so a settled-looking "RM 0.00"
-  // (or the PREVIOUS term's money under a placeholder page) would outlive the
-  // rows it describes. Same flag SearchScopeHint already uses for its count.
   const statsFailed = Boolean(error);
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
@@ -1161,38 +993,22 @@ export function MfgSalesOrdersListV2() {
   const { discard: discardDraft } = useDiscardDraftAction();
   const setHold = useSetDocumentHold("so");
 
-  // The server already filtered (status + search) and sorted this page; the
-  // rows are rendered verbatim — NO client re-filter / re-sort (that would be
-  // wrong on a partial page).
-  const { rows, mrp: mrpStatus } = useEnrichedSoListRows((data?.salesOrders ?? []) as SoRow[], !listLoading); // SHIPPED chips + stored placeholders; deferred MRP heals 4 fields a beat later
+  const { rows, mrp: mrpStatus } = useEnrichedSoListRows((data?.salesOrders ?? []) as SoRow[], !listLoading);
   const total = data?.total ?? 0;
-  /* A deep-linked or stale ?page= past the filtered set's last page (page 70 of
-     a 3-page filter) falls back to the last page once the real total is in. */
   useEffect(() => {
     if (!data || isPlaceholderData) return;
     const clamped = clampSoPage(page, total, pageSize);
     if (clamped !== page) setPageParam(clamped);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setPageParam is recreated each render; the inputs are listed
   }, [data, isPlaceholderData, page, total, pageSize]);
-  // Status tab counts come from the server over the FULL scoped set (not the
-  // page), so the pills stay correct while paging / searching.
   const counts: Record<string, number> = data?.statusCounts ?? { all: 0 };
 
-  // KPI money stats — the backend paginated contract returns `aggregates` with
-  // FULL-SET revenue/outstanding/paid sums (computed server-side over the same
-  // scope+company+status+search filters, all rows), byte-identical to the old
-  // pre-pagination client sum. We use those directly. Total Orders uses `total`.
-  // Defensive fallback: if `aggregates` is absent (old backend / mid-deploy),
-  // fall back to summing the CURRENT page's rows and label it "on this page".
   const aggregates = data?.aggregates;
   const stats = useMemo(() => {
     if (aggregates) return { ...aggregates, fullSet: true };
     let revenueSen = 0;
     let outstandingSen = 0;
     let paidSen = 0;
-    // Client-side fallback sum (legacy non-paginated path only — the paginated
-    // path uses the server's full-set `aggregates`). Same ledger-derived
-    // columns the server now sums, so both paths agree.
     for (const r of rows) {
       revenueSen += r.local_total_sen ?? 0;
       outstandingSen += soListBalanceSen(r);
@@ -1201,7 +1017,6 @@ export function MfgSalesOrdersListV2() {
     return { revenueSen, outstandingSen, paidSen, fullSet: false };
   }, [aggregates, rows]);
 
-  // Write the page index to the URL. p<=0 drops the param (clean default).
   const setPageParam = (p: number) => {
     const next = new URLSearchParams(params);
     if (p <= 0) next.delete("page");
@@ -1212,7 +1027,7 @@ export function MfgSalesOrdersListV2() {
     const next = new URLSearchParams(params);
     if (s === "all") next.delete("status");
     else next.set("status", s);
-    next.delete("page"); // status change → back to page 0
+    next.delete("page");
     setParams(next, { replace: true });
   };
   const setView = (v: "table" | "cards") => {
@@ -1225,13 +1040,9 @@ export function MfgSalesOrdersListV2() {
     const next = new URLSearchParams(params);
     if (!q.trim()) next.delete("q");
     else next.set("q", q);
-    next.delete("page"); // typing → back to page 0
+    next.delete("page");
     setParams(next, { replace: true });
   };
-  // The DataTable fires onSortChange once on mount to sync any localStorage-
-  // persisted sort up to us. That first call must ADOPT the sort without
-  // resetting the page (so a deep-linked ?page=N survives a refresh); only
-  // subsequent user-initiated header clicks reset back to page 0.
   const sortSyncedRef = useRef(false);
   const setSortAndReset = (
     s: { key: string; dir: "asc" | "desc" } | null
@@ -1239,18 +1050,11 @@ export function MfgSalesOrdersListV2() {
     setSort(s ? `${SORT_COL_MAP[s.key] ?? s.key}:${s.dir}` : undefined);
     if (!sortSyncedRef.current) {
       sortSyncedRef.current = true;
-      // First (mount) report: the restored sort is now in state, so release the
-      // gate — the one and only list fetch fires with `sort` already applied.
       setSortReady(true);
       return;
     }
-    setPageParam(0); // sort change → back to page 0
+    setPageParam(0);
   };
-  /* DataTable reports its funnel state here; we lift the SERVER-FILTERABLE ones
-     (./so-list-server-funnels) into the list query. Mirrors
-     setSortAndReset: the first (mount-restore) report adopts the funnel without
-     clobbering a deep-linked ?page=; any later funnel change — server or
-     page-local — resets to page 1. */
   const funnelSyncedRef = useRef(false);
   const funnelSigRef = useRef("");
   const onColFiltersChange = (colFilters: Record<string, string[] | undefined>) => {
@@ -1270,7 +1074,6 @@ export function MfgSalesOrdersListV2() {
   const filtersActive =
     status !== "all" || view !== "table" || search.trim().length > 0 || soFilters.length > 0;
 
-  // ── Actions wired to real routes / mutations ──────────────────────────
   const goNewSo = () => navigate("/scm/sales-orders/new");
   const goScanOrder = () => setShowScan(true);
   const goSoMaintenance = () => navigate("/scm/sales-orders/maintenance");
@@ -1280,8 +1083,6 @@ export function MfgSalesOrdersListV2() {
   const printDocument = usePrintDocument();
   const goFullPage = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}`);
   const doConfirm = async (r: SoRow) => {
-    /* The list row carries no lines, so read them before deciding on the SOFFIO
-       reminder; an unreadable order is not confirmed blind. */
     let codes: string[];
     try {
       codes = await fetchSoItemCodes(r.doc_no);
@@ -1295,8 +1096,6 @@ export function MfgSalesOrdersListV2() {
       { onSuccess: () => setSelected(null) }
     );
   };
-  /* Discard a DRAFT (DELETE /:docNo) — confirm + words in ./use-discard-draft-action.
-     The row no longer exists on success, so the drawer closes. */
   const doDiscard = async (r: SoRow) => { if (await discardDraft(r.doc_no)) setSelected(null); };
   const doDeliver = (r: SoRow) => navigate(convertToLink('soToDo', r.doc_no));
   /* Owner 2026-11-18: goods not in yet -> a DRAFT DO for every remaining line; stock moves at its Confirm. */
@@ -1308,8 +1107,6 @@ export function MfgSalesOrdersListV2() {
       onError: (e) => void notify({ title: "Draft delivery order not created", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
     });
   };
-  // Reopen a cancelled SO → CONFIRMED so it can proceed again (2990
-  // MfgSalesOrdersList "Reopen SO" parity; reuses the status PATCH endpoint).
   const doReopen = async (r: SoRow) => {
     if (
       !(await askConfirm({
@@ -1333,8 +1130,6 @@ export function MfgSalesOrdersListV2() {
     );
   };
 
-  /* The four statuses the route accepted and no screen ever sent — the owner's
-     own lifecycle, minus the two the machine writes. See row-menus.ts. */
   const setSoStatus = async (r: SoRow, status: string) => {
     if (!(await askConfirm({
       title: `${r.doc_no} → ${status.replace(/_/g, " ").toLowerCase()}?`,
@@ -1345,14 +1140,9 @@ export function MfgSalesOrdersListV2() {
       onError: (e) => notify({ title: "Status not changed", body: e instanceof Error ? e.message : "Something went wrong.", tone: "error" }),
     });
   };
-  /* Not setSoStatus: the WORDS are the point — Close sits one menu entry from
-     Cancel and they do opposite things to the money. Both live in ./use-close-action. */
   const doCloseSo = makeCloseAction({ askConfirm, notify, mutate: updateStatus.mutate });
   /* Cancel is a REQUEST (owner 2026-09-08): reason + two approvals, in ./use-cancel-request-action. */
   const doCancelSo = (r: SoRow) => void requestCancel(r.doc_no, r.doc_no);
-  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. The
-     wording lives in ./use-hold-action; this screen runs it through askConfirm
-     because every other action here does. */
   const setSoHold = async (r: SoRow, onHold: boolean) => {
     if (!(await askConfirm(holdPrompt(r.doc_no, onHold)))) return;
     setHold.mutate({ key: r.doc_no, onHold });
@@ -1364,7 +1154,6 @@ export function MfgSalesOrdersListV2() {
     setStatus: setSoStatus, close: doCloseSo, setHold: setSoHold, cancel: doCancelSo, discard: (r) => void doDiscard(r), canDeliver,
   });
 
-  // ─── Multi-select → batch "Print all" ─────────────────────────────────────
   const toggleSelect = (rowId: string) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -1381,19 +1170,11 @@ export function MfgSalesOrdersListV2() {
     });
   const clearSelection = () => setSelectedIds(new Set());
 
-  // One SO's full PDF bundle — detail (header + items + pwpCodes) and the
-  // payments ledger. Delegated to lib/printDocumentPdf, the ONE place that
-  // knows a Sales Order is addressed by its NUMBER and that a failed payments
-  // read must PROPAGATE rather than render a PDF claiming nothing was paid —
-  // that reasoning now lives beside the fetch it governs. The row menu's print
-  // calls the same function, so batch and single cannot drift apart.
   const fetchSoBundle = async (docNo: string) => {
     const b = await fetchPrintBundle({ doc: "so", docNo, key: docNo });
     return { ...b, payments: b.payments ?? [], pwpCodes: b.pwpCodes ?? [] };
   };
 
-  // Batch "Print all" — one ticked SO downloads straight; several prompt
-  // combined-vs-separate. Mirrors the V1 exportSelected.
   const deliverSelectedSos = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.doc_no));
@@ -1414,9 +1195,6 @@ export function MfgSalesOrdersListV2() {
         clearSelection();
         return;
       }
-      /* View / Print always render ONE document — a preview or a print run
-         is about the stack, not N separate files. Only the download exit
-         still asks combined-vs-separate. */
       const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} sales orders`,
         options: [
@@ -1461,17 +1239,6 @@ export function MfgSalesOrdersListV2() {
   };
   const batchPrint = usePrintPreview(deliverSelectedSos);
 
-  /* ── Table columns ───────────────────────────────────────────────────────
-     `group` puts each column under a header in the Columns drawer. The design
-     handoff's example listed Basic / Amounts / Logistics / Custom fields for a
-     20-column demo; this list is 44, so two more groups earn their place —
-     stuffing eleven address fields into "Basic" would put the drawer back to
-     the flat scroll the grouping exists to end. Custom fields is automatic
-     (every UDF column joins it). Finance columns are only DECLARED for a
-     finance viewer, so that group simply doesn't exist for anyone else. */
-  /* Labels are AutoCount's captions and Doc No / Agent / Debtor Code / Venue /
-     Branding are the book's spellings where the order is in AutoCount (the
-     server stamps ac_*; 2990 prints its own). The ERP number stays on ERP Doc No. */
   const soLineColumnList = Object.values(soLineColumns<SoRow>());
   const columns: Column<SoRow, SoListLine>[] = withSoFunnelSeeds<Column<SoRow, SoListLine>>(funnelValues, [
     {
@@ -1515,8 +1282,6 @@ export function MfgSalesOrdersListV2() {
       group: "Basic",
       label: SO_LABELS.debtorName,
       getValue: (r) => r.debtor_name,
-      // Server-filterable: the funnel is pushed into the list query, so seed the
-      // checklist with every customer (not just the loaded page's).
       filterSeedValues: customerNames,
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
@@ -1529,8 +1294,6 @@ export function MfgSalesOrdersListV2() {
       group: "Basic",
       label: SO_LABELS.agent,
       width: "148px",
-      // Not in the backend sort whitelist — keep getValue for CSV export but
-      // disable the header sort so we never send an unsupported sort key.
       disableSort: true,
       getValue: (r) => r.ac_agent ?? salespersonNameOf(r.agent, r.salesperson_id, ""),
       render: (r) => (
@@ -1579,7 +1342,6 @@ export function MfgSalesOrdersListV2() {
       width: "112px",
       disableSort: true,
       getValue: (r) => r.ac_branding ?? brandOf(r),
-      // Server-filterable (lib/so-list-branding-funnel.ts): seed every brand.
       filterSeedValues: brandNames,
       render: (r) => {
         const b = r.ac_branding ?? brandOf(r);
@@ -1595,7 +1357,6 @@ export function MfgSalesOrdersListV2() {
       group: "Basic",
       label: "Status",
       width: "108px",
-      // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       getValue: (r) => r.status,
       exportValue: (r) => soListStatusWord(r.status, r.delivery_state ?? null, r.lifecycle_state ?? null, r.on_hold ?? null),
@@ -1616,11 +1377,6 @@ export function MfgSalesOrdersListV2() {
         </span>
       ),
     },
-    // ── Re-added columns (Phase 1) — data already on the SoRow payload, ported
-    //    from the legacy MfgSalesOrdersList buildColumns (labels/widths). All
-    //    default-hidden so the column chooser exposes them without changing the
-    //    slim default view. disableSort because the SO list is server-sorted
-    //    and these keys aren't in the backend sort whitelist.
     {
       /* NB: the key stays "po_doc_no" for historical reasons — it is what
          users (incl. the owner) already have persisted as a shown/ordered
@@ -1654,7 +1410,7 @@ export function MfgSalesOrdersListV2() {
       width: "150px",
       disableSort: true,
       getValue: (r) => poCellChips(r).all.join(", "),
-      lineValue: (_r, l) => l.po_nos.join(", ") || null, // the file: the POs raised for THIS line
+      lineValue: (_r, l) => l.po_nos.join(", ") || null,
       render: (r) => <SoListPoCell row={r} />,
     },
     {
@@ -1797,12 +1553,7 @@ export function MfgSalesOrdersListV2() {
         </span>
       ),
     },
-    // ── Re-added columns (Phase 2) — NON-finance fields that already travel on
-    //    the SO list payload (HEADER + server-computed) but were untyped, so no
-    //    column existed. All default-hidden + disableSort (server-sorted list;
-    //    these keys aren't in the backend sort whitelist). Safe for everyone.
     {
-      // Was "Current Doc No." until 2026-08-14 — why it changed: SoListDoCell.
       key: "do_no",
       group: "Logistics",
       label: "DO No.",
@@ -1831,11 +1582,11 @@ export function MfgSalesOrdersListV2() {
       label: "Stock Status",
       width: "170px",
       defaultHidden: true,
-      disableSort: true,                       // client-side; sortValue orders it
-      getValue: (r) => r.stock_remark ?? "",   // raw remark for CSV + the funnel
+      disableSort: true,
+      getValue: (r) => r.stock_remark ?? "",
       lineValue: (_r, l) => l.stock_status,
-      sortValue: (r) => stockRemarkSortScore(r.stock_remark),  // fullest first
-      render: (r) => <StockRemarkPill remark={r.stock_remark} />,  // was grey text
+      sortValue: (r) => stockRemarkSortScore(r.stock_remark),
+      render: (r) => <StockRemarkPill remark={r.stock_remark} />,
     },
     shippedProgressColumn<SoRow>(),
     {
@@ -1862,7 +1613,7 @@ export function MfgSalesOrdersListV2() {
       disableSort: true,
       exportFormat: "date",
       getValue: (r) => r.customer_delivery_date ?? "",
-      lineValue: (_r, l) => l.delivery_date, // the file: the line's own date, else the order's
+      lineValue: (_r, l) => l.delivery_date,
       render: (r) => {
         const late = isPastDue(r.customer_delivery_date, soAwaitingDelivery(r));
         return (
@@ -1920,10 +1671,6 @@ export function MfgSalesOrdersListV2() {
         <span className="text-[12.5px] text-ink-secondary">{r.customer_country || "—"}</span>
       ),
     },
-    // ── Phase 2 FINANCE columns — cost / margin / per-category subtotals +
-    //    deposit. DECLARED ONLY for a finance-viewer so the column chooser never
-    //    lists an always-empty finance column for a non-finance user; the
-    //    backend also omits these keys from the payload (canViewScmFinance).
     ...(canFinance
       ? [
           ...financeColumns<SoRow, SoListLine>("Finance"),
@@ -1985,12 +1732,6 @@ export function MfgSalesOrdersListV2() {
     ];
   }, [branding.companyCode]);
 
-  /* One pill per vocabulary status, each carrying its FULL-set count (see
-     SO_STATUS_TABS) via FilterPills' count badge — these are the SERVER's
-     statusCounts, never a count of the loaded page. "Other" (legacy/unknown
-     status spellings) appears only when the server reports a non-zero count
-     for it — or while it is the active filter, so the selected pill can never
-     vanish from under the user. */
   const statusPillOptions: Array<{ value: StatusTab; label: string; count: number }> = [
     ...SO_STATUS_TABS.map(({ value, label }) => ({
       value,
@@ -2003,23 +1744,17 @@ export function MfgSalesOrdersListV2() {
   ];
 
   const onPullToRefresh = async () => {
-    // Wipe the SO list cache for every status tab so the pull's spinner
-    // reflects a real network round-trip. Detail queries stay warm.
     await queryClient.invalidateQueries({ queryKey: ["mfg-sales-orders"] });
   };
 
   return (
     <PullToRefresh onRefresh={onPullToRefresh}>
-      {/* When the drawer is open the desktop shell reflows into the left
-          520 + gutter, so stats/table are cleanly visible next to it instead
-          of being half-covered. Mobile keeps the full-width overlay. */}
       <div
         className={cn(
           "transition-[padding] duration-200",
           selected ? "md:pr-[540px]" : ""
         )}
       >
-      {/* Mobile-only compact header — hides at md+. */}
       <div className="mb-3 flex items-start justify-between gap-3 md:hidden">
         <div className="min-w-0">
           <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
@@ -2074,10 +1809,6 @@ export function MfgSalesOrdersListV2() {
 
           <MrpAsOf status={mrpStatus} className="mb-2" />
 
-          {/* No data-freeze-anchor here: the owner revised the SO ruling to
-              match Service Cases — cards + status pills scroll away, and the
-              freeze keeps only the DataTable's own toolbar + header + pager
-              (the component-root default). */}
           <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard
               pending={statsPending} failed={statsFailed} onRetry={() => void refetch()}
@@ -2125,7 +1856,6 @@ export function MfgSalesOrdersListV2() {
         </div>
       </div>
 
-      {/* Mobile-only sticky search — sits above the pill row on phones. */}
       <div className="sticky top-0 z-10 -mx-4 mb-3 bg-bg/95 px-4 py-2 backdrop-blur-sm md:hidden">
         <input
           type="search"
@@ -2142,7 +1872,6 @@ export function MfgSalesOrdersListV2() {
         <SearchScopeHint scope="server" searching={searchTransition.isSearching} countPending={isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale} resultCount={total} term={search} className="mt-1" />
       </div>
 
-      {/* Mobile filter row — desktop pills live inside the sticky chrome above. */}
       <div className="mb-4 flex flex-wrap items-center gap-3 md:hidden">
         <FilterPills
           options={statusPillOptions}
@@ -2152,7 +1881,6 @@ export function MfgSalesOrdersListV2() {
         <SoListFilterBar q={debouncedSearch} />
       </div>
 
-      {/* Phone → CardsGrid ALWAYS. Desktop → the view toggle decides. */}
       <div className="md:hidden">
         {error ? (
           <ListErrorPanel message={(error as Error).message} />
@@ -2173,7 +1901,6 @@ export function MfgSalesOrdersListV2() {
         </div>}
       </div>
 
-      {/* Table / Cards (md+) */}
       <div className="hidden md:block">
       {view === "table" ? (
         <>

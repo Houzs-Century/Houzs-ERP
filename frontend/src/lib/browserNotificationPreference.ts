@@ -24,13 +24,10 @@ function parsedPreference(value: string | null): boolean | null {
   return null;
 }
 
-/** Ownerless notification values cannot be safely attributed on a shared ERP
- * device. Quarantine by deleting them; every identity starts explicitly off. */
 function discardLegacyDesktopPreference(): void {
   try {
     window.localStorage.removeItem(PREFERENCE_KEY);
   } catch {
-    // Disabled storage is harmless; the ownerless value is never read.
   }
 }
 
@@ -43,7 +40,6 @@ export function getBrowserNotificationPreference(): boolean {
     const stored = parsedPreference(window.localStorage.getItem(key));
     if (stored !== null) return stored;
   } catch {
-    // Fall through to the session-only copy.
   }
 
   discardLegacyDesktopPreference();
@@ -60,7 +56,6 @@ export function setBrowserNotificationPreference(enabled: boolean): void {
     window.localStorage.setItem(key, enabled ? "1" : "0");
     window.localStorage.removeItem(PREFERENCE_KEY);
   } catch {
-    // The live tab still follows memoryFallback.
   }
   emit();
 }
@@ -76,8 +71,6 @@ export function getBrowserNotificationPermission(): BrowserNotificationPermissio
 export async function requestBrowserNotificationPermission(): Promise<BrowserNotificationPermission> {
   if (getBrowserNotificationPermission() === "unsupported") return "unsupported";
   const result = await window.Notification.requestPermission();
-  // Permission denial does not write the preference, so explicitly notify
-  // both desktop/mobile consumers instead of leaving their UI at "default".
   emit();
   return result;
 }

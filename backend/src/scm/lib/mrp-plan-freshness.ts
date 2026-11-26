@@ -1,23 +1,9 @@
-// ----------------------------------------------------------------------------
-// mrp-plan-freshness — refuse an MRP "Proceed PO" made from a plan that is older
-// than a PO already raised on the same Sales Order lines.
-//
-// The MRP page reads a STORED plan (mrp-snapshot.ts, refreshed every ~15 min),
-// and an MRP-origin convert has no qty cap on a pooled line (fromMrp, see
-// convertSosToPosCore). So after one Proceed, the lines just ordered still read
-// as short until the plan is recomputed, and a second press, or a second tab,
-// ordered the same goods again. The page sends the `computedAt` of the plan it
-// is showing; a live PO line on any picked SO line created after that moment
-// means the plan no longer knows about it, and the convert is refused.
-// ----------------------------------------------------------------------------
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the untyped supabase-js client this SCM tree passes around (see companyScope.ts header). */
 import { chunkIn } from './paginate-all';
 import { deferMrpSnapshotRefresh } from './mrp-snapshot';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 
-/* Same set as routes/mrp.ts PO_DEAD: a cancelled or draft PO is not supply in
-   the plan, so a newer one does not make the plan stale. */
 const PO_NOT_SUPPLY = new Set(['CANCELLED', 'DRAFT']);
 
 export type PoLineSince = { so_item_id: string | null; created_at: string | null; po: { status: string | null } | null };
@@ -65,8 +51,6 @@ export async function loadSoLinesOrderedSincePlan(
       .order('id')
       .range(from, to),
   );
-  /* A failed read must not pass as "nothing ordered since": that is the
-     direction that lets the duplicate order through. */
   if (error) throw new Error(`mrp_plan_freshness_read_failed: ${error.message}`);
   return soLinesOrderedSincePlan(data, planAsOfMs);
 }

@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// propose-days — the DAY-grouped view of the auto-propose result (owner spec
-// 2026-08-07/08: dates first, lorries later, never lump-sum).
-//
-// The backend packer (/delivery-zones/propose) still reasons in lorry-days —
-// that is how it knows how many orders fit a day — but the Delivery Date
-// Arrangement page must present the proposal as DAY -> orders only: the lorry
-// dimension belongs to Delivery Time Arrangement, and a lorry name on the date
-// page would promise an assignment nothing has made yet. This pure helper
-// folds the wire proposals into per-(date, zone-group) cards with sets/revenue
-// as summary numbers and NO lorry field at all, so the page cannot leak one.
-//
-// Pinned by propose-days.test.ts.
-// ----------------------------------------------------------------------------
 import type { PackProposal } from './delivery-zones-queries';
 
 export type ProposalDayOrder = {
@@ -24,7 +10,6 @@ export type ProposalDayOrder = {
 
 export type ProposalDay = {
   date: string;
-  /** The packer's zone group — 'KLANG_VALLEY' (mixed) or a dedicated far zone. */
   group: string;
   orders: ProposalDayOrder[];
   sets: number;

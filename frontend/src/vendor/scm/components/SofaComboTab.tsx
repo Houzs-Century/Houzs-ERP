@@ -1,6 +1,3 @@
-// Sofa Combo Pricing, on Products (the master combos) and on a supplier's page (that
-// supplier's cost). Pick a model, pick a Price, and the combos sit in one table with
-// a cell per size; saving writes a new dated row, so the old price stays in history.
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -26,15 +23,12 @@ import styles from './combo/ComboScreen.module.css';
 import { AdjustDialog, AssignDialog, CompartmentDialog, DeleteDialog, ExportDialog, fieldStyle, ImportDialog, NewComboDialog } from './combo/ComboDialogs';
 import { PresetsDialog } from './combo/PresetsDialog';
 
-// Seat-height columns follow the Maintenance Sizes pool; this shows only if that
-// config fails to load.
 const HEIGHTS_FALLBACK = ['24', '26', '28', '30', '32', '35'];
 const ALL_MODULE_CODES = SOFA_MODULES.map((m) => m.id).sort();
 const GREEN = 'var(--c-primary, #0f6b5c)';
 const plain = (sen: number): string => fmtSen(sen).replace(/^RM\s*/, '');
 
 type ComboTabProps = {
-  /** Set on a supplier's page: reads and writes that supplier's combos. */
   supplierId?: string;
 };
 
@@ -70,7 +64,6 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   const sourceBook = useMemo(() => comboBook(masterQ.data ?? []), [masterQ.data]);
   const lineByKey = useMemo(() => new Map([...book.values()].flat().map((l) => [l.key, l])), [book]);
 
-  // Each model's module codes, from its SKUs: the part after the first dash.
   const modulesByModel = useMemo(() => {
     const m: Record<string, string[]> = {};
     for (const p of productsQ.data ?? []) {
@@ -86,7 +79,6 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
     return m;
   }, [productsQ.data]);
 
-  // Each model's own sizes (Products > Modular), reached from its SKUs.
   const ownSizes = useMemo(() => {
     const byId = new Map((productModelsQ.data ?? []).map((m) => [m.id, m.allowed_options.sizes ?? []]));
     const out = new Map<string, string[]>();
@@ -99,7 +91,6 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   }, [productModelsQ.data, productsQ.data]);
   const sizesOf = (m: string): string[] => offeredSizes(ownSizes.get(m), heights, sizesInUse(book.get(m) ?? []));
 
-  // The supplier's own model code, from their bindings: "5539-2A(LHF)" gives 5539.
   const supplierCodes = useMemo(() => {
     const out: Record<string, Record<string, number>> = {};
     if (!supplierId) return out;
@@ -110,7 +101,6 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
     }
     for (const b of supplierDetailQ.data?.bindings ?? []) {
       const model = modelByCode.get(b.item_code);
-      // "5539-2A(LHF)" gives 5539, "DSL-8030-2A" gives DSL-8030: only the module comes off.
       const code = (b.supplier_sku ?? '').trim().replace(/-[^-]*$/, '').trim();
       if (!model || !code) continue;
       const counts = (out[model] ??= {});
@@ -133,7 +123,6 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
     return out;
   }, [productsQ.data]);
 
-  // The models to work on: a supplier's page shows what they carry, Products every sofa.
   const models = useMemo(() => {
     const set = new Set<string>(book.keys());
     for (const m of supplierId ? Object.keys(supplierCodes) : Object.keys(modulesByModel)) set.add(m);
@@ -141,7 +130,6 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   }, [book, supplierCodes, modulesByModel, supplierId]);
 
   const openModel = params.get('comboModel') ?? models.find((m) => book.has(m)) ?? models[0] ?? null;
-  // Module code to its names for the picker's search: the build label and the SKU name.
   const moduleNames = useMemo(() => {
     const out: Record<string, string> = Object.fromEntries(SOFA_MODULES.map((m) => [m.id, m.label]));
     for (const p of productsQ.data ?? []) {
@@ -227,7 +215,6 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   ];
 
   const modelEntries = models.map((m) => ({ code: m, name: modelNames.get(m) ?? '', supplierCode: supplierCodeOf(m), combos: (book.get(m) ?? []).length }));
-  // A search on Products also finds sofa models with no SKU module yet (Products > Modular).
   const everyModel = supplierId ? [] : [
     ...(productModelsQ.data ?? []).filter((m) => m.active).map((m) => m.model_code),
     ...(productsQ.data ?? []).map((p) => (p as unknown as { base_model?: string | null }).base_model ?? ''),

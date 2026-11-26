@@ -57,7 +57,6 @@ export const scanFileContentHandler = async (kind: ScanFileKind, c: Ctx): Promis
   const obj = await bucket.get(String((row as Row).storage_key));
   if (!obj) return c.json({ error: 'object_missing', message: 'The scan is indexed but its file is gone.' }, 404);
 
-  /* The trail is the point of this endpoint: no row, no bytes. */
   const { error: viewErr } = await sb.from('scan_file_views').insert({
     company_id: co.companyId,
     scan_file_id: id,

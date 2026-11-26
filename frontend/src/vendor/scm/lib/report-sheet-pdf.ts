@@ -41,7 +41,6 @@ export const printedColumns = (t: SheetTable): PrintedColumn[] => {
   return out;
 };
 
-/** Where a printed column's text sits: a column asked to read left to right, else right. */
 const alignOf = (pc: PrintedColumn): 'left' | 'right' => (pc.align === 'left' ? 'left' : 'right');
 /** A cell as autoTable takes it: its text, or its text running across columns or rows. */
 export type PrintedCell = string | { content: string; colSpan?: number; rowSpan?: number; styles?: { halign: 'center' | 'left' } };
@@ -58,7 +57,6 @@ export function printedTable(t: SheetTable, fmt: (sen: number) => string = fmtSe
   const printed = printedColumns(t);
   const head = [t.labelHeader ?? '', ...printed.map((p) => p.label)];
   const cellText = (r: SheetRow, ci: number): string => sheetText(t.columns[ci]!, r.cells[ci] ?? null, fmt);
-  /* A sheet column's printed column — a run of sheet cells becomes a run of printed ones. */
   const printedAt = new Map<number, number>();
   printed.forEach((p, pi) => p.cols.forEach((ci) => printedAt.set(ci, pi)));
   const body = t.rows.map((r): PrintedCell[] => {
@@ -79,13 +77,10 @@ export function printedTable(t: SheetTable, fmt: (sen: number) => string = fmtSe
   });
   const beside = t.rows.map((r) => [null, ...printed.map((p) => (r.cells.length === 0 || p.cols.length < 2 ? null : cellText(r, p.cols[1]!)))]);
   const columnHead = printed.some((p) => p.group) ? groupedHead(printed, t.labelHeader ?? '') : [head];
-  /* A section's title on a row of its own above the header, across the table. */
   const titleRow: PrintedCell[][] = t.title ? [[{ content: t.title, colSpan: printed.length + 1, styles: { halign: 'left' } }]] : [];
   return { head, headRows: [...titleRow, ...columnHead], body, beside, printed };
 }
 
-/** The two header rows of columns under shared headings: the name column and a column
-    without a heading stand two rows tall; a heading spans its columns, their names below. */
 function groupedHead(printed: PrintedColumn[], name = ''): PrintedCell[][] {
   const top: PrintedCell[] = [{ content: name, rowSpan: 2 }];
   const under: PrintedCell[] = [];
@@ -129,9 +124,7 @@ export const isLandscape = (sheet: ReportSheet): boolean => pageFor(sheet).orien
 type Lines = { top: number; right: number; bottom: number; left: number };
 const lines = (over: Partial<Lines>): Lines => ({ top: 0, right: 0, bottom: 0, left: 0, ...over });
 
-/* Points per millimetre — jsPDF's own k for unit 'mm'. */
 const K = 72 / 25.4;
-/* autoTable sets a top-aligned line's baseline this far below the padding, in font-size units. */
 const BASELINE = 2 - 1.15;
 
 export async function generateReportPdf(given: ReportSheet, opts: { fileName: string; action?: PdfAction }): Promise<void> {
@@ -143,7 +136,6 @@ export async function generateReportPdf(given: ReportSheet, opts: { fileName: st
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
   const avail = pageW - margin * 2;
-  /* A % beside its amount: a size and a half smaller, in the room `slot` keeps free at the cell's right. */
   const pctFont = page.fontSize - 1.5;
   const slot = page.fontSize * 1.05;
   let y = drawHeader(doc, {
@@ -158,7 +150,6 @@ export async function generateReportPdf(given: ReportSheet, opts: { fileName: st
   for (const t of sheet.tables) {
     const p = printedTable(t, fmt);
     const n = p.printed.length;
-    /* Sideways, every figure column gets an equal share; upright, the widest content decides. */
     const figureW = page.orientation === 'landscape' && n > 0 ? (avail - page.labelW) / n : undefined;
     autoTable(doc, {
       startY: y,
@@ -178,7 +169,6 @@ export async function generateReportPdf(given: ReportSheet, opts: { fileName: st
         if (data.section === 'head') {
           if (data.column.index === 0) data.cell.styles.halign = 'left';
           else if (pc) data.cell.styles.halign = alignOf(pc);
-          /* The section title: a size up, no rules, a little air above. */
           if (t.title && data.row.index === 0) {
             data.cell.styles.fontSize = page.fontSize + 1.5;
             data.cell.styles.lineWidth = 0;
@@ -193,14 +183,12 @@ export async function generateReportPdf(given: ReportSheet, opts: { fileName: st
         if (s.italic) data.cell.styles.fontStyle = 'italic';
         if (s.soft) data.cell.styles.textColor = 120;
         if (s.fill) data.cell.styles.fillColor = s.fill;
-        /* A cell running across columns takes the rule of the last one it covers. */
         const lastPc = pc && data.cell.colSpan > 1 ? p.printed[data.column.index - 2 + data.cell.colSpan] : pc;
         const edge = lastPc?.edge ? { right: 0.4 } : {};
         if (s.rule > 0 || lastPc?.edge) data.cell.styles.lineWidth = lines({ top: s.rule, ...edge });
         if (data.column.index === 0) {
           data.cell.styles.cellPadding = { top: row.kind === 'block' ? 3.5 : 1.2, bottom: 1.2, left: 1.5 + 3 * row.depth, right: 1.5 };
         } else if (pc && pc.cols.length > 1) {
-          /* The amount keeps to the left of the slot the % is drawn in. */
           data.cell.styles.cellPadding = { top: 1.2, bottom: 1.2, left: 1.5, right: 1.5 + slot };
         }
       },
@@ -210,7 +198,6 @@ export async function generateReportPdf(given: ReportSheet, opts: { fileName: st
         const row = t.rows.at(data.row.index);
         if (!text || !row) return;
         const s = printedStyle(row.kind);
-        /* On the amount's own baseline, small and grey, flush with the cell's right edge. */
         const baseline = data.cell.y + data.cell.padding('top') + (page.fontSize / K) * BASELINE;
         doc.setFont('helvetica', s.bold ? 'bold' : 'normal');
         doc.setFontSize(pctFont);

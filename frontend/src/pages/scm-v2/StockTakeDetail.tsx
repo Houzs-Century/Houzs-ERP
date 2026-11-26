@@ -89,22 +89,18 @@ const scopeLabel = (scopeType: string, scopeValue: string | null): string => {
   return scopeType;
 };
 
-// Local row state: counted_qty as string so empty input = null, not 0.
 type LineDraft = {
   id: string;
   itemCode: string;
   productName: string | null;
   variantLabel: string | null;
-  /* null while the server strips it (blind take, non-supervisor viewer). */
   systemQty: number | null;
-  countedQtyInput: string;   // '' means uncounted
+  countedQtyInput: string;
   notes: string;
   origCountedQty: number | null;
   origNotes: string;
-  /* WHO/WHEN this cell was counted (mig 0270) — display-only here. */
   countedBy: string | null;
   countedAt: string | null;
-  /* Round 1: unit cost (sen) the post would value a variance at; null = none. */
   estUnitCostSen: number | null;
   /* Round 3 (owner 2026-11-23): the unit cost the counter types for a found SKU
      with no priced lot. enteredCostSen is what the server holds (sen);
@@ -114,10 +110,8 @@ type LineDraft = {
   enteredCostRmInput: string;
   sourcePos: Array<{ po: string; qty: number }>;
   addedOnCount: boolean;
-  /* Round 2: where the counter found the goods (moved there at post). */
   rackId: string | null;
   origRackId: string | null;
-  /* What was typed in the Rack box; null = untouched (the box shows rackId's label). */
   rackInput: string | null;
 };
 
@@ -147,7 +141,6 @@ const toDraft = (l: StockTakeLine): LineDraft => ({
   rackInput:        null,
 });
 
-/* "rack l5.1", "Rack L5.1", "L5.1 " are one rack (backend lib/stock-take-sheet.ts normRack). */
 const normRack = (s: string): string => s.toUpperCase().replace(/^\s*RACK\b/, '').replace(/\s+/g, '');
 
 const parseCounted = (s: string): number | null => {
@@ -157,8 +150,6 @@ const parseCounted = (s: string): number | null => {
   return n;
 };
 
-/* The unit cost (sen) a found line carries from the sheet — the RM the counter
-   typed in the cost box, parsed; null when blank or not a positive number. */
 const enteredCostSenOf = (d: LineDraft): number | null => {
   const s = d.enteredCostRmInput.trim();
   if (s === '') return null;
@@ -166,16 +157,12 @@ const enteredCostSenOf = (d: LineDraft): number | null => {
   return Number.isFinite(rm) && rm > 0 ? Math.round(rm * 100) : null;
 };
 
-/* The RM a line's variance is worth, in sen; null when there is no variance
-   to show or no cost to value it at. A SKU with no priced lot falls back to the
-   cost the counter typed on the sheet, so the value previews as they fill it. */
 const valueOf = (d: LineDraft): number | null => {
   const v = varianceOf(d);
   const cost = d.estUnitCostSen ?? enteredCostSenOf(d);
   return v == null || cost == null ? null : v * cost;
 };
 
-/* null = "no variance to show": uncounted, OR system qty hidden (blind). */
 const varianceOf = (d: LineDraft): number | null => {
   const c = parseCounted(d.countedQtyInput);
   if (c == null || d.systemQty == null) return null;
@@ -186,8 +173,6 @@ export const StockTakeDetail = () => {
   const { id }   = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  /* History drawer. Stable close handler so the memoized panel does not
-     re-render on every count keystroke. */
   const [historyOpen, setHistoryOpen] = useState(false);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
 
@@ -216,19 +201,14 @@ export const StockTakeDetail = () => {
   const [saving, setSaving] = useState(false);
   const unsaved = dirty || pendingAdds.length > 0 || deleteIds.size > 0;
   const shownLines = useMemo(() => lines.filter((l) => !deleteIds.has(l.id)), [lines, deleteIds]);
-  /* Model view is the DEFAULT — variant-heavy categories are why it exists.
-     Flat is the toggle (owner phase 1). */
   const [view, setView] = useState<'model' | 'flat'>('model');
   const columnOrder = useColumnOrder(COUNT_SHEET_ORDER_STORAGE_KEY, COUNT_SHEET_COLUMN_KEYS);
-  /* Expanded model groups (multi-line groups start collapsed to one header). */
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  /* Header edit (round 1): assignees + notes while OPEN. */
   const updateHeader = useUpdateStockTakeHeader();
   const pickableStaff = usePickableStaff();
   const [editingHeader, setEditingHeader] = useState(false);
   const [draftAssignees, setDraftAssignees] = useState<string[]>([]);
   const [draftNotes, setDraftNotes] = useState('');
-  /* Round 2: racks of this take's warehouse + the paper-sheet reader. */
   const racksQ = useStockTakeRacks(id ?? null);
   const rackLabel = useCallback((rid: string | null) => {
     if (!rid) return '—';
@@ -272,16 +252,13 @@ export const StockTakeDetail = () => {
   }, [detail.data]);
 
   const status: StockTakeStatus | undefined = detail.data?.take.status;
-  const isDraft  = status === 'OPEN';      // local var name kept for diff minimization; refers to OPEN state
+  const isDraft  = status === 'OPEN';
   const isPosted = status === 'POSTED';
   /* Approval lane (owner 2026-11-20): an over-limit count a non-supervisor
      submitted, waiting for a supervisor to approve (→ POSTED) or return (→ OPEN). */
   const isPendingApproval = status === 'PENDING_APPROVAL';
   const isCancelled = status === 'CANCELLED';
 
-  /* Server-decided viewer facts (backend GET /:id). The fallback only matters
-     against an older worker that omits `viewer` — behave exactly as before
-     this phase (no blind, buttons enabled; the backend still enforces). */
   const viewer = detail.data?.viewer ?? { isAssignee: true, canSupervise: true, blindActive: false };
   const blindActive = viewer.blindActive;
   const visibleColumns = visibleCountSheetColumns(columnOrder.order, blindActive);
@@ -289,8 +266,6 @@ export const StockTakeDetail = () => {
      anyone who can open the take can post it (a big variance still needs a
      supervisor, enforced by the server). */
 
-  /* id → name for assignee + per-cell counted-by (same idiom as the Stock
-     Adjustments "Performed By" column — never render a uuid). */
   const { actorNameOf } = useStaffLookup();
 
   const filteredLines = useMemo(() => {
@@ -303,10 +278,8 @@ export const StockTakeDetail = () => {
     );
   }, [shownLines, search]);
 
-  /* Model groups over the FILTERED lines — search narrows, then groups. */
   const groups = useMemo(() => groupByModel(filteredLines), [filteredLines]);
 
-  // ── Aggregates ───────────────────────────────────────────────────────
   const totals = useMemo(() => {
     let counted = 0;
     let uncounted = 0;
@@ -317,16 +290,13 @@ export const StockTakeDetail = () => {
     let valueNegSen = 0;
     let uncostedVarianceLines = 0;
     for (const l of shownLines) {
-      /* Counted-ness is judged on the ENTRY, not the variance — on a blind
-         take variance is unknowable here, but "how many cells are done" must
-         still be right. */
       const c = parseCounted(l.countedQtyInput);
       if (c == null) { uncounted += 1; continue; }
       counted += 1;
       const v = varianceOf(l);
-      if (v == null) continue; // blind — variance unknown to this viewer
+      if (v == null) continue;
       if (v > 0) variancePos += v;
-      if (v < 0) varianceNeg += v;       // negative number
+      if (v < 0) varianceNeg += v;
       if (v !== 0) nonZeroVarianceLines += 1;
       const val = valueOf(l);
       if (v !== 0 && val == null) uncostedVarianceLines += 1;
@@ -344,22 +314,6 @@ export const StockTakeDetail = () => {
     };
   }, [shownLines]);
 
-  /* ── Print ──────────────────────────────────────────────────────────────
-     This document had no print handler at all until now, on any surface.
-     (A fabricated owner quote was attached here and has been removed — see
-     row-menus.ts for the provenance note.)
-
-     The SERVER rows, not the local drafts: a count that has not been saved is
-     not yet part of the record, and a printed sheet that carries typed-but-
-     unsaved numbers is a document nobody can reconcile against the take.
-
-     BLIND NEEDS NO SPECIAL CASE HERE. The server has already stripped
-     `system_qty` / `variance` from this payload for a non-supervising viewer,
-     so the generator has nothing to leak and prints a count sheet instead.
-
-     "Print now" goes through the PDF (action: 'print') and never
-     window.print(): index.css's @media print block hides `body *`, so printing
-     this page directly yields a blank sheet. */
   const deliverPrintPdf = (action: PdfAction) => {
     const d = detail.data;
     if (!d) return;
@@ -367,8 +321,6 @@ export const StockTakeDetail = () => {
       .then(({ generateStockTakePdf }) => generateStockTakePdf(
         {
           ...d.take,
-          /* Resolved here, never inside the PDF lib — `assignee_staff_id` is a
-             uuid and a uuid never reaches a person. */
           assignee_name: stockTakeAssignees(d.take).map((x) => actorNameOf(x)).join(', ') || null,
         },
         d.lines,
@@ -382,7 +334,6 @@ export const StockTakeDetail = () => {
   };
   const print = usePrintPreview(deliverPrintPdf);
 
-  /* 2990-0014: the same server rows as the PDF, as a workbook. */
   const exportExcel = () => {
     const d = detail.data;
     if (!d) return;
@@ -406,11 +357,8 @@ export const StockTakeDetail = () => {
         tone: 'error',
       }));
   };
-  /* The list's right-click Print navigates here with ?print=1 — same contract
-     every other document's row menu uses. */
   useOpenPrintPreviewFromUrl(print.openPreview, !!detail.data);
 
-  // ── Local edit helpers ───────────────────────────────────────────────
   const setLine = (id: string, patch: Partial<LineDraft>) => {
     setLines((cur) => cur.map((l) => (l.id === id ? { ...l, ...patch } : l)));
     setDirty(true);
@@ -435,9 +383,6 @@ export const StockTakeDetail = () => {
     setDirty(true);
   };
 
-  /* One-click "all zero for this group" (phase 1): the common truth for a
-     variant-heavy model is "none of these are physically here". Local draft
-     only — Save persists, so a slip is undoable. */
   const zeroGroup = (itemCode: string) => {
     setLines((cur) => cur.map((l) =>
       l.itemCode === itemCode ? { ...l, countedQtyInput: '0' } : l,
@@ -454,13 +399,8 @@ export const StockTakeDetail = () => {
     });
   };
 
-  // ── Mutations ────────────────────────────────────────────────────────
-  /* Counts first, then added-line deletes, then new lines: each step is
-     dropped from the pending state as it lands, so a failure part-way leaves
-     only the unsaved part on screen to retry. */
   const onSave = async () => {
     if (!id) return;
-    // Build diff payload — only lines whose counted or notes changed.
     const changed = shownLines.filter((l) => {
       const parsedCounted = parseCounted(l.countedQtyInput);
       return parsedCounted !== l.origCountedQty || l.notes !== l.origNotes || l.rackId !== l.origRackId
@@ -484,8 +424,6 @@ export const StockTakeDetail = () => {
           id,
           lines: changed.map((l) => ({
             id:         l.id,
-            /* Only a changed count is sent: the server re-stamps Counted By on
-               every countedQty it receives, so a note-only edit must not. */
             ...(parseCounted(l.countedQtyInput) !== l.origCountedQty ? { countedQty: parseCounted(l.countedQtyInput) } : {}),
             notes:      l.notes.trim() ? l.notes.trim() : null,
             ...(l.rackId !== l.origRackId ? { rackId: l.rackId } : {}),
@@ -516,8 +454,6 @@ export const StockTakeDetail = () => {
     if (!id) return;
     if (unsaved) { notify({ title: 'Save your counts before posting.', tone: 'error' }); return; }
     const summary = blindActive
-      /* Blind counter: the variance figures are exactly what they must not
-         see before posting, so the confirm speaks only of coverage. */
       ? `Lines: ${totals.totalLines} (${totals.counted} counted, ${totals.uncounted} untouched)\n` +
         `Blind count — variances are revealed after posting.`
       : `Lines: ${totals.totalLines} (${totals.counted} counted, ${totals.uncounted} untouched)\n` +
@@ -533,8 +469,6 @@ export const StockTakeDetail = () => {
     post.mutate(id, {
       onSuccess: (res) => {
         detail.refetch();
-        /* Over the limit and the caller is not a supervisor: nothing posted —
-           the count is now waiting for a supervisor to approve it. */
         if (res.pendingApproval) {
           void notify({
             title: 'Sent for approval',
@@ -560,8 +494,6 @@ export const StockTakeDetail = () => {
     });
   };
 
-  /* Supervisor approves a pending over-limit count — books the ADJUSTMENT
-     movements now, exactly as a direct post would have. */
   const onApprove = async () => {
     if (!id) return;
     const proceed = await askConfirm({
@@ -587,8 +519,6 @@ export const StockTakeDetail = () => {
     });
   };
 
-  /* Supervisor returns a pending count to OPEN for a recount. No stock moved
-     while it waited, so nothing is reversed. */
   const onReject = async () => {
     if (!id) return;
     const proceed = await askConfirm({
@@ -686,7 +616,6 @@ export const StockTakeDetail = () => {
     });
   };
 
-  // ── Render ───────────────────────────────────────────────────────────
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -715,15 +644,9 @@ export const StockTakeDetail = () => {
           <>
             {status && <StatusPill docType="stockTake" status={status} />}
             <div className={styles.actions}>
-              {/* History drawer toggle. Same header seat on every detail page,
-                  and unconditional: a cancelled or posted take is exactly when
-                  someone needs to see who changed what. */}
               <Button variant="ghost" size="md" onClick={() => setHistoryOpen(true)}>
                 <History {...ICON} /> History
               </Button>
-              {/* Unconditional, like History. An OPEN take prints as the count
-                  sheet somebody walks the aisles with; a POSTED one prints as
-                  the variance record. Both are wanted. */}
               <Button variant="ghost" size="md" onClick={print.openPreview}>
                 <Printer {...ICON} /> Print PDF
               </Button>
@@ -749,8 +672,6 @@ export const StockTakeDetail = () => {
                   </Button>
                 </>
               )}
-              {/* Approval lane: a supervisor signs off (or returns) an over-limit
-                  count. Only a supervisor sees these — the submitter waits. */}
               {isPendingApproval && viewer.canSupervise && (
                 <>
                   <Button variant="ghost" size="md" onClick={onReject} disabled={reject.isPending || approve.isPending}>
@@ -806,7 +727,6 @@ export const StockTakeDetail = () => {
         </section>
       )}
 
-      {/* ── Header card ─────────────────────────────────────────────── */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Setup</h2>
@@ -866,7 +786,6 @@ export const StockTakeDetail = () => {
                 </div>
               )}
             </div>
-            {/* Phase 1 — accountability facts on the header. */}
             <div className={styles.field}>
               <span className={styles.fieldLabel}>Assignees</span>
               {editingHeader ? (
@@ -896,7 +815,6 @@ export const StockTakeDetail = () => {
         </div>
       </section>
 
-      {/* ── Variance Summary ────────────────────────────────────────── */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Variance Summary</h2>
@@ -911,8 +829,6 @@ export const StockTakeDetail = () => {
             <SummaryStat label="Counted"        value={totals.counted.toString()} />
             <SummaryStat label="Untouched"      value={totals.uncounted.toString()}
               tone={totals.uncounted > 0 ? 'muted' : undefined} />
-            {/* Blind view: the variance figures ARE the hidden information —
-                coverage stats only until posted/revealed. */}
             {!blindActive && (
               <>
                 <SummaryStat label="Variance lines" value={totals.nonZeroVarianceLines.toString()} />
@@ -1014,10 +930,6 @@ export const StockTakeDetail = () => {
         </section>
       )}
 
-      {/* ── Lines ───────────────────────────────────────────────────── */}
-      {/* The table scrolls in its own box, sized to the screen under the page
-          header: the header row freezes to its top and the first column to its
-          left. overflow: clip, not hidden, so the card is never a scroll box. */}
       <section className={styles.card} style={{ overflow: 'clip' }}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>
@@ -1035,7 +947,6 @@ export const StockTakeDetail = () => {
                 <Undo2 size={14} strokeWidth={1.75} /> Reset columns
               </Button>
             )}
-            {/* Model / flat toggle (phase 1) — model view is the default. */}
             <Button variant={view === 'model' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('model')}>
               <Rows3 size={14} strokeWidth={1.75} /> By model
             </Button>
@@ -1062,8 +973,6 @@ export const StockTakeDetail = () => {
                     }}
                   />
                 </div>
-                {/* Meaningless on a blind take — there is no visible system qty
-                    to fill from (and the server strips the figure anyway). */}
                 {!blindActive && (
                   <Button variant="ghost" size="sm" onClick={matchAllToSystem}>
                     <Wand2 size={14} strokeWidth={1.75} /> Fill all to system
@@ -1078,9 +987,6 @@ export const StockTakeDetail = () => {
           <table className={`${styles.table} ${styles.tableOwnWidths} ${styles.stickyHead} ${styles.freezeFirstCol}`}>
             <thead>
               <tr>
-                {/* Blind (phase 1): the figures the counter must not see
-                    simply do not exist in this view — the server already
-                    stripped them from the payload. */}
                 {visibleColumns.map((key) => (
                   <th
                     key={key}
@@ -1140,8 +1046,6 @@ export const StockTakeDetail = () => {
                         {ln.productName || <span className={styles.muted}>—</span>}
                       </td>
                     ),
-                    /* Variant bucket (migration 0183) — the (item_code,
-                       variant_key) this line counts. A plain SKU shows '—'. */
                     variant: (
                       <td key="variant" style={{ fontSize: 'var(--fs-13)' }}>
                         {ln.variantLabel
@@ -1164,9 +1068,6 @@ export const StockTakeDetail = () => {
                             inputMode="numeric"
                             aria-label={`Counted qty for ${ln.itemCode}`}
                             value={ln.countedQtyInput}
-                            /* Digits only: a text box has no spinner and no
-                               mouse-wheel change, the two ways a count got
-                               nudged by accident. */
                             onChange={(e) => setLine(ln.id, { countedQtyInput: e.target.value.replace(/[^0-9]/g, '') })}
                             placeholder="—"
                             className={styles.fieldInput}
@@ -1184,7 +1085,6 @@ export const StockTakeDetail = () => {
                         )}
                       </td>
                     ),
-                    /* Round 2: where the goods actually sit — moved there at post. */
                     rack: (
                       <td key="rack">
                         {isDraft && (racksQ.data ?? []).length > 0 ? (
@@ -1259,9 +1159,6 @@ export const StockTakeDetail = () => {
                         )}
                       </td>
                     ),
-                    /* WHO counted this cell (mig 0270) — stamped server-side
-                       on save; a just-typed, unsaved entry still shows the
-                       previous author until Save Counts round-trips. */
                     countedBy: (
                       <td key="countedBy" style={{ fontSize: 'var(--fs-12)' }}
                           title={ln.countedAt ? fmtDateTime(ln.countedAt) : undefined}>
@@ -1305,8 +1202,6 @@ export const StockTakeDetail = () => {
 
                 if (view === 'flat') return filteredLines.map((ln) => lineRow(ln, false));
 
-                /* MODEL view (default): one header row per multi-line model,
-                   collapsed until expanded; single-line models render plain. */
                 return groups.flatMap((g) => {
                   if (g.lines.length === 1) return [lineRow(g.lines[0], false)];
                   const isOpen = expanded.has(g.itemCode);
@@ -1430,7 +1325,6 @@ export const StockTakeDetail = () => {
             />
           )}
 
-          {/* A misclicked trash would otherwise only come back by reloading, which drops every unsaved count. */}
           {isDraft && deleteIds.size > 0 && (
             <div style={{
               marginTop: 'var(--space-3)', display: 'flex', alignItems: 'center', gap: 'var(--space-2)',
@@ -1481,8 +1375,6 @@ export const StockTakeDetail = () => {
         />
       )}
 
-      {/* History drawer — portals to <body>, so its position here is only
-          about lifecycle, not layout. */}
       {historyOpen && (
         <EntityHistoryPanel
           entityType="STOCK_TAKE"
@@ -1505,9 +1397,6 @@ export const StockTakeDetail = () => {
           { label: 'Scope', value: scopeLabel(t.scope_type, t.scope_value) },
           { label: 'Date', value: fmtDateOrDash(t.take_date) },
           { label: 'Lines', value: `${totals.counted} counted of ${totals.totalLines}` },
-          /* The card says what the sheet will say. On a blind take the
-             variance is exactly the number the counter must not see, so it
-             names the blind instead of printing a figure. */
           blindActive
             ? { label: 'Variance', value: 'Hidden — blind count' }
             : { label: 'Net variance', value: `${totals.varianceNet > 0 ? '+' : ''}${fmtQty(totals.varianceNet)}` },
@@ -1518,7 +1407,6 @@ export const StockTakeDetail = () => {
   );
 };
 
-// ── Small inline component for the variance summary cards ──────────────
 type SummaryTone = 'positive' | 'negative' | 'muted';
 const SummaryStat = (props: { label: string; value: string; tone?: SummaryTone }) => {
   const color =
@@ -1546,7 +1434,6 @@ const SummaryStat = (props: { label: string; value: string; tone?: SummaryTone }
   );
 };
 
-/* "+RM 1,234.00" / "−RM 56.00" / "RM 0.00" from sen. */
 const fmtSignedRM = (sen: number): string =>
   sen > 0 ? `+${fmtSen(sen)}` : sen < 0 ? `−${fmtSen(-sen)}` : fmtSen(0);
 

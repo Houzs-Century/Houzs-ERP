@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// sg-postcode — live Singapore 6-digit postcode -> address via OneMap.
-//
-// GET /sg-postcode/:code — resolve a real SG postcode. Thin wrapper over
-// lookupSgPostcode (scm/lib/onemap-sg.ts, which holds the testable logic).
-//
-// INERT until configured: with no ONEMAP_EMAIL / ONEMAP_PASSWORD Worker secret
-// it returns { configured: false } and the SG address forms keep the seeded
-// 55-area picker (mig 0181). Shared reference lookup, not company-scoped — a
-// postcode resolves the same for every caller — so it sits with the other
-// shared-read helpers (staff / localities / fabric-colours) in index.ts.
-// ----------------------------------------------------------------------------
 
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";

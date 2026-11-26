@@ -37,7 +37,6 @@ const board = async (qs: string, caller: Caller = 'office') => {
   return r.body as Body;
 };
 
-/** Bands 1-5, every page, in load order. */
 async function allBands(qs: string, caller: Caller = 'office'): Promise<Order[][]> {
   const out: Order[][] = [];
   for (let band = 1; band <= 5; band += 1) {
@@ -109,8 +108,8 @@ describe('date bands', () => {
     expect(bandOf('2026-11-25', '2026-11-10')).toBe(1);
     expect(bandOf('2026-11-26', '2026-11-10')).toBe(2);
     expect(bandOf('2026-10-25', '2026-11-10')).toBe(2);
-    expect(bandOf('2026-08-12', '2026-11-10')).toBe(4); // 90 days
-    expect(bandOf('2026-08-11', '2026-11-10')).toBe(5); // 91 days
+    expect(bandOf('2026-08-12', '2026-11-10')).toBe(4);
+    expect(bandOf('2026-08-11', '2026-11-10')).toBe(5);
     expect(bandOf(null, '2026-11-10')).toBe(5);
   });
 });
@@ -124,8 +123,6 @@ describe('counts_only', () => {
   });
 });
 
-/* Production 2026-11-10: p95 208 s. The parallel band reads of a board open must
-   never write; the Pending Schedule stamp is written by a request without a band. */
 describe('board GETs in bands never write', () => {
   const stampedIn = (tables: ReturnType<typeof fixtureTables>) =>
     tables.mfg_sales_orders!.filter((r) => r.delivery_state === 'PENDING_SCHEDULE').map((r) => String(r.doc_no)).sort();
@@ -164,9 +161,6 @@ describe('parameters', () => {
 });
 
 describe('DP_BOARD_SOURCE (lib/delivery-board-source.ts) with no Postgres reachable', () => {
-  // The SQL path runs on real Postgres in tests-pg/deliveryBoardSql.pg.test.ts. Here
-  // there is no database URL, so its statement fails: the board must still answer,
-  // from the PostgREST reads, byte-identical to the board as it was.
   for (const source of ['sql', 'shadow']) {
     it(`${source}: whole board, OPEN, driver and counts_only are unchanged`, async () => {
       const run = async (qs: string, caller: Caller = 'office') => {

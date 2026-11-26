@@ -14,41 +14,22 @@ import { Calendar } from 'lucide-react';
 import styles from './DateField.module.css';
 
 export type DateFieldProps = {
-  /** ISO `YYYY-MM-DD` (or '' for empty). */
   value: string;
-  /** Emits ISO `YYYY-MM-DD` (or '' when cleared). */
   onChange: (iso: string) => void;
   className?: string;
   id?: string;
   name?: string;
-  /** ISO min/max for the native calendar. */
   min?: string;
   max?: string;
   disabled?: boolean;
-  /** Stretch to fill the parent (form fields / dialog rows). */
   fullWidth?: boolean;
   placeholder?: string;
   title?: string;
   'aria-label'?: string;
-  /** Show a validation-error border (replaces the inline red `style` the raw
-   *  native inputs used, since DateField wraps in a span). */
   invalid?: boolean;
-  /** Soft informational highlight (orange border + cream fill) — e.g. a value
-   *  auto-inherited from a parent doc. Distinct from `invalid` (red error). */
   highlight?: boolean;
-  /** Inline style, merged onto the wrapper. The raw `<input type="date">`
-   *  sites this component replaced carried their validation and
-   *  inherited-value borders as inline `style`, and carrying those over
-   *  verbatim is what let 170-odd fields move in one pass without each one
-   *  being re-designed. `invalid` / `highlight` still win where both are set,
-   *  because they are the reviewed spellings of the same two states. */
   style?: CSSProperties;
-  /** Fired when the text box loses focus, after the display snaps back to the
-   *  canonical value. */
   onBlur?: () => void;
-  /** Fired instead of `onBlur` when the text box is left holding text that is
-   *  not a date. The parent's value is put back to what it was on focus and the
-   *  box shows it again; without this prop the text stays, outlined red. */
   onInvalid?: (text: string) => void;
   required?: boolean;
 };
@@ -80,8 +61,6 @@ export function maskDmy(digits: string): string {
  *  alone by the `^[\d/]*$` guard at the call site. */
 export function separatorsAreMaskOwn(raw: string): boolean {
   for (let i = 0; i < raw.length; i++) {
-    // YYYY/MM/DD: the mask writes '/' after the year (index 4) and the month
-    // (index 7); a '/' anywhere else is the operator's own, so leave it alone.
     if (raw[i] === '/' && i !== 4 && i !== 7) return false;
   }
   return true;
@@ -109,11 +88,6 @@ export function isCoarsePointer(): boolean {
   }
 }
 
-/** `isCoarsePointer()` as render state, re-read when the primary pointer
- *  changes — a tablet gaining a keyboard case, a phone driven by a desktop
- *  browser's device emulation. Read at render (not inside a handler) because
- *  the touch fix is a DIFFERENT ELEMENT GEOMETRY, not a different event
- *  handler, so it has to be decided while the tree is being built. */
 function useCoarsePointer(): boolean {
   const [coarse, setCoarse] = useState(isCoarsePointer);
   useEffect(() => {
@@ -126,10 +100,6 @@ function useCoarsePointer(): boolean {
     }
     const onChange = () => setCoarse(isCoarsePointer());
     onChange();
-    // A MediaQueryList with no addEventListener is Safari < 14 and some older
-    // embedded webviews. The read above has already run, so what is lost there
-    // is only the LIVE update; the field still renders for the right pointer.
-    // Typed non-nullish, so this is a runtime feature test, not a null check.
     if (typeof mql.addEventListener !== 'function') return;
     mql.addEventListener('change', onChange);
     return () => mql.removeEventListener('change', onChange);
@@ -160,7 +130,6 @@ export function parseDmy(text: string): string | null {
   const mm = Number(m[2]);
   const dd = Number(m[3]);
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
-  // Reject overflow (e.g. 31/02) by round-tripping through a UTC date.
   const dt = new Date(Date.UTC(yyyy, mm - 1, dd));
   if (dt.getUTCFullYear() !== yyyy || dt.getUTCMonth() !== mm - 1 || dt.getUTCDate() !== dd) return null;
   return `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
@@ -186,21 +155,9 @@ export function DateField({
   onInvalid,
   required = false,
 }: DateFieldProps) {
-  /* The host's LATEST onBlur. A calendar pick commits a tick after onChange, by
-     which time the host has re-rendered with the picked value; calling the
-     onBlur captured at pick time handed it the OLD value, so a blur-committing
-     host compared old with old and saved nothing (2026-10-26: HC-SO-2609-164's
-     Delivery Date showed 28, stayed 20 in the database, WhatsApp sent 20). */
   const onBlurRef = useRef(onBlur);
   onBlurRef.current = onBlur;
-  // `editing` is non-null only while the text box has focus; the rest of the
-  // time the display is derived straight from the canonical ISO `value`, so the
-  // field can never drift out of sync with the parent.
   const [editing, setEditing] = useState<string | null>(null);
-  // Set on blur when the operator's own text does not parse. Before this the
-  // field silently reverted to the previous date and the operator read that as
-  // his own typo — the entry was lost with no border, no message and nothing
-  // announced, because `aria-invalid` came only from the `invalid` PROP.
   const [draftInvalid, setDraftInvalid] = useState(false);
   /* The value the field held when focus arrived. Clearing the box on the way to
      retyping emits '' to the parent; if the retyped text then does not parse, a
@@ -222,7 +179,7 @@ export function DateField({
     const el = nativeRef.current;
     if (!el || disabled) return;
     if (typeof el.showPicker === 'function') {
-      try { el.showPicker(); return; } catch { /* not allowed in this context */ }
+      try { el.showPicker(); return; } catch { }
     }
     el.focus();
     el.click();
@@ -271,8 +228,6 @@ export function DateField({
           const text = (editing ?? '').trim();
           if (text !== '' && parseDmy(text) === null) {
             if (value !== focusValueRef.current) onChange(focusValueRef.current);
-            // A host that reports the error itself gets the box back to the
-            // saved value, as the HC Delivery sheet does after its popup.
             if (onInvalid) {
               setEditing(null);
               onInvalid(text);
@@ -337,10 +292,6 @@ export function DateField({
         max={max}
         onChange={(e) => {
           onChange(e.target.value);
-          // A calendar pick is a COMPLETED entry but it lands on this hidden
-          // input; a blur-committing host (InlineEdit saves on blur) would
-          // otherwise miss it (2026-08-20: a Service-case Supplier Pickup
-          // Date chosen via the icon showed in the field, never saved).
           setTimeout(() => onBlurRef.current?.(), 0);
         }}
       />

@@ -33,7 +33,6 @@ describe('the month-end statement repeats the any-day export', () => {
     expect(pairRepeats(earlier, incoming)).toEqual([
       '2990-JE-2609-0336', '2990-HPV-2609-001', 'Transaction_Statement_20260901_20260928.csv (still open there)', '2990-JE-2609-0050',
     ]);
-    /* And the other way round: the any-day export after the month-end file. */
     const back = pairRepeats(incoming.map((m) => ({ ...m, where: 'monthly' })), earlier);
     expect(back).toEqual(['monthly', 'monthly', 'monthly', 'monthly']);
   });
@@ -55,12 +54,9 @@ describe('the month-end statement repeats the any-day export', () => {
   });
 
   test('one earlier print answers one movement; an exact pair is taken before a containment one', () => {
-    /* Two deposits of RM 100 on the month-end file, one on the export: one repeat, one new. */
     expect(pairRepeats([anyDay('2026-09-04', 10000, 'CDM Deposit', null)], [
       monthEnd('2026-09-04', 10000, 'CDM Deposit at PNT', null), monthEnd('2026-09-04', 10000, 'CDM Deposit at PNT', null),
     ])).toEqual(['JE-1', null]);
-    /* The export holds "Fund transfer" and "Fund transfer RACHEL NG"; the month-end
-       print of the second pairs with the second, leaving the first for its own twin. */
     const earlier = [anyDay('2026-08-03', 143300, 'Fund transfer', null, 'A'), anyDay('2026-08-03', 143300, 'Fund transfer', 'RACHEL NG', 'B')];
     expect(pairRepeats(earlier, [monthEnd('2026-08-03', 143300, 'Fund transfer', 'RACHEL NG')])).toEqual(['B']);
   });
@@ -99,8 +95,6 @@ describe('repeatsAmong — the rule over files already in', () => {
       line(3, 15, { ...KLM, state: 'POSTED', where: 'JE-B' }),
       line(4, 16, { ...KLM }),
     ]);
-    /* Line 3, decided, is not asked; line 4 pairs with it — the same words beat
-       line 1's containment — and line 2, a copy, is never offered. */
     expect([...found.entries()]).toEqual([[4, 'JE-B']]);
   });
 });
@@ -152,8 +146,6 @@ describe('the month-end print words a movement differently — a mark both print
   });
 
   test('words still come first: an exact pair is never taken by a mark', () => {
-    /* Two prints of the same day and amount sharing the biller account; the
-       month-end copy of the second says exactly what the second said. */
     const a = anyDay('2026-10-02', -7210, 'JomPAY Bill Payment', 'U MOBILE SDN BHD 30515721824 DA203JNP22610021822Y', 'A');
     const b = anyDay('2026-10-02', -7210, 'JomPAY Bill Payment', 'U MOBILE SDN BHD 30515721824 DA111AAA22610021111Y', 'B');
     expect(pairRepeats([a, b], [

@@ -63,8 +63,6 @@ async function agingHandler(c: Ctx, side: 'AR' | 'AP'): Promise<Response> {
 
   const rows = ageEntries(loaded.entries, { asOf: q.asOf, basis: q.basis, buckets: q.buckets });
   const totals = agingTotals(rows);
-  /* AR: orders that owe here although AutoCount took their deposit — the
-     smaller of what the order still owes and what was paid before the ERP. */
   const owedByOrder = new Map<string, number>();
   for (const r of rows) for (const i of r.items) if (i.group.startsWith('SO:')) owedByOrder.set(i.group.slice(3), (owedByOrder.get(i.group.slice(3)) ?? 0) + i.openSen);
   let paidOrders = 0;

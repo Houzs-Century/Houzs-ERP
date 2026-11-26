@@ -19,27 +19,13 @@
 import { describe, expect, test } from 'vitest';
 
 import { loadOutstandingSoLines, OUTSTANDING_SO_SELECT } from './outstanding-so-lines';
-// Source text of both files, so the WIRING is asserted too — the old read looked
-// fine and was wrong about which rows it had. Same device as
-// outstanding-po-lines.test.ts, and for the same reason.
 import poRouterSrc from '../routes/mfg-purchase-orders.ts?raw';
 import libSrc from './outstanding-so-lines.ts?raw';
 
 type Row = Record<string, unknown>;
 
-/* THE FAKE ENFORCES POSTGREST'S REAL ROW CEILING — the point of the harness.
-   A live PostgREST returns at most `db-max-rows` per response, drops the rest,
-   and reports NOTHING. A fake that hands back everything makes an un-paged read
-   look correct here while it is short in production. Same device as
-   mfg-purchase-orders.binding-cap.test.ts. */
 const PGRST_MAX_ROWS = 1000;
 
-/* TIES COME BACK IN WHATEVER ORDER THE PLANNER PRODUCED, and each request is
-   its own plan. The fake reproduces that by breaking ties differently per
-   query, which is the only way a test can see what an INCOMPLETE sort key costs
-   a `.range()` window: with a stable fake, a missing tie-break is invisible and
-   the assertion below would pass on the broken code. Deterministic — a fixed
-   rotation keyed on the request number, so a failure reproduces. */
 function fakeSb(rows: Row[], counter: { reads: number }) {
   class Q {
     private rows: Row[];
@@ -63,7 +49,6 @@ function fakeSb(rows: Row[], counter: { reads: number }) {
             if (av === bv) continue;
             return asc ? (av < bv ? -1 : 1) : (av < bv ? 1 : -1);
           }
-          // Unordered pair: this plan's arbitrary answer, not insertion order.
           return ((a.i + rot) % 5) - ((b.i + rot) % 5);
         })
         .map((x) => x.r);
@@ -81,14 +66,6 @@ function fakeSb(rows: Row[], counter: { reads: number }) {
   return { from: () => new Q(rows) };
 }
 
-/* 2,700 live lines across 900 sales orders, THREE lines each — the shape that
-   matters, because `doc_no` is NOT unique and the old order was `doc_no` alone.
-   Three, not five: 1,000 (the page size) divides by five, so five-line orders
-   would put every page boundary exactly on a document edge and no tie would
-   ever straddle one — the fixture would then pass with or without the
-   tie-break, which is the fixture proving nothing.
-   `SO-000001` is the OLDEST document number, so it sorts LAST under `doc_no`
-   DESC and is exactly the line the 500-row window could never reach. */
 const OLDEST = 'SO-000001';
 const LINES: Row[] = [];
 for (let d = 1; d <= 900; d++) {
@@ -97,7 +74,6 @@ for (let d = 1; d <= 900; d++) {
     LINES.push({ id: `${docNo}-L${l}`, doc_no: docNo, cancelled: false, qty: 1, po_qty_picked: 0 });
   }
 }
-// A cancelled line, to prove the SQL filter that DOES belong in the read survived.
 LINES.push({ id: 'SO-000001-LX', doc_no: OLDEST, cancelled: true, qty: 1, po_qty_picked: 0 });
 
 const noScope = <T>(q: T): T => q;
@@ -108,17 +84,12 @@ describe('the read that feeds the From-SO picker', () => {
     const { data, error } = await loadOutstandingSoLines<Row>(fakeSb(LINES, counter), noScope);
     expect(error).toBeNull();
     expect(data).toHaveLength(2_700);
-    // The consequence, in the operator's terms: this order can be turned into a
-    // purchase order again.
     expect((data ?? []).some((r) => r.id === `${OLDEST}-L1`)).toBe(true);
-    // 2,700 live rows in 1,000-row windows is three requests, the last short.
     expect(counter.reads).toBe(3);
   });
 
   test('CONTROL — the pre-fix shape drops that same order from the same fixture', async () => {
     const counter = { reads: 0 };
-    // Byte-for-byte the read this module replaced: one request, `.limit(500)`,
-    // ordered by `doc_no` alone.
     const sb = fakeSb(LINES, counter);
     const { data } = await sb.from()
       .select(OUTSTANDING_SO_SELECT)
@@ -138,9 +109,6 @@ describe('the read that feeds the From-SO picker', () => {
     const { data } = await loadOutstandingSoLines<Row>(fakeSb(LINES, { reads: 0 }), noScope);
     const ids = (data ?? []).map((r) => r.id as string);
     expect(new Set(ids).size).toBe(ids.length);
-    /* `doc_no` alone is not a total order — three lines share each one — so a
-       page boundary landing inside a document is where a repeat or a drop would
-       appear. `id` is the tie-break that makes the window coherent. */
     expect(libSrc).toContain(".order('doc_no', { ascending: false })");
     expect(libSrc).toContain(".order('id')");
   });
@@ -149,7 +117,7 @@ describe('the read that feeds the From-SO picker', () => {
     const seen: number[] = [];
     const scoped = <T>(q: T): T => { seen.push(1); return q; };
     await loadOutstandingSoLines<Row>(fakeSb(LINES, { reads: 0 }), scoped);
-    expect(seen).toHaveLength(3);              // once per page, not once per call
+    expect(seen).toHaveLength(3);
   });
 });
 
@@ -161,9 +129,6 @@ describe('WIRING — a guard nothing calls is the failure mode this repo pays fo
     expect(end).toBeGreaterThan(start);
     const handler = poRouterSrc.slice(start, end);
     expect(handler.length).toBeGreaterThan(500);
-    /* Strip comments first. The handler DESCRIBES the cap it removed, and a raw
-       substring match on the prose would fail while the code is right — which
-       teaches the next person to delete the provenance to get green. */
     const code = handler.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     expect(code).not.toMatch(/\.limit\(/);
     expect(code).toContain('loadOutstandingSoLines');

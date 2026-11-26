@@ -12,17 +12,6 @@ import {
   type MfgProductPriceChangeRow,
 } from '../../vendor/scm/lib/mfg-products-queries';
 
-/* Effective-dated SELLING price timeline (Pricing "Option B", ph.2). Lives on the
-   SKU detail drawer: shows the current price, a "Next: RM X from <date>" badge for
-   the pending change, the dated history (date · RM · who), and an "add future
-   price" form. Money is integer sen (MoneyInput + fmtSen). Mirrors the
-   maintenance-config effective-date editor's shape.
-
-   NOTE the price amount is held in a REF, not just state: MoneyInput commits on
-   blur, and a click on Schedule blurs the field first — reading the ref in the
-   handler avoids the stale-closure race a disabled-by-amount button would hit.
-
-   In its own file so Products.tsx (at its size ceiling) does not grow. */
 export const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
   const q = useMfgProductPriceChanges(row.id);
   const create = useCreateMfgProductPriceChange();
@@ -69,7 +58,6 @@ export const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
     <section style={{ marginBottom: 'var(--space-5)' }}>
       <h3 style={h3}>Selling price timeline</h3>
 
-      {/* Current + pending badges — "today = current, <future> = new". */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
         <span style={{
           display: 'inline-flex', alignItems: 'baseline', gap: 6, padding: '3px 10px',
@@ -91,7 +79,6 @@ export const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
         )}
       </div>
 
-      {/* Add a future price. */}
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
         <div>
           <label style={fieldLabel}>Effective from</label>
@@ -127,7 +114,6 @@ export const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
         <p style={{ margin: '0 0 var(--space-3)', color: '#b3261e', fontSize: 'var(--fs-12)' }}>{formError}</p>
       )}
 
-      {/* Dated history — newest first. */}
       {q.isLoading ? (
         <p style={{ color: 'var(--hz-c-ink-muted)', fontSize: 'var(--fs-13)' }}>Loading price timeline…</p>
       ) : history.length === 0 ? (

@@ -1,15 +1,3 @@
-/* Map a spreadsheet to employee rows (Employee Master bulk import, option 2).
- *
- * Pure: the modal reads the file with lib/import-sheet and hands the grid here;
- * this turns each row into the wire shape the /employees/bulk-import endpoint
- * takes, and says why a row cannot go in. The server re-checks everything, so
- * this only has to be a faithful preview — it uses the SAME shared validator
- * (employeeInputProblem) the server does, over the SAME parse (parseEmployeeInput).
- *
- * A blank Employee No is left blank on purpose: the server assigns the next one
- * in sequence, so the preview shows "(auto)". Money columns are RM here and sen
- * on the wire. Headers match loosely (case, spacing and common aliases, English
- * and Chinese), so HR can rename the template columns within reason. */
 import { normalizeImportHeader, resolveImportHeaders } from "../../lib/import-sheet";
 import { employeeInputProblem, parseEmployeeInput } from "../../vendor/shared/hr-employee";
 import { senFromRm, type ImportEmployeeRow } from "./hrApi";
@@ -47,19 +35,14 @@ for (const col of IMPORT_COLUMNS) {
 }
 
 export type ImportPreviewRow = {
-  /** 1-based row number as the sheet shows it (header is row 1, so data starts at 2). */
   rowNumber: number;
-  /** The wire shape to submit, when the row is valid. */
   row: ImportEmployeeRow;
-  /** How the employee reads for the preview, before the server assigns Emp No. */
   display: { empNo: string; name: string; account: string; pay: string; link: boolean };
-  /** Why the row cannot go in, or null when it can. */
   problem: string | null;
 };
 
 export type ImportMapping = {
   rows: ImportPreviewRow[];
-  /** Columns in the file that matched no known field (an import ignores them). */
   ignoredHeaders: string[];
 };
 
@@ -67,9 +50,6 @@ const YES = /^(y|yes|true|1|✓|on|是|有|要|ya)$/i;
 const DAILY = /daily|per day|day|日|天/i;
 const pad = (s: string) => s.padStart(2, "0");
 
-/** A date cell to ISO YYYY-MM-DD. Accepts YYYY-MM-DD, DD/MM/YYYY and the common
- *  separators; an unrecognised non-blank value is returned as written so the
- *  shared validator flags it rather than this guessing. */
 function toIso(raw: string): string {
   const t = raw.trim();
   if (!t) return "";
@@ -101,8 +81,6 @@ export function mapImportGrid(grid: string[][], departmentsByName: ReadonlyMap<s
     if (rowIsBlank(cells)) continue;
     const cell = (key: string): string => {
       const i = keys.indexOf(key);
-      // A row can have fewer cells than the header has columns, so the index may
-      // run off the end — keep it as string | undefined rather than string.
       const v = i >= 0 ? cells[i] : undefined;
       return (v ?? "").trim();
     };
@@ -119,9 +97,6 @@ export function mapImportGrid(grid: string[][], departmentsByName: ReadonlyMap<s
     const departmentId = deptText ? departmentsByName.get(deptText.toLowerCase()) ?? null : null;
     const deptUnknown = deptText !== "" && departmentId === null;
 
-    // Only the cells the sheet actually filled go on the wire, so a re-import of
-    // someone already in the book patches just those and leaves each blank cell
-    // as it is. Name and Emp No identify the row and always travel.
     const row: ImportEmployeeRow = { empNo, name, accountEmail };
     const phone = cell("phone"); if (phone) row.phone = phone;
     const position = cell("position"); if (position) row.position = position;
@@ -141,9 +116,6 @@ export function mapImportGrid(grid: string[][], departmentsByName: ReadonlyMap<s
     if (salaryText) row.basicSalarySen = senFromRm(salaryText);
     if (dailyText) row.dailyRateSen = senFromRm(dailyText);
 
-    // Validate with the shared rules, the way the server will. A blank Emp No is
-    // allowed here (the server auto-assigns it), so stand a placeholder in for
-    // the check and never report "Employee No is required" for a blank one.
     const check = parseEmployeeInput({ ...row, empNo: empNo || "EMP-AUTO" }, today);
     let problem: string | null = null;
     if (!name) problem = "Name is required.";

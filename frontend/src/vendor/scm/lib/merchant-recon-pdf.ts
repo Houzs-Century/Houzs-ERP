@@ -24,12 +24,9 @@ type Options = { merchant?: string | null; action?: PdfAction };
 const RED: Rgb = [176, 32, 32];
 const GREEN: Rgb = [24, 110, 60];
 const BAND_FILL: Rgb = [244, 245, 242];
-/** The room a report's name takes above its first line. */
 const BAND_H = 5.6;
-/** The screen turns Days red past this. */
 const LATE_DAYS = 14;
 
-/* ── The card payments list ─────────────────────────────────────────────────── */
 
 /** The cells the table's Excel would hold (DataTable's `onExportPdf`). Money is in ringgit there. */
 export type WaitingCardsView = ScreenTableView;
@@ -53,7 +50,6 @@ export function waitingCardsSubtitle({ keys, matrix }: WaitingCardsView, merchan
   ].filter(Boolean).join(' ');
 }
 
-/* ── The reports still to reconcile ─────────────────────────────────────────── */
 
 export type PrintedOrder = {
   docNo: string; customer: string | null; sales: string | null; sheet: string | null;
@@ -61,7 +57,6 @@ export type PrintedOrder = {
 };
 export type PrintedLine = {
   date: string; lineNo: number; ref: string | null; grossSen: number; feeSen: number; netSen: number;
-  /** What the Document column says when no order is named: "7 possible". */
   document: string | null;
   orders: PrintedOrder[];
   status: string;
@@ -96,7 +91,6 @@ export function reportLinesTable(reports: PrintedReport[]): {
       tones.push(l.tone);
       total.grossSen += l.grossSen; total.feeSen += l.feeSen; total.netSen += l.netSen;
       total.amountSen += l.orders.reduce((s, o) => s + (o.amountSen ?? 0), 0);
-      /* One line settling several orders stacks inside its cells, as on the screen. */
       const stack = (pick: (o: PrintedOrder) => string | null) => (
         l.orders.length === 0 ? '-' : l.orders.map((o) => pick(o) || '-').join('\n')
       );
@@ -122,7 +116,6 @@ export function reportLinesTable(reports: PrintedReport[]): {
   };
 }
 
-/* ── On paper ───────────────────────────────────────────────────────────────── */
 
 export async function generateWaitingCardsPdf(view: WaitingCardsView, opts: Options = {}): Promise<void> {
   const t = waitingCardsTable(view);
@@ -167,7 +160,6 @@ export async function generateReportLinesPdf(reports: PrintedReport[], opts: Opt
       const c = d.column.index;
       const headedFigure = d.section === 'body' || d.section === 'foot' || d.row.index === 1;
       if (REPORT_FIGURES.has(c) && headedFigure) d.cell.styles.halign = 'right';
-      /* The rule down the seam, between what the merchant said and what the ERP said. */
       if (c === REPORT_SEAM) d.cell.styles.lineWidth = { top: 0.1, right: 0.1, bottom: 0.1, left: 0.4 };
       if (d.section !== 'body') return;
       if (t.bands.has(d.row.index)) d.cell.styles.cellPadding = { ...CELL, top: CELL.top + BAND_H };
@@ -176,7 +168,6 @@ export async function generateReportLinesPdf(reports: PrintedReport[], opts: Opt
         if (tone) d.cell.styles.textColor = tone === 'good' ? GREEN : RED;
       }
     },
-    /* After the row's last cell, so the band lies over the columns' rules. */
     didDrawCell: (d) => {
       if (d.section !== 'body' || d.column.index !== REPORT_STATUS) return;
       const band = t.bands.get(d.row.index);

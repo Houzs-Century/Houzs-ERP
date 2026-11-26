@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// Product Models — second-layer template entity (PR #49).
-//
-// Every SKU on `mfg_products` belongs to a Model (e.g. 5530, 1003). The Model
-// owns the allowed-options pool that the SO/PO line picker (and a future
-// auto-SKU-generator) reads from.
-//
-// Endpoints:
-//   GET    /product-models           List, optional ?category=SOFA filter.
-//   GET    /product-models/by-code/:code
-//                                    One SKU's Model pools + real category.
-//   GET    /product-models/by-code-batch?code=A&code=B
-//                                    The same answer for many codes in ONE trip.
-//                                    The SO/PO line editors ask per LINE, so the
-//                                    single form costs one round trip per line.
-//   GET    /product-models/:id       Detail + side-loaded SKU rows.
-//   POST   /product-models           Create a new Model.
-//   PATCH  /product-models/:id       Update name / description / allowed_options
-//                                    / photo_url / active.
-//   DELETE /product-models/:id       Hard delete. SKUs on mfg_products fall
-//                                    back to model_id NULL (FK ON DELETE SET NULL).
-// ----------------------------------------------------------------------------
 
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
@@ -44,18 +22,6 @@ import { newSkuPosActive } from '../lib/new-sku-pos-active';
 
 export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-// ── Public photo proxy (PR — Commander 2026-05-27) ─────────────────────────
-// Exported so it can ALSO be mounted OUTSIDE /api/scm (routes/public-images.ts).
-// Houzs gates all of /api/scm behind requireScmAccess + the global auth (main
-// index.ts), which the same-origin Houzs SPA passes via its session cookie —
-// but the 2990 POS is a DIFFERENT origin using Bearer auth, so its <img src>
-// requests carry no Houzs cookie and 401. 2990 serves Model photos from an
-// auth-free proxy (apps/api product-models.ts:35, before its own supabaseAuth);
-// we replicate that by mounting this handler pre-auth. Security: validates the
-// requested key against the Model's stored photo_url before streaming, so a
-// guessed key can't leak another Model's blob. Service-role client (no JWT).
-// The .schema('scm') is REQUIRED — product_models lives in scm; a bare .from()
-// hits the empty public.product_models and 404s every photo (BUG-HISTORY 2026-07-20).
 export const modelPhotoProxyHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   // company-scope: PUBLIC pre-auth image proxy, mounted before companyContext on purpose (the 2990 POS <img> is cross-origin and carries no session), so no company can be resolved. The requested R2 key must equal the model's stored photo_url key, which is a server-minted randomUUID.
   const id = c.req.param('id');
@@ -88,24 +54,12 @@ export const modelPhotoProxyHandler = async (c: Context<{ Bindings: Env; Variabl
   return new Response(obj.body, {
     headers: {
       'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
-      // The key IS the identity: upload mints `product-models/<id>/<uuid>.<ext>`
-      // with crypto.randomUUID() (:1084), so a replaced photo is a different
-      // key and therefore a different url — this one can never come to mean
-      // other bytes. That is the same argument the old 1-hour TTL rested on;
-      // an hour was conservatism, not the limit of what it proves. Measured
-      // 2026-08-01: /scm/product-models issues 57 requests, most of them this
-      // proxy, one per row.
       'cache-control': 'public, max-age=31536000, immutable',
     },
   });
 };
 productModels.get('/:id/photo/:key', modelPhotoProxyHandler);
 
-// ── Gallery photo proxy (PUBLIC) ─────────────────────────────────────────────
-// Multi-photo gallery (scm.product_model_photos, migration 0060). Same shape
-// as the single-photo proxy above: registered BEFORE supabaseAuth so <img>
-// tags work, validates the requested key against the gallery row, streams
-// the R2 object. Path is distinct from /:id/photo/:key so the two coexist.
 productModels.get('/:id/photo-gallery/:key', async (c) => {
   const id = c.req.param('id');
   const key = decodeURIComponent(c.req.param('key'));
@@ -113,13 +67,10 @@ productModels.get('/:id/photo-gallery/:key', async (c) => {
   if (!c.env.SO_ITEM_PHOTOS) {
     return c.json({ error: 'photo_bucket_not_configured' }, 500);
   }
-  // Defensive prefix check — keys we mint live under product-model-photos/.
   if (!key.startsWith('product-model-photos/')) {
     return c.json({ error: 'gallery_key_invalid' }, 400);
   }
 
-  // WO-7 thumbnails live at `<r2_key>.thumb`. Authorize a thumb request
-  // against its BASE key's gallery row — the thumb is never in r2_key itself.
   const baseKey = baseKeyOf(key);
 
   const sb = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, {
@@ -141,9 +92,6 @@ productModels.get('/:id/photo-gallery/:key', async (c) => {
   return new Response(obj.body, {
     headers: {
       'content-type': contentType,
-      // Gallery keys are minted the same way — `product-model-photos/<id>/
-      // <uuid>.<ext>` via crypto.randomUUID() (:1286) — so the url names one
-      // fixed object for its lifetime. See the single-photo proxy above.
       'cache-control': 'public, max-age=31536000, immutable',
     },
   });
@@ -151,16 +99,9 @@ productModels.get('/:id/photo-gallery/:key', async (c) => {
 
 productModels.use('*', supabaseAuth);
 
-/* Every category the column can hold (the product page offers them all); the
-   one home is MFG_PRODUCT_CATEGORIES. */
 const CATEGORIES = MFG_PRODUCT_CATEGORIES;
 
 const CreateBody = z.object({
-  // PR #69 — Branding is OPTIONAL across all categories per commander
-  // 2026-05-26 ("bedframe dont need branding"). BEDFRAME / SOFA encode the
-  // brand inside the Model name (HILTON BEDFRAME, SOFA 5530). MATTRESS
-  // commander still treats branding as separate metadata. UI keeps the
-  // field but no longer enforces it.
   branding:       z.string().trim().max(80).optional().nullable(),
   modelCode:      z.string().trim().min(1).max(32),
   name:           z.string().trim().min(1).max(200),
@@ -181,18 +122,12 @@ const MODEL_CODE_REFUSALS: Record<string, string> = {
 
 const PatchBody = z.object({
   branding:       z.string().trim().max(80).nullable().optional(),
-  // The 32-character limit is checked in the handler, and only for a CHANGED
-  // code: imported models carry longer codes, and the edit screen sends the
-  // code back on every save, so a schema limit made those models uneditable.
   modelCode:      z.string().trim().min(1).max(200).optional(),
   name:           z.string().trim().min(1).max(200).optional(),
-  // category: any other category (shared/category-swap.ts), and it moves the
-  // model's SKUs with it so none is orphaned in the other category.
   category:       z.enum(CATEGORIES).optional(),
   description:    z.string().trim().max(500).nullable().optional(),
   photoUrl:       z.string().trim().url().nullable().optional(),
   allowedOptions: z.record(z.unknown()).optional(),
-  // Keyed like a line's variants; checked against allowed_options below.
   defaultVariants: z.record(z.string().trim().min(1)).optional(),
   active:         z.boolean().optional(),
 });
@@ -209,13 +144,10 @@ export function compartmentsWithoutSku(added: string[], codePrefix: string, exis
   return added.filter((comp) => !have.has(`${codePrefix}-${comp}`.toUpperCase()));
 }
 
-// ── GET / ──────────────────────────────────────────────────────────────────
 export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const supabase = c.get('supabase');
   const category = c.req.query('category');
 
-  /* Paged: one PostgREST read stops at 1,000 rows, so the supplier "Pick Model" list would silently drop every Model
-     sorting after the first 1,000 once the catalogue passes that (Conts hit it at 1,927). `id` makes the order total. */
   const inCategory = category && (CATEGORIES as readonly string[]).includes(category) ? category : null;
   const { data, error } = await paginateAll((from, to) => {
     let q = scopeToCompany(supabase.from('product_models').select(COLS), c).order('category').order('model_code').order('id');
@@ -225,18 +157,9 @@ export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Varia
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const rows = (data ?? []) as Array<Record<string, unknown> & { id: string }>;
 
-  // SKU count per Model — surfaces "0 SKUs" orphan/empty models in Modular
-  // (Wei Siang 2026-06-19: a deleted-from-SKU-Master model still showed with
-  // no hint it had nothing under it). ONE grouped count over mfg_products, then
-  // map onto the rows — NOT N+1. PostgREST has no GROUP BY in the REST API, so
-  // we select just the model_id column for the visible models and tally
-  // client-side; mfg_products is small enough (~hundreds of rows) that pulling
-  // a single id column is cheaper than a per-model count roundtrip.
   const counts = new Map<string, number>();
   const activeCounts = new Map<string, number>();
   if (rows.length > 0) {
-    // Paged and chunked: one bare request is cut at 1000 rows by PostgREST, which
-    // showed "0 SKUs" on every model whose SKUs fell past the cut (2990-0022).
     const { data: skuRows, error: cntErr } = await chunkIn(rows.map((m) => m.id), (batch, from, to) =>
       scopeToCompany(supabase.from('mfg_products').select('model_id, status').in('model_id', batch).order('id'), c)
         .range(from, to));
@@ -250,41 +173,16 @@ export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Varia
   /* active_sku_count: Modular hides a Model whose codes are all off (merged away)
      unless "Show inactive" is on (owner, 2026-11-10). */
   const models = rows.map((m) => ({ ...m, sku_count: counts.get(m.id) ?? 0, active_sku_count: activeCounts.get(m.id) ?? 0 }));
-  /* Perf (go-live) — Models back the catalog picker's variant-filter pools and
-     the Modular list; they change rarely (config edits, not per-order). A short
-     PRIVATE max-age lets the browser reuse the list across a burst of picker
-     opens without re-running the list + grouped-count round-trip. Kept short so
-     a Model/allowed-options edit surfaces within a minute. */
   c.header('cache-control', 'private, max-age=60');
-  /* Multi-company (fix/so-product-company-scope): same leak as GET /mfg-products.
-     The 60s private cache is URL-keyed while the active company rides in the
-     X-Company-Id header, so without Vary the sofa-model picker serves the previous
-     company's models for up to a minute after a top-bar switch (a page reload does
-     not bypass a still-fresh fetch response). The query is company-scoped
-     (scopeToCompany); Vary keeps the CACHED RESPONSE company-scoped too. */
   c.header('vary', 'X-Company-Id');
   return c.json({ models });
 };
 productModels.get('/', listProductModelsHandler);
 
-// ── GET /by-code/:code ───────────────────────────────────────────────────────
-// Resolve a SKU's Model allowed_options pools by the SKU's item code, mirroring
-// 2990's useModelAllowedOptionsByCode (a direct supabase join
-// mfg_products → product_models.allowed_options). The SO line editor (SoLineCard)
-// reads this so EDITING an already-saved line filters its variant dropdowns by
-// the picked Model's pools, not just freshly-picked lines.
-//
-// Returns { allowedOptions: null } for legacy/unknown codes (no Model link) so
-// the caller falls back to UNRESTRICTED dropdowns — the verbatim 2990's
-// behaviour. NOTE: static `/by-code/...` MUST be declared before `/:id` so the
-// param route doesn't swallow it.
 productModels.get('/by-code/:code', async (c) => {
   const code = c.req.param('code');
   const supabase = c.get('supabase');
 
-  // Resolve the SKU's model_id, then the Model's allowed_options. A two-step
-  // read avoids relying on PostgREST embedded-resource shaping (which the
-  // service client may camelCase / array-wrap inconsistently).
   const { data: sku, error: skuErr } = await supabase
     .from('mfg_products')
     .select('model_id, category')
@@ -303,7 +201,6 @@ productModels.get('/by-code/:code', async (c) => {
   const category = (sku as Record<string, unknown> | null)?.category != null
     ? String((sku as Record<string, unknown>).category)
     : null;
-  // Dual-read camelCase ?? snake_case for the FK column.
   const modelId = (sku as Record<string, unknown> | null)?.modelId
     ?? (sku as Record<string, unknown> | null)?.model_id
     ?? null;
@@ -322,38 +219,6 @@ productModels.get('/by-code/:code', async (c) => {
   return c.json({ allowedOptions, category });
 });
 
-// ── GET /by-code-batch?code=A&code=B ─────────────────────────────────────────
-// Batch form of GET /by-code/:code, same answer for every code in one trip.
-//
-// WHY this exists: the SO/PO line editors ask this question once per LINE
-// (useModelAllowedOptionsByCode, called from SoLineCard / MobileNewSO / PoLineCard
-// / PcVariantEditor). One code at a time, that is one HTTP round trip AND two DB
-// reads per line, and the question can only be asked after the order has loaded
-// and its lines are known — so it lands as a second, N-wide serial hop. On a
-// phone at ~250ms RTT that hop is the dominant cost of opening an order (owner's
-// capture, 2026-07-17: one authed-fetch per product, 171 requests for one SO).
-// Two reads now serve the whole order.
-//
-// A GET, and NOT a POST, even though a code list reads more naturally in a body.
-// This router is mounted `scmAreaGuard('scm.procurement.products', { openRead:
-// true })` — openRead exempts GET/HEAD ONLY; a POST would require `edit` on the
-// Products ADMIN area, which every L2-configured salesperson holds at `none`.
-// A POST here would therefore 403 exactly the people who open Sales Orders, and
-// their variant dropdowns would fail. Same scar as the scan-so writeLevel:'view'
-// downgrade and fix/x1-so-create-gate. Repeated `code` params (not a comma list)
-// so a code containing a comma cannot split.
-//
-// The per-code contract is IDENTICAL to the single route — { allowedOptions: null,
-// category: null } for a legacy/unknown code, so callers keep their UNRESTRICTED
-// dropdown fallback. An entry is returned for EVERY requested code: a caller must
-// be able to tell "this SKU has no Model" (a real answer) from "we did not
-// answer", so nothing here fills a gap with a default and the client rejects a
-// missing entry rather than reading it as "no Model".
-//
-// MUST be declared before GET /:id — it is a single path segment, so the param
-// route would otherwise swallow it (same reason as /by-code/:code above).
-// Far above the largest real order (~30 lines); keeps the URL well inside limits.
-// A longer list is not an error for the client — it simply sends a second batch.
 const BY_CODE_BATCH_MAX = 100;
 
 productModels.get('/by-code-batch', async (c) => {
@@ -374,20 +239,14 @@ productModels.get('/by-code-batch', async (c) => {
     .select('code, model_id, category'), 'code', codes)
     .eq('company_id', activeCompanyId(c));
   if (skuErr) {
-    // Parity with the single route: a missing relation degrades to "no Model"
-    // rather than 500ing the whole order open.
     if (/relation .* does not exist/i.test(skuErr.message)) return c.json({ results: allNull() });
     return c.json({ error: 'load_failed', reason: skuErr.message }, 500);
   }
-  // No `?? []` here: with error null a select yields an array, so a null `skus`
-  // means the read did not answer. Folding that into "no rows" would report
-  // every line as Model-less and silently unrestrict its dropdowns.
   if (!skus) return c.json({ error: 'load_failed', reason: 'mfg_products read returned no rows' }, 500);
 
   const skuByCode = new Map<string, { modelId: string | null; category: string | null }>();
   for (const r of skus as Array<Record<string, unknown>>) {
     if (r.code == null) continue;
-    // Dual-read camelCase / snake_case for the FK column, as the single route does.
     const modelId = r.modelId ?? r.model_id ?? null;
     skuByCode.set(String(r.code), {
       modelId: modelId != null ? String(modelId) : null,
@@ -421,9 +280,6 @@ productModels.get('/by-code-batch', async (c) => {
     const sku = skuByCode.get(code);
     if (!sku) { results[code] = { allowedOptions: null, category: null }; continue; }
     if (!sku.modelId) { results[code] = { allowedOptions: null, category: sku.category }; continue; }
-    // A model_id resolving to no row is a dangling FK. The single route returns
-    // null for it (maybeSingle -> null, no error); keep the two contracts
-    // identical rather than inventing a different answer here.
     results[code] = {
       allowedOptions: allowedByModelId.has(sku.modelId) ? allowedByModelId.get(sku.modelId) : null,
       category: sku.category,
@@ -432,7 +288,6 @@ productModels.get('/by-code-batch', async (c) => {
   return c.json({ results });
 });
 
-// ── GET /:id ───────────────────────────────────────────────────────────────
 productModels.get('/:id', async (c) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
@@ -448,8 +303,6 @@ productModels.get('/:id', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!model) return c.json({ error: 'not_found' }, 404);
 
-  // Side-load the SKU list so the Model Detail page can show variant rows
-  // without a second roundtrip. Cap at 200 (no Model exceeds ~30 today).
   const { data: skus } = await supabase
     .from('mfg_products')
     .select('id, code, name, size_code, size_label, status, base_price_sen, price1_sen, cost_price_sen, unit_m3_milli, pos_active, one_shot, source_doc_no')
@@ -457,16 +310,6 @@ productModels.get('/:id', async (c) => {
     .order('code')
     .limit(200);
 
-  /* #669 made the Cost column director-only on the screen this payload feeds and
-     left the number on the wire; PRODUCT_FINANCE_KEYS is that ruling's payload
-     half. base_price_sen stays — the same screen prints it to everyone as
-     "Price 2".
-
-     canViewScmProductCost, NOT canViewScmFinance: the screen this feeds
-     (ProductModelDetail) gates its Cost column on canViewProductCost, which
-     since #699 admits Purchasing. A director gate here deleted the key from
-     under it, so the column rendered blank for the one function the owner's
-     2026-07-17 ruling named. Screen and wire ask ONE question now. */
   const skuRows = (skus ?? []) as Array<Record<string, unknown>>;
   if (!canViewScmProductCost(c)) {
     for (const s of skuRows) {
@@ -477,7 +320,6 @@ productModels.get('/:id', async (c) => {
   return c.json({ model, skus: skuRows });
 });
 
-// ── POST / ─────────────────────────────────────────────────────────────────
 productModels.post('/', async (c) => {
   let raw: unknown;
   try { raw = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -510,7 +352,6 @@ productModels.post('/', async (c) => {
   return c.json({ model: data }, 201);
 });
 
-// ── PATCH /:id ─────────────────────────────────────────────────────────────
 export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const id = c.req.param('id');
   let raw: unknown;
@@ -518,8 +359,6 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   const parsed = PatchBody.safeParse(raw);
   if (!parsed.success) return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
 
-  // Build the partial update — only include keys the client actually sent so
-  // we don't overwrite columns with `undefined` (Supabase treats that as NULL).
   const u: Record<string, unknown> = {};
   if (parsed.data.branding !== undefined)       u.branding        = parsed.data.branding;
   if (parsed.data.modelCode !== undefined)      u.model_code      = parsed.data.modelCode;
@@ -536,12 +375,8 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   }
 
   const supabase = c.get('supabase');
-  // Multi-company: scope the snapshot AND the write to the active company so a
-  // blind model id from another company matches nothing.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  // Snapshot the pre-update compartments so we can tell which ones the admin
-  // just ACTIVATED (sofa auto-SKU rule below — Chairman 2026-06-02).
   const { data: before } = await scopeToCompanyId(supabase
     .from('product_models')
     .select('allowed_options, category, model_code')
@@ -573,8 +408,6 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
       return c.json({ error: 'default_not_allowed', message: `The default for ${bad} is not one of this Model's allowed options.` }, 400);
     }
   }
-  // A changed code moves with its SKUs' base_model and the combo / quick-pick rows keyed on it,
-  // in one transaction inside scm.rename_model_code; the function writes model_code itself.
   let codeRenamed = false;
   if (u.model_code !== undefined && u.model_code !== beforeCode) {
     const { data: ren, error: renErr } = await supabase.rpc('rename_model_code', {
@@ -589,7 +422,6 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
     codeRenamed = true;
   }
   delete u.model_code;
-  // The category moves through the helper Import SKUs also uses, so the model's SKUs always follow it.
   const newCategory = u.category === undefined ? undefined : String(u.category);
   delete u.category;
   let data: Record<string, unknown> | null = null;
@@ -624,9 +456,6 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
     const moved = await moveModelCategory(supabase, co.companyId, String(id), newCategory);
     if (!moved.ok) {
       if (moved.error === 'model_not_found') return c.json(NOT_THIS_COMPANY, 404);
-      // A model already holds this code in the target category — a real,
-      // actionable clash, not a server fault. 409 + a plain `message` so the
-      // operator sees the reason instead of the generic 5xx sentence.
       if (moved.error === 'target_category_taken') {
         return c.json({ error: moved.error, message: moved.reason }, 409);
       }
@@ -646,18 +475,10 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   }
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
-  // Chairman 2026-06-01: Modular's allowed_options is the SINGLE source of truth
-  // for ON/OFF — there is no separate per-SKU "Visible" toggle anymore. For
-  // size-keyed categories, mirror allowed_options.sizes onto each SKU's
-  // pos_active (the flag the POS catalog reads) so toggling a size OFF in Modular
-  // also pulls it from the catalog. Idempotent: only flips SKUs whose membership
-  // changed. Sofa is unaffected (its configurator reads allowed_options directly;
-  // its catalog card is model-level via product_models.active).
   const cat = (data as { category?: string }).category;
   const aoSizes = (parsed.data.allowedOptions as { sizes?: unknown } | undefined)?.sizes;
   if ((cat === 'MATTRESS' || cat === 'BEDFRAME') && Array.isArray(aoSizes) && aoSizes.length > 0) {
     const allowedSet = new Set((aoSizes as unknown[]).map((s) => String(s).toUpperCase()));
-    // Scoped so the derived toOn/toOff id set is strictly this company's SKUs.
     const { data: skus } = await scopeToCompanyId(supabase
       .from('mfg_products')
       .select('id, size_code, pos_active')
@@ -673,19 +494,7 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
     if (toOff.length) await supabase.from('mfg_products').update({ pos_active: false }).in('id', toOff);
   }
 
-  // Chairman 2026-06-02: activating a SOFA compartment in Modular auto-creates
-  // its SKU in SKU Master when missing. SKU creation is a Backend-authority
-  // action, so it runs here server-side with the service-role client (the PATCH
-  // itself is already auth-gated); the POS SKU Master then shows it via sync.
-  // Format mirrors generate-skus: code `MODEL-<comp>`, name `SOFA <MODEL> <comp>`,
-  // NO prices (Master Admin sets the base price afterwards in SKU Master). Only
-  // NEWLY-activated compartments without an existing SKU are created; existing
-  // SKUs + deactivations are untouched. `comp` keeps its pool casing (e.g.
-  // "Console") — the engine matches case-sensitively, so the code suffix must
-  // equal the laid-out cell code.
   const autoCreatedSkus: string[] = [];
-  // Codes the insert refused: the options are saved, so the PATCH still
-  // succeeds, but the screen must say these codes do not exist yet.
   const autoCreateFailed: string[] = [];
   if (cat === 'SOFA' && parsed.data.allowedOptions !== undefined) {
     const oldComps = new Set(
@@ -703,9 +512,6 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
       const modelName  = String((data as { name?: string }).name ?? '').trim();
       const branding   = String((data as { branding?: string | null }).branding ?? '').trim();
       const upperName  = (modelName || modelCode).toUpperCase();
-      // The request's own client: it is already service-role AND pointed at the
-      // `scm` schema. A raw createClient() here defaulted to `public`, where
-      // this table is not, so every auto-create failed and was swallowed.
       const wantCodes = added.map((comp) => `${codePrefix}-${comp}`);
       const [{ data: existing, error: existingErr }, { data: ofModel, error: ofModelErr }] = await Promise.all([
         pgrestIn(supabase
@@ -744,9 +550,6 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
           };
         });
       if (rows.length > 0) {
-        // Best-effort: allowed_options already saved; don't fail the PATCH if the
-        // auto-create hiccups (Master Admin can still add via SKU Master). 23505
-        // = a concurrent create already made it — treat as success (idempotent).
         const { error: insErr } = await supabase.from('mfg_products').insert(stampCompany(rows, c));
         if (!insErr || insErr.code === '23505') autoCreatedSkus.push(...rows.map((r) => r.code));
         else autoCreateFailed.push(...rows.map((r) => r.code));
@@ -758,44 +561,15 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
 };
 productModels.patch('/:id', patchProductModelHandler);
 
-// ── POST /:id/generate-skus ───────────────────────────────────────────────
-// "Open a code, don't open it 20 times" — bulk-INSERT one mfg_products row per
-// allowed-option combination. Skips rows that already exist (ON CONFLICT on
-// code). Returns count generated + skipped + the new SKU codes.
-//
-// Per-category combination rules:
-//   SOFA:     one row per `compartments` value (sizes live in seat_height_prices
-//             JSONB on the SKU, not in the code). Code = `{model_code}-{compartment}`.
-//   BEDFRAME: one row per `sizes` value. Code = `{model_code}-({size_code})`.
-//   MATTRESS: same as BEDFRAME.
-//   ACCESSORY / SERVICE: one SKU, code = {model_code} (no variant axis).
-//
-// PR #66 — Standard size info per code. Mirrors commander's existing data:
-//   1003-(K) → "HILTON BEDFRAME (6FT) (183X190CM)"
-//   2990-NF AKKA-FIRM MATT (K) → "2990 AKKA-FIRM MATTRESS (183x190x31CM)"
-//
-// `dim` carries the dimensions string for BEDFRAME. MATTRESS adds a
-// per-Model thickness (Model.allowed_options.mattress_thickness_cm) — see
-// the MATTRESS branch in generate-skus for the assembly.
-// `label` is the friendly size like "6FT" / "5FT" / "3FT" / "3.5FT".
-// SK / SP fall back to label-only (their label IS already the dimensions).
 const SIZE_INFO: Record<string, { label: string; dim: string; w: number; l: number }> = {
   K:  { label: '6FT',       dim: '183X190CM', w: 183, l: 190 },
   Q:  { label: '5FT',       dim: '152X190CM', w: 152, l: 190 },
   S:  { label: '3FT',       dim: '90X190CM',  w: 90,  l: 190 },
   SS: { label: '3.5FT',     dim: '107X190CM', w: 107, l: 190 },
   SK: { label: '200X200CM', dim: '',          w: 200, l: 200 },
-  // SP = made-to-order custom size: no fixed dims (could be 200X220, etc.), so
-  // w/l/dim are blank → generated name renders "(CUSTOM)" not a fake 220X220;
-  // the real dimensions + quoted price are captured per-order on the SO/PO line.
   SP: { label: 'CUSTOM',    dim: '',          w: 0,   l: 0   },
 };
 
-/** PR #92 — Resolve a size code with the Maintenance sizeLabels override on
- *  top of the static SIZE_INFO table. Mirrors the resolveSizeInfo() helper
- *  in apps/backend/src/lib/size-info.ts so server-rendered SKU names pick
- *  up commander's relabel ("K → Super K · 200X200CM") the moment he saves
- *  the Maintenance row. */
 function resolveSizeInfoServer(
   code: string,
   overrides?: Record<string, { label?: string; dimensions?: string } | undefined> | null,
@@ -816,29 +590,16 @@ function resolveSizeInfoServer(
   return { label, dim, w, l };
 }
 
-/* Exported so the new-SKU defaults (newSkuPosActive) can be driven by a test. */
 export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
-  // Multi-company: scope the model load so SKUs can only be minted for THIS
-  // company's model (a blind model id from another company is not found).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // PR #51 + #69 — body shapes:
-  //   { rows: [{code, name, size_code?, size_label?}] }
-  //     → client already computed the candidate rows (using its current
-  //       in-memory allowed_options). Insert them directly. Decouples the
-  //       picker from "must save Allowed Options first" UX trap.
-  //   { codes: string[] }
-  //     → legacy filter: server materialises ALL allowed-option combos,
-  //       then only INSERTs the listed codes.
-  //   {} or null
-  //     → materialise ALL allowed-option combos.
   let body: { rows?: Array<{ code: string; name: string; size_code?: string | null; size_label?: string | null }>; codes?: string[] } = {};
   try {
     body = (await c.req.json().catch(() => ({}))) as typeof body;
-  } catch { /* allow empty body */ }
+  } catch { }
   const explicitRows = Array.isArray(body.rows) && body.rows.length > 0 ? body.rows : null;
   const filterCodes = Array.isArray(body.codes) && body.codes.length > 0
     ? new Set(body.codes)
@@ -852,17 +613,9 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
   if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
   if (!model) return c.json(NOT_THIS_COMPANY, 404);
 
-  // PR #92 — Maintenance sizeLabels override. Load the resolved maintenance
-  // config so generated SKU names pick up commander's relabel ("K → 6FT (NEW)"
-  // / "183X190CM → 180X200CM") without a code change. Best-effort: if the
-  // load fails we fall back to the static SIZE_INFO map below.
   let sizeOverrides: Record<string, { label?: string; dimensions?: string }> | null = null;
   try {
     const { data: cfgRow } = await scopeToCompanyId(supabase
-      // Audit (ported from 2990 3e288239) — was `maintenance_config`, a table that
-      // does not exist (real table is maintenance_config_history, seeded by
-      // mig 0022); the dead lookup meant Maintenance size-label relabels silently
-      // never reached generated SKU names.
       .from('maintenance_config_history')
       .select('config'), co.companyId)
       .eq('scope', 'master')
@@ -876,7 +629,6 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
       sizeOverrides = blob.sizeLabels;
     }
   } catch {
-    // Swallow — generator stays functional with static SIZE_INFO.
   }
 
   const opts = (model.allowed_options ?? {}) as Record<string, unknown>;
@@ -921,14 +673,9 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
     ? opts.mattress_thickness_cm
     : null;
 
-  // Compute the SKU rows we'd like to materialize.
   type GenRow = { code: string; name: string; size_code: string | null; size_label: string | null };
   const wanted: GenRow[] = [];
 
-  // Fast path: client computed the rows already (using its local
-  // allowed_options state) and just wants the server to INSERT them. This
-  // avoids the "I forgot to click Save first" trap where the picker had
-  // candidates but the DB allowed_options was still empty.
   if (explicitRows) {
     for (const r of explicitRows) {
       if (!r?.code || !r?.name) continue;
@@ -943,16 +690,9 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
     if (compsArr.length === 0) {
       return c.json({ error: 'no_compartments', reason: 'Allowed Options → Compartments is empty. Toggle at least one before generating.' }, 400);
     }
-    // PR #81 — Commander 2026-05-26: Sofa generated names were missing the
-    // "SOFA" word + branding prefix the legacy data carries
-    // ("SOFA 5530 1A(LHF)"). The old data buried both inside `model.name`
-    // (commander typed "SOFA 5530" as the name). Now the template adds
-    // them so commander can keep `model.name` short ("ADDA" → "SOFA ADDA
-    // 1A(LHF)"). Mattress branch below got the same treatment.
     for (const comp of compsArr) {
       wanted.push({
         code:       `${model.model_code}-${comp}`,
-        // Brand stays in the branding column, not the name: "SOFA ADDA 1A(RHF)"
         name:       `SOFA ${modelName} ${comp}`,
         size_code:  null,
         size_label: null,
@@ -985,7 +725,6 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
       const info  = resolveSizeInfoServer(sz, sizeOverrides);
       const label = info.label;
       const dim   = info.dim;
-      // "TRION BEDFRAME (6FT) (183X190CM)" vs "TRION BEDFRAME (200X200CM)"
       const namePart = dim ? `${namePrefix}BEDFRAME (${label}) (${dim})` : `${namePrefix}BEDFRAME (${label})`;
       wanted.push({
         code:       `${model.model_code}-(${sz})`,
@@ -998,24 +737,16 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
     if (sizesArr.length === 0) {
       return c.json({ error: 'no_sizes', reason: 'Allowed Options → Sizes is empty. Toggle at least one before generating.' }, 400);
     }
-    // PR #81 — Commander 2026-05-26 wanted generated mattress names to look
-    // like the 2990 data sample: "2990 AKKA-FIRM MATTRESS (183x190x31CM)".
-    // The old template ("{model.name} ({dim})") produced just
-    // "GridCool (183x190x25CM)" — no branding prefix, no "MATTRESS" word.
-    // Now: prepend {branding} + space (only when branding is non-empty) and
-    // always insert the literal "MATTRESS" between model name and (dim).
     const branding = (model.branding ?? '').trim();
     const prefix   = branding ? `${branding} ` : '';
     for (const sz of sizesArr) {
       const info  = resolveSizeInfoServer(sz, sizeOverrides);
       const label = info.label;
-      // Mattress dimensions include thickness so "(183x190x31CM)" is the goal.
-      // Note lowercase 'x' to match commander's existing data.
       let dimPart: string;
       if (info.w && info.l && mattressThickness != null) {
         dimPart = `${info.w}x${info.l}x${mattressThickness}CM`;
       } else if (info.dim) {
-        dimPart = info.dim.toLowerCase(); // bedframe-style fallback if thickness not set
+        dimPart = info.dim.toLowerCase();
       } else {
         dimPart = label;
       }
@@ -1026,18 +757,12 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
         // "{branding} {model_code} MATT (size)" so other brands don't
         // inherit 2990's idiosyncratic suffix.
         code:       `${branding ? branding + ' ' : ''}${model.model_code} MATT (${sz})`,
-        // "2990 AKKA-FIRM MATTRESS (183x190x31CM)" — branding prefix +
-        // MATTRESS word inserted to match 2990 sample (PR #81).
         name:       `${prefix}${modelName} MATTRESS (${dimPart})`.trim(),
         size_code:  sz,
         size_label: label,
       });
     }
   } else if (isSingleSkuCategory(model.category)) {
-    // No variant axis — the Model itself IS the single SKU. Generate exactly one
-    // row whose code is the model code (Wei Siang 2026-06-09: accessories /
-    // services have no sizes, but must still produce one sellable SKU so they
-    // show up in the SKU Master, instead of leaving a 0-SKU phantom model).
     const branding = (model.branding ?? '').trim();
     const prefix   = branding ? `${branding} ` : '';
     wanted.push({
@@ -1063,11 +788,6 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
     if (w.size_label) w.size_label = w.size_label.toUpperCase();
   }
 
-  // If the caller filtered to specific codes, narrow `wanted` to just those.
-  // Unknown codes (not in the allowed-option cartesian product) are silently
-  // dropped — protects against the client sending stale codes after the
-  // allowed_options were edited. filterCodes itself is uppercased on the
-  // way in so a client passing mixed-case still matches.
   const filterCodesUpper = filterCodes
     ? new Set(Array.from(filterCodes).map((c) => c.toUpperCase()))
     : null;
@@ -1075,7 +795,6 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
     ? wanted.filter((w) => filterCodesUpper.has(w.code))
     : wanted;
 
-  // Find which codes already exist so we can report skip count.
   const codes = wantedFiltered.map((w) => w.code);
   const { data: existing } = codes.length
     ? await pgrestIn(supabase.from('mfg_products').select('code'), 'code', codes).eq('company_id', activeCompanyId(c))
@@ -1087,15 +806,11 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
     return c.json({
       generated: 0,
       skipped: wantedFiltered.length,
-      // Return the (already-existing) codes so the caller can still bind
-      // suppliers to them — an existing SKU is NOT a failure to create the model.
       codes: wantedFiltered.map((w) => w.code),
       reason: 'All variant codes already exist — nothing new to insert.',
     });
   }
 
-  // Build the rows. id is text on mfg_products and uses the `mfg-{rand}` pattern
-  // already used by POST /mfg-products and the CSV batch-import.
   const now = new Date().toISOString();
   const rows = toInsert.map((w) => {
     const rand = (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -1109,8 +824,6 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
       base_model: model.model_code,
       size_code:  w.size_code,
       size_label: w.size_label,
-      // PR #65 — mirror branding onto the SKU row too so it shows up in the
-      // SKU Master list without having to JOIN product_models on read.
       branding:   model.branding ?? null,
       model_id:   model.id,
       status:     'ACTIVE',
@@ -1130,28 +843,19 @@ export const generateModelSkusHandler = async (c: Context<{ Bindings: Env; Varia
   return c.json({
     generated: rows.length,
     skipped: existingSet.size,
-    // ALL wanted codes (newly-inserted + already-existing) so a partial batch
-    // still lets the caller bind suppliers to every SKU, not only the new ones.
     codes: wantedFiltered.map((w) => w.code),
   });
 };
 productModels.post('/:id/generate-skus', generateModelSkusHandler);
 
-// ── DELETE /:id ────────────────────────────────────────────────────────────
 productModels.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
-  // Multi-company: confirm the model is THIS company's before the usage probe
-  // (so another company's model can't be probed) and scope the delete.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: exists } = await scopeToCompanyId(supabase.from('product_models').select('id').eq('id', id), co.companyId).maybeSingle();
   if (!exists) return c.json(NOT_THIS_COMPANY, 404);
-  // (C) Wei Siang 2026-06-08 — lock USED models. If any SKU under this model has
-  // been sold / ordered / moved in stock, block the delete: removing it would
-  // orphan live order lines. Unused models (setup-phase typos) stay deletable.
   const used = await findModelUsage(supabase, id);
-  /* A probe that could not run is NOT "unused" — see sku-usage.ts. */
   if (!used.ok) return c.json(usageCheckFailedBody('model', used.reason), 409);
   if (used.usage) {
     return c.json({
@@ -1165,25 +869,8 @@ productModels.delete('/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Photo upload (PR — Commander 2026-05-27) ───────────────────────────────
-//
-// Stores Model hero photo in the SO_ITEM_PHOTOS R2 bucket (already
-// provisioned + bound for PR-F per-line SO photos). Reuses the bucket
-// instead of provisioning a second one because:
-//   - same access pattern (private bucket, auth-gated proxy reads),
-//   - same auth model (any signed-in staff can upload from Backend),
-//   - bucket layout uses a distinct prefix (`product-models/{id}/...`)
-//     so the two purposes stay tidy without a second binding.
-//
-// The Model row's `photo_url` column stores the public proxy path
-// (e.g. `/product-models/{id}/photo/{key}`) — relative URLs that the POS
-// catalog hot-loads via the same Worker. Storing the proxy path (not a
-// signed S3 URL) means commander's uploaded photo doesn't expire and the
-// POS card cache stays stable. The proxy endpoint itself enforces auth +
-// validates the key against `product_models.photo_url` before streaming
-// the R2 object.
 
-const PHOTO_MAX_BYTES = 2 * 1024 * 1024; // 2 MB per task spec
+const PHOTO_MAX_BYTES = 2 * 1024 * 1024;
 
 const photoExtFromMime = (mime: string): string | null => {
   const m = mime.toLowerCase();
@@ -1203,8 +890,6 @@ productModels.post('/:id/photo', async (c) => {
 
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  // Cheap existence check before consuming the upload body. Scoped so a blind
-  // model id from another company is not found (no R2 object is written for it).
   const { data: model, error: mErr } = await scopeToCompanyId(supabase
     .from('product_models')
     .select('id, photo_url')
@@ -1247,14 +932,8 @@ productModels.post('/:id/photo', async (c) => {
     return c.json({ error: 'r2_put_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
   }
 
-  // Proxy URL the POS catalog + Backend thumbnail render via <img src>.
-  // Relative path keeps it portable across api.{env} domains.
   const photoUrl = `/product-models/${id}/photo/${encodeURIComponent(photoKey)}`;
 
-  // Best-effort cleanup of the previous photo so we don't leak R2 storage
-  // when commander overwrites a photo. Only deletes if the previous URL
-  // points to a key under this Model's prefix (defensive — a manual URL
-  // edit should never trigger a delete of an unrelated object).
   const prev = (model as { photo_url: string | null }).photo_url;
   if (prev) {
     const prevKey = extractPhotoKey(prev, id);
@@ -1268,7 +947,6 @@ productModels.post('/:id/photo', async (c) => {
     .update({ photo_url: photoUrl })
     .eq('id', id), co.companyId);
   if (updErr) {
-    // Rollback the just-uploaded blob so we don't leak.
     await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch(() => {});
     return c.json({ error: 'db_update_failed', reason: updErr.message }, 500);
   }
@@ -1309,10 +987,6 @@ productModels.delete('/:id/photo', async (c) => {
   return c.json({ ok: true });
 });
 
-/** Extract the raw R2 key from a stored photo_url. Only returns a key if
- *  it lives under this Model's prefix — guards the DELETE/upload-replace
- *  paths against an attacker-supplied photo_url pointing at an unrelated
- *  object. */
 function extractPhotoKey(photoUrl: string, modelId: string): string | null {
   const prefix = `/product-models/${modelId}/photo/`;
   const idx = photoUrl.indexOf(prefix);
@@ -1324,23 +998,6 @@ function extractPhotoKey(photoUrl: string, modelId: string): string | null {
   return decoded;
 }
 
-// ============================================================================
-// Multi-photo gallery (migration 0060_product_model_photos_and_hero_meta).
-//
-// Backs the 4a PhotoGallery component. Surface:
-//   GET    /:id/photos                       → { photos: PhotoRow[] }
-//   POST   /:id/photos        (multipart)    → { photo: PhotoRow }
-//   DELETE /:id/photos/:photoId              → { ok: true }
-//   PATCH  /:id/photos/:photoId              → { ok: true }
-//                                              body: { is_primary?, order? }
-//
-// PhotoRow = { id, key, url, is_primary, order }
-// `url` is a relative path to the PUBLIC hero/gallery proxy registered above
-// (/product-models/:id/photo-gallery/:key) so <img src> works without auth.
-//
-// Storage: R2 bucket SO_ITEM_PHOTOS (shared with SO item photos under a
-// different prefix). Keys are minted under product-model-photos/<modelId>/.
-// ============================================================================
 
 type PhotoCols = {
   id: string;
@@ -1357,8 +1014,6 @@ function photoToWire(modelId: string, p: PhotoCols) {
     id: p.id,
     key: p.r2_key,
     url: `/api/scm/product-models/${modelId}/photo-gallery/${encodeURIComponent(p.r2_key)}`,
-    // WO-7: present only for photos uploaded with a client-generated thumb.
-    // Old rows have thumb_key NULL and the frontend renders the full url.
     thumbUrl: p.thumb_key
       ? `/api/scm/product-models/${modelId}/photo-gallery/${encodeURIComponent(p.thumb_key)}`
       : null,
@@ -1367,7 +1022,7 @@ function photoToWire(modelId: string, p: PhotoCols) {
   };
 }
 
-const GALLERY_MAX_BYTES = 5 * 1024 * 1024; // 5 MB — matches the 4a frontend cap
+const GALLERY_MAX_BYTES = 5 * 1024 * 1024;
 const GALLERY_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 productModels.get('/:id/photos', async (c) => {
@@ -1398,7 +1053,6 @@ productModels.post('/:id/photos', async (c) => {
   const supabase = c.get('supabase');
   const id = c.req.param('id');
 
-  // Multipart upload — Hono parses FormData via c.req.parseBody().
   let body: Record<string, unknown>;
   try {
     body = await c.req.parseBody();
@@ -1421,7 +1075,6 @@ productModels.post('/:id/photos', async (c) => {
 
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  // Confirm the model exists (in THIS company) before minting a key / uploading.
   const { data: model } = await scopeToCompanyId(supabase
     .from('product_models')
     .select('id')
@@ -1429,9 +1082,6 @@ productModels.post('/:id/photos', async (c) => {
     .maybeSingle();
   if (!model) return c.json(NOT_THIS_COMPANY, 404);
 
-  // Mint a unique key under this model's prefix. Use crypto.randomUUID for
-  // collision-safety; extension derived from MIME so the bucket reads back
-  // the right content-type.
   const ext = file.type === 'image/png' ? 'png'
             : file.type === 'image/webp' ? 'webp'
             : 'jpg';
@@ -1441,20 +1091,14 @@ productModels.post('/:id/photos', async (c) => {
     httpMetadata: { contentType: file.type },
   });
 
-  // WO-7: optional client-generated thumbnail rides the same multipart body.
-  // Best-effort — old clients send no `thumb` part and nothing changes.
   const thumbKey = await putOptionalThumb(c.env.SO_ITEM_PHOTOS, body.thumb, r2Key);
 
-  // First photo for a model auto-marks itself primary. After that, primary
-  // stays sticky until the operator changes it.
   const { count } = await supabase
     .from('product_model_photos')
     .select('id', { count: 'exact', head: true })
     .eq('model_id', id);
   const isFirst = (count ?? 0) === 0;
 
-  // sort_order = current MAX + 1 (or 0 if empty). NULL on the very first
-  // insert defaults to 0 per the table default.
   const { data: maxRow } = await supabase
     .from('product_model_photos')
     .select('sort_order')
@@ -1466,7 +1110,7 @@ productModels.post('/:id/photos', async (c) => {
     ((maxRow as { sort_order: number } | null)?.sort_order ?? -1) + 1;
 
   const insertRow = {
-    company_id: activeCompanyId(c), // multi-company: stamp the active company
+    company_id: activeCompanyId(c),
     model_id: id,
     r2_key: r2Key,
     thumb_key: thumbKey,
@@ -1481,7 +1125,6 @@ productModels.post('/:id/photos', async (c) => {
     .select('id, r2_key, thumb_key, sort_order, is_primary, mime_type, size_bytes')
     .single();
   if (error) {
-    // Roll back the R2 objects so a failed DB insert doesn't leak storage.
     await c.env.SO_ITEM_PHOTOS.delete(r2Key).catch(() => {});
     await deleteThumbFor(c.env.SO_ITEM_PHOTOS, r2Key);
     return c.json({ error: 'db_insert_failed', reason: error.message }, 500);
@@ -1496,14 +1139,9 @@ productModels.delete('/:id/photos/:photoId', async (c) => {
   const supabase = c.get('supabase');
   const id = c.req.param('id');
   const photoId = c.req.param('photoId');
-  // Multi-company: scope the load + delete (and the re-promote below) so a blind
-  // photo id from another company can't be read, have its R2 object deleted, or
-  // be removed.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // Load the row first so we know which R2 key to drop + can re-promote a
-  // new primary if we deleted the existing one.
   const { data: row } = await scopeToCompanyId(supabase
     .from('product_model_photos')
     .select('id, r2_key, is_primary')
@@ -1519,15 +1157,11 @@ productModels.delete('/:id/photos/:photoId', async (c) => {
     .eq('id', photoId), co.companyId);
   if (delErr) return c.json({ error: 'db_delete_failed', reason: delErr.message }, 500);
 
-  // Best-effort R2 cleanup — if the bucket call fails we DON'T re-insert the
-  // row (delete intent was the operator's). Log via Workers tail if needed.
   if (c.env.SO_ITEM_PHOTOS) {
     await c.env.SO_ITEM_PHOTOS.delete(target.r2_key).catch(() => {});
     await deleteThumbFor(c.env.SO_ITEM_PHOTOS, target.r2_key);
   }
 
-  // If the deleted row was the primary, promote the lowest-order remaining
-  // photo so the gallery never sits primary-less while photos exist.
   if (target.is_primary) {
     const { data: next } = await scopeToCompanyId(supabase
       .from('product_model_photos')
@@ -1558,12 +1192,9 @@ productModels.patch('/:id/photos/:photoId', async (c) => {
   const supabase = c.get('supabase');
   const id = c.req.param('id');
   const photoId = c.req.param('photoId');
-  // Multi-company: scope the load + every write so a blind photo id from another
-  // company can't be re-ordered or promoted.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // Validate target exists + belongs to this model.
   const { data: row } = await scopeToCompanyId(supabase
     .from('product_model_photos')
     .select('id, is_primary, sort_order')
@@ -1573,8 +1204,6 @@ productModels.patch('/:id/photos/:photoId', async (c) => {
   if (!row) return c.json(NOT_THIS_COMPANY, 404);
   const target = row as { id: string; is_primary: boolean; sort_order: number };
 
-  // is_primary: setting true → demote the current primary on the same model
-  // first (the partial unique index would otherwise reject the insert).
   if (body.is_primary === true) {
     await scopeToCompanyId(supabase
       .from('product_model_photos')
@@ -1588,10 +1217,6 @@ productModels.patch('/:id/photos/:photoId', async (c) => {
     if (error) return c.json({ error: 'patch_failed', reason: error.message }, 500);
   }
 
-  // order: PATCH expects an absolute integer (the 4a frontend's move-up /
-  // move-down compute the new value client-side). Re-numbering siblings is
-  // intentionally out of scope here — the table tolerates ties (sort_order
-  // + created_at break ordering ties), so a simple absolute write is enough.
   if (body.order !== undefined) {
     const n = Number(body.order);
     if (!Number.isInteger(n) || n < 0) {

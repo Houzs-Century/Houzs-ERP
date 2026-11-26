@@ -1,7 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// jsdom (25.x) does not implement Blob#arrayBuffer, which the module under
-// test calls on the prepared File. Polyfill via FileReader for the suite.
 beforeAll(() => {
   if (typeof Blob.prototype.arrayBuffer !== "function") {
     Blob.prototype.arrayBuffer = function (this: Blob): Promise<ArrayBuffer> {
@@ -15,9 +13,6 @@ beforeAll(() => {
   }
 });
 
-// Mock the low-level client (network) and the pipeline (canvas) so the test
-// drives ONLY this module's contract: main PUT first, optional thumb PUT
-// second, thumb failure non-fatal.
 vi.mock("../api/client", () => ({
   api: { putBinary: vi.fn() },
 }));

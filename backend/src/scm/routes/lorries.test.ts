@@ -14,7 +14,6 @@ describe('boxCapacityM3 — WS3 box capacity (ft -> m3)', () => {
   });
 
   it('rounds to 2 decimal places', () => {
-    // 10 x 10 x 10 ft3 = 1000 * 0.0283168 = 28.3168 -> 28.32
     expect(boxCapacityM3(10, 10, 10)).toBe(28.32);
   });
 

@@ -77,44 +77,10 @@ import { refuseForeignAttachmentKey, refuseForeignChild, refuseForeignProject } 
 import { calendarCrewScope } from "./lib/calendar-visibility";
 import { masterPostcodeError } from "../scm/shared/master-postcode-rule";
 
-/* The context the extracted handlers below receive. They are exported so the
-   route tests can drive them directly; the shape is exactly what app.get/post
-   would have passed to an inline handler — including the PATH literal, which is
-   what keeps c.req.param("id") a plain string rather than string | undefined. */
 type HandlerCtx = Context<{ Bindings: Env }, "/brands/:id/logo">;
 const app = new Hono<{ Bindings: Env }>();
 
-// Multi-company (mig-pg 0093): Projects are a PER-COMPANY module — every
-// list/summary/detail/analytics read below adds the ACTIVE company predicate
-// and creates stamp company_id, CONDITIONALLY (skipped when the companies
-// master is unresolved: pre-migration, the D1 test mirror, or a DB
-// cold-start) so single-company Houzs keeps serving unchanged. This is the
-// same raw-SQL idiom as routes/sales.ts.
-//
-// ⚠️ CORRECTED 2026-08-18. This paragraph used to assert that child tables
-// "are ALWAYS read through their parent project_id". That was FALSE, and it was
-// load-bearing false: it is the sentence that made ~30 handlers look safe
-// without anyone re-reading them, and migration 0292 repeated it back. It holds
-// only where the URL CARRIES the parent. A large family addresses the CHILD by
-// its own id — /finance/lines/:lineId, /checklist/:itemId, /sections/:sectionId,
-// /defects/:defectId, /team/:teamId, /attachments/:attId, /stock-transfers/:tid
-// — and no middleware supplies a project_id, so each was a bare `WHERE id = ?`
-// against a service-role client: one tenant editing the other's P&L, checklist
-// and defect list by uuid. THE RULE NOW, enforced by lib/project-company-gate.ts
-// rather than by this comment: a handler taking a CHILD id proves that child is
-// in the active company BEFORE anything else, and a handler taking a PARENT id
-// and creating under it proves the parent.
 
-/**
- * Server-side finance/payment gate (Sales-department visibility, rules 3 & 5).
- * Returns a 403 JSON Response when the caller must NOT see project money
- * (finance snapshot / ledger / payment / rental / quotation / agreement),
- * else null. Single source of truth = pmsAccess.financeHiddenForUser
- * (DIRECTOR-level only; un-migrated users without a position keep legacy
- * access). Apply to every finance/payment endpoint so the data never leaves
- * the Worker for a non-director sales user — the UI hide is defence-in-depth,
- * this is the wire-level enforcement.
- */
 function denyFinance(c: any): Response | null {
   if (financeHiddenForUser(c.get("user"))) {
     return c.json({ error: "You don't have permission to view financial information." }, 403);
@@ -122,9 +88,6 @@ function denyFinance(c: any): Response | null {
   return null;
 }
 
-// ── Event types ──────────────────────────────────────────────
-// DB-backed via project_event_types (migrations 021/022). Admins
-// maintain this from Project Maintenance.
 
 app.get("/event-types", async (c) => {
   const includeInactive = c.req.query("include_inactive") === "1";
@@ -211,9 +174,6 @@ app.patch("/event-types/:id", requirePermission("projects.manage"), async (c) =>
 app.delete("/event-types/:id", requirePermission("projects.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
-  // Soft-delete: set active=0. Projects pointing at this type keep
-  // their event_type_id (FK is ON DELETE SET NULL but we prefer to
-  // keep the historical link visible).
   await c.env.DB.prepare(
     `UPDATE project_event_types SET active = 0 WHERE id = ?`
   )
@@ -222,18 +182,9 @@ app.delete("/event-types/:id", requirePermission("projects.manage"), async (c) =
   return c.json({ ok: true });
 });
 
-// ── Brands ───────────────────────────────────────────────────
-// Stored in project_brands (migration 044). Admins maintain this
-// from Project Maintenance.
 
 app.get("/brands", async (c) => {
   const includeInactive = c.req.query("include_inactive") === "1";
-  // Company-scope the brand pool. project_brands carries company_id (mig 0093)
-  // but this read was left unscoped by that migration's paired code change, so
-  // the SCM Products > Maintenance > Brandings tab (which 2990 uses, re-sourced
-  // via this endpoint) showed 2990 the HOUZS brand pool. activeCompanySql
-  // degrades to no predicate when the company is unresolved (cold-start /
-  // single-company), so Houzs-only behaviour is unchanged.
   const coSql = activeCompanySql(c);
   const whereClause = includeInactive
     ? (coSql ? `WHERE 1=1${coSql}` : "")
@@ -245,8 +196,6 @@ app.get("/brands", async (c) => {
       ORDER BY sort_order, name`
   ).all<{ id: number; name: string; color: string; sort_order: number; active: number; logo_r2_key: string | null }>();
   const all = rows.results ?? [];
-  // Backwards compatibility: if the caller didn't ask for the full
-  // objects, return the flat name array the old frontend expects.
   if (c.req.query("full") !== "1") {
     return c.json({ data: all.map((r) => r.name) });
   }
@@ -262,16 +211,7 @@ app.post("/brands", requirePermission("projects.manage"), async (c) => {
   const name = (body.name || "").trim();
   if (!name) return c.json({ error: "name is required" }, 400);
   const color = normaliseHex(body.color) ?? "64748b";
-  // Stamp the active company so a brand created under 2990 isn't silently
-  // labelled HOUZS by the company_id column DEFAULT. When the company is
-  // unresolved (single-company / cold-start) fall back to that DEFAULT.
   const activeCo = activeCompanyId(c);
-  /* Duplicate check is PER COMPANY, matching what the list shows (owner
-     2026-08-08: adding BEDFRAME/SERVICE on Houzs Century refused because
-     2990 owns brands with those names — the company-blind check named a
-     collision the operator could not even see). The INSERT below already
-     stamps company_id; the check must look at the same slice. Unresolved
-     company keeps the old global check (single-company installs). */
   const existing = activeCo != null
     ? await c.env.DB.prepare(
         `SELECT id FROM project_brands WHERE LOWER(name) = LOWER(?) AND company_id = ?`
@@ -303,8 +243,6 @@ app.post("/brands", requirePermission("projects.manage"), async (c) => {
 app.patch("/brands/:id", requirePermission("projects.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
-  // Scope every read + write in this handler to the active company, so a
-  // 2990-context request can't rename/reorder/deactivate a HOUZS brand.
   const brandCoSql = activeCompanySql(c);
   const body = await c.req.json<{
     name?: string;
@@ -318,9 +256,6 @@ app.patch("/brands/:id", requirePermission("projects.manage"), async (c) => {
   if (body.name !== undefined) {
     const n = body.name.trim();
     if (!n) return c.json({ error: "name cannot be empty" }, 400);
-    // Capture the old name so we can cascade the rename to
-    // existing projects — projects.brand is plain text, not a FK, so
-    // renaming here without a cascade would orphan historical rows.
     const cur = await c.env.DB.prepare(
       `SELECT name FROM project_brands WHERE id = ?${brandCoSql}`
     )
@@ -353,7 +288,6 @@ app.patch("/brands/:id", requirePermission("projects.manage"), async (c) => {
     .run();
   if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
 
-  // Cascade rename to historical projects.brand values (this company only).
   if (oldName && body.name && oldName !== body.name.trim()) {
     const newName = body.name.trim();
     await c.env.DB.prepare(
@@ -361,17 +295,6 @@ app.patch("/brands/:id", requirePermission("projects.manage"), async (c) => {
     )
       .bind(newName, oldName)
       .run();
-    /* user_brands and project_cost_rates hold the same name as free text and
-       were left out of this cascade, so a rename silently unmatched them:
-       approverBrandBlocked compares user_brands.brand to projects.brand by
-       exact string, so a restricted director stops being able to approve the
-       brand they were granted, with no message saying why.
-
-       Neither table carries company_id (and users has none either), so they
-       cannot take a company predicate. Cascade them only when NO other brand
-       row still holds the old name — otherwise this company's rename would
-       rewrite another company's grants, and leaving them stale is the safer
-       half of that trade. */
     // company-scope: deliberately cross-company — this asks whether ANY other
     // company still owns the old name, which a company predicate would hide,
     // and that answer is what decides the two unscoped cascades below.
@@ -413,8 +336,6 @@ app.delete("/brands/:id", requirePermission("projects.manage"), async (c) => {
       .bind(id)
       .run();
   } else {
-    // Soft-delete (default). Existing projects keep their brand label;
-    // the brand just stops appearing in new-project pickers.
     await c.env.DB.prepare(
       `UPDATE project_brands SET active = 0 WHERE id = ?${activeCompanySql(c)}`
     )
@@ -424,9 +345,6 @@ app.delete("/brands/:id", requirePermission("projects.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-// Bulk reorder. Mirrors the checklist-template items reorder pattern:
-// renumber sort_order in steps of 10 by ID position so future inserts
-// can slot between two rows without a full pass.
 app.put("/brands/reorder", requirePermission("projects.manage"), async (c) => {
   const body = await c.req.json<{ ids?: unknown }>();
   if (!Array.isArray(body.ids) || !body.ids.every((n) => Number.isInteger(n))) {
@@ -434,7 +352,6 @@ app.put("/brands/reorder", requirePermission("projects.manage"), async (c) => {
   }
   const ids = body.ids as number[];
   if (ids.length === 0) return c.json({ ok: true });
-  // Scoped so a 2990-context reorder can't touch HOUZS brand rows.
   const coSql = activeCompanySql(c);
   await c.env.DB.batch(
     ids.map((id, idx) =>
@@ -445,24 +362,14 @@ app.put("/brands/reorder", requirePermission("projects.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Brand logos (owner 2026-07) ──────────────────────────────
-// Per-brand letterhead logo for the SCM Sales Order PDF. Clones the
-// branding.ts company-logo endpoints EXACTLY (raw binary in, R2 stream
-// out), but the key pointer lives on the project_brands row
-// (logo_r2_key, migration-pg 0069) instead of the branding config.
-// Same permission as the rest of the brands CRUD (projects.manage).
 
-/* Only the two web-safe raster formats the jspdf letterhead can embed.
-   Maps the upload's Content-Type to the stored extension. */
 const BRAND_LOGO_TYPES: Record<string, string> = {
   "image/png": "png",
   "image/jpeg": "jpg",
   "image/jpg": "jpg",
 };
-const BRAND_LOGO_MAX_BYTES = 1 * 1024 * 1024; // ~1 MB — a letterhead logo, not a photo
+const BRAND_LOGO_MAX_BYTES = 1 * 1024 * 1024;
 
-/** Dual-read helper — the pg driver camelCases result columns (#1
- *  recurring bug), so always read both spellings. */
 const brandLogoKeyOf = (row: unknown): string | null => {
   const r = (row ?? {}) as Record<string, unknown>;
   const v = (r.logoR2Key ?? r.logo_r2_key) as string | null | undefined;
@@ -470,15 +377,6 @@ const brandLogoKeyOf = (row: unknown): string | null => {
   return s || null;
 };
 
-/**
- * GET /brands/logo?key=brands/…
- * Serve-by-key stream for the PDF brand-logo loader (frontend
- * lib/branding.ts ensureBrandLogoLoaded). Mirrors the scan-so
- * /slip-image proxy: the `brands/` prefix guard stops an
- * attacker-supplied key from reaching an unrelated R2 object.
- * Registered BEFORE /brands/:id/logo purely for reading order —
- * the segment counts differ so the routes never collide.
- */
 app.get("/brands/logo", async (c) => {
   const key = c.req.query("key") ?? "";
   if (!key.startsWith("brands/")) {
@@ -488,19 +386,10 @@ app.get("/brands/logo", async (c) => {
   if (!obj) return c.json({ error: "Logo missing" }, 404);
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
-  // Keys carry a Date.now() stamp (immutable per upload), so a long
-  // browser cache is safe — matches the slip-image proxy cache policy.
   headers.set("cache-control", "private, max-age=3600");
   return new Response(obj.body, { headers });
 });
 
-/**
- * POST /brands/:id/logo
- * Raw binary upload of a brand logo. The R2 key carries a Date.now()
- * stamp — same convention as the company logo — so every upload yields
- * a NEW key and every consumer (blob-URL previews, the PDF brand-logo
- * memo) can use the key itself as the cache-buster.
- */
 app.post("/brands/:id/logo", requirePermission("projects.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -515,9 +404,6 @@ app.post("/brands/:id/logo", requirePermission("projects.manage"), async (c) => 
     return c.json({ error: "Logo must be under 1 MB" }, 413);
   }
 
-  /* Scope BOTH halves, like every other /brands/:id route. Unscoped, an upload
-     against another company's brand id replaced that brand's logo AND deleted
-     its previous R2 object. */
   const brandCoSql = activeCompanySql(c);
   const brand = await c.env.DB.prepare(
     `SELECT id, name, logo_r2_key FROM project_brands WHERE id = ?${brandCoSql}`
@@ -529,8 +415,6 @@ app.post("/brands/:id/logo", requirePermission("projects.manage"), async (c) => 
   const key = `brands/logo-${id}-${Date.now()}.${ext}`;
   await c.env.POD_BUCKET.put(key, buf, { httpMetadata: { contentType } });
 
-  // Point the brand row at the new object; best-effort clean up the
-  // previous one (orphans are cheap; a failed delete never fails the upload).
   const prevKey = brandLogoKeyOf(brand);
   await c.env.DB.prepare(
     `UPDATE project_brands SET logo_r2_key = ? WHERE id = ?${brandCoSql}`
@@ -538,7 +422,7 @@ app.post("/brands/:id/logo", requirePermission("projects.manage"), async (c) => 
     .bind(key, id)
     .run();
   if (prevKey && prevKey !== key) {
-    try { await c.env.POD_BUCKET.delete(prevKey); } catch { /* orphan is fine */ }
+    try { await c.env.POD_BUCKET.delete(prevKey); } catch { }
   }
 
   await audit(c, {
@@ -585,9 +469,6 @@ app.get("/brands/:id/logo", getBrandLogoHandler);
 export const deleteBrandLogoHandler = async (c: HandlerCtx) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
-  /* Scoped on BOTH halves: the load that decides whether to delete, and the
-     UPDATE that performs it. Scoping only the load would leave the write able to
-     null another company's logo if the two ever drifted apart. */
   const brandCoSql = activeCompanySql(c);
   const brand = await c.env.DB.prepare(
     `SELECT logo_r2_key FROM project_brands WHERE id = ?${brandCoSql}`
@@ -602,7 +483,7 @@ export const deleteBrandLogoHandler = async (c: HandlerCtx) => {
     )
       .bind(id)
       .run();
-    try { await c.env.POD_BUCKET.delete(prevKey); } catch { /* orphan is fine */ }
+    try { await c.env.POD_BUCKET.delete(prevKey); } catch { }
   }
   await audit(c, {
     action: "projects.brands",
@@ -638,10 +519,6 @@ function normaliseHex(input: string | undefined | null): string | null {
   return v;
 }
 
-// ── Cost rates (mig 063) ─────────────────────────────────────
-// Per-brand transport / merchandise / commission rates that drive
-// the auto cost-line engine on every finance edit. Surfaced under
-// Project Maintenance → Cost Rates. `projects.manage` gates writes.
 
 app.get("/cost-rates", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
@@ -672,8 +549,6 @@ app.put("/cost-rates/:brand", requirePermission("projects.manage"), async (c) =>
     boost_min_sales?: number | null;
   }>();
 
-  // Coerce into clean numerics. Negatives are nonsensical for these
-  // rates and would break the recompute math.
   const num = (v: unknown, fallback: number | null = null) => {
     if (v === null || v === "" || v === undefined) return fallback;
     const n = Number(v);
@@ -689,9 +564,6 @@ app.put("/cost-rates/:brand", requirePermission("projects.manage"), async (c) =>
     boost_min_sales: num(body.boost_min_sales, null),
   };
 
-  // Upsert by brand. The seed migration created the row; this UPDATE
-  // is the common path. The fallback INSERT covers brands added
-  // later (e.g. someone added a new brand and now wants a rate card).
   const upd = await c.env.DB.prepare(
     `UPDATE project_cost_rates
         SET transport_pct = ?, merchandise_pct = ?,
@@ -746,14 +618,6 @@ app.put("/cost-rates/:brand", requirePermission("projects.manage"), async (c) =>
   return c.json({ ok: true, recomputed: projects.results?.length ?? 0 });
 });
 
-// ── Roadshow PMS Agent — Job B: fill a project's P&L from a FAIR REPORT ──────
-// The owner's fair report is one worksheet PER EVENT. The frontend reads the
-// .xlsx with SheetJS and POSTs each sheet's raw rows here; parseFairSheet
-// (unit-tested) aggregates revenue + product-COGS + salesperson, and we match
-// candidate projects by brand + venue (sheet names are truncated, so venue is
-// matched by mutual prefix/contains). NOTHING is written here — the human picks
-// the project, then /apply writes. Amounts are whole RM (project_finance_lines
-// is NOT sen). Categories map 1:1 to LEDGER_COST_CATEGORIES.
 app.post("/fair-report/match", requirePermission("projects.read"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
   const body = (await c.req.json().catch(() => ({}))) as { sheets?: { name?: string; rows?: unknown[][] }[] };
@@ -785,10 +649,6 @@ app.post("/fair-report/match", requirePermission("projects.read"), async (c) => 
   return c.json({ events, projectCount: projects.length });
 });
 
-// Apply the parsed finance lines to ONE project the human picked. Idempotent-ish:
-// a (kind, category) that already has a non-archived line is SKIPPED (this fills
-// what is missing, never double-counts on a re-apply). Lines are dated to the
-// project start_date so they land in the right P&L period (the occurred_at fix).
 app.post("/:id/fair-report/apply", requirePermission("projects.write"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
   const id = parseInt(c.req.param("id"), 10);
@@ -828,13 +688,6 @@ app.post("/:id/fair-report/apply", requirePermission("projects.write"), async (c
   return c.json({ created, skipped, errors });
 });
 
-// ── Roadshow PMS Agent — Job A: reconcile an organizer's schedule photo ──────
-// The owner forwards an organizer's newest itinerary photo (some venues moved /
-// postponed / cancelled). This OCRs it (Claude vision — same pattern as
-// scan-payment.ts / vision-blocks.ts), extracts {organizer, events[]}, loads the
-// organizer's projects, and returns the pure `reconcileSchedule` diff (MATCH /
-// DATE_CHANGED / NEW / MISSING). Writes NOTHING — the owner applies approved date
-// changes via the normal project PATCH.
 const RECONCILE_MODEL = "claude-sonnet-4-6";
 const RECONCILE_URL = "https://api.anthropic.com/v1/messages";
 app.post("/schedule-reconcile/scan", requirePermission("projects.write"), async (c) => {
@@ -872,7 +725,6 @@ app.post("/schedule-reconcile/scan", requirePermission("projects.write"), async 
   }
   if (!extract || !Array.isArray(extract.events)) return c.json({ error: "extract_empty" }, 502);
 
-  // Load the organizer's live projects (name-scoped, company-scoped) to diff.
   const org = String(extract.organizer ?? "").trim();
   const projRes = await c.env.DB.prepare(
     `SELECT id, code, name, venue, start_date, end_date, stage
@@ -888,12 +740,6 @@ app.post("/schedule-reconcile/scan", requirePermission("projects.write"), async 
   return c.json({ organizer: org, projectCount: projects.length, rows });
 });
 
-// ── Roadshow PMS Agent — Job E: setup-invoice OCR -> project setup COGS ───────
-// Owner forwards a scanned setup/booth invoice; this OCRs it (Claude vision, the
-// same pattern as Job A), extracts the vendor + grand total + line items, and (on
-// apply) writes a `setup` cost line to the chosen project. The scan also returns a
-// short recent-projects list so the picker needs no extra call. Amounts are whole
-// RM (project_finance_lines is NOT sen).
 app.post("/setup-invoice/scan", requirePermission("projects.write"), async (c) => {
   const apiKey = (c.env as { ANTHROPIC_API_KEY?: string }).ANTHROPIC_API_KEY;
   if (!apiKey) return c.json({ error: "anthropic_key_missing", reason: "ANTHROPIC_API_KEY is not set." }, 400);
@@ -942,9 +788,6 @@ app.post("/setup-invoice/scan", requirePermission("projects.write"), async (c) =
   });
 });
 
-// Apply the setup invoice to a project as a `setup` cost line. A project can have
-// several setup invoices, so this always ADDS (no skip-if-present, unlike the fair
-// report). Dated to the project start_date.
 app.post("/:id/setup-invoice/apply", requirePermission("projects.write"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
   const id = parseInt(c.req.param("id"), 10);
@@ -972,8 +815,6 @@ app.post("/:id/setup-invoice/apply", requirePermission("projects.write"), async 
   }
 });
 
-// Manual trigger — useful from the project detail page to backfill
-// auto lines on historical projects after the migration lands.
 app.post("/:id/finance/recompute-auto", requirePermission("projects.write"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
   const id = parseInt(c.req.param("id"), 10);
@@ -983,10 +824,8 @@ app.post("/:id/finance/recompute-auto", requirePermission("projects.write"), asy
   return c.json({ ok: true });
 });
 
-// ── Summary (dashboard tiles) ─────────────────────────────────
 
 app.get("/summary", requirePageAccess("projects.list"), async (c) => {
-  // Multi-company: active-company predicate ("" when unresolved).
   const coSql = activeCompanySql(c);
   const byStage = await c.env.DB.prepare(
     `SELECT stage, COUNT(*) as count
@@ -994,10 +833,6 @@ app.get("/summary", requirePageAccess("projects.list"), async (c) => {
       GROUP BY stage`
   ).all();
 
-  // SQL date('now') is the UTC calendar date (d1-compat rewrites it to
-  // to_char(timezone('UTC', now()), ...)), so before 08:00 MYT the window was
-  // anchored to yesterday. start_date is a Malaysian calendar date — bind the
-  // MY date so the two sides speak the same calendar.
   const upcoming = await c.env.DB.prepare(
     `SELECT COUNT(*) as count FROM projects
       WHERE archived_at IS NULL${coSql}
@@ -1014,7 +849,6 @@ app.get("/summary", requirePageAccess("projects.list"), async (c) => {
       WHERE archived_at IS NULL${coSql} AND stage = 'live'`
   ).first<{ count: number }>();
 
-  // Overdue checklist items across all open projects
   const overdueTasks = await c.env.DB.prepare(
     `SELECT COUNT(*) as count
        FROM project_checklist c
@@ -1035,7 +869,6 @@ app.get("/summary", requirePageAccess("projects.list"), async (c) => {
   });
 });
 
-// ── List ──────────────────────────────────────────────────────
 
 app.get("/", requirePageAccess("projects.list"), async (c) => {
   const eventTypeParam = c.req.query("event_type_id");
@@ -1044,8 +877,6 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   const fromParam = c.req.query("from");
   const toParam = c.req.query("to");
   const user = c.get("user");
-  // "My pending tasks" filter — map the caller's role to the task scope
-  // they own. Owner / IT Admin / unmapped roles -> no filter (full list).
   let pendingLabel: string | undefined;
   let pendingTitle: string | undefined;
   let pendingLogistic = false;
@@ -1056,8 +887,6 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   let pendingSalesAttending = false;
   let pendingAgreement = false;
   let pendingDefectReview = false;
-  // true = this reviewer takes every OTHER state (Shukor); false = only the
-  // region states (Nancy). See DEFECT_REVIEW_REGION_STATES.
   let pendingDefectReviewExclude = false;
   if (c.req.query("my_pending") === "1" && user) {
     // Owner 2026-07-13 — staged "My Pending". Approvers (anyone holding a
@@ -1087,15 +916,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
        required_perm: the switch existing is not the same as the gate
        existing. */
     const GATING_APPROVE_PERMS = ["projects.approve"];
-    // hasPermission handles the `*` wildcard, so admins/owner still match.
     const held = GATING_APPROVE_PERMS.filter((p) => hasPermission(granted, p));
-    // Stock / agreement keys the caller EXPLICITLY holds (explicit-only per
-    // the owner matrix; `*` does not confer these). Since 2026-08-21 they
-    // widen pendingApprove so a submitted Stock In / Stock Out / Agreement
-    // reaches the key holder's lane — before this, a submitted STOCK IN
-    // (stock_in.approve) surfaced in NO approver's My Pending at all and sat
-    // "IN REVIEW" forever. These do NOT affect branch selection below, so
-    // Peter / Kris keep their director staffing lanes.
     const heldExplicit = [...EXPLICIT_APPROVAL_KEYS].filter((k) =>
       holdsChecklistApproval(granted, k),
     );
@@ -1148,7 +969,7 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       const kbList = (kb.results ?? []).map((x) => (x.brand ?? "").trim()).filter(Boolean);
       if (kbList.length) approverBrands = kbList;
     } else if (r === "purchaser") pendingLabel = "PURCHASER";
-    else if (r === "logistic") pendingLogistic = true; // setup not arranged
+    else if (r === "logistic") pendingLogistic = true;
     else if (r === "ops exec") {
       // Nancy (owner 2026-08-11): the Ops Exec reviews defects for the region
       // warehouse states (Penang/Kelantan/Terengganu/Perak) BEFORE they reach
@@ -1167,15 +988,13 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
       pendingDefectReviewExclude = true;
     } else if (r === "driver" || r === "helper" || r === "storekeeper") pendingLabel = "DRIVER";
     else if (r.includes("sales")) {
-      // Sales PIC: their SALES-PIC-badged tasks + the Sales Attending assignment.
       pendingLabel = "SALES PIC";
       pendingSalesAttending = true;
     } else if (r === "manager") pendingTitle = "Agreement / Quotation";
-    // unmapped roles -> no pending filter (see all)
   }
   const result = await listProjects(c.env, {
     company_id: activeCompanyId(c),
-    with_pnl: !financeHiddenForUser(user), // finance columns from the event P&L (ledger item 5)
+    with_pnl: !financeHiddenForUser(user),
     pending_label: pendingLabel,
     pending_title: pendingTitle,
     pending_logistic: pendingLogistic,
@@ -1250,16 +1069,12 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     pending_titles_defect_review: pendingDefectReview || undefined,
     pending_titles_logistic: pendingLogistic || undefined,
   });
-  // Server-side finance strip (rule 3): the list SELECTs pf.rental /
-  // total_sales / contractor_cost per row. Blank them for any non-director
-  // sales user so the money never reaches the list view on the wire.
   if (financeHiddenForUser(user) && Array.isArray((result as any).data)) {
     (result as any).data = (result as any).data.map((r: any) => ({
       ...r,
       rental: null,
       total_sales: null,
       contractor_cost: null,
-      // Ledger-derived finance columns follow the same wire-level redaction.
       fin_revenue: null,
       fin_cogs: null,
       fin_cogs_matt_sofa: null,
@@ -1272,22 +1087,10 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   return c.json(result);
 });
 
-// Expose the canonical states + payment-status lists to the frontend
-// so pickers stay in sync with the backend without duplicating.
 app.get("/states", (c) => c.json({ data: MALAYSIA_STATES }));
 app.get("/payment-statuses", (c) => c.json({ data: PAYMENT_STATUSES }));
 
-// Canonical stage list — pulled from the most recently created
-// active checklist template in Project Maintenance. This way the
-// filter pill row on /projects?view=list mirrors the workflow
-// exactly as admin laid it out (reorder / rename / add / delete in
-// PM flow through on the next list-page load). Cloned per-project
-// sections inherit the same name on project create, so the filter
-// still matches projects whose sections were cloned from an older
-// template version.
 app.get("/sections-distinct", requirePageAccess("projects"), async (c) => {
-  /* "Most recent active template" resolves WITHIN the active company (mig
-     0288). Company-blind, MAX(id) picks whichever company's template is newer. */
   const rows = await c.env.DB.prepare(
     `SELECT s.name, s.sort_order
        FROM project_checklist_template_sections s
@@ -1338,7 +1141,6 @@ app.get("/task-titles-distinct", requirePageAccess("projects"), async (c) => {
        LEFT JOIN title_section ts ON ts.title = lt.title AND ts.rn = 1
       ORDER BY COALESCE(ts.section_order, 9999), COALESCE(ts.seq, 9999), lt.title`
   ).all<{ title: string; section_name: string | null; section_order: number | null; seq: number }>();
-  // De-dupe by title (live_titles is already DISTINCT, but keep the guard).
   const seen = new Set<string>();
   const data: { title: string; section: string | null }[] = [];
   for (const r of rows.results ?? []) {
@@ -1350,10 +1152,6 @@ app.get("/task-titles-distinct", requirePageAccess("projects"), async (c) => {
   return c.json({ data });
 });
 
-// ── Organizers (lookup) ──────────────────────────────────────
-// Free-form names but de-duplicated centrally so the picker stays clean.
-// The actual projects.organizer column remains free text — this table
-// is a convenience source for the dropdown.
 
 app.get("/organizers", requirePageAccess("projects"), async (c) => {
   const rows = await c.env.DB.prepare(
@@ -1368,14 +1166,12 @@ app.post("/organizers", requirePermission("projects.write"), async (c) => {
   const body = await c.req.json<{ name?: string; notes?: string }>();
   const name = (body.name || "").trim();
   if (!name) return c.json({ error: "name required" }, 400);
-  // Idempotent on (name) — return the existing row if it already exists.
   const existing = await c.env.DB.prepare(
     `SELECT id, name FROM project_organizers WHERE LOWER(name) = LOWER(?)`
   )
     .bind(name)
     .first<{ id: number; name: string }>();
   if (existing) {
-    // Reactivate if previously archived.
     await c.env.DB.prepare(
       `UPDATE project_organizers SET active = 1 WHERE id = ?`
     )
@@ -1398,8 +1194,6 @@ app.patch("/organizers/:id", requirePermission("projects.manage"), async (c) => 
   const body = await c.req.json<{ name?: string }>();
   const name = (body.name || "").trim();
   if (!name) return c.json({ error: "name required" }, 400);
-  // Guard against colliding with another active organizer's name (the POST
-  // route is idempotent on name, so two rows sharing a name must not exist).
   const clash = await c.env.DB.prepare(
     `SELECT id FROM project_organizers
       WHERE LOWER(name) = LOWER(?) AND id <> ? AND active = 1`
@@ -1407,10 +1201,6 @@ app.patch("/organizers/:id", requirePermission("projects.manage"), async (c) => 
     .bind(name, id)
     .first<{ id: number }>();
   if (clash) return c.json({ error: "An organizer with that name already exists" }, 409);
-  // Capture the old name so the rename cascades into existing events:
-  // projects.organizer is plain free text, not a FK, so renaming the master
-  // alone strands historical events on the old name (and the public share
-  // calendar reads projects.organizer). Mirrors PATCH /brands/:id.
   const cur = await c.env.DB.prepare(
     `SELECT name FROM project_organizers WHERE id = ?`
   )
@@ -1423,9 +1213,6 @@ app.patch("/organizers/:id", requirePermission("projects.manage"), async (c) => 
     .bind(name, id)
     .run();
   if (oldName && oldName.trim() !== name) {
-    // Scope to the active company like /brands/:id; project_organizers itself
-    // is a shared master with no company_id, so activeCompanySql degrades to no
-    // predicate in a single-company context (a global cascade there).
     const orgCoSql = activeCompanySql(c);
     await c.env.DB.prepare(
       `UPDATE projects SET organizer = ?, updated_at = datetime('now') WHERE organizer = ?${orgCoSql}`
@@ -1447,10 +1234,6 @@ app.delete("/organizers/:id", requirePermission("projects.manage"), async (c) =>
   return c.json({ ok: true });
 });
 
-// ── Contractors (lookup) ─────────────────────────────────────
-// Booth setup/dismantle contractors. Same shape as organizers: the
-// projects.contractor column stays free text — this table just keeps the
-// Project Detail picker (and the per-contractor share links) clean.
 
 app.get("/contractors", requirePageAccess("projects"), async (c) => {
   const rows = await c.env.DB.prepare(
@@ -1465,14 +1248,12 @@ app.post("/contractors", requirePermission("projects.write"), async (c) => {
   const body = await c.req.json<{ name?: string; notes?: string }>();
   const name = (body.name || "").trim();
   if (!name) return c.json({ error: "name required" }, 400);
-  // Idempotent on (name) — return the existing row if it already exists.
   const existing = await c.env.DB.prepare(
     `SELECT id, name FROM project_contractors WHERE LOWER(name) = LOWER(?)`
   )
     .bind(name)
     .first<{ id: number; name: string }>();
   if (existing) {
-    // Reactivate if previously archived.
     await c.env.DB.prepare(
       `UPDATE project_contractors SET active = 1 WHERE id = ?`
     )
@@ -1513,11 +1294,6 @@ app.patch("/contractors/:id", requirePermission("projects.manage"), async (c) =>
   return c.json({ ok: true });
 });
 
-// ── Contractor share links ───────────────────────────────────
-// Generate/copy or revoke the unguessable token behind a contractor's public,
-// no-login calendar (routes/publicContractorCalendar.ts). Minted against the
-// contractor NAME — the value projects.contractor stores and the public route
-// filters on — so a rename would need a fresh link, which is correct.
 
 app.post("/contractors/:id/share-link", requirePermission("projects.write"), async (c) => {
   const user = c.get("user");
@@ -1529,7 +1305,6 @@ app.post("/contractors/:id/share-link", requirePermission("projects.write"), asy
     .bind(id)
     .first<{ name: string }>();
   if (!row) return c.json({ error: "Contractor not found" }, 404);
-  // Get-or-create: repeated clicks reuse the same live token.
   const token = await issueShareToken(c.env, row.name, user?.id ?? null);
   return c.json({ token });
 });
@@ -1547,18 +1322,11 @@ app.delete("/contractors/:id/share-link", requirePermission("projects.manage"), 
   return c.json({ ok: true });
 });
 
-// ── Venues ────────────────────────────────────────────────────
 type VenueBody = { name?: string; state?: string | null; country?: string | null; city?: string | null; postcode?: string | null; size?: string | null; notes?: string | null };
 const blankToNull = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-// Same shape as organizers — picker-backed lookup, free-text column on
-// `projects.venue` stays valid so legacy data still renders.
 
 app.get("/venues", requirePageAccess("projects"), async (c) => {
-  // Company-scoped: project_venues carries company_id (mig 0093, all existing
-  // rows tagged HOUZS). Without this the 2990 Project Maintenance venue master
-  // + the SO venue picker listed every HOUZS exhibition venue — the same leak
-  // already fixed for the brand pool below.
   const rows = await c.env.DB.prepare(
     `SELECT id, name, state, country, city, postcode, size, notes, active FROM project_venues
       WHERE active = 1${activeCompanySql(c)} ORDER BY name`
@@ -1566,9 +1334,6 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
   type VenueOut = Record<string, unknown> & { name?: unknown; origin: 'PROJECT' | 'SHOWROOM' };
   const projectVenues: VenueOut[] = ((rows.results ?? []) as Array<Record<string, unknown>>).map((r) => ({
     ...r,
-    /* Where this entry came from. The owner asked to see a showroom apart from
-       an exhibition venue at a glance, so origin travels WITH the row rather
-       than being inferred by the client from a name pattern. */
     origin: "PROJECT" as const,
   }));
 
@@ -1600,10 +1365,6 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
           ${activeCompanySql(c, "company_id")}
         ORDER BY venue_name`
     ).all();
-    /* DEDUPE against the project venues by case-insensitive name. A showroom
-       that has ALSO been entered by hand into the venue master is ONE venue, and
-       the project_venues row wins because it carries the real integer id the SO
-       venue_id column and every existing picker compare against. */
     const seen = new Set(
       projectVenues.map((v) => String(v.name ?? "").trim().toLowerCase()).filter(Boolean),
     );
@@ -1611,10 +1372,6 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
       .map((r) => {
         const venueName = String((r.venueName ?? r.venue_name) ?? "").trim();
         return {
-          /* Prefixed synthetic id — a showroom venue is NOT a project_venues row
-             and must never collide with one of its integer ids, or editing the
-             venue master would write to the wrong record. The prefix also makes
-             it obvious in a payload which kind of id is in hand. */
           id: `showroom:${String(r.id ?? "")}`,
           name: venueName,
           state: null,
@@ -1627,9 +1384,6 @@ app.get("/venues", requirePageAccess("projects"), async (c) => {
       })
       .filter((v) => v.name && !seen.has(v.name.toLowerCase()));
   } catch {
-    /* Pre-migration, or the scm schema is unreachable from this binding. The
-       project venues still list — a missing showroom half must never take the
-       venue picker down with it. */
     showroomVenues = [];
   }
 
@@ -1643,26 +1397,11 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
   const user = c.get("user");
   const body = await c.req.json<VenueBody>();
   const rawName = (body.name || "").trim();
-  // Country / City / Postcode (migs 0178 / 0182): sent by the form, dropped here until 2026-11-17; DP reads them.
   const [country, city, postcode] = [body.country, body.city, body.postcode].map(blankToNull);
   if (!rawName) return c.json({ error: "name required" }, 400);
-  // Fold showroom-venue aliases (e.g. "PJ Showroom") to canonical "2990s PJ" before
-  // the by-name lookup + INSERT, so re-adding an alias reactivates the ONE canonical
-  // picker row instead of spawning a duplicate menu entry (the main drift vector).
   const name = canonicalizeVenue(rawName) ?? rawName;
-  // Resolve the active company for this WRITE, or refuse. The INSERT below used
-  // to omit company_id, so a venue created while viewing 2990 was written with
-  // company_id = HOUZS (the project_venues.company_id DEFAULT, mig 0093). The
-  // company-scoped GET /venues for 2990 then never listed it again — the owner
-  // saw "save success" and the venue was gone on reload. Fail closed when the
-  // company can't be resolved rather than writing that default: guessing the
-  // company is exactly the bug this fixes (companyScope: writes must REFUSE).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  // Company-scope the existing-by-name lookup too, so a same-named venue in
-  // ANOTHER company can no longer be matched and reactivated/updated in place —
-  // a save in company 2 must create/update within company 2, never hijack a
-  // company-1 row.
   const existing = await c.env.DB.prepare(
     `SELECT id, name, state, country, postcode FROM project_venues
       WHERE LOWER(name) = LOWER(?) AND company_id = ?`
@@ -1674,7 +1413,6 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
   const pcErr = masterPostcodeError(country ?? existing?.country ?? null, postcode ?? existing?.postcode ?? null);
   if (pcErr) return c.json({ error: "postcode_required", message: pcErr }, 400);
   if (existing) {
-    // Reactivate + update state/notes if user supplied them.
     await c.env.DB.prepare(
       `UPDATE project_venues
           SET active = 1,
@@ -1702,11 +1440,6 @@ app.post("/venues", requirePermission("projects.write"), async (c) => {
 app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-  // Scope the UPDATE to the active company so a 2990-context request can't reach
-  // in and rename a HOUZS venue by its id (the UI only ever surfaces this
-  // company's ids via the scoped GET, but the handler is reachable by raw id).
-  // Mirrors the sibling PATCH /brands/:id guard. Degrades to no predicate on a
-  // genuinely unresolved / single-company context, matching activeCompanySql.
   const venueCoSql = activeCompanySql(c);
   const body = await c.req.json<VenueBody>();
   const sets: string[] = [];
@@ -1721,7 +1454,6 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
     sets.push("state = ?");
     binds.push(body.state ?? null);
   }
-  /* Clearing a venue's postcode is refused; a save that leaves it alone is not. */
   if ("postcode" in body) {
     const pcErr = masterPostcodeError("country" in body ? blankToNull(body.country) : null, blankToNull(body.postcode));
     if (pcErr) return c.json({ error: "postcode_required", message: pcErr }, 400);
@@ -1750,8 +1482,6 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
   )
     .bind(...binds, id)
     .run();
-  // A miss means the id isn't this company's — answer 404 so the cross-company
-  // guard is observable instead of a silent no-op "ok".
   if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
   return c.json({ ok: true });
 });
@@ -1759,38 +1489,13 @@ app.patch("/venues/:id", requirePermission("projects.manage"), async (c) => {
 app.delete("/venues/:id", requirePermission("projects.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-  // Same company guard as PATCH above / DELETE /brands/:id: a 2990-context
-  // request must not soft-delete a HOUZS venue by its id.
   await c.env.DB.prepare(`UPDATE project_venues SET active = 0 WHERE id = ?${activeCompanySql(c)}`)
     .bind(id)
     .run();
   return c.json({ ok: true });
 });
 
-// ── Default checklist templates ───────────────────────────────
-// Each project_event_type has a default_template_id pointing at a
-// project_checklist_templates row. Items live in
-// project_checklist_template_items. These routes let admins manage
-// the template body that gets cloned into every new project.
-//
-// PER-COMPANY since mig 0288, and every route below follows the same three
-// rules — stated once here, not re-argued at each handler:
-//   · a TEMPLATE id in the URL goes through findTemplateInCompany;
-//   · a CHILD id (itemId / sectionId) is scoped by that row's OWN company_id,
-//     and `!r.meta.changes` turns a cross-company miss into a 404, not a
-//     silent "ok" — the same shape as PATCH /venues/:id and PATCH /brands/:id;
-//   · a CREATE takes requireActiveCompanyId and REFUSES when it is unknown.
-//     Falling through to the company_id DEFAULT writes the row into HOUZS,
-//     where the scoped read never shows it again.
 
-/**
- * The company boundary for any /checklist-templates route carrying a TEMPLATE id.
- * Null => the caller answers 404, deliberately the same answer as "no such
- * template": confirming another company's id exists is itself a leak.
- * A STAMP IS NOT A PREDICATE — stamping company_id on a new child says nothing
- * about whose template it hangs under, so the parent is re-checked separately on
- * every create and reorder. Degrades exactly as activeCompanySql does.
- */
 async function findTemplateInCompany(
   c: { env: Env; get(key: string): unknown },
   templateId: number,
@@ -1825,9 +1530,6 @@ app.get(
   async (c) => {
     const id = parseInt(c.req.param("id"), 10);
     if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-    /* Company gate on the PARENT. The children below stay keyed on template_id
-       alone on purpose: this gate is the only way to reach them, so a second
-       predicate could only hide a child from its own template. */
     if (!(await findTemplateInCompany(c, id))) {
       return c.json({ error: "Not found" }, 404);
     }
@@ -1880,12 +1582,9 @@ app.post(
     if (!title) return c.json({ error: "title required" }, 400);
     const co = requireActiveCompanyId(c);
     if (!co.ok) return c.json(co.refusal, 409);
-    // A STAMP IS NOT A PREDICATE: the stamp says whose item this is, not whose
-    // template it hangs under.
     if (!(await findTemplateInCompany(c, id))) {
       return c.json({ error: "Not found" }, 404);
     }
-    // If no seq given, append at end.
     let seq = body.seq;
     if (seq == null) {
       const maxRow = await c.env.DB.prepare(
@@ -1989,14 +1688,6 @@ app.delete(
   }
 );
 
-// Batch reorder. Accepts an array of item ids in the new display
-// order; renumbers seq in steps of 10 (10, 20, 30, …) so any future
-// fine-grained insert can pick a value between two existing rows
-// without another full renumber.
-//
-// Only items that actually belong to the template are affected, so
-// passing an id from a different template is a no-op rather than an
-// error.
 app.put(
   "/checklist-templates/:id/items/reorder",
   requirePermission("projects.manage"),
@@ -2009,8 +1700,6 @@ app.put(
     }
     const ids = body.ids as number[];
     if (ids.length === 0) return c.json({ ok: true });
-    /* BOTH halves: the parent template must be this company's, and each row is
-       scoped again so a foreign id in the array is a no-op. */
     if (!(await findTemplateInCompany(c, id))) {
       return c.json({ error: "Not found" }, 404);
     }
@@ -2043,11 +1732,6 @@ app.put(
   }
 );
 
-// ── Analytics / profitability ────────────────────────────────
-// Aggregates the finance ledger across non-archived projects. All
-// slices (by brand / state / event type / month) share a common
-// project list defined by the filter set, so drilling into any
-// dimension reflects the same scope.
 
 app.get("/analytics/profitability", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
@@ -2056,18 +1740,6 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   const brand = c.req.query("brand");
   const eventTypeParam = c.req.query("event_type_id");
   const organizer = c.req.query("organizer");
-  // An unsettled event carries booked rental/setup while its sales are still
-  // being keyed, so counting it reads as a loss that has not happened.
-  // Measured on prod 2026-07-29 over the same 2024-2026 window:
-  //   all       720 projects  NP RM -50,931
-  //   started   613 projects  NP RM -35,731  <- barely moves: the 107 future
-  //                                             events carry only RM 15,200
-  //   completed 528 projects  NP RM +710,285 (1.2%)  <- the honest P&L
-  // The distortion is NOT future bookings; it is the ~85 events that have
-  // started but are not settled, which drag NP by ~RM 746K between them.
-  //   completed (default) — stage = completed
-  //   started             — start_date on or before today
-  //   all                 — the full pipeline, future bookings included
   const scope = c.req.query("scope") || "completed";
 
   const where: string[] = ["p.archived_at IS NULL"];
@@ -2078,15 +1750,8 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   } else if (scope === "completed") {
     where.push("p.stage = 'completed'");
   }
-  // Multi-company: active-company predicate ("" when unresolved). Inlined
-  // fragment (validated integer), appended after the joined WHERE below.
   const coSql = activeCompanySql(c, "p.company_id");
-  // Date filter applies to start_date — overlapping window is harder
-  // to reason about across by-month grouping, so keep it strict.
   if (dateFrom) {
-    // substr, not date(): on Postgres date(text_col) casts to the date type
-    // and "date >= text" has no operator. substr keeps it text-vs-text on
-    // both dialects with the same truncate-to-day semantics.
     where.push("substr(p.start_date, 1, 10) >= substr(?, 1, 10)");
     binds.push(dateFrom);
   }
@@ -2160,17 +1825,15 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
 
   const projects = rows.results ?? [];
 
-  // Headline totals
   const total_projects = projects.length;
   const total_income = projects.reduce((s, r) => s + (r.income || 0), 0);
   const total_cogs = projects.reduce((s, r) => s + (r.cogs || 0), 0);
   const total_cost = projects.reduce((s, r) => s + (r.cost || 0), 0);
   const total_rental = projects.reduce((s, r) => s + (r.rental || 0), 0);
   const total_gp = total_income - total_cogs;
-  const total_profit = total_income - total_cogs - total_cost; // NP = Sales - COGS - other costs
+  const total_profit = total_income - total_cogs - total_cost;
   const overall_margin = total_income > 0 ? (total_profit / total_income) * 100 : null;
 
-  // Group helper
   function groupBy<K extends string>(
     keyFn: (r: (typeof projects)[number]) => K | null
   ): { key: K; count: number; income: number; cogs: number; cost: number; rental: number; gp: number; profit: number; margin: number | null }[] {
@@ -2195,7 +1858,7 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
         cost: v.cost,
         rental: v.rental,
         gp: v.income - v.cogs,
-        profit: v.income - v.cogs - v.cost, // NP
+        profit: v.income - v.cogs - v.cost,
         margin: v.income > 0 ? ((v.income - v.cogs - v.cost) / v.income) * 100 : null,
       }))
       .sort((a, b) => b.profit - a.profit);
@@ -2203,17 +1866,12 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
 
   const by_brand = groupBy((r) => r.brand);
   const by_organizer = groupBy((r) => r.organizer);
-  // Canonicalize at read time too: any legacy row still holding an alias buckets
-  // under "2990s PJ" so the breakdown never shows the same showroom twice, even
-  // before the one-shot backfill runs.
   const by_venue = groupBy((r) => canonicalizeVenue(r.venue));
   const by_event_type = groupBy((r) => r.event_type_name);
-  // YYYY-MM bucket from start_date
   const by_month = groupBy((r) =>
     r.start_date ? r.start_date.slice(0, 7) : null
   ).sort((a, b) => a.key.localeCompare(b.key));
 
-  // Top / bottom events by profit
   const ranked = [...projects]
     .filter((r) => (r.income || 0) > 0 || (r.cogs || 0) > 0 || (r.cost || 0) > 0)
     .map((r) => ({
@@ -2264,21 +1922,6 @@ app.get("/analytics/profitability", requirePageAccess("projects.finances"), asyn
   });
 });
 
-// ── Analytics / profitability drill-down (L2 months -> L3 projects) ─────
-// The dashboard's group tables (L1) break profitability down by brand /
-// organizer / venue / event type. This endpoint powers the two levels BELOW
-// a group value, sharing L1's exact filter set so a drill always sits inside
-// the same scope as the table it opened from:
-//   L2  dimension + value            -> that value's performance BY MONTH
-//   L3  dimension + value + month    -> the individual projects in that month
-// (L4 — the project page — is a plain client navigation to /projects/:id.)
-//
-// Months are binned on each finance line's OWN date, COALESCE(occurred_at,
-// created_at) (index idx_pfl_occurred), so revenue/cost lands in the month it
-// was recognised and the L2 month rows sum back to the L1 value total — every
-// line has exactly one month. The By-Month card is the one exception: its L1
-// rows are already start-date months carrying whole-project totals, so
-// dimension=month skips L2 and returns those same whole-project rows (L3).
 const PROFITABILITY_DIMENSION = {
   brand: "p.brand = ?",
   organizer: "p.organizer = ?",
@@ -2288,18 +1931,14 @@ const PROFITABILITY_DIMENSION = {
 } as const;
 type ProfitabilityDimension = keyof typeof PROFITABILITY_DIMENSION;
 
-// COGS family (matches /analytics/profitability): the legacy `cogs` slug plus
-// the three product sub-categories. Everything else under kind='cost' is the
-// non-COGS "cost" bucket; `rental` is surfaced as its own slice of that.
 const PROFIT_COGS_CATEGORIES = "('cogs','cogs_matt_sofa','cogs_bedframe','cogs_accessories')";
-// The finance-line month expression the drill bins on (see idx_pfl_occurred).
 const PROFIT_MONTH_EXPR = "substr(COALESCE(l.occurred_at, l.created_at), 1, 7)";
 
 app.get("/analytics/profitability/drill", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
   const dimensionParam = c.req.query("dimension") ?? "";
   const value = c.req.query("value");
-  const month = c.req.query("month"); // YYYY-MM — only meaningful for the four real dims
+  const month = c.req.query("month");
   if (!(dimensionParam in PROFITABILITY_DIMENSION)) {
     return c.json({ error: "Invalid dimension (expected brand|organizer|venue|event_type|month)" }, 400);
   }
@@ -2314,10 +1953,6 @@ app.get("/analytics/profitability/drill", requirePageAccess("projects.finances")
   const eventTypeParam = c.req.query("event_type_id");
   const organizer = c.req.query("organizer");
 
-  // Project-level predicates — identical filter set to /analytics/profitability
-  // so the drill respects whatever filters are active on the dashboard, then
-  // narrowed to the clicked dimension value. `scope` MUST match the parent or a
-  // drilled level would total differently from the card it was opened from.
   const scope = c.req.query("scope") || "completed";
   const where: string[] = ["p.archived_at IS NULL"];
   const binds: any[] = [];
@@ -2352,9 +1987,6 @@ app.get("/analytics/profitability/drill", requirePageAccess("projects.finances")
   binds.push(value);
   const whereSql = where.join(" AND ");
 
-  // ── L2: BY MONTH ── a dimension value with no month picked (never the
-  // By-Month card, which drills straight to projects). One row per finance
-  // month, summing that month's lines across the value's projects.
   if (dimension !== "month" && (month == null || month === "")) {
     const rows = await c.env.DB.prepare(
       `SELECT ${PROFIT_MONTH_EXPR} AS month,
@@ -2389,7 +2021,7 @@ app.get("/analytics/profitability/drill", requirePageAccess("projects.finances")
         cost: r.cost,
         rental: r.rental,
         gp: r.income - r.cogs,
-        profit: r.income - r.cogs - r.cost, // NP = income − cogs − cost
+        profit: r.income - r.cogs - r.cost,
         margin: r.income > 0 ? ((r.income - r.cogs - r.cost) / r.income) * 100 : null,
       }))
       .sort((a, b) => a.key.localeCompare(b.key));
@@ -2397,18 +2029,8 @@ app.get("/analytics/profitability/drill", requirePageAccess("projects.finances")
     return c.json({ level: "months", dimension, value, months });
   }
 
-  // ── L3: PROJECTS ── either a month was picked under a dimension value, or
-  // the By-Month card was drilled (dimension=month, value=YYYY-MM). Metric
-  // scope differs so each level reconciles with its parent:
-  //   dimension=month  -> whole-project totals (all lines), matching the
-  //                       start-date-month rows the By-Month card shows.
-  //   dimension in 4 + m -> that finance-month's lines only, so the project
-  //                       rows sum back to the L2 month row above them.
   const lineMonthFilter = dimension === "month" ? "" : ` AND ${PROFIT_MONTH_EXPR} = ?`;
   const lineJoin = dimension === "month" ? "LEFT JOIN" : "JOIN";
-  // Bind order MUST match the textual order of `?` in the query. The month
-  // placeholder lives in the JOIN…ON clause, BEFORE the WHERE placeholders, so
-  // it is bound FIRST — otherwise every WHERE value shifts one slot.
   const projBinds = dimension === "month" ? [...binds] : [month, ...binds];
 
   const rows = await c.env.DB.prepare(
@@ -2455,7 +2077,7 @@ app.get("/analytics/profitability/drill", requirePageAccess("projects.finances")
       cost: r.cost,
       rental: r.rental,
       gp: r.income - r.cogs,
-      profit: r.income - r.cogs - r.cost, // NP = income − cogs − cost
+      profit: r.income - r.cogs - r.cost,
       margin: r.income > 0 ? ((r.income - r.cogs - r.cost) / r.income) * 100 : null,
     }))
     .sort((a, b) => b.profit - a.profit);
@@ -2483,14 +2105,11 @@ app.get("/sales-rep-options", requirePermission("projects.write"), async (c) => 
   return c.json({ data: rows.results ?? [], others: await staffNotOnRoster(c.env, activeCompanyId(c)) });
 });
 
-// ── Detail ────────────────────────────────────────────────────
 
 app.get("/:id", requirePageAccess("projects.list"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const user = c.get("user");
-  // Multi-company: a cross-company id resolves null -> 404 (indistinguishable
-  // from a nonexistent id). Predicate skipped when the context is unresolved.
   const detail = await getProjectDetail(c.env, id, activeCompanyId(c));
   if (!detail) return c.json({ error: "Not found" }, 404);
   // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19): any
@@ -2516,19 +2135,7 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
     scoped: false,
     pms,
   };
-  // Defense in depth: hide finance (rental / cost / profit / ledger lines /
-  // sales-report amounts) from a position whose PMS role doesn't include
-  // FINANCIAL — on the wire, not just the UI. GATED on position_id: un-migrated
-  // users (no position assigned yet) keep legacy access, so the rollout doesn't
-  // suddenly hide finances from current finance/director users before positions
-  // are seeded + assigned. `finance` alone is not enough — `finance_lines`
-  // carries the raw cost/income ledger (COGS / cost lines), so it must go too.
-  // `sales_reports` is deliberately KEPT: it's the sales rep's own per-entry
-  // log, surfaced in a separate panel gated by sales.* perms, not the Finance
-  // Snapshot. (Owner review flag — see PR body.)
   const stripFinance = user.position_id != null && !pms.canFinancial;
-  // Payment status / proof is DIRECTOR-only (rule 5). Blank the payment
-  // columns on the project row when the user can't see payment.
   const stripPayment = user.position_id != null && !pms.canPayment;
   let payload: any = detail;
   if (stripFinance) {
@@ -2537,7 +2144,7 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
       finance: null,
       finance_lines: [],
       finance_books: null,
-      finance_pnl: null, finance_forecast: null, // the P&L and its forecast layers are money too
+      finance_pnl: null, finance_forecast: null,
     };
   }
   if (stripPayment) {
@@ -2554,11 +2161,6 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
       },
     };
   }
-  // Quotation / Agreement (WF_SENSITIVE) are DIRECTOR-only (rule 5). Strip
-  // those checklist rows — plus their comments, attachments, and section
-  // progress — on the wire for a position whose PMS role lacks WF_SENSITIVE,
-  // the same defense-in-depth as finance/payment above. Position-gated so
-  // un-migrated users keep legacy access until positions are assigned.
   const stripSensitive = user.position_id != null && !pms.canSensitive;
   if (stripSensitive) {
     payload = stripSensitiveChecklist(payload);
@@ -2574,13 +2176,6 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
   if (stripSetupDismantleData) {
     payload = stripSetupDismantle(payload);
   }
-  // Sales-reports row scoping (owner 2026-07): the `sales_reports` panel is a
-  // per-rep sale-amount log. A non-director sales user may see only THEIR OWN
-  // rows plus their downline's (users.manager_id subtree). Directors
-  // (isFinanceViewer — `*` / Super Admin / Sales Director / Finance Manager)
-  // and service-case managers (`service_cases.manage`) see every row. Rep
-  // identity on a row is `uploaded_by`; unresolved reps are dropped for
-  // non-directors (fail closed).
   const granted = user?.permissions_set ?? user?.permissions ?? [];
   const canSeeAllSalesReports =
     isFinanceViewer(user) || hasPermission(granted, "service_cases.manage");
@@ -2598,10 +2193,7 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
   return c.json({ ...payload, _access: access });
 });
 
-// ── Create ────────────────────────────────────────────────────
 
-// Event (project) creation: BD staff, the Owner account and Lim only (owner
-// 2026-07-24) — services/pmsAccess.canCreateEvent is the one rule.
 app.post("/", requirePermission("projects.write"), async (c) => {
   const user = c.get("user");
   if (!canCreateEvent(user)) {
@@ -2627,9 +2219,6 @@ app.post("/", requirePermission("projects.write"), async (c) => {
   // so any submitted pic_id is honoured and there is no per-brand PIC gate — the
   // picker offers whoever it offers.
   const picId = body.pic_id ?? null;
-  // `deriveProjectCode` throws when state/venue/brand are missing —
-  // surface that as a clean 400 so the toast says exactly which field
-  // is missing instead of "Internal server error".
   try {
     const result = await createProject(c.env, {
       name: body.name.trim(),
@@ -2643,8 +2232,6 @@ app.post("/", requirePermission("projects.write"), async (c) => {
       notion_url: body.notion_url ?? null,
       pic_id: picId,
       created_by: user?.id ?? 0,
-      // Multi-company: stamp the active company (omitted when unresolved —
-      // the PG DEFAULT covers it).
       company_id: activeCompanyId(c),
     });
     return c.json(result, 201);
@@ -2657,7 +2244,6 @@ app.post("/", requirePermission("projects.write"), async (c) => {
   }
 });
 
-// ── Patch ─────────────────────────────────────────────────────
 
 app.patch("/:id", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2665,9 +2251,6 @@ app.patch("/:id", requirePermission("projects.write"), async (c) => {
   const user = c.get("user");
   const body = await c.req.json<Record<string, any>>();
 
-  // Multi-company: the pre-patch fetch is company-scoped, so a cross-company
-  // id 404s before any write. This is the only remaining row-level gate on the
-  // patch (the PIC/brand ACL was removed 2026-08-19).
   const existing = await c.env.DB.prepare(
     `SELECT id FROM projects WHERE id = ?${activeCompanySql(c)}`
   )
@@ -2675,13 +2258,6 @@ app.patch("/:id", requirePermission("projects.write"), async (c) => {
     .first<{ id: number }>();
   if (!existing) return c.json({ error: "Not found" }, 404);
 
-  // Logistics crew is READ-ONLY for Sales (owner 2026-07): a Sales user — incl.
-  // a Sales Director — may VIEW the scheduled Setup/Dismantle crew + lorries but
-  // NOT edit them; logistics editing stays with logistics/ops roles. The crew
-  // editor writes these two JSON blobs via this PATCH; strip them for any
-  // Sales-classified caller so the write silently no-ops the crew fields
-  // (defense-in-depth behind the read-only FE editor). All other project fields
-  // in the same PATCH still apply.
   if (isSalesUser(user)) {
     delete body.setup_crew;
     delete body.dismantle_crew;
@@ -2702,11 +2278,6 @@ app.patch("/:id", requirePermission("projects.write"), async (c) => {
   });
 });
 
-// ── Chat / notes ──────────────────────────────────────────────
-// Free-text messages from team members. Posted into the same
-// project_activity table as system entries (stage_change, finance_edit,
-// …) so the timeline interleaves human chat and system events in one
-// view. Mirrors POST /api/assr/:id/notes.
 
 app.post("/:id/notes", requireAnyPermission(["projects.write", "projects.chat"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2719,11 +2290,6 @@ app.post("/:id/notes", requireAnyPermission(["projects.write", "projects.chat"])
   return c.json({ ok: true });
 });
 
-// ── Activity polling ─────────────────────────────────────────
-// Lightweight endpoint used by the chat pane to pull only rows newer
-// than its last-seen cursor. No ACL filter here beyond the existing
-// projects.read gate — the chat pane only opens once the caller has
-// already fetched the full project detail, which is ACL-gated.
 
 app.get("/:id/activity", requirePageAccess("projects.list"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2733,8 +2299,6 @@ app.get("/:id/activity", requirePageAccess("projects.list"), async (c) => {
   const sinceClause = since ? " AND act.created_at > ?" : "";
   const sinceBinds = since ? [since] : [];
 
-  // Multi-company: the timeline is reachable by raw project id, so verify the
-  // parent project belongs to the active company ("" guard when unresolved).
   const coSql = activeCompanySql(c, "p.company_id");
   const coGuard = coSql
     ? ` AND EXISTS (SELECT 1 FROM projects p WHERE p.id = act.project_id${coSql})`
@@ -2753,12 +2317,6 @@ app.get("/:id/activity", requirePageAccess("projects.list"), async (c) => {
   )
     .bind(id, ...sinceBinds)
     .all();
-  // Finance/payment strip (Sales-department visibility, rules 3/5/7): the
-  // timeline replays payment_status transitions (to_value = 'paid'/'deposit',
-  // note = payment remarks) and finance-edit markers. The detail GET already
-  // blanks these fields on the wire for a non-director; the activity feed must
-  // not re-leak them. Drop the money-bearing rows for any user finance is
-  // hidden from — same gate (financeHiddenForUser: positioned non-directors).
   let activity = (rows.results ?? []) as any[];
   if (financeHiddenForUser(user)) {
     const HIDDEN_ACTIONS = new Set([
@@ -2772,10 +2330,6 @@ app.get("/:id/activity", requirePageAccess("projects.list"), async (c) => {
   return c.json({ data: activity });
 });
 
-// ── Mark as read ─────────────────────────────────────────────
-// Upserts the (user, project, now) row into project_reads. The
-// frontend calls this when the user opens the chat / detail page;
-// drives the notification bell's unread count.
 
 app.post("/:id/read", requirePageAccess("projects.list"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2793,7 +2347,6 @@ app.post("/:id/read", requirePageAccess("projects.list"), async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Archive / restore (soft delete) ───────────────────────────
 
 app.post("/:id/archive", requirePermission("projects.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2825,7 +2378,6 @@ app.post("/:id/unarchive", requirePermission("projects.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Finance ───────────────────────────────────────────────────
 
 app.patch("/:id/finance", requirePermission("projects.write"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
@@ -2846,9 +2398,6 @@ app.patch("/:id/finance", requirePermission("projects.write"), async (c) => {
   const body = await c.req.json<Record<string, any>>();
   const ok = await patchFinance(c.env, id, body, user?.id ?? 0);
   if (!ok) return c.json({ error: "No changes" }, 400);
-  // Entering/changing sales must auto-backfill the derived cost lines
-  // (transport/merchandise/commission) from the brand cost rates. Best-effort:
-  // a recompute failure must not fail the finance write.
   await recomputeAutoCostLines(c.env, id, user?.id ?? 0).catch(() => {});
   await audit(c, {
     action: "finance.update",
@@ -2860,9 +2409,6 @@ app.patch("/:id/finance", requirePermission("projects.write"), async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Finance ledger ───────────────────────────────────────────
-// Line-item finance. Each write triggers a rollup into project_finance
-// so list queries and dashboard tiles stay correct without a migration.
 
 app.get("/finance/categories", (c) => {
   return c.json({
@@ -2871,13 +2417,6 @@ app.get("/finance/categories", (c) => {
   });
 });
 
-// Per-project finance summary — feeds the Finances → List tab. One row
-// per project; SUMs income / cost / net out of project_finance_lines
-// and joins back to projects for display fields (code, name, brand,
-// stage, dates). Filters: the date range selects PROJECTS whose event
-// dates (start_date..end_date — the "Dates" column) overlap the window;
-// every line of a matching project is summed. Brand + stage + search
-// filter the project itself.
 app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
   // PIC/brand row-level ACL removed (owner decision 2026-08-19): the Finance
@@ -2898,11 +2437,6 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
 
   const db = getDb(c.env);
 
-  // The From/To window is a PROJECT predicate on the event dates (the "Dates"
-  // column), not a per-line occurred_at filter: filtering lines surfaced a
-  // July 2027 event under September because its rent line was keyed then.
-  // Overlap: ends on/after From, starts on/before To; end_date falls back to
-  // start_date. substr() keeps it text-vs-text (see /analytics/profitability).
   const projConds: any[] = [];
   if (dateFrom) {
     projConds.push(
@@ -2912,12 +2446,8 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
   if (dateTo) {
     projConds.push(sql`substr(p.start_date, 1, 10) <= ${dateTo.slice(0, 10)}`);
   }
-  // Every non-archived line of a matching project is summed: no line clause.
   const dateClause = sql``;
 
-  // Project-level WHERE (continued).
-  // Multi-company: rollups follow the active company (no predicate when the
-  // context is unresolved).
   const rollupCompanyId = activeCompanyId(c);
   if (rollupCompanyId != null) projConds.push(sql`p.company_id = ${rollupCompanyId}`);
   if (!includeArchived) projConds.push(sql`p.archived_at IS NULL`);
@@ -2936,8 +2466,6 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
   const sortBy = c.req.query("sort_by") || "net";
   const sortDir =
     (c.req.query("sort_dir") || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
-  // Sort runs on the OUTER wrapped subquery, so all columns are
-  // unaliased (the `p.` prefix only exists inside `baseSelect`).
   const sortMap: Record<string, string> = {
     project: "code",
     brand: "brand",
@@ -2964,8 +2492,6 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
   };
   const orderByClause = sql`ORDER BY ${sql.raw(`${sortMap[sortBy] ?? sortMap.net} ${sortDir}`)}, id DESC`;
 
-  // The aggregate row per project. Per-category breakdown built with one
-  // CASE-SUM per dedicated column; the residue lands in `others_cost`.
   const baseSelect = sql`
     SELECT p.id,
            p.code,
@@ -3010,10 +2536,6 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
       GROUP BY p.id
   `;
 
-  // Derived columns: net, net_profit, margin_pct, gp_pct, sales_per_day,
-  // rent_per_sqm. Computed on top of the aggregate so we can sort by
-  // them. Duration uses julianday() and falls back to NULL when start /
-  // end are missing — sales_per_day then ends up NULL too.
   const wrapped = sql`
     SELECT *,
            (income - cost) AS net,
@@ -3039,9 +2561,6 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
       FROM (${baseSelect}) sub
   `;
 
-  // Row visibility is decided by the project-date predicate in whereClause
-  // (an event in the window shows even before any line is keyed, matching
-  // the Projects list), so no line_count gate here.
   const visible = wrapped;
 
   const totalRow = await db.get<{ count: number }>(
@@ -3052,7 +2571,6 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
     sql`${visible} ${orderByClause} LIMIT ${perPage} OFFSET ${offset}`
   );
 
-  // Filtered grand totals so the header cards recompute server-side.
   const totalsRow = await db.get<{
     total_income: number;
     total_sales: number;
@@ -3086,9 +2604,6 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
   });
 });
 
-// Cross-project finance lines list — kept as a secondary endpoint for
-// callers that want the raw ledger (audit, exports). Same filter shape
-// as /finance/by-project plus kind + category.
 app.get("/finance/lines", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
   // PIC/brand row-level ACL removed (owner decision 2026-08-19): finance lines
@@ -3111,7 +2626,6 @@ app.get("/finance/lines", requirePageAccess("projects.finances"), async (c) => {
   const db = getDb(c.env);
 
   const conds: any[] = [sql`l.archived_at IS NULL`];
-  // Multi-company: lines follow their project's company (active pick).
   const linesCompanyId = activeCompanyId(c);
   if (linesCompanyId != null) conds.push(sql`p.company_id = ${linesCompanyId}`);
   if (dateFrom) {
@@ -3175,8 +2689,6 @@ app.get("/finance/lines", requirePageAccess("projects.finances"), async (c) => {
     LIMIT ${perPage} OFFSET ${offset}
   `);
 
-  // Lightweight totals across the filtered set so the page can show
-  // "income X, cost Y, net Z" without a second round trip.
   const totalsRow = await db.get<{ total_income: number; total_cost: number }>(sql`
     SELECT
       COALESCE(SUM(CASE WHEN l.kind = 'income' THEN l.amount ELSE 0 END), 0) AS total_income,
@@ -3271,8 +2783,6 @@ app.delete("/finance/lines/:lineId", requirePermission("projects.write"), async 
   return c.json({ ok: true });
 });
 
-// Upload evidence (invoice, receipt, sales sheet) for a ledger line.
-// Returns an r2_key the create/patch call then attaches to the line.
 app.put("/:id/finance/upload", requirePermission("projects.write"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
   const id = parseInt(c.req.param("id"), 10);
@@ -3293,14 +2803,6 @@ app.put("/:id/finance/upload", requirePermission("projects.write"), async (c) =>
   return c.json({ key, mime_type: mime });
 });
 
-// ── Phase photos (crew-uploaded evidence for setup / dismantle) ──
-// Two-step upload like the finance + payment patterns:
-//   1) PUT  /:id/phase-photos/upload?phase=...&ext=... — pushes the
-//      bytes into R2, returns { key, mime_type }.
-//   2) POST /:id/phase-photos — registers the row.
-// Auth is permission-OR-crew: a member of projects.write can manage
-// any project's photos; a crew member can only act on the phase they
-// are assigned to. Mirrors mig 049's PIC-scope pattern.
 
 app.put("/:id/phase-photos/upload", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -3325,9 +2827,6 @@ app.put("/:id/phase-photos/upload", async (c) => {
   }
 
   const ext = (c.req.query("ext") || "jpg").toLowerCase();
-  // Images render inline; documents get a download link; videos play in
-  // MediaLightbox. 50MB cap so phone clips upload cleanly. Limits and
-  // MIME map mirror the driver-facing endpoint.
   const MIME_BY_EXT: Record<string, string> = {
     jpg: "image/jpeg",
     jpeg: "image/jpeg",
@@ -3377,9 +2876,6 @@ app.post("/:id/phase-photos", async (c) => {
     }
   }
 
-  /* project_phase_photos has no company_id, so the boundary is the PARENT
-     project — the rule the GET already applies. Unscoped, a photo lands on the
-     other company's project and is then invisible to everyone. */
   const owner = await c.env.DB.prepare(
     `SELECT id FROM projects WHERE id = ?${activeCompanySql(c)}`
   )
@@ -3394,8 +2890,6 @@ app.post("/:id/phase-photos", async (c) => {
   )
     .bind(id, phase, body.r2_key, body.content_type ?? null, body.caption ?? null, user?.id ?? null)
     .run();
-  // Crew Setup/Dismantle photo → auto-tick the matching DRIVER row DONE (these
-  // bypass task attachments). See services/checklistAutoTick.ts.
   if (phase === "setup" || phase === "dismantle") {
     await autoTickPhasePhoto(c.env, id, phase, user?.id ?? 0);
   }
@@ -3416,8 +2910,6 @@ app.get("/:id/phase-photos", async (c) => {
     if (!phases.length) return c.json({ error: "You don't have permission to view this project." }, 403);
   }
 
-  /* project_phase_photos carries no company_id of its own, so the boundary is
-     the parent project — the same EXISTS form GET /:id/activity already uses. */
   const photoCoSql = activeCompanySql(c, "p.company_id");
   const rows = await c.env.DB.prepare(
     `SELECT pp.id, pp.phase, pp.r2_key, pp.content_type, pp.caption,
@@ -3438,8 +2930,6 @@ app.delete("/phase-photos/:photoId", async (c) => {
   const photoId = parseInt(c.req.param("photoId"), 10);
   if (isNaN(photoId)) return c.json({ error: "Invalid ID" }, 400);
   const user = c.get("user");
-  /* Parent project's company, same EXISTS form the GET uses. Unscoped, a
-     foreign photoId deleted both the row and its R2 object. */
   const photoCoSql = activeCompanySql(c, "p.company_id");
   const row = await c.env.DB.prepare(
     `SELECT project_id, phase, uploaded_by, r2_key FROM project_phase_photos WHERE id = ?${
@@ -3495,8 +2985,6 @@ app.post("/:id/floorplan/detect-size", requirePermission("projects.write"), asyn
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const user = c.get("user");
-  // ?overwrite=1 forces (the manual "Auto" button); ?overwrite=auto refreshes a
-  // value a previous read wrote but leaves a hand-typed one alone.
   const ow = c.req.query("overwrite");
   const result = await detectFloorplanSize(c.env, id, {
     overwrite: ow === "auto" ? "auto" : ow === "1",
@@ -3514,7 +3002,6 @@ app.post("/:id/finance/resync", requirePermission("projects.write"), async (c) =
   return c.json({ ok: true });
 });
 
-// ── Payment workflow ─────────────────────────────────────────
 
 app.post("/:id/payment", requirePermission("projects.write"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
@@ -3528,8 +3015,6 @@ app.post("/:id/payment", requirePermission("projects.write"), async (c) => {
     proof_file_name?: string;
   }>();
   if (!body.status) return c.json({ error: "status required" }, 400);
-  // Read the prior status so the activity entry shows the transition.
-  // Company scope: another company's project is "not found" before anything moves.
   const prior = await c.env.DB.prepare(
     `SELECT payment_status FROM projects WHERE id = ?${activeCompanySql(c)}`
   )
@@ -3559,15 +3044,11 @@ app.post("/:id/payment", requirePermission("projects.write"), async (c) => {
     );
     return c.json({ ok: true });
   } catch (e: any) {
-    // Now visible in Wrangler logs so the swallowed message isn't the
-    // only signal when a payment transition fails server-side.
     console.error("[POST /:id/payment]", id, body.status, e);
     return c.json({ error: e?.message || "Failed" }, 400);
   }
 });
 
-// Rental-proof upload. Returns an r2_key that the /payment call
-// then attaches to the project row.
 app.put("/:id/payment/proof", requirePermission("projects.write"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
   const id = parseInt(c.req.param("id"), 10);
@@ -3583,7 +3064,6 @@ app.put("/:id/payment/proof", requirePermission("projects.write"), async (c) => 
   return c.json({ key, mime_type: mime });
 });
 
-// ── Stock transfers ──────────────────────────────────────────
 
 app.post("/:id/stock-transfers", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -3642,8 +3122,6 @@ app.post("/stock-transfers/:tid/confirm", requirePermission("projects.write"), a
   if (isNaN(tid)) return c.json({ error: "Invalid ID" }, 400);
   { const foreign = await refuseForeignChild(c, "project_stock_transfers", tid); if (foreign) return foreign; }
   const user = c.get("user");
-  // Resolve project_id + direction before confirming so the activity
-  // entry survives even if the transfer is then deleted.
   const xfer = await c.env.DB.prepare(
     `SELECT project_id, direction FROM project_stock_transfers WHERE id = ?`
   )
@@ -3698,7 +3176,6 @@ app.delete("/stock-transfers/:tid", requirePermission("projects.write"), async (
   return c.json({ ok: true });
 });
 
-// ── Checklist ─────────────────────────────────────────────────
 
 app.post("/:id/checklist", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -3740,9 +3217,6 @@ app.patch("/checklist/:itemId", requireAnyPermission(["projects.write", "project
   { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<Record<string, any>>();
-  // Notes-only edits (the mobile item remark box on Deco/Coffee Table &
-  // Weekend Activity) are open to tick-holders; any other field change still
-  // requires projects.write.
   const keys = Object.keys(body);
   const notesOnly = keys.length > 0 && keys.every((k) => k === "notes");
   const granted = user?.permissions_set ?? user?.permissions;
@@ -3754,14 +3228,7 @@ app.patch("/checklist/:itemId", requireAnyPermission(["projects.write", "project
   return c.json({ ok: true });
 });
 
-// Checklist people-rules (crew scoping, brand-scoped approval, the Sales
-// Director floorplan exception, the two-warehouse defect split) live in
-// services/projectGates.ts — see the header there.
 
-// Status transitions (pending/done/na/blocked). Enforces required_perm
-// — if the item specifies one (e.g. 'projects.approve' for the
-// 3D-final-approval step), only users with that permission can tick
-// it.
 app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "projects.checklist.tick"]), async (c) => {
   const itemId = parseInt(c.req.param("itemId"), 10);
   if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
@@ -3822,13 +3289,6 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
       }
     }
   }
-  // Per-function gate for tick-only roles (Sales-department visibility, rules
-  // 4 & 6) — parity with the /attachments route. A user without projects.write
-  // (drivers/helpers, and a Sales PIC granted only projects.checklist.tick) may
-  // only change the status of a task badged for THEIR role (item.role_label vs
-  // their role_name). Items badged for another function (DRIVER / PURCHASER / …)
-  // stay view+download only for them. projects.write holders / directors are
-  // unaffected (they manage the whole checklist).
   {
     const granted = user?.permissions_set ?? user?.permissions;
     // An APPROVER of a gated step is exempt (owner 2026-08-10): the
@@ -3848,7 +3308,6 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
   return c.json({ ok: true });
 });
 
-// ── Checklist review loop ────────────────────────────────────
 
 app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "projects.checklist.tick"]), async (c) => {
   const itemId = parseInt(c.req.param("itemId"), 10);
@@ -3864,9 +3323,6 @@ app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "p
     .first<{ required_perm: string | null; role_label: string | null }>();
   if (!item) return c.json({ error: "Not found" }, 404);
 
-  // Approval / rejection gates on required_perm (same rule as
-  // direct status transitions). Submissions and comments are open to
-  // any user with projects.write.
   if ((action === "approve" || action === "reject") && item.required_perm) {
     // Approval keys are explicit-only (owner matrix 2026-07-21) — `*` does
     // not pass; see EXPLICIT_APPROVAL_KEYS.
@@ -3936,10 +3392,6 @@ app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "p
   return c.json({ ok: true });
 });
 
-// ── Tasklist sections (mig 050) ──────────────────────────────
-// Per-project sections that group tasks into stages. The frontend
-// renders these as collapsible groups with a stage-chip progress row
-// at the top of the project detail page.
 
 app.post("/:id/sections", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -3948,7 +3400,6 @@ app.post("/:id/sections", requirePermission("projects.write"), async (c) => {
   const body = await c.req.json<{ name?: string; sort_order?: number }>();
   const name = (body.name || "").trim();
   if (!name) return c.json({ error: "name is required" }, 400);
-  // If sort_order omitted, append.
   let order = body.sort_order;
   if (order == null) {
     const max = await c.env.DB.prepare(
@@ -3959,8 +3410,6 @@ app.post("/:id/sections", requirePermission("projects.write"), async (c) => {
       .first<{ s: number }>();
     order = (max?.s ?? 0) + 10;
   }
-  // Stamp the company: refuseForeignProject above proved the project is in the
-  // active company, and the section/task gates read the CHILD's own company_id.
   const sectionCo = activeCompanyId(c);
   const r = await c.env.DB.prepare(
     `INSERT INTO project_checklist_sections (project_id, name, sort_order${sectionCo != null ? ", company_id" : ""})
@@ -4011,11 +3460,6 @@ app.delete("/sections/:sectionId", requirePermission("projects.write"), async (c
   const sectionId = parseInt(c.req.param("sectionId"), 10);
   if (isNaN(sectionId)) return c.json({ error: "Invalid ID" }, 400);
   { const foreign = await refuseForeignChild(c, "project_checklist_sections", sectionId); if (foreign) return foreign; }
-  // project_checklist.section_id was ON DELETE SET NULL, but the D1->PG load
-  // dropped it to NO ACTION — so a bare delete throws once the section still has
-  // tasks. Null them first so tasks fall back to "Uncategorised".
-  // The task rows are matched through the SECTION's company, not their own:
-  // every task in our section must lose the link or the delete below fails.
   await c.env.DB.prepare(
     `UPDATE project_checklist SET section_id = NULL
       WHERE section_id IN (SELECT id FROM project_checklist_sections WHERE id = ?${activeCompanySql(c)})`,
@@ -4028,8 +3472,6 @@ app.delete("/sections/:sectionId", requirePermission("projects.write"), async (c
   return c.json({ ok: true });
 });
 
-// Bulk reorder — accepts an array of section ids in the new display
-// order; renumbers sort_order in steps of 10.
 app.put("/:id/sections/reorder", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -4053,15 +3495,12 @@ app.put("/:id/sections/reorder", requirePermission("projects.write"), async (c) 
   return c.json({ ok: true });
 });
 
-// ── Tasklist attachments (mig 050) ───────────────────────────
-// Per-task file attachments. Replaces the project-level Attachments
-// panel. Same R2 upload pattern as project_attachments above.
 
 const TASK_ATTACH_ALLOWED = new Set([
   "pdf", "png", "jpg", "jpeg", "webp", "heic", "mp4", "mov",
   "doc", "docx", "xls", "xlsx", "csv", "txt", "dwg", "skp",
 ]);
-const TASK_ATTACH_MAX = 25 * 1024 * 1024; // 25 MB
+const TASK_ATTACH_MAX = 25 * 1024 * 1024;
 
 function taskAttachmentKey(itemId: number, ext: string): string {
   return `task-attach/${itemId}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
@@ -4069,9 +3508,6 @@ function taskAttachmentKey(itemId: number, ext: string): string {
 
 app.put(
   "/checklist/:itemId/attachments",
-  // Tick-only roles (drivers uploading setup/dismantle evidence) must be
-  // able to attach files to the tasks they can tick — same gate as the
-  // status/review routes above. Delete stays projects.write-only.
   requireAnyPermission(["projects.write", "projects.checklist.tick"]),
   async (c) => {
     const itemId = parseInt(c.req.param("itemId"), 10);
@@ -4101,7 +3537,6 @@ app.put(
     }
     const ext = (c.req.query("ext") || "").toLowerCase();
     const fileName = c.req.query("name") || `attachment.${ext}`;
-    // Optional remark supplied at upload time (Defect List requires it up front).
     const caption = (c.req.query("caption") || "").slice(0, 2000) || null;
     if (!TASK_ATTACH_ALLOWED.has(ext)) {
       return c.json({ error: `Extension '${ext}' not allowed` }, 400);
@@ -4125,8 +3560,6 @@ app.put(
       `image/${ext === "jpg" ? "jpeg" : ext}`;
     const key = taskAttachmentKey(itemId, ext);
     await c.env.POD_BUCKET.put(key, body, { httpMetadata: { contentType } });
-    // Stamp the company (refuseForeignChild above proved the task is ours): the
-    // delete/caption gates read the attachment's OWN company_id.
     const attachCo = activeCompanyId(c);
     const coCol = attachCo != null ? ", company_id" : "";
     const coVal = attachCo != null ? ", ?" : "";
@@ -4164,10 +3597,7 @@ app.put(
     ) {
       await submitChecklistForReview(c.env, itemId, user?.id ?? 0);
     }
-    // Owner (repeated ask): auto-tick a plain evidence row DONE on upload — no
-    // manual click, mobile and PC. See services/checklistAutoTick.ts.
     await autoTickChecklistOnUpload(c.env, item, itemId, user?.id ?? 0);
-    // Audit trail — log the upload to the project activity feed.
     const owner = await c.env.DB.prepare(
       `SELECT project_id, title FROM project_checklist WHERE id = ?${activeCompanySql(c)}`
     )
@@ -4253,8 +3683,6 @@ app.delete(
     )
       .bind(attId)
       .first<{ item_id: number; file_name: string }>();
-    // Soft archive — keep the row + R2 object so an accidental delete
-    // can be reversed if anyone notices in time.
     await c.env.DB.prepare(
       `UPDATE project_checklist_attachments
           SET archived_at = datetime('now')
@@ -4344,7 +3772,6 @@ app.post(
     if (!isAdmin && !isReviewer && !isPurchaser) return c.json({ error: "Only a defect reviewer, purchaser or BD can log defect actions" }, 403);
     const body = await c.req.json<{ status?: string; remark?: string | null }>();
     const status = (body.status ?? "").toLowerCase();
-    // Reviewer statuses clean/escalate; purchaser statuses work the escalation.
     const REVIEWER_STATUSES = new Set(["done_clean", "exchange", "service"]);
     const PURCHASER_STATUSES = new Set(["in_progress", "done"]);
     if (!REVIEWER_STATUSES.has(status) && !PURCHASER_STATUSES.has(status)) return c.json({ error: "status must be one of done_clean, exchange, service, in_progress, done" }, 400);
@@ -4380,7 +3807,6 @@ app.post(
         );
       }
     }
-    // Optional remark — an empty string is a legitimate save (owner spec).
     const remark =
       typeof body.remark === "string" && body.remark.trim()
         ? body.remark.slice(0, 2000)
@@ -4395,12 +3821,6 @@ app.post(
   }
 );
 
-// ── Template sections + requires_review (mig 050) ───────────
-// Used by the Project Maintenance template editor (Phase B in the
-// frontend rollout). The clone-on-create path in
-// services/projects.ts::instantiateChecklistFromEventType already
-// honours these — admins can configure today, the next project
-// inherits.
 
 app.post(
   "/checklist-templates/:id/sections",
@@ -4411,7 +3831,6 @@ app.post(
     const body = await c.req.json<{ name?: string; sort_order?: number }>();
     const name = (body.name || "").trim();
     if (!name) return c.json({ error: "name is required" }, 400);
-    // Company for the WRITE, then prove the parent template is this company's.
     const co = requireActiveCompanyId(c);
     if (!co.ok) return c.json(co.refusal, 409);
     if (!(await findTemplateInCompany(c, id))) {
@@ -4497,11 +3916,6 @@ app.delete(
   }
 );
 
-// Bulk reorder template sections — same shape as the items reorder
-// (`PUT /checklist-templates/:id/items/reorder`). Renumbers
-// sort_order in steps of 10 so future fine-grained inserts can pick
-// a value in between two rows without another full renumber. Sections
-// not belonging to the template are silent no-ops.
 app.put(
   "/checklist-templates/:id/sections/reorder",
   requirePermission("projects.manage"),
@@ -4514,7 +3928,6 @@ app.put(
     }
     const ids = body.ids as number[];
     if (ids.length === 0) return c.json({ ok: true });
-    // BOTH halves scoped, as in the items reorder above.
     if (!(await findTemplateInCompany(c, id))) {
       return c.json({ error: "Not found" }, 404);
     }
@@ -4533,7 +3946,6 @@ app.put(
   }
 );
 
-// ── Defects ──────────────────────────────────────────────────
 
 app.post("/:id/defects", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -4591,9 +4003,6 @@ app.delete("/defects/:defectId", requirePermission("projects.write"), async (c) 
   return c.json({ ok: true });
 });
 
-// Upload a photo for a defect — small wrapper around the same R2 pattern
-// attachments use. Photo lands under projects/{id}/defect-*.ext and the
-// returned key goes onto the defect row via PATCH.
 app.put("/:id/defects/photo", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -4608,7 +4017,6 @@ app.put("/:id/defects/photo", requirePermission("projects.write"), async (c) => 
   return c.json({ key });
 });
 
-// ── Sales reports ────────────────────────────────────────────
 
 app.post("/:id/sales-reports", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -4651,8 +4059,6 @@ app.delete("/sales-reports/:reportId", requirePermission("projects.write"), asyn
   return c.json({ ok: true });
 });
 
-// Upload the sales-report attachment (image / PDF). Returns the key
-// + suggested mime_type that the create call will store.
 app.put("/:id/sales-reports/upload", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -4668,8 +4074,6 @@ app.put("/:id/sales-reports/upload", requirePermission("projects.write"), async 
   return c.json({ key, mime_type: contentType });
 });
 
-// Manual finance resync — callable if the UI ever drifts from the
-// computed sum (shouldn't happen normally).
 app.post("/:id/sales-reports/resync", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -4687,7 +4091,6 @@ app.delete("/checklist/:itemId", requirePermission("projects.write"), async (c) 
   return c.json({ ok: true });
 });
 
-// ── Team ─────────────────────────────────────────────────────
 
 app.post("/:id/team", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -4703,8 +4106,6 @@ app.post("/:id/team", requirePermission("projects.write"), async (c) => {
       .run();
     return c.json({ id: r.meta.last_row_id }, 201);
   } catch {
-    // The only expected failure is the UNIQUE(project_id,user_id,role) index —
-    // never surface the raw driver string ("D1_ERROR: UNIQUE constraint …").
     return c.json({ error: "This person is already on the team with that role." }, 409);
   }
 });
@@ -4717,12 +4118,7 @@ app.delete("/team/:teamId", requirePermission("projects.write"), async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Sales attendees (mig 087) ────────────────────────────────
-// Reps from the sales_reps master who'll physically attend the
-// project (booth duty etc). Separate from pic_id (a User) and the
-// generic project_team (also Users).
 
-// (GET /sales-rep-options sits above "/:id", which would otherwise shadow it with a 400.)
 
 app.post("/:id/sales-attendees", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -4756,8 +4152,6 @@ app.post("/:id/sales-attendees", requirePermission("projects.write"), async (c) 
     );
     return c.json({ ok: true }, 201);
   } catch {
-    // The only expected failure is the UNIQUE(project_id,sales_rep_id) index —
-    // never surface the raw driver string.
     return c.json({ error: "That sales attendee is already assigned to this project." }, 409);
   }
 });
@@ -4797,15 +4191,12 @@ app.delete(
   }
 );
 
-// ── Attachments ──────────────────────────────────────────────
-// R2-backed uploads. Same contract as ASSR attachments: PUT raw binary
-// with ?category=&ext=&name= query params. Returns the attachment row.
 
 const PROJECT_ATTACH_ALLOWED = new Set([
   "jpg", "jpeg", "png", "webp", "mp4", "pdf",
-  "dwg", "skp", // floorplans / 3D source files from designers
+  "dwg", "skp",
 ]);
-const PROJECT_ATTACH_MAX = 25 * 1024 * 1024; // 25 MB
+const PROJECT_ATTACH_MAX = 25 * 1024 * 1024;
 
 function projectAttachmentKey(projectId: number, category: string, ext: string): string {
   return `projects/${projectId}/${category}-${Date.now()}.${ext}`;
@@ -4858,7 +4249,6 @@ app.put("/:id/attachments", requirePermission("projects.write"), async (c) => {
   return c.json({ id: r.meta.last_row_id, key }, 201);
 });
 
-// Stream the asset. {.+} captures the slash-containing key; the key gate refuses other modules' objects and other companies' projects.
 app.get("/attachments/:key{.+}", async (c) => {
   const key = c.req.param("key");
   { const foreign = await refuseForeignAttachmentKey(c, key); if (foreign) return foreign; }
@@ -4867,8 +4257,6 @@ app.get("/attachments/:key{.+}", async (c) => {
   return new Response(obj.body as ReadableStream, {
     headers: {
       "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream",
-      // Block MIME-sniffing the server-derived content-type back into
-      // html/svg (parity with mail-center.ts's INLINE_SAFE serve).
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400",
     },
@@ -4887,9 +4275,6 @@ app.post("/attachments/:attId/archive", requirePermission("projects.write"), asy
   return c.json({ ok: true });
 });
 
-// Rename — only the human label (file_name). The R2 key stays put so
-// existing thumbnails / cached URLs don't break. uploaded_by_role is
-// also patchable here so a mistagged upload can be re-categorised.
 app.patch("/attachments/:attId", requirePermission("projects.write"), async (c) => {
   const attId = parseInt(c.req.param("attId"), 10);
   if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
@@ -4927,27 +4312,15 @@ app.patch("/attachments/:attId", requirePermission("projects.write"), async (c) 
   return c.json({ ok: true });
 });
 
-// ── Calendar feed ────────────────────────────────────────────
-// Returns projects overlapping [from, to], plus their open checklist
-// items whose due_date falls in the window. Used by the Calendar page.
 
 app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) => {
   const from = c.req.query("from");
   const to = c.req.query("to");
   if (!from || !to) return c.json({ error: "from & to required (YYYY-MM-DD)" }, 400);
 
-  // Crew scoping (drivers/helpers/storekeepers see only their events) is
-  // shared with the all-dates search: routes/lib/calendar-visibility.ts.
   const { scopeWhere, scopeBinds } = calendarCrewScope(c);
-  // Multi-company: the calendar follows the active company ("" when the
-  // context is unresolved). Inlined fragment so the positional binds above
-  // stay untouched.
   const coSql = activeCompanySql(c, "p.company_id");
 
-  // Projects whose [start_date, end_date] overlaps [from, to]. The
-  // active_section_name subquery returns the project's current
-  // template section (lowest sort_order with open tasks) so the
-  // calendar can filter by section the same way the list view does.
   const projects = await c.env.DB.prepare(
     `SELECT p.id, p.code, p.name, p.stage, p.status, p.brand, p.organizer,
             p.start_date, p.end_date, p.venue, p.state,
@@ -4990,22 +4363,12 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
         AND substr(c.due_date, 1, 10) BETWEEN substr(?, 1, 10) AND substr(?, 1, 10)${scopeWhere}${coSql}
       ORDER BY c.due_date, p.brand, c.id`
   )
-    // The MY date is the FIRST bind — the is_overdue placeholder sits in the
-    // SELECT list, ahead of the BETWEEN bounds and the scope binds.
     .bind(todayMyt(), from, to, ...scopeBinds)
     .all();
 
   return c.json({ projects: projects.results ?? [], tasks: tasks.results ?? [] });
 });
 
-// ── CSV import ───────────────────────────────────────────────
-// Admin tool to backfill projects from the existing Google Sheet.
-// Accepts a CSV body (text/csv) with a header row. Recognised columns
-// (case-insensitive, spaces become underscores):
-//   name, brand, event_type, start_date, end_date,
-//   venue, state, organizer, booth_no, size_sqm, notion_url,
-//   rental, total_sales, contractor_cost, license_fee
-// Unknown columns are ignored. Missing name → row skipped.
 
 app.post("/import/csv", requirePermission("projects.manage"), async (c) => {
   // company-scope: the two UPDATEs at :5066 and :5081 key on result.id, and result comes from createProject at :5038 — services/projects.ts INSERTs only (no upsert, no ON CONFLICT), so that row was created BY THIS REQUEST and stamped with activeCompanyId at :5050. A row you just minted needs no predicate to prove it is yours. Verified 2026-08-19.
@@ -5023,9 +4386,6 @@ app.post("/import/csv", requirePermission("projects.manage"), async (c) => {
     etBySlug.set(r.name.toLowerCase(), r.id);
   }
 
-  // Pull the canonical brand allow-list from project_brands (admins
-  // maintain it under Project Maintenance) so newly-added brands flow
-  // through CSV without code changes.
   const brandRows = await getDb(c.env)
     .select({ name: project_brands.name })
     .from(project_brands);
@@ -5058,7 +4418,6 @@ app.post("/import/csv", requirePermission("projects.manage"), async (c) => {
         organizer: row.organizer || null,
         notion_url: row.notion_url || null,
         created_by: user?.id ?? 0,
-        // Multi-company: stamp the active company (PG DEFAULT when unresolved).
         company_id: activeCompanyId(c),
       });
       const numeric = (s: string | undefined): number | null => {
@@ -5103,8 +4462,6 @@ app.post("/import/csv", requirePermission("projects.manage"), async (c) => {
   return c.json({ imported, errors, total_rows: parsed.rows.length });
 });
 
-// Minimal CSV parser — handles quoted fields with embedded commas and
-// escaped quotes. Good enough for the Google Sheet export.
 function parseCsv(text: string): { headers: string[]; rows: Record<string, string>[] } {
   const lines: string[][] = [];
   let cur: string[] = [];
@@ -5170,7 +4527,6 @@ function parseCsv(text: string): { headers: string[]; rows: Record<string, strin
   return { headers, rows };
 }
 
-// Accept YYYY-MM-DD, DD/MM/YYYY, D/M/YYYY. Returns YYYY-MM-DD or null.
 function normalizeDate(s: string | undefined): string | null {
   if (!s) return null;
   const trimmed = s.trim();

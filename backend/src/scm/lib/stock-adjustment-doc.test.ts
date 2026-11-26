@@ -70,7 +70,6 @@ describe('bucketDeltas — what an edit moves', () => {
   });
 
   it('an unchanged bucket gets no movement, even when the ledger holds an earlier edit', () => {
-    // created -3, edited to -5 (a -2 correction), now only the notes change
     expect(bucketDeltas([row('A', -3), row('A', -2)], [row('A', -5)])).toEqual([]);
   });
 

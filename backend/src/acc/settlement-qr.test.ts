@@ -28,8 +28,6 @@ const HLB: Row = {
   date_tolerance_days: 7, column_map: null, is_active: true,
 };
 
-/* 2990's 00005992284_20261101.CSV: 31/10 RM 3,240 and 01/11 RM 100, both QR —
-   and, for the mixing case, a card line of another report. */
 const QR_ROW: Row = {
   id: 857, batch_id: 389, company_id: 2, acquirer_code: 'HLB', line_no: 23,
   txn_date: '2026-10-31', ref: null, gross_sen: 324000, fee_sen: 0, net_sen: 324000,
@@ -49,9 +47,7 @@ const QR_BATCH: Row = {
 };
 
 const PAYMENTS: Row[] = [
-  /* The QR sale, keyed Online with the QR's own code. */
   { id: 'jenny', so_doc_no: '2990-SO-2611-041', company_id: 2, paid_at: '2026-11-07', amount_sen: 324000, approval_code: '20261031HLBBMYKLA30OQR77370349', method: 'transfer', merchant_provider: null, account_sheet: 'Bank transfer' },
-  /* The old guess: a card instalment keyed with no bank. */
   { id: 'how', so_doc_no: '2990-SO-2611-042', company_id: 2, paid_at: '2026-11-07', amount_sen: 324000, approval_code: '078120', method: 'installment', merchant_provider: null, account_sheet: 'Card terminal' },
   { id: 'cash', so_doc_no: '2990-SO-2611-050', company_id: 2, paid_at: '2026-11-01', amount_sen: 10000, approval_code: null, method: 'cash', merchant_provider: null, account_sheet: 'Cash' },
   { id: 'small', so_doc_no: '2990-SO-2611-051', company_id: 2, paid_at: '2026-11-01', amount_sen: 10000, approval_code: null, method: 'transfer', merchant_provider: null, account_sheet: 'Bank transfer' },

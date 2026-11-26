@@ -6,21 +6,14 @@ type Variant = "soft" | "solid" | "outline";
 
 interface Props {
   children: ReactNode;
-  /** Semantic colour. Defaults to neutral. */
   tone?: Tone;
-  /** soft (tinted bg) · solid (filled) · outline (bordered). Default soft. */
   variant?: Variant;
-  /** xs = 9px (dense table pills) · sm = 10.5px. Default xs. */
   size?: "xs" | "sm";
-  /** Drop the uppercase + wide tracking (for mixed-case labels). */
   caseless?: boolean;
   className?: string;
   title?: string;
 }
 
-// tone → [soft, solid, outline] class sets. Palette-only (brass accent,
-// synced green, err red, warning amber, ink-muted neutral) so badges stay
-// on-brand and reuse the same tokens as the rest of the design system.
 const TONES: Record<Tone, { soft: string; solid: string; outline: string }> = {
   neutral: {
     soft: "bg-ink-muted/10 text-ink-muted",

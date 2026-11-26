@@ -1,7 +1,3 @@
-// The Daily Bank board's arithmetic. The decisions pinned: opening is strictly
-// BEFORE the date, the day's movements split into receipts and payouts, lines
-// after the date never bleed backwards, transit is an as-of balance shown but
-// not counted as movable, and available = money closing minus pending.
 
 import { describe, it, expect } from 'vitest';
 import { computeDailyBank, insideStart, payoutDay, voucherPayoutSen, type CashbookPayout, type CashbookReceipt, type GlLine } from './daily-bank';
@@ -29,10 +25,10 @@ const L = (over: Partial<GlLine>): GlLine => ({
 describe('computeDailyBank', () => {
   it('opening strictly before the date; the day splits into receipts and payouts; tomorrow never bleeds back', () => {
     const board = computeDailyBank('2026-08-16', MONEY, TRANSIT, [
-      L({ entry_date: '2026-08-10', debit_sen: 100000 }),                       // opening +1000.00
-      L({ entry_date: '2026-08-16', je_no: 'JE-A', debit_sen: 50000 }),          // today in
-      L({ entry_date: '2026-08-16', je_no: 'JE-B', credit_sen: 20000, source_type: 'PV' }), // today out
-      L({ entry_date: '2026-08-17', debit_sen: 999999 }),                        // tomorrow — ignored
+      L({ entry_date: '2026-08-10', debit_sen: 100000 }),
+      L({ entry_date: '2026-08-16', je_no: 'JE-A', debit_sen: 50000 }),
+      L({ entry_date: '2026-08-16', je_no: 'JE-B', credit_sen: 20000, source_type: 'PV' }),
+      L({ entry_date: '2026-08-17', debit_sen: 999999 }),
     ], [], null);
     const bank = board.blocks[0];
     expect(bank).toMatchObject({ openingSen: 100000, inSen: 50000, outSen: 20000, closingSen: 130000 });
@@ -49,7 +45,7 @@ describe('computeDailyBank', () => {
     ], [], null);
     expect(board.transit[0].balanceSen).toBe(100000);
     expect(board.totalTransitSen).toBe(100000);
-    expect(board.availableSen).toBe(10000); // bank only — swiped money cannot be spent yet
+    expect(board.availableSen).toBe(10000);
   });
 
   it('an account with no lines still renders as a zero block — absence is a value, not a crash', () => {
@@ -63,8 +59,8 @@ describe('computeDailyBank', () => {
     const board = computeDailyBank('2026-08-16', MONEY, TRANSIT, [
       L({ entry_date: '2026-08-10', debit_sen: 100000 }),
     ], [
-      { total_sen: 30000, exchange_rate: 1 },            // RM 300.00 awaiting a yes
-      { total_sen: 10000, exchange_rate: 0.619838 },     // ¥100.00 → RM 61.98, converted the way posting will
+      { total_sen: 30000, exchange_rate: 1 },
+      { total_sen: 10000, exchange_rate: 0.619838 },
     ], null);
     expect(board.pendingApprovalSen).toBe(30000 + Math.round(10000 * 0.619838));
     expect(board.availableSen).toBe(100000 - board.pendingApprovalSen);
@@ -97,10 +93,10 @@ describe('computeDailyBank — by bank', () => {
   ];
   const DAY = '2026-09-29';
   const LEDGER: GlLine[] = [
-    L({ account_code: '310-0020', entry_date: '2026-09-28', debit_sen: 6_172_699 }),          // HLBB B/F 61,726.99
+    L({ account_code: '310-0020', entry_date: '2026-09-28', debit_sen: 6_172_699 }),
     L({ account_code: '310-0020', entry_date: DAY, je_no: 'JE-IN', debit_sen: 285_000, source_type: 'SOPAY', source_doc_no: 'pay-9', party: 'Hookka', doc_no: 'OR-0443', notes: 'Settle invoice' }),
     L({ account_code: '310-0020', entry_date: DAY, je_no: 'JE-OUT', credit_sen: 44_264, source_type: 'PV', source_doc_no: 'PV-0432', party: 'Tan Yong Hong', notes: 'Claude - Sep' }),
-    L({ account_code: '310-0010', entry_date: '2026-09-01', debit_sen: 100_000 }),             // Maybank B/F 1,000.00
+    L({ account_code: '310-0010', entry_date: '2026-09-01', debit_sen: 100_000 }),
     L({ account_code: '326-0020', entry_date: '2026-09-20', debit_sen: 4_677_417 }),
     L({ account_code: '326-0010', entry_date: '2026-09-20', debit_sen: 3_750_352 }),
     L({ account_code: '326-0030', entry_date: '2026-09-25', debit_sen: 4_220_064 }),
@@ -124,7 +120,7 @@ describe('computeDailyBank — by bank', () => {
     expect(hlbb).toMatchObject({ openingSen: 6_172_699, inSen: 285_000, outSen: 44_264, closingSen: 6_413_435 });
     expect(hlbb.pending.map((p) => [p.pvNumber, p.payee, p.description, p.amountSen])).toEqual([
       ['HPV-023', 'UNICOM', 'BILL IV2026-09-007', 1_083_600],
-      ['HPV-030', 'UMOBILE', 'Supplier payment', 7_210],       // no note → the purpose in words
+      ['HPV-030', 'UMOBILE', 'Supplier payment', 7_210],
     ]);
     expect(hlbb.pendingSen).toBe(1_090_810);
     expect(hlbb.availableSen).toBe(6_413_435 - 1_090_810);
@@ -152,7 +148,6 @@ describe('computeDailyBank — by bank', () => {
   it('what names no bank on the board stays in its own list, still inside the totals', () => {
     const board = computeDailyBank(DAY, BANKS, ACQUIRERS, LEDGER, PENDING, null);
     expect(board.unassignedTransit.map((t) => [t.acquirerCode, t.balanceSen])).toEqual([['Untagged bank', 336_500]]);
-    /* Cash in hand is not on this board's list, so its voucher waits in the bottom list. */
     expect(board.unassignedPending.map((p) => [p.pvNumber, p.accountCode])).toEqual([['HPV-040', '320-0000']]);
     expect(board.totalTransitSen).toBe(4_677_417 + 3_750_352 + 4_220_064 + 336_500);
     expect(board.pendingApprovalSen).toBe(1_083_600 + 7_210 + 5_000);
@@ -179,9 +174,9 @@ describe('computeDailyBank — the cash book', () => {
   ];
   const DAY = '2026-11-25';
   const LEDGER: GlLine[] = [
-    L({ account_code: '310-0010', entry_date: '2026-09-30', debit_sen: 52_943_781 }),     // the ledger's Maybank, far from the bank's
-    L({ account_code: '310-0010', entry_date: DAY, je_no: 'JE-L', debit_sen: 999 }),        // a ledger line today: not the cash book's
-    L({ account_code: '310-0020', entry_date: '2026-11-01', credit_sen: 81_164_858 }),    // HLBB: no start
+    L({ account_code: '310-0010', entry_date: '2026-09-30', debit_sen: 52_943_781 }),
+    L({ account_code: '310-0010', entry_date: DAY, je_no: 'JE-L', debit_sen: 999 }),
+    L({ account_code: '310-0020', entry_date: '2026-11-01', credit_sen: 81_164_858 }),
     L({ account_code: '326-0020', entry_date: '2026-11-20', debit_sen: 120_000 }),
     L({ account_code: '326-0010', entry_date: '2026-11-20', debit_sen: 70_000 }),
   ];
@@ -226,12 +221,10 @@ describe('computeDailyBank — the cash book', () => {
     expect(may.availableSen).toBe(may.closingSen - 30_000);
     /* Card money not yet in the bank sits under no bank on the cash book (owner: 这个可以不要出现吗). */
     expect(may).toMatchObject({ transit: [], transitSen: 0, availableWithTransitSen: may.availableSen });
-    /* HLBB is not on the cash book yet: no block, and its pending voucher not counted here. */
     expect(board.notStarted).toEqual([{ accountCode: '310-0020', accountName: 'CASH AT BANK - HLBB', startDate: null }]);
     expect(board.pendingApprovalSen).toBe(30_000);
     expect(board.unassignedPending).toEqual([]);
     expect(board.unassignedTransit).toEqual([]);
-    /* It is still listed once, on its way, and still never counted. */
     expect(board.transit.map((t) => [t.acquirerCode, t.balanceSen])).toEqual([['MBB', 120_000], ['PBB', 70_000]]);
     expect(board.totalTransitSen).toBe(190_000);
     expect(board.totalClosingSen).toBe(may.closingSen);
@@ -265,17 +258,12 @@ describe('computeDailyBank — the cash book', () => {
       payouts: [
         V({ id: 'old', pv_number: 'HPV-OLD', voucher_date: '2026-09-29', total_sen: 70_000, bank_charge_sen: 100, approved_at: `${DAY}T02:00:00Z` }),
         V({ id: 'moved', pv_number: 'HPV-MOVED', voucher_date: '2026-11-24', total_sen: 11_000, approved_at: `${DAY}T01:00:00Z` }),
-        /* 23:30 UTC on the 24th is 07:30 in Malaysia on the 25th. */
         V({ id: 'late', pv_number: 'HPV-LATE', voucher_date: '2026-11-24', total_sen: 3_000, approved_at: '2026-11-24T23:30:00Z' }),
         V({ id: 'same', pv_number: 'HPV-SAME', voucher_date: DAY, total_sen: 1_500, approved_at: `${DAY}T03:00:00Z` }),
-        /* Approved yesterday, dated today: it came off yesterday. */
         V({ id: 'early', pv_number: 'HPV-EARLY', voucher_date: DAY, total_sen: 5_000, approved_at: '2026-11-24T05:00:00Z' }),
-        /* Approved on the start day, dated on it: the start day's. */
         V({ id: 'startday', pv_number: 'HPV-SD', voucher_date: '2026-11-24', total_sen: 2_000, approved_at: '2026-11-24T04:00:00Z' }),
-        /* Inside the start: approved before it; approved on it but dated before it. */
         V({ id: 'before', pv_number: 'HPV-BEFORE', voucher_date: '2026-11-24', total_sen: 999, approved_at: '2026-11-23T05:00:00Z' }),
         V({ id: 'sd-old', pv_number: 'HPV-SD-OLD', voucher_date: '2026-11-02', total_sen: 888, approved_at: '2026-11-24T03:00:00Z' }),
-        /* Approved tomorrow: not yet. */
         V({ id: 'tomorrow', pv_number: 'HPV-TMR', voucher_date: '2026-11-20', total_sen: 777, approved_at: '2026-11-26T02:00:00Z' }),
       ],
     });
@@ -305,13 +293,10 @@ describe('computeDailyBank — the cash book', () => {
     expect(may.notDeducted).toEqual([
       { pvId: 'again', pvNumber: 'HPV-AGAIN', party: 'OWN TRANSFER', note: 'Other', amountSen: 3_100_000, tickedBy: 'Finance', tickedAt: '2026-11-26T02:00:00Z' },
     ]);
-    /* The day after: B/F leaves it out, and it is not listed again. */
     const after = computeDailyBank('2026-11-26', BANKS, ACQ, LEDGER, [], { starts: [START], receipts: [], payouts, skips }).blocks[0]!;
     expect(after).toMatchObject({ openingSen: 77_408_649 - 20_000, outSen: 0, notDeducted: [] });
-    /* Unticked, it comes off as before. */
     const unticked = computeDailyBank('2026-11-26', BANKS, ACQ, LEDGER, [], { starts: [START], receipts: [], payouts, skips: [] }).blocks[0]!;
     expect(unticked.openingSen).toBe(77_408_649 - 20_000 - 3_100_000);
-    /* The original board never carries the list. */
     expect(computeDailyBank(DAY, BANKS, ACQ, LEDGER, [], null).blocks.every((b) => !('notDeducted' in b))).toBe(true);
   });
 

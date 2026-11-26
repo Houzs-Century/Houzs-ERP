@@ -1,20 +1,3 @@
-// What this file pins: the bank reconciliation statement TIES, or it is not
-// drawn.
-//
-// A reconciliation report is a document somebody files and an auditor later
-// relies on, so the failure that matters is not an ugly layout — it is a tidy
-// walk from the bank's balance to a "balance per the books" that is not the
-// balance in the books. That looks filed. These tests pin the three ways the
-// report refuses to produce one:
-//
-//   • the walk arrives somewhere other than the ledger — say so, do not file;
-//   • the server already found the figures inconsistent — print no walk at all,
-//     because a tidy one would launder the error it caught;
-//   • no file printed a closing balance — there is nothing to walk from, and a
-//     zero is not the same as an absence.
-//
-// And the one thing it must always print, reconciled or not: WHY each ignored
-// movement was left out, because that sentence is the only record of it.
 
 import { describe, expect, test } from 'vitest';
 import {
@@ -71,8 +54,6 @@ describe('a month that reconciles', () => {
     expect(r.filable).toBe(true);
   });
 
-  /* The column has to add up as read, or a person checking it by hand gets a
-     different answer from the one printed at the bottom. */
   test('the steps sum to the final figure', () => {
     const r = reconciliationStatement(input());
     const walk = r.steps.filter((s) => s.rule !== 'grand').reduce((t, s) => t + s.sen, 0);
@@ -105,8 +86,6 @@ describe('a month that reconciles', () => {
 });
 
 describe('a month with outstanding items', () => {
-  /* April on Hong Leong: books −2,163.31, one payment of 3,101.68 the bank
-     has not paid, RM 600 on the bank nobody has decided, bank 1,538.37. */
   const APRIL: ReconInput = {
     ...RECON,
     closingStatementSen: 153837, closingLedgerSen: -216331, differenceSen: 370168,
@@ -142,9 +121,6 @@ describe('a month with outstanding items', () => {
 });
 
 describe('a walk that does not arrive', () => {
-  /* THE ONE THAT MATTERS. The four figures are self-consistent, the arithmetic
-     is fine, and the ledger says something else — so the report must refuse to
-     be filed rather than print a tidy statement. */
   test('says both figures and refuses to be filed', () => {
     const r = reconciliationStatement(input({
       reconciliation: { ...RECON, closingLedgerSen: 1234567 },
@@ -178,7 +154,6 @@ describe('a month whose files print no closing balance', () => {
     expect(r.steps).toEqual([]);
     expect(r.filable).toBe(false);
     expect(r.warnings.join(' ')).toContain('no bank figure to reconcile from');
-    /* The movements are still listed — the month is not a blank page. */
     expect(r.sections.some((s) => s.body.length > 0)).toBe(true);
   });
 });
@@ -193,7 +168,6 @@ describe('a month with a day missing', () => {
     }));
     expect(r.warnings[0]).toContain('not covered end to end');
     expect(r.warnings.join(' ')).toContain('d04.csv');
-    /* The arithmetic is fine — that is exactly why the gap has to be said. */
     expect(stepFor(r, 'Balance per the books')!.sen).toBe(1090000);
     expect(r.filable).toBe(false);
   });
@@ -213,8 +187,6 @@ describe('the sections behind the figures', () => {
     expect(open.body[0]).toContain('d04.csv');
   });
 
-  /* THE AUDIT LINE. An ignored movement leaves the difference for ever and this
-     sentence is the whole record of the decision. */
   test('prints why each left-out movement was left out', () => {
     const r = reconciliationStatement(input({ lines: LINES }));
     const left = r.sections.find((s) => s.title.startsWith('Left out'))!;
@@ -247,7 +219,6 @@ describe('the sections behind the figures', () => {
     const books = r.sections.find((s) => s.title.startsWith('Outstanding items'))!;
     expect(books.body[0]).toContain('JE-2609-0011');
     expect(books.body[0]?.[2]).toBe('PV · HPV-2609-006');
-    /* Money OUT of the account reads as a bracket, like every other statement. */
     expect(books.body[0]?.[4]).toBe('(RM 450.00)');
   });
 
@@ -261,7 +232,6 @@ describe('the sections behind the figures', () => {
     }));
     const books = r.sections.find((s) => s.title.startsWith('Outstanding items'))!;
     expect(books.head).toEqual(['Entry', 'Date', 'Source', 'Who', 'Amount']);
-    /* One table, this month's and the earlier month's alike. */
     expect(books.body).toHaveLength(2);
     expect(books.body.map((b) => b[3])).toEqual(['TENAGA NASIONAL BERHAD', 'AIR SELANGOR']);
     expect(r.sections.find((s) => s.title.startsWith('From earlier months'))).toBeUndefined();

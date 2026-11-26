@@ -26,7 +26,6 @@ import { comboSlotsKey, parseDefaultFreeGifts, type SofaPriceTier } from '../sha
 import { onePieceSetRefusal, validateComboModules, validatePricesByHeight } from './sofa-combos';
 import { validateComboAccessories, comboAccessoriesKey } from '../lib/sofa-saved-layout';
 
-// pos_sofa_combos.tier has its own CHECK (PRICE_1..PRICE_3); PRICE_4 is cost-side only.
 const TIERS = new Set(['PRICE_1', 'PRICE_2', 'PRICE_3']);
 
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
@@ -250,7 +249,6 @@ export const posSofaCombosEditHandler = async (c: AppContext) => {
   const body = await readBody(c);
   if (!body) return c.json({ error: 'invalid_json' }, 400);
 
-  // Omitted = carried forward, so editing one dimension never wipes another.
   const selling = body.sellingPricesByHeight === undefined
     ? (o.selling_prices_by_height ?? {})
     : validatePricesByHeight(body.sellingPricesByHeight);

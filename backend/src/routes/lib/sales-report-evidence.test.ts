@@ -16,10 +16,8 @@ const EVIDENCE = buildReportEvidence(
   new Map([
     [307, [note(1, "10/10\n1. HC13315 RM11000 Luis\n2. HC13316 RM3388 Shawn\n3. HC13548 RM4300 Shawn"), note(2, "11/10\n1. HC13317 RM9888 Luis")]],
     [2260, [note(3, "16/10\n1. HC13420 RM11776 Melvin")]],
-    /* Two fairs' reports naming one booklet: a person decides. */
     [500, [note(4, "12/10\n1. HC20000 RM100 A")]],
     [501, [note(5, "12/10\n1. HC20000 RM100 A")]],
-    /* A rep pasting numbers is not a report. */
     [600, [note(6, "1. HC13999 RM100 Me", { author_email: "rep@houzs.com", author_position: "Sales Executive" })]],
   ]),
   new Map([[307, "2026-10-09"], [2260, "2026-10-15"], [500, "2026-10-12"], [501, "2026-10-12"], [600, "2026-10-12"]]),
@@ -70,14 +68,11 @@ describe("loadReportEvidence", () => {
     const bySince = await loadReportEvidence(db, " AND p.company_id = 1", { since: "2026-08-01" });
     expect(bySince.get("HC13315")).toEqual([{ projectId: 307, reportDate: "2026-10-10", amountSen: 1100000, salesperson: "Luis" }]);
     await loadReportEvidence(db, " AND p.company_id = 1", { projectIds: [307, 307, 2260] });
-    /* The relevant queries are the two notes queries (one per invocation); the
-       attendee queries carry the same scope and bindings. */
     const noteCalls = asked.filter(([sql]) => !/project_sales_attendees/.test(sql));
     expect(noteCalls.map(([sql, vals]) => [/p\.start_date >= \?/.test(sql) || /p\.id IN \(\?, \?\)/.test(sql), /AND p\.company_id = 1$/.test(sql), vals])).toEqual([
       [true, true, ["2026-08-01"]],
       [true, true, [307, 2260]],
     ]);
-    /* Every notes query is paired with an attendees query that shares its scope. */
     const attendeeCalls = asked.filter(([sql]) => /project_sales_attendees/.test(sql));
     expect(attendeeCalls.length).toBe(noteCalls.length);
     expect(await loadReportEvidence(db, "", { projectIds: [] })).toEqual(new Map());

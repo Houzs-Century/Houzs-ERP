@@ -51,7 +51,6 @@ export async function creditNotesBySi(sb: any, companyId: number, siIds: readonl
     }
     return { ok: true, bySi };
   } catch (e) {
-    /* A client that throws is a read that failed, never a credit of nothing. */
     return { ok: false, reason: e instanceof Error ? e.message : String(e) };
   }
 }

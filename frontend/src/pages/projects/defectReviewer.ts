@@ -65,13 +65,10 @@ export function canPurchaseDefect(user: DefectReviewUser | null | undefined): bo
   );
 }
 
-// ── The stage machine ────────────────────────────────────────────────────────
 
 export type DefectStage = "fresh" | "purchaser" | "resolved";
 
-/** Resolved: the defect is closed and drops out of every open list. */
 const RESOLVED_STATUSES = new Set(["done", "done_clean"]);
-/** Escalated or in progress: the purchaser (Farra) owns it. `replace` is legacy. */
 const PURCHASER_STATUSES = new Set(["exchange", "service", "in_progress", "replace"]);
 
 /** Which lane a defect photo is in, from its LATEST timeline status. Anything
@@ -88,7 +85,6 @@ export function defectIsResolved(latest: string | null | undefined): boolean {
   return defectStage(latest) === "resolved";
 }
 
-// ── The buttons each actor sees ──────────────────────────────────────────────
 
 export type DefectActionTone = "done" | "escalate" | "progress";
 export interface DefectAction {

@@ -1,31 +1,3 @@
-/**
- * ASSR/QMS v3.1 alert engine — proposal §9.
- *
- * Scans every open stage_history row, computes elapsed_pct against the
- * snapshotted target_days, and fires one of:
- *
- *   stage_entered      — emitted at history insert (already covered)
- *   half_time          — elapsed_pct >= 50%
- *   approaching_breach — elapsed_pct >= 80%
- *   breach             — elapsed_pct >= 100%
- *
- * Idempotency: `assr_stage_history.alerts_fired` is a bit-mask
- * (1=entered, 2=half, 4=approaching, 8=breach). Each pass OR-s in the
- * bits it just fired, so re-running this on the same row only sends
- * what hasn't been sent.
- *
- * `stage_entered` is a special case — fired inline by `transitionStage`
- * in services/assr.ts (we want it the moment the case enters the
- * stage, not on the next 30-min cron tick). The bit is also flipped
- * there so the scanner skips it.
- *
- * Snooze handling: `assr_alert_acks(snoozed_until)` suppresses alerts
- * for a (case, stage, event) until that time. Max 2 snoozes per stage
- * enforced at the route layer.
- *
- * Channels: email always (reuses sendEmail). WhatsApp / Telegram stubs
- * documented but unwired — proposal §9.2 calls them out as opt-in.
- */
 import type { Env } from "../types";
 import { sendEmail, publicUrl } from "./email";
 
@@ -57,9 +29,6 @@ const EVENT_LABEL: Record<Event, string> = {
 export async function runAssrAlerts(
   env: Env
 ): Promise<{ half: number; approaching: number; breach: number; cases_scanned: number }> {
-  // All open stage_history rows (exited_at IS NULL) with a positive
-  // target — completed stage rows have target_days = 0 and don't fire
-  // alerts.
   const rows = await env.DB.prepare(
     `SELECT h.id          AS history_id,
             h.assr_id     AS assr_id,
@@ -99,8 +68,6 @@ export async function runAssrAlerts(
     return { half: 0, approaching: 0, breach: 0, cases_scanned: 0 };
   }
 
-  // Managers — emailed on approaching + breach events. One DB lookup
-  // up-front; ASSR managers don't churn within a 30-min cron window.
   const managers = await env.DB.prepare(
     `SELECT DISTINCT u.email
        FROM users u
@@ -128,8 +95,6 @@ export async function runAssrAlerts(
 
     if (toFire.length === 0) continue;
 
-    // Per-(case, stage, event) snooze suppression — most-recent ack
-    // wins, snoozed_until in the future suppresses.
     const acked = await env.DB.prepare(
       `SELECT event, MAX(snoozed_until) AS snoozed_until
          FROM assr_alert_acks
@@ -155,7 +120,6 @@ export async function runAssrAlerts(
         issue: r.complaint_issue,
         link: publicUrl(env, `/assr`),
       });
-      // Owner first, manager loop-in on approaching + breach.
       const recipients = new Set<string>();
       if (r.assignee_email) recipients.add(r.assignee_email);
       if (ev === "approaching_breach" || ev === "breach") {
@@ -263,7 +227,6 @@ export async function runAssrDailyDigest(
   return { recipients: managerEmails.length, cases: cases.length };
 }
 
-// ── Email templates ─────────────────────────────────────────────────
 
 function prettyStage(stage: string): string {
   return stage

@@ -22,16 +22,11 @@
 // PHOTO_PDF_SRC=<file.jpg> swaps in a real photograph and PHOTO_PDF_OUT=<file>
 // writes the PDF, for showing the owner an actual document.
 import { describe, expect, it, vi, beforeAll } from 'vitest';
-// The letterhead is fetched for the tab's company before drawing (BUG-111).
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { readFileSync, writeFileSync } from 'node:fs';
-/* jsdom's Blob has no `arrayBuffer()`; Node's does, and every real browser's
-   does. Using the platform one keeps the decode path un-stubbed. */
 import { Blob as NodeBlob } from 'node:buffer';
 import { pdfRawText } from './pdf-raw-text';
 
-/* A 1x1 JPEG — enough to be a real image the encoder accepts. Swapped for a
-   real sofa sketch when PHOTO_PDF_SRC is set. */
 const TINY_JPEG_B64 = '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwcJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPDIzNP/AABEIAAEAAQMBIgACEQEDEQH/xAAfAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgv/xAC1EAACAQMDAgQDBQUEBAAAAX0BAgMABBEFEiExQQYTUWEHInEUMoGRoQgjQrHBFVLR8CQzYnKCCQoLhcYGRomJygkKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q==';
 
 const PHOTO_KEY = 'so-items/HC-SO-013422/376d3ab1-a904-4464-b439-4b4e56a89970/ac-919030-1.jpg';
@@ -57,9 +52,6 @@ beforeAll(() => {
     : Buffer.from(TINY_JPEG_B64, 'base64');
   dataUrl = `data:image/jpeg;base64,${jpeg.toString('base64')}`;
 
-  /* jsdom has neither createImageBitmap nor a 2d context. Both belong to the
-     browser, so they are supplied rather than asserted — what is under test is
-     what our code does with them. */
   (globalThis as { createImageBitmap?: unknown }).createImageBitmap = async () => ({
     width: 600, height: 800, close() {},
   });
@@ -68,11 +60,6 @@ beforeAll(() => {
   proto.toDataURL = () => dataUrl;
 });
 
-/* Typed off the generator's own signature rather than cast with `as never`.
-   The repo bans that cast (no-restricted-syntax) for the reason it names: a
-   hand-written fixture pushed past its type hides the field the code actually
-   reads, which for THIS test would be `id` or `photo_urls` — the two the photo
-   block depends on. `printDocumentPdf.ts` takes the same shape the same way. */
 type PoArgs = Parameters<typeof import('./purchase-order-pdf').purchaseOrderPdfBase64>;
 
 const header: PoArgs[0] = {
@@ -115,9 +102,7 @@ describe('purchase-order-pdf — a line that carries a photo prints it', () => {
   it('puts the photograph and the ITEM PHOTOS block on the document', async () => {
     const { pdf, raw } = await render([PHOTO_KEY]);
     expect(raw).toContain('ITEM PHOTOS');
-    // The chip names the SUPPLIER's code, because that is what they act on.
     expect(raw).toContain('HOK-9058-1A');
-    // An embedded bitmap, not just a caption: this is what was missing.
     expect(raw).toContain('/Subtype /Image');
     if (process.env.PHOTO_PDF_OUT) writeFileSync(process.env.PHOTO_PDF_OUT, pdf);
   });

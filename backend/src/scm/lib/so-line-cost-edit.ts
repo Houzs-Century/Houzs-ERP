@@ -34,7 +34,6 @@ const COST_NEUTRAL_KEYS = new Set([
   'freeGift', 'freeItem', 'pwp', 'pwpCode',
 ]);
 
-/** The seat height keys, after canonicalizeVariants. */
 const HEIGHT_KEYS = new Set(['seatHeight']);
 
 /** LHF and RHF are the two sides of one piece at one price. */
@@ -56,7 +55,6 @@ export function changedSpecKeys(before: Record<string, unknown>, after: Record<s
 
 export interface CostedLineShape {
   itemCode: string;
-  /** canonicalizeVariants output */
   variants: Record<string, unknown>;
   unitCostSen: number;
 }

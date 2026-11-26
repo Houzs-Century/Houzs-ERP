@@ -31,8 +31,6 @@ async function readWindows<K extends string, T>(path: string, usp: URLSearchPara
     const q = new URLSearchParams(usp);
     q.set('offset', String(offset));
     const body: WindowBody<K, T> = await authedFetch<WindowBody<K, T>>(`${path}?${q.toString()}`);
-    /* A document added while the export runs shifts the later windows by one;
-       the repeat it causes is dropped here. */
     for (const row of body[key] ?? []) {
       const id = idOf(row);
       if (seen.has(id)) continue;

@@ -40,7 +40,6 @@ const isCancelled = (e: EventCostRow): boolean => String(e.event.status ?? '').t
 const isCost = (row: EventCostRow, accountCode: string): boolean =>
   row.accounts.find((a) => a.accountCode === accountCode)?.accountType === 'EXPENSE';
 
-/* The table as CSV: one row per event, then its entries beneath it. */
 export const eventCostsCsv = (r: EventCosts): string => {
   const esc = (v: string | number | null) => `"${guardFormula(String(v ?? '')).replace(/"/g, '""')}"`;
   const lines: string[] = [['Event', 'Dates', 'Status', 'Entry', 'Date', 'Document', 'Account', 'Notes', 'Cost', 'Other'].map(esc).join(',')];
@@ -104,7 +103,6 @@ const StatusTag = ({ row }: { row: EventCostRow }) => {
 
 export const EventCostsTab = () => {
   const r = useReportRange();
-  /* Events starting in whole months: the range widens to its months' first and last days. */
   const from = r.usable ? monthStart(r.from) : monthStart(r.today);
   const to = r.usable ? monthEnd(r.to) : monthEnd(r.today);
   const fromMonth = from.slice(0, 7);

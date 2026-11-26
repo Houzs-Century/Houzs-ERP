@@ -150,10 +150,6 @@ const STOCK_TAKE: Record<string, Entry> = {
   CANCELLED:        { label: 'Cancelled',        tone: 'danger' },
 };
 
-// SO amendment / revision workflow (Phase 1-C). Two-gate state machine:
-// REQUESTED → SUPPLIER_PENDING → SO_APPROVED → PO_APPROVED → SENT / REJECTED.
-// The two mid-gates read as in-progress (progress/burnt); SENT is the terminal
-// happy path (success/green); REJECTED closes it (danger/red).
 const SO_AMENDMENT: Record<string, Entry> = {
   REQUESTED:        { label: 'Requested',         tone: 'info' },
   SUPPLIER_PENDING: { label: 'Supplier Pending',  tone: 'pending' },
@@ -163,19 +159,12 @@ const SO_AMENDMENT: Record<string, Entry> = {
   REJECTED:         { label: 'Rejected',           tone: 'danger' },
 };
 
-// Two-lane rework (2026-07-27): a LANE amendment (so_amendments.lane set) has
-// ONE signature — REQUESTED -> SO_APPROVED is its applied TERMINAL, so it reads
-// "Applied" (success), not the legacy mid-chain "SO Approved" (progress).
 const SO_AMENDMENT_LANE: Record<string, Entry> = {
   REQUESTED:   { label: 'Requested', tone: 'info' },
   SO_APPROVED: { label: 'Applied',   tone: 'success' },
   REJECTED:    { label: 'Rejected',  tone: 'danger' },
 };
 
-// PO amendment / revision workflow (Houzs, mig 0192). SIMPLIFIED single-approver
-// state machine: REQUESTED -> APPROVED, with REJECTED the terminal close for both
-// a rejection and a withdrawal. REQUESTED reads as in-flight (info/burnt); APPROVED
-// is the terminal happy path (success/green); REJECTED closes it (danger/red).
 const PO_AMENDMENT: Record<string, Entry> = {
   REQUESTED: { label: 'Requested', tone: 'info' },
   APPROVED:  { label: 'Approved',  tone: 'success' },
@@ -193,9 +182,6 @@ const PV: Record<string, Entry> = {
   CANCELLED: { label: 'Cancelled', tone: 'danger' },
 };
 
-// DP Order (delivery-planning job, mig 0129). PENDING_SCHEDULE is the whole
-// reason the DP Orders list exists (awaiting a lorry + date to mint its DP
-// number); SCHEDULED is the terminal happy path; CANCELLED closes it.
 const DP_ORDER: Record<string, Entry> = {
   PENDING_SCHEDULE: { label: 'Pending Schedule', tone: 'pending' },
   SCHEDULED:        { label: 'Scheduled',        tone: 'success' },

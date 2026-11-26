@@ -7,10 +7,6 @@ import {
 } from './do-not-ready-lines';
 import routeSrc from '../routes/delivery-orders-mfg.ts?raw';
 
-/* BUG-59 (Azza, HC-SO-009191 -> HC-DO-2610-095): a DO was cut from SO lines
-   whose Stock read PENDING, with no dialog. The short-stock pre-flight only
-   asks whether the warehouse holds the SKU, never whether THIS order's line has
-   stock set aside. */
 
 const row = (over: Partial<SoLineReadinessRow>): SoLineReadinessRow => ({
   id: 'li-1',
@@ -63,8 +59,6 @@ describe('notReadyLines', () => {
   });
 });
 
-/* A thenable PostgREST stand-in: every builder call returns itself, awaiting it
-   yields the table's rows. Records the filters so company scope is checked. */
 function fakeSb(tables: Record<string, Array<Record<string, unknown>> | Error>) {
   const calls: Array<{ table: string; op: string; args: unknown[] }> = [];
   const sb = {
@@ -117,8 +111,6 @@ describe('the 409 and the routes', () => {
 
   test('both create paths ask (not a draft), and both honour confirmNotReady', () => {
     const src = routeSrc as string;
-    /* The read STARTS with the create's read wave (only when not confirmed and not a
-       draft: a draft is asked at Confirm, lib/do-confirm-preflight.ts) and is gated where it always was. */
     expect(src.match(/const notReadyProm = \(body\.confirmNotReady \|\| body\.asDraft === true\) \? null : eager\(findNotReadySoLines/g)).toHaveLength(2);
     expect(src.match(/if \(notReadyProm\) \{\s*const notReady = \(await notReadyProm\)\(\);/g)).toHaveLength(2);
     expect(src.match(/return c\.json\(itemsNotReadyResponse\(notReady\), 409\)/g)).toHaveLength(2);

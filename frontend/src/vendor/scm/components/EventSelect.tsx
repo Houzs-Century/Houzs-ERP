@@ -1,18 +1,8 @@
-// ----------------------------------------------------------------------------
-// EventSelect — the event a voucher / AP invoice line's money is for (owner
-// 2026-09-29/30, 5a). A SearchCombo over the company's events around the
-// document's date, grouped by month; type any word of the name, venue,
-// organizer, brand or booth to find one. Value in / value out: an event id,
-// or null for "no event". An event already on the line but outside the window
-// (or archived since) is fetched by id so the field never reads blank.
-// ----------------------------------------------------------------------------
 
 import { useMemo } from 'react';
 import { SearchCombo, type ComboOption } from './SearchCombo';
 import { eventLabel, useEventLabels, useEventOptions, type EventOption, type EventOptionsPath } from '../lib/event-queries';
 
-/* Grouped by the month the event starts, read as the ISO word the data carries
-   (2026-09) — no month-name table (the house date rule, check-date-formatting). */
 const monthOf = (e: EventOption): string => (/^\d{4}-\d{2}/.test(e.startDate ?? '') ? String(e.startDate).slice(0, 7) : 'No date');
 
 export function EventSelect({
@@ -27,12 +17,10 @@ export function EventSelect({
 }: {
   value: number | null;
   onChange: (projectId: number | null) => void;
-  /** The document's date (YYYY-MM-DD) the list is centred on; null = today. */
   around: string | null;
   className?: string;
   placeholder?: string;
   disabled?: boolean;
-  /** A requester's picker reads the payment requests' copy of the list. */
   optionsPath?: EventOptionsPath;
   'aria-label'?: string;
 }) {

@@ -78,7 +78,6 @@ import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
 import { parseMoneyToSen } from '../../lib/money';
 
 export const KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note', OCN: 'Other debtor credit note' };
-/* The kind as the tab and the form's picker say it. */
 const KIND_TAB: Record<NoteKind, string> = { CN: 'CN', DN: 'DN', SCN: 'SCN', OCN: 'Other debtor CN' };
 const KIND_OPTION: Record<NoteKind, string> = {
   CN: 'CN — credit note to a customer',
@@ -90,7 +89,6 @@ const KIND_OPTION: Record<NoteKind, string> = {
 /* The two pages (owner 2026-10-28): which kinds each holds — the list asks the
    server for the side's kinds, the tabs and the New note picker offer them. */
 const SIDES: Record<NoteSide, { title: string; description?: string; kinds: NoteKind[]; hint: string; tableId: string }> = {
-  /* Money in's page by the redesign's name, no description (owner's Claude Design, batch 5). */
   AR: {
     title: 'Credit / debit notes',
     kinds: ['CN', 'DN', 'OCN'],
@@ -123,7 +121,6 @@ const DEBIT_HINT: Record<NoteSide, string> = {
   AP: 'Supplier DN: we owe the supplier more — a bill of its own kind, paid through an AP Payment.',
 };
 
-/* The page's tab strip — the kind filter, and Money out's Credit notes / Opening 31/08. */
 function SegTabs<T extends string>({ label, tabs, value, onChange }: { label: string; tabs: Array<{ key: T; text: string }>; value: T; onChange: (key: T) => void }) {
   return (
     <div role="tablist" aria-label={label} style={{ display: 'inline-flex', border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 6, overflow: 'hidden' }}>
@@ -137,7 +134,6 @@ function SegTabs<T extends string>({ label, tabs, value, onChange }: { label: st
   );
 }
 
-/** The kinds whose credit knocks off documents, and whose: a supplier's invoices, an other debtor's bills. */
 const knocksOff = (k: NoteKind): boolean => k === 'SCN' || k === 'OCN';
 const whoOf = (k: NoteKind): KnockOffWho => (k === 'OCN' ? 'debtor' : 'supplier');
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
@@ -162,21 +158,15 @@ const input: React.CSSProperties = { padding: '5px 8px', fontSize: 'var(--fs-13)
 /** projectId: a supplier note line's event (owner 2026-10-22) — null = none, or the AP invoice's at save. */
 type FormLine = {
   rid: number; description: string; accountCode: string; amountRm: string; projectId: number | null;
-  /** A line of a note raised from a delivery return (backlog A1): the return line, its units, how many may
-      still be credited and the invoiced unit price — the last two null on a draft opened for edit. */
   ret?: { itemId: string; qty: number; maxQty: number | null; unitSen: number | null };
 };
 /** The note form's values — Supplier bills raises and edits a supplier's note with the same form. */
 export type FormValues = {
   kind: NoteKind; noteDate: string; soDocNo: string; partyName: string; supplierId: string;
-  /** An other-debtor note's debtor (2026-10-28). */
   debtorId?: string;
   sourceDocNo: string; reason: string; lines: FormLine[];
-  /** The supplier's invoice a supplier note names (set from a scan) — its reference. */
   creditedDoc?: { kind: 'PI' | 'API'; id: string } | null;
-  /** A supplier, other-debtor or customer note's knock-off ticks — the plan the post carries out (2026-10-02). */
   knockOff?: KnockOffPick;
-  /** The delivery return this customer note answers (backlog A1), its number and the invoice its prices came from. */
   deliveryReturnId?: string | null;
   returnNumber?: string | null;
   invoiceNumber?: string | null;
@@ -198,7 +188,6 @@ export const noteEditValues = (n: CreditNote, lines: CreditNoteLine[], allocatio
   knockOff: Object.fromEntries(allocations.map((a) => [a.docId, { kind: a.kind, id: a.docId, amountSen: a.amountSen }])),
 });
 
-/** The invoice the paper names, ticked — as much of the credit as it owes. */
 const scanKnockOff = (r: ScnScan): KnockOffPick => {
   const named = r.suggested ? r.invoices.find((i) => i.id === r.suggested?.id) : undefined;
   const credit = r.lines.reduce((sum, l) => sum + l.amountSen, 0);
@@ -220,17 +209,12 @@ export const fromScan = (r: ScnScan): FormValues => ({
   creditedDoc: r.suggested ? { kind: r.suggested.kind, id: r.suggested.id } : null,
   knockOff: scanKnockOff(r),
 });
-/* The repo's money parser, never Number(): Number("3,500.00") is NaN, which
-   JSON sends as null. A line whose amount cannot be read is refused with its
-   sentence, never treated as blank (a blank line is dropped). */
 const lineSen = (l: FormLine) => parseMoneyToSen(l.amountRm, `Line ${l.rid}'s amount`);
 export const amountProblem = (lines: FormLine[]): string | null => {
   for (const l of lines) { const p = lineSen(l); if (!p.ok) return p.message; }
   return null;
 };
 
-/* The body the server takes, off the form — the lines with a sen amount; an
-   account left blank lets the server land it on the kind's default. */
 export const bodyOf = (v: FormValues): { kind: NoteKind; noteDate: string; reason: string | null; sourceDocNo: string | null; soDocNo?: string; partyName?: string; supplierId?: string; debtorId?: string; purchaseInvoiceId?: string; apInvoiceId?: string; allocations?: KnockOffTarget[]; deliveryReturnId?: string; lines: CreditNoteLineInput[] } => ({
   kind: v.kind,
   noteDate: v.noteDate,
@@ -240,7 +224,6 @@ export const bodyOf = (v: FormValues): { kind: NoteKind; noteDate: string; reaso
     : v.kind === 'OCN' ? { debtorId: v.debtorId ?? '' }
       : v.soDocNo.trim() ? { soDocNo: v.soDocNo.trim() } : { partyName: v.partyName.trim() }),
   ...(v.kind === 'SCN' && v.creditedDoc ? (v.creditedDoc.kind === 'PI' ? { purchaseInvoiceId: v.creditedDoc.id } : { apInvoiceId: v.creditedDoc.id }) : {}),
-  /* A supplier, other-debtor or customer credit note always says its ticks — none ticked is a plan too. */
   ...(knocksOff(v.kind) || v.kind === 'CN' ? { allocations: pickTargets(v.knockOff ?? {}) } : {}),
   ...(v.kind === 'CN' && v.deliveryReturnId ? { deliveryReturnId: v.deliveryReturnId } : {}),
   lines: v.lines.flatMap((l) => {
@@ -261,7 +244,6 @@ const StatusPill = ({ status }: { status: NoteStatus }) => (
 
 export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
   const page = SIDES[side];
-  /* The kind filter's tabs, off the side's kinds — a page of one kind needs none. */
   const kindTabs: Array<NoteKind | 'ALL'> = ['ALL', ...page.kinds];
   const [kind, setKind] = useState<NoteKind | 'ALL'>('ALL');
   const [status, setStatus] = useState<NoteStatus | 'ALL'>('ALL');
@@ -272,7 +254,6 @@ export const CreditNotes = ({ side = 'AR' }: { side?: NoteSide }) => {
   const opening: OpeningFilter = side === 'AP' ? (view === 'opening' ? 'only' : 'exclude') : 'all';
   const [openId, setOpenId] = useState<string | null>(null);
   const [form, setForm] = useState<{ mode: 'new' | 'edit'; id?: string; values: FormValues; scan?: ScnScan; files?: File[] } | null>(null);
-  /* Scan supplier CN: the pages of one credit note → the New note form, filled. */
   const scanRef = useRef<HTMLInputElement>(null);
   const [scanStage, setScanStage] = useState<AiReadStage | null>(null);
   const scan = useScanSupplierCreditNote(setScanStage);
@@ -438,7 +419,6 @@ export function useNoteDoc(id: string) {
       await generateCreditNotePdf(n, lines, nameOf, { action: 'print', knockedOff: q.data ? knockedOffOf(q.data) : null });
     } catch (e) { setPrintError(errText(e)); } finally { setPrinting(false); }
   };
-  /* What a customer note knocked off, named in its cancel ask (the design's words). */
   const knockedSis = (q.data?.allocations ?? []).filter((a) => a.kind === 'SI' && a.appliedSen > 0).map((a) => a.number ?? 'an invoice');
   const cancelNote = async () => {
     if (!n) return;
@@ -451,8 +431,6 @@ export function useNoteDoc(id: string) {
     });
     if (yes) cancel.mutate(n.id);
   };
-  /* A posted customer note's Knock off — its own form on Money in's notes, back to this page. A
-     note answering a deposit invoice has none. */
   const knockOff = n && n.kind === 'CN' && n.status === 'POSTED' && !q.data?.depositPaper
     ? () => navigate(`/scm/credit-notes?form=knock&id=${encodeURIComponent(n.id)}&back=note`) : null;
   return { q, n, lines, allocations: q.data?.allocations ?? [], post, cancel, eventLabelsQ, withEvents, busy, failed, printing, printError, printOne, cancelNote, knockOff };
@@ -468,7 +446,6 @@ export function NoteActions({ doc, onEdit }: { doc: NoteDoc; onEdit: (n: CreditN
       <Button variant="ghost" size="sm" onClick={() => void doc.printOne()} disabled={busy || doc.printing}>{doc.printing ? 'Preparing…' : 'Print'}</Button>
       {n.status === 'DRAFT' && <Button variant="ghost" size="sm" onClick={() => onEdit(n, doc.lines, doc.allocations)} disabled={busy}>Edit</Button>}
       {n.status === 'DRAFT' && <Button size="sm" onClick={() => doc.post.mutate(n.id)} disabled={busy}>{doc.post.isPending ? 'Posting…' : 'Post to ledger'}</Button>}
-      {/* An opening paper is changed on Opening Balance — the server refuses a cancel here. */}
       {n.status !== 'CANCELLED' && !n.opening && (
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => void doc.cancelNote()}>
           Cancel note
@@ -544,7 +521,6 @@ export const NoteDetail = ({ id, onClose, onEdit }: { id: string; onClose: () =>
   );
 };
 
-/* The party pickers, each reading its own list only when its kind is on the form. */
 const SupplierField = ({ value, onChange, disabled }: { value: string; onChange: (id: string) => void; disabled: boolean }) => {
   const suppliersQ = useSuppliers();
   const options = useMemo(() => (suppliersQ.data ?? []).map((s) => ({ value: s.id, label: `${s.code} · ${s.name}` })), [suppliersQ.data]);
@@ -554,7 +530,6 @@ const SupplierField = ({ value, onChange, disabled }: { value: string; onChange:
     </Field>
   );
 };
-/* The Other Debtors registry's active debtors; the one a draft was raised to stays shown on its edit. */
 const DebtorField = ({ value, onChange, disabled }: { value: string; onChange: (id: string) => void; disabled: boolean }) => {
   const debtorsQ = useOtherDebtors();
   const options = useMemo(
@@ -584,15 +559,8 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
   const create = useCreateCreditNote();
   const update = useUpdateCreditNote();
   const post = usePostCreditNote();
-  /* One key per opened form: a second press answers the first note, never a second. */
   const idemKey = useIdempotencyKey();
-  /* The whole save — create, the scanned pages, the post — is one press: the
-     button stays off between the steps too, where `create.isPending` alone had
-     already turned back to false while the pages were still uploading. */
   const [saving, setSaving] = useState(false);
-  /* The note this form already created. When the post after it fails, the form stays open on a saved draft; the
-     next Save must update that draft (and post it), never send the create again - a replay attaches the scanned
-     pages twice, and a create with any field changed is refused as a reused key. */
   const [createdId, setCreatedId] = useState<string | null>(null);
   const locked = mode === 'edit' || createdId != null;
   const savedId = mode === 'edit' ? id : createdId ?? undefined;
@@ -603,21 +571,16 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
   const failed = create.isError ? create.error : update.isError ? update.error : post.isError ? post.error : null;
   const setLine = (rid: number, patch: Partial<FormLine>) => setV((p) => ({ ...p, lines: p.lines.map((l) => (l.rid === rid ? { ...l, ...patch } : l)) }));
   const fromReturn = v.kind === 'CN' && !!v.deliveryReturnId;
-  /* A returned line's units: the amount follows the invoiced unit price when it is known. */
   const setReturnQty = (l: FormLine, qty: number) => {
     if (!l.ret) return;
     setLine(l.rid, { ret: { ...l.ret, qty }, ...(l.ret.unitSen != null ? { amountRm: (Math.round(l.ret.unitSen * qty) / 100).toFixed(2) } : {}) });
   };
-  /* An other debtor's credit has no default account — each money line names its own (the server refuses one without). */
   const accountsNamed = v.kind !== 'OCN' || v.lines.every((l) => l.amountRm.trim() === '' || l.accountCode !== '');
   const partyId = v.kind === 'OCN' ? v.debtorId ?? '' : v.supplierId;
   const canSave = badAmount === null && totalSen > 0 && v.noteDate !== '' && accountsNamed && (knocksOff(v.kind)
     ? partyId !== '' && pickSen(v.knockOff ?? {}) <= totalSen
     : (v.soDocNo.trim() !== '' || v.partyName.trim() !== '') && pickSen(v.knockOff ?? {}) <= totalSen);
   const withEvents = knocksOff(v.kind);
-  /* What a blank account means (f1): a customer's note lands on the SALES_RETURNS
-     role (510-0000 Return inwards); a supplier's on its kind's default; an other
-     debtor's has none. */
   const blankAccount = (() => {
     if (v.kind === 'OCN') return '— pick the account —';
     if (v.kind === 'SCN') return '— default for this kind —';
@@ -626,7 +589,6 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
     return `— Default · ${code}${name ? ` ${name}` : ''} —`;
   })();
 
-  /* Save as draft, or Save & post (the redesign): the same save, then the post. */
   const save = async (postAfter = false) => {
     if (saving) return;
     setSaving(true);
@@ -639,7 +601,6 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
         noteId = r.note.id;
         number = r.note.note_number;
         setCreatedId(noteId);
-        /* The scanned pages go with the note they became. */
         for (const f of scanFiles ?? []) {
           try {
             await uploadFile.mutateAsync({ noteId, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
@@ -650,7 +611,7 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
       }
       if (postAfter && noteId) await post.mutateAsync(noteId);
       onSaved(noteId, { number, posted: postAfter });
-    } catch { /* the hook holds the error; it is shown below */ } finally { setSaving(false); }
+    } catch { } finally { setSaving(false); }
   };
 
   const body = (
@@ -664,10 +625,8 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
           </div>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-3)' }}>
-          {/* In place of a page, the page's own switch picks the kind. */}
           {!inline && (
             <Field label="Kind">
-              {/* Switching kind drops the ticks — they were another party's documents. */}
               <select value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value as NoteKind, knockOff: {} })} disabled={locked} aria-label="Kind" style={input}>
                 {(kinds.includes(v.kind) ? kinds : [v.kind, ...kinds]).map((k) => <option key={k} value={k}>{KIND_OPTION[k]}</option>)}
               </select>
@@ -731,7 +690,6 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
             ))}
             <tr>
               <td colSpan={(withEvents ? 3 : 2) + (fromReturn ? 1 : 0)} style={td}>
-                {/* A note from a return credits the return's lines only. */}
                 {!fromReturn && <AddLineButton variant="ghost" onClick={() => setV({ ...v, lines: [...v.lines, emptyLine(Math.max(0, ...v.lines.map((x) => x.rid)) + 1)] })} />}
               </td>
               <td style={{ ...td, ...num, fontWeight: 700 }}>{fmtSen(totalSen)}</td>
@@ -745,7 +703,6 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
           <FormKnockOff who={whoOf(v.kind)} partyId={partyId} noteId={savedId} totalSen={totalSen}
             pick={v.knockOff ?? {}} onChange={(knockOff) => setV((p) => ({ ...p, knockOff }))} />
         )}
-        {/* A customer's credit knocks off the customer's sales invoices — the sales order's customer, else the name. */}
         {v.kind === 'CN' && (
           <FormKnockOff who="customer" partyId={v.soDocNo.trim() || v.partyName.trim()} by={v.soDocNo.trim() ? 'so' : 'name'}
             partyName={v.soDocNo.trim() && mode !== 'edit' ? null : v.partyName} noteId={savedId} totalSen={totalSen}
@@ -772,9 +729,6 @@ export const NoteForm = ({ mode, id, kinds, initial, scan, scanFiles, inline = f
   );
 };
 
-/* What the scan read, said before the form: the issuer and the paper, what to
-   check (the server's sentences), and the invoice the paper names — ticked in
-   the knock-off table below, still Finance's call. */
 const ScanPanel = ({ scan }: { scan: ScnScan }) => (
   <div style={{ border: '1px solid var(--border-weak, #e3e1da)', borderRadius: 8, padding: 'var(--space-3)', display: 'grid', gap: 8, fontSize: 'var(--fs-13)' }} aria-label="What the credit note reads">
     <div>
@@ -792,8 +746,6 @@ const ScanPanel = ({ scan }: { scan: ScnScan }) => (
   </div>
 );
 
-/* The note's paper — the AP invoice's files card bound to this document: a
-   POSTED note keeps what it has, a CANCELLED one takes no more. */
 const NoteFilesCard = ({ noteId, locked, closed }: { noteId: string; locked: boolean; closed: boolean }) => {
   const filesQ = useCreditNoteFiles(noteId);
   const upload = useUploadCreditNoteFile();

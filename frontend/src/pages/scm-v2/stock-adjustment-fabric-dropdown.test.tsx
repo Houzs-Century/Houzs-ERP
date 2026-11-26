@@ -70,7 +70,6 @@ describe('New Stock Adjustment — fabric is picked from the fabric master', () 
     expect(fabric.tagName).toBe('SELECT');
     const labels = Array.from((fabric as HTMLSelectElement).options).map((o) => o.textContent);
     expect(labels).toContain('PC151-01 (DC-151-01) — Grey');
-    // A retired fabric is not offered for new stock.
     expect(labels.some((l) => l.startsWith('OLD-9'))).toBe(false);
 
     fireEvent.change(fabric, { target: { value: 'PC151-01' } });

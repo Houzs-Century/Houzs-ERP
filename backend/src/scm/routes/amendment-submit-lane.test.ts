@@ -13,7 +13,6 @@
  * so this pins the WIRING: the submit route asks the shared resolver, in the
  * order's company, and refuses when it cannot answer. */
 import { describe, expect, it } from 'vitest';
-/* `?raw`, not node:fs — backend/tsconfig.json types Workers only. */
 import { soRouterSource } from '../../../tests/lib/so-router-source';
 import rawPreview from './so-amendment-lane-preview.ts?raw';
 const rawRoute = soRouterSource();

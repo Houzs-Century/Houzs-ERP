@@ -71,9 +71,6 @@ export async function validateItemCodes(
     : q.in('code', unique);
   if (companyId != null) q = q.eq('company_id', companyId);
   const { data, error } = await q;
-  /* A failed read must not read as "every code is unknown": log it so a future
-     break is loud, not a silent 409 that sends the requester chasing a code that
-     is really in the catalogue. */
   if (error) {
     console.error(`[validate-item-codes] mfg_products read failed (company=${companyId ?? 'unscoped'}):`, (error as { message?: unknown }).message ?? error);
   }
@@ -81,9 +78,6 @@ export async function validateItemCodes(
   const rows = ((data ?? []) as Array<{ code: string; status?: string | null; model?: ModelJoin | ModelJoin[] | null }>);
   const found = new Set(rows.map((r) => r.code));
   const unknown = unique.filter((c) => !found.has(c));
-  /* A code counts ACTIVE if ANY of its rows is (code is only unique per
-     company; unscoped reads can see both companies' rows). A SKU whose Model was
-     deactivated is inactive too — the picker hides it (BUG-50). */
   const rowActive = (r: (typeof rows)[number]) => {
     const m = Array.isArray(r.model) ? r.model[0] : r.model;
     return (r.status ?? 'ACTIVE') === 'ACTIVE' && m?.active !== false;

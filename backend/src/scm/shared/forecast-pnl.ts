@@ -93,12 +93,9 @@ export const supplierCellLabel = (month: string, code: string, supplierId: strin
 
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const isPlainObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
-/** The cell a month keyed for an account, or nothing — a Record lookup that says so in its type. */
 const cellOf = (lines: ForecastLines, code: string): ForecastCell | undefined => (Object.prototype.hasOwnProperty.call(lines, code) ? lines[code] : undefined);
 
 type CellCheck = { ok: true; cell: ForecastCell } | { ok: false; field: 'amount' | 'percent' | null; reason: string };
-/** One cell as sent: exactly one of bp / amtSen, whole numbers, a percent zero
-    or more, a sales line an amount. `field` says which box a refusal is about. */
 function checkCell(raw: unknown, sales: boolean): CellCheck {
   if (!isPlainObject(raw)) return { ok: false, field: null, reason: 'a cell is { bp } or { amtSen }' };
   const hasBp = raw.bp !== undefined && raw.bp !== null;
@@ -189,30 +186,22 @@ export function forecastSalesSen(lines: ForecastLines, accounts: ForecastAccount
   return sum;
 }
 
-/** Half-up rounding that keeps the sign. */
 const round = (v: number): number => Math.sign(v) * Math.round(Math.abs(v));
 
 /** One supplier's figure under a purchase line, worked out as the line's own cell would be. */
 export type SupplierFigure = {
   supplierId: string;
-  /** Keyed, or the line's basis × bp / 10000. */
   amountSen: number;
-  /** Keyed, or amount / the line's basis; null when the basis is zero. */
   bp: number | null;
   keyed: 'amount' | 'percent';
 };
 
 export type ForecastLine = {
   code: string; name: string; section: string; block: ForecastBlockKey;
-  /** The line's forecast amount in sen — keyed, basis × bp / 10000, or the sum of its suppliers. */
   amountSen: number;
-  /** The line's share of its basis in basis points — keyed, or amount / basis; null when the basis is zero. */
   bp: number | null;
-  /** What the share is OF: the line's own group's sales when the account is bound to one, else the month's whole sales. */
   basisSen: number;
-  /** 'suppliers' — a purchase line split by supplier this month: its amount is theirs, its own cell is superseded. */
   keyed: 'amount' | 'percent' | 'suppliers';
-  /** The suppliers that make the line, Other last; empty unless keyed by suppliers. */
   bySupplier: SupplierFigure[];
 };
 export type ForecastTotals = {
@@ -235,7 +224,6 @@ export function basisSalesSen(lines: ForecastLines, account: ForecastAccount, sa
   return sum;
 }
 
-/** A cell worked out against its basis: an amount as keyed with its share, or a share with its amount. */
 const workOut = (c: ForecastCell, basisSen: number): { amountSen: number; bp: number | null; keyed: 'amount' | 'percent' } => (isAmountCell(c)
   ? { amountSen: c.amtSen, bp: basisSen !== 0 ? round((c.amtSen / basisSen) * 10000) : null, keyed: 'amount' }
   : { amountSen: round((basisSen * c.bp) / 10000), bp: c.bp, keyed: 'percent' });

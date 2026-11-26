@@ -1,28 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseReturnNew — full-page Create Purchase Return at
-// /purchase-returns/new (PR — Phase 4 of Purchasing rebuild,
-// Commander 2026-05-26).
-//
-// Two entry modes via URL params:
-//   ?grnId={uuid}  — pre-fill lines from a posted GRN (defect / reject /
-//                    over-supply). Each line carries grn_item_id so the
-//                    server can validate qty <= qty_accepted - already
-//                    returned (future check).
-//   ?poId={uuid}   — pre-fill supplier + lines from the PO header. No
-//                    grn_item_id linkage; commander enters qty manually.
-//   (neither)      — free-form. Pick supplier from a dropdown, type lines.
-//
-// Commander 2026-05-29 — the ITEMS section now mirrors New PO / New GRN /
-// New Purchase Invoice: each line is a bordered CARD (LINE N + category pill +
-// refund value + remove), an inline Item Code picker (manual lines) / read-only
-// code (GRN/PO-sourced), description, the per-category variant editor
-// (bedframe/sofa), then a fields row. A dashed "Add another item" button +
-// a right-aligned Totals card complete the layout.
-//
-// Save flow: POST /purchase-returns → PATCH /:id/post in sequence.
-// /post writes inventory OUT (stock leaves the warehouse) and stamps
-// posted_at. Subsequent /complete adds the supplier's credit note ref.
-// ----------------------------------------------------------------------------
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
@@ -65,9 +40,6 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   return fmtMoneySen(v, currency);
 };
 
-/* Commander 2026-05-29 — Purchase Return manual lines whose product is a
-   bedframe/sofa get the SAME per-category variant editor as New PO / New GRN.
-   Small local copy of GrnNew's VariantSelect (not exported there). */
 const VariantSelect = ({
   label, options, value, onChange,
 }: {
@@ -98,8 +70,6 @@ type DraftLine = {
   materialKind:   string;
   itemCode:   string;
   materialName:   string;
-  /* Commander 2026-05-29 — carry the source GRN/PO line's category + variant
-     selections so the return shows WHAT is going back (PO/GRN parity). */
   itemGroup:      string | null;
   variants:       Record<string, unknown> | null;
   qtyReturned:    number;
@@ -126,12 +96,6 @@ export const PurchaseReturnNew = () => {
   const navigate = useNavigate();
   const notify   = useNotify();
   const [params] = useSearchParams();
-  /* The GRN screens' "Transfer to Purchase Return" sent ?fromGrn=<id> here while this page has
-     always read `grnId`, so the button opened a blank free-form return with no
-     note attached and said nothing (fixed 2026-08-16 by routing both callers
-     through lib/convertScope). The scope read now goes through the same module,
-     and a parameter this page does not understand is SHOWN rather than dropped
-     — a silent drop is what let that mismatch survive. */
   const scope    = readConvertScope('grnToPr', params, ['poId', 'piId']);
   const grnId    = params.get('grnId');
   const poId     = params.get('poId');
@@ -140,24 +104,16 @@ export const PurchaseReturnNew = () => {
 
   const grnQ       = useGrnDetail(grnId);
   const poQ        = usePurchaseOrderDetail(poId);
-  // PO mode draws from the PO's receipts — see the prefill effect below.
   const returnableQ = useReturnableGrnLines(poId);
   const returnablePiQ = useReturnablePiLines(piId);
   const poolQ = poId ? returnableQ : returnablePiQ;
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
 
-  // Free-form mode = no GRN, PO or PI source. Then the operator picks a
-  // supplier + adds lines by hand (with the inline Item Code picker).
   const isManual = !grnId && !poId && !piId;
 
-  // Commander 2026-05-29 — maintenance config drives the per-category variant
-  // editor on MANUAL bedframe/sofa lines (same dropdown pools as New PO / GRN).
   const maintQ = useMaintenanceConfig('master');
   const maint  = maintQ.data?.data ?? null;
 
-  // Special Orders pool from special_addons (Backend↔POS parity, Loo
-  // 2026-06-08), filtered by category — replaces legacy maint.specials /
-  // maint.sofaSpecials. `code` shares the old value namespace.
   const specialAddonsQ = useSpecialAddons();
   const specialsPools = useMemo(() => {
     const rows = (specialAddonsQ.data ?? [])
@@ -169,11 +125,6 @@ export const PurchaseReturnNew = () => {
     return { bedframe: pick('BEDFRAME'), sofa: pick('SOFA') };
   }, [specialAddonsQ.data]);
 
-  /* One key for the one return this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the return detail on success, so the MOUNT is
-     exactly one return. Load-bearing: the POST creates the return already POSTED
-     and writes the stock OUT inline (see useCreatePurchaseReturn), so a re-press
-     after a stalled submit moves stock twice unless it replays. */
   const idemKey = useIdempotencyKey();
   const create = useCreatePurchaseReturn();
   const post   = usePostPurchaseReturn();
@@ -183,10 +134,6 @@ export const PurchaseReturnNew = () => {
   const [returnDate, setReturnDate]   = useState<string>(() => todayMyt());
   const [reason, setReason]           = useState<string>('');
   const [notes, setNotes]             = useState<string>('');
-  /* Where the goods sit while the supplier repairs them. Only a repair return
-     has one; `warehouses.type === 'service'` is what marks those locations
-     (KL / PG "RETURNED TO SUPPLIER FOR SERVICE"), so the destination is read
-     from the master data rather than matched on its name. */
   const [repairWarehouseId, setRepairWarehouseId] = useState<string>('');
   // HC-0221: No keeps the PO received instead of re-opening it for a replacement.
   const [supplierReplaces, setSupplierReplaces] = useState<boolean>(true);
@@ -196,23 +143,17 @@ export const PurchaseReturnNew = () => {
     [warehousesQ.data],
   );
   const isRepair = reason === REPAIR_REASON_CODE;
-  /* One service location is the common case — pick it so the operator does not
-     have to. More than one (KL and PG) leaves the choice to them. */
   useEffect(() => {
     if (!isRepair) { setRepairWarehouseId(''); return; }
     if (!repairWarehouseId && serviceWarehouses.length === 1) setRepairWarehouseId(serviceWarehouses[0]!.id);
   }, [isRepair, serviceWarehouses, repairWarehouseId]);
   const [lines, setLines]             = useState<DraftLine[]>([]);
 
-  // Free-form mode — seed ONE blank starter line so a LINE 1 card shows
-  // immediately (matches New GRN / New PO). Never clobber sourced lines —
-  // only seed when empty.
   useEffect(() => {
     if (!isManual) return;
     setLines((prev) => prev.length > 0 ? prev : [newLine()]);
   }, [isManual]);
 
-  // Pre-fill lines + supplier from GRN.
   useEffect(() => {
     if (!grnQ.data) return;
     const grn = grnQ.data.grn as { supplier_id?: string } | null;
@@ -227,7 +168,7 @@ export const PurchaseReturnNew = () => {
         materialName:   it.material_name,
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
-        qtyReturned:    it.qty_rejected ?? 0,        // pre-fill with rejected qty if any
+        qtyReturned:    it.qty_rejected ?? 0,
         unitPriceSen: it.unit_price_sen ?? 0,
         reason:         it.rejection_reason ?? '',
         notes:          '',
@@ -235,13 +176,6 @@ export const PurchaseReturnNew = () => {
     if (items.length > 0) setLines(items);
   }, [grnQ.data]);
 
-  /* Pre-fill from PO — via its RECEIPTS, not its own lines (2026-08-21, audit
-     B6). The old prefill mapped PO lines with grnItemId:null, which made every
-     line "manual": uncapped, consuming no returned_qty, and deducting the
-     company DEFAULT warehouse instead of the receiving one. A return of
-     received goods draws from receipts, so the pool is now the PO's POSTED GRN
-     lines with remaining > 0 — same linkage the GRN prefill above produces.
-     Supplier comes from the receipts (falling back to the PO header). */
   useEffect(() => {
     if ((!poId && !piId) || !poolQ.data) return;
     const po = poQ.data?.purchaseOrder;
@@ -254,7 +188,7 @@ export const PurchaseReturnNew = () => {
       materialName:   l.materialName ?? '',
       itemGroup:      l.itemGroup,
       variants:       l.variants,
-      qtyReturned:    0,                              // commander enters (≤ remaining, server-capped)
+      qtyReturned:    0,
       unitPriceSen: l.unitPriceSen,
       reason:         l.rejectionReason ?? '',
       notes:          '',
@@ -272,22 +206,13 @@ export const PurchaseReturnNew = () => {
     [lines],
   );
 
-  // ── Manual product search (gated by min query length, mirrors GRN/PO form).
-  // Each MANUAL line carries its own inline Item Code picker; the search query
-  // is shared (only one input is focused at a time, so a single gated query
-  // feeds whichever line's datalist is active).
   const [productQuery, setProductQuery] = useState<string>('');
-  /* Perf — debounce the datalist search so a fast typist fires one
-     /mfg-products request per pause, not per keystroke. Native <datalist>
-     renders <option>s directly, so no render cap is needed — only the refetch. */
   const debouncedProductQuery = useDebouncedValue(productQuery, 250);
   const productsQ = useMfgProducts({
     search: debouncedProductQuery,
     enabled: isManual && debouncedProductQuery.trim().length >= 2,
   });
 
-  // Pick / type an internal SKU on a manual line → fill code + name + itemGroup
-  // (category drives the variant editor below, exactly like the GRN/PO picker).
   const pickItemForLine = (rid: string, code: string) => {
     const sku = (productsQ.data ?? []).find((p) => p.code === code);
     setLine(rid, {
@@ -297,8 +222,6 @@ export const PurchaseReturnNew = () => {
     });
   };
 
-  // Narrow the loose `any` from flow-queries.ts to the fields touched in
-  // this page. Avoids `as any` on every property access.
   type GrnDetail = {
     grn_number?: string;
     purchase_order_id?: string | null;
@@ -349,19 +272,11 @@ export const PurchaseReturnNew = () => {
           lineRefundSen: l.qtyReturned * l.unitPriceSen,
           reason:         l.reason || undefined,
           notes:          l.notes || undefined,
-          // Commander 2026-05-29 — send the line's category + variant selections
-          // so the return reflects WHAT is going back. (purchase_return_items
-          // has item_group/variants columns the inventory-OUT writer reads, but
-          // the POST handler does not currently persist these keys — see report.)
           itemGroup:      l.itemGroup,
           variants:       l.variants,
         })),
       });
       await post.mutateAsync(createRes.id);
-      /* "Stock OUT recorded." was printed unconditionally, including when the
-         response's own movementErrors said the OUT was refused. The create hook
-         raises that failure now, so say nothing about stock here rather than
-         contradict it with a second dialog. */
       if (!createRes.movementErrors?.length) {
         await notify({ title: `Purchase Return ${createRes.returnNumber} created + posted`, body: 'Stock OUT recorded.' });
       }
@@ -377,10 +292,6 @@ export const PurchaseReturnNew = () => {
     returnablePiQ.data ? `from Purchase Invoice ${returnablePiQ.data.invoiceNumber}` :
     '(free-form)';
 
-  /* PO mode with nothing received: say the SCOPED thing is empty (the
-     convert-scope rule) — "nothing returnable on this PO" and "no receipts
-     exist" are different facts, and the operator acts on the wrong one by
-     keying a free-form return for goods that were never received. */
   const poPoolEmpty = Boolean(poId) && returnableQ.isSuccess && (returnableQ.data?.lines ?? []).length === 0;
   const piPool = piId && returnablePiQ.isSuccess ? returnablePiQ.data : null;
   const piPoolEmpty = piPool !== null && piPool.lines.length === 0;
@@ -407,8 +318,6 @@ export const PurchaseReturnNew = () => {
         title={`New Purchase Return ${sourceTitle}`}
         actions={
           <div className={styles.actions}>
-            {/* Pull lines from a Goods Receipt — routes to the GRN list where the
-                user right-clicks "Transfer to Purchase Return" (no dedicated picker page). */}
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/grns')}>
               <ArrowRightLeft {...ICON} /> From Goods Receipt
             </Button>
@@ -454,11 +363,6 @@ export const PurchaseReturnNew = () => {
               <input type="text" readOnly value={po?.po_number ?? (grn?.purchase_order?.po_number ?? '—')} className={styles.fieldInput} style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }} />
             </label>
 
-            {/* The reason is REQUIRED and picked from the shared catalogue (owner
-                2026-09-28), so returns can be counted by reason later. Picking
-                "Send for repair" is also what makes this a REPAIR return: the
-                goods are expected back, no credit note is chased, and the stock
-                moves to the repair warehouse instead of leaving the books. */}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Reason *</span>
               <select value={reason} onChange={(e) => setReason(e.target.value)} className={styles.fieldInput}>
@@ -500,8 +404,6 @@ export const PurchaseReturnNew = () => {
         </div>
       </section>
 
-      {/* Items card — Commander 2026-05-29: card-per-line, identical to New PO /
-          New GRN / New Purchase Invoice. */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items to Return</h2>
@@ -522,8 +424,6 @@ export const PurchaseReturnNew = () => {
             lines.map((l, idx) => {
               const lineRefundSen = l.qtyReturned * l.unitPriceSen;
               const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
-              // Manual lines (no grn linkage AND free-form mode) get the inline
-              // picker + editable variant block. Sourced lines stay read-only.
               const isManualLine = isManual && l.grnItemId === null;
               const showVariantEditor =
                 isManualLine &&
@@ -548,7 +448,6 @@ export const PurchaseReturnNew = () => {
               const setVariant = (key: string, value: string) =>
                 setLine(l.rid, { variants: (() => {
                   const variants: Record<string, unknown> = { ...(l.variants ?? {}), [key]: value };
-                  // Auto-compute bedframe Total Height = Divan + Leg + Gap.
                   if (isTotalHeightCategory(l.itemGroup) && isTotalHeightPart(key)) {
                     variants.totalHeight = computeTotalHeight(l.itemGroup, variants);
                   }
@@ -568,7 +467,6 @@ export const PurchaseReturnNew = () => {
                     gap: 'var(--space-3)',
                   }}
                 >
-                  {/* Card header — LINE N · category pill · refund value · remove */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                       <span style={{
@@ -602,7 +500,6 @@ export const PurchaseReturnNew = () => {
                     </div>
                   </div>
 
-                  {/* Identity row — Item Code (Internal) + Description */}
                   <div className={styles.formGrid2}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Item Code (Internal)</span>
@@ -615,10 +512,8 @@ export const PurchaseReturnNew = () => {
                             onChange={(e) => {
                               const code = e.target.value;
                               setProductQuery(code);
-                              // Exact match on the searched SKU list → fill the line.
                               const match = (productsQ.data ?? []).find((p) => p.code === code);
                               if (match) { pickItemForLine(l.rid, code); return; }
-                              // Free typing — keep what's typed so the field stays editable.
                               setLine(l.rid, { itemCode: code });
                             }}
                             placeholder="Type ≥2 chars to search SKUs by code or name…"
@@ -655,15 +550,10 @@ export const PurchaseReturnNew = () => {
                     </label>
                   </div>
 
-                  {/* Sourced lines: read-only variant summary (variants came from
-                      the GRN/PO). Manual lines get the editable variant block. */}
                   {!isManualLine && variantSummary && (
                     <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{variantSummary}</div>
                   )}
 
-                  {/* Per-category VARIANT EDITOR for MANUAL bedframe/sofa lines —
-                      mirrors New PO / New GRN: divan/leg/total height, gap,
-                      special, seat size + fabric. Same variant keys the PO/SO store. */}
                   {specialSurface.block && (
                     <div style={{ marginTop: 'var(--space-2)' }}>
                       <SpecialOrders
@@ -698,9 +588,6 @@ export const PurchaseReturnNew = () => {
                           <VariantSelect label="Leg Height" options={sortByNumeric(activeOptions(maint!.legHeights, String(l.variants?.legHeight ?? '')))}
                             value={String(l.variants?.legHeight ?? '')}
                             onChange={(v) => setVariant('legHeight', v)} />
-                          {/* Total Heights removed — auto-computed from Divan +
-                              Leg + Gap (see setVariant). Special Orders moved to
-                              the shared block below. */}
                         </div>
                       ) : (
                         <div className={styles.formGrid4}>
@@ -733,7 +620,6 @@ export const PurchaseReturnNew = () => {
                     </div>
                   )}
 
-                  {/* Fields row — Qty Returned · Unit Price · Reason · Refund. */}
                   <div className={styles.formGrid4}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Qty Returned</span>
@@ -770,15 +656,12 @@ export const PurchaseReturnNew = () => {
             })
           )}
 
-          {/* "Add another item" — free-form mode (mirrors New PO / New GRN). */}
           {isManual && (
             <AddLineButton variant="block" onClick={addLine} />
           )}
         </div>
       </section>
 
-      {/* Totals card aligned right — identical to New PO / New GRN / New PI.
-          lg:pr-32 clears the fixed FAB cluster. */}
       <div className="lg:pr-32" style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <section className={styles.card} style={{ maxWidth: 360, width: '100%' }}>
           <div className={styles.cardBody}>

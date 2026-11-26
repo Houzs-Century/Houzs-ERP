@@ -1,8 +1,3 @@
-/* HR · Punch Sites. Where a phone punch counts as on site, and the two punch-rule
- * switches (selfie / on-site) that turn a soft check into a hard block. The list
- * is the SYSTEM DataTable (search / per-column sort + funnel / Columns / freeze /
- * export) via HrTablePage, like every other HR page; the punch-rule card rides
- * above it, add/edit is a modal. (parseCoords kept for the modal.) */
 import { useEffect, useState } from "react";
 import { MapPin } from "lucide-react";
 import { api } from "../../api/client";

@@ -1,7 +1,3 @@
-/* The Last Mile order-drawer remarks thread route (/delivery-remarks, phase 3):
- * a thread per sales order, the /flags rollup for the board pill, and adding a
- * note with a snapshotted author. Keyed by so_doc_no (globally unique), so no
- * company column — same story as delivery_planning_row_marks. */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { fakeSb } from '../lib/fake-postgrest';

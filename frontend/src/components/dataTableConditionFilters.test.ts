@@ -40,7 +40,6 @@ describe("condition tokens", () => {
 });
 
 describe("dateMatchesPreset (MYT)", () => {
-  // 2026-09-25 01:00 MYT = 2026-09-24T17:00Z: still the 24th in UTC.
   const now = Date.parse("2026-09-24T17:00:00Z");
   it("uses the Malaysian calendar day", () => {
     expect(dateMatchesPreset("2026-09-25", "today", now)).toBe(true);

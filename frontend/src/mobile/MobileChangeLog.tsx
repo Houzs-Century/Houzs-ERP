@@ -57,8 +57,6 @@ function DocumentCard({ doc }: { doc: ChangeLogDocument }) {
           </span>
         </div>
         <div style={{ marginTop: 3, fontSize: 12 }}>
-          {/* A document only the system touched says so, rather than showing an
-              empty name that reads as a change nobody can account for. */}
           {doc.people.length > 0 ? doc.people.join(", ") : "The system only"}
         </div>
         <div style={{ marginTop: 2, fontSize: 11, color: "var(--mut)" }}>
@@ -127,7 +125,6 @@ export function MobileChangeLog({ onBack }: { onBack: () => void }) {
           </div>
         </div>
 
-        {/* The same three strips the desktop page shows, in the same order. */}
         <div className="chips" style={{ marginTop: 11 }}>
           {CL_WINDOWS.map((w) => (
             <button
@@ -174,7 +171,6 @@ export function MobileChangeLog({ onBack }: { onBack: () => void }) {
       </header>
 
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 40 }}>
-        {/* THE ANSWER FIRST — the same sentence the desktop page shows. */}
         <div
           style={{
             border: "1px solid var(--line)", borderRadius: 10, padding: 11,
@@ -184,7 +180,6 @@ export function MobileChangeLog({ onBack }: { onBack: () => void }) {
           {d ? clVerdict(d) : "Reading the change log..."}
         </div>
 
-        {/* A refusal or a failure reaches the reader here too. */}
         {q.error && (
           <div
             style={{

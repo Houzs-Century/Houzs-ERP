@@ -25,33 +25,24 @@ export type FlatLine = {
   id: string;
   label: string;
   kind: 'block' | 'category' | 'row' | 'unassigned' | 'total' | 'net' | 'memo';
-  /** A memo line whose figures open entries of their own (the Cash Flow's AutoCount line). */
   drill?: boolean;
   depth: number;
   amountSen: number;
   pct: number | null;
-  /** An account row's code — what its lines are read by. */
   code?: string;
-  /** A grey line after the name on screen (`· 3 lines`, `· GP % = …`); not exported. */
   caption?: string;
-  /** A group's own name for its Total line (the layout's totalLabel); else "Total <label>". */
   totalLabel?: string;
-  /** The Cash Flow: the figure split into Settlement and Deposit (absent = not split). */
   sd?: SettleDeposit;
 };
 
 export type MonthlyCell = { amountSen: number; pct: number | null; sd?: SettleDeposit };
 export type MonthlyLine = Omit<FlatLine, 'amountSen' | 'pct' | 'sd'> & {
   cells: Partial<Record<string, MonthlyCell>>;
-  /** Cells that run across more than one column, by the column they start in (the Cash
-      Flow's Settlement / Deposit view: a line not split prints one figure across a
-      month's two columns). The columns a cell covers print nothing of their own. */
   spans?: Partial<Record<string, number>>;
 };
 
 export type MonthColumn = { key: string; label: string; from: string; to: string; cumulative: boolean };
 
-/* ── Months ──────────────────────────────────────────────────────────────── */
 
 const pad = (n: number): string => String(n).padStart(2, '0');
 
@@ -93,7 +84,6 @@ export const monthColumns = (latest: string, count: number, withCumulative: bool
   return cols;
 };
 
-/* ── Lines ───────────────────────────────────────────────────────────────── */
 
 /** A laid tree as flat lines, one level below `depth` — the tree's own ids. */
 export const treeLines = (nodes: LaidNode[], depth = 1): FlatLine[] =>
@@ -141,7 +131,6 @@ export const monthlyLinesAtLevel = (lines: MonthlyLine[], level: number | 'all')
 
 export const monthlyDepth = (lines: MonthlyLine[]): number => lines.reduce((d, l) => Math.max(d, l.depth), 0);
 
-/* ── Each report as lines ─────────────────────────────────────────────────── */
 
 type PnlLike = {
   layout: { baseSen: number | null; tradingIncome: LaidNode[]; costOfSales: LaidNode[]; otherIncome: LaidNode[]; expenses: LaidNode[]; taxation: LaidNode[] };
@@ -236,7 +225,6 @@ type RpLike = {
 export const rpLines = (r: RpLike): FlatLine[] => {
   const t = r.totals;
   const out: FlatLine[] = [];
-  /* A side's total and a running subtotal carry the Settlement / Deposit pair where the server split it. */
   const withSd = (l: FlatLine, n: LaidNode): FlatLine => (n.sd ? { ...l, sd: n.sd } : l);
   for (const n of r.layout.tree) {
     if (n.kind === 'subtotal') { out.push(withSd(fixedLine(n.id, n.label, 'net', n.amountSen, null), n)); continue; }
@@ -255,7 +243,6 @@ export const rpLines = (r: RpLike): FlatLine[] => {
   return withAutoCountLine(r, out, (depth, sen): FlatLine => ({ id: AUTOCOUNT_LINE_ID, label: AUTOCOUNT_LINE_LABEL, kind: 'memo', depth, amountSen: sen, pct: null, drill: true }));
 };
 
-/* ── The CSV ─────────────────────────────────────────────────────────────── */
 
 const csvCell = (raw: string): string => {
   const s = guardFormula(raw);

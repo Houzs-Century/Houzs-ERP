@@ -1,9 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-/* B31 (sister: Hookka #675). The outbox preview rendered the sent email in an
-   iframe with sandbox="", which forbids popups, and no new-tab base target, so
-   every link in a sent customer email did nothing when clicked. */
 vi.mock("./mail-actions", async (orig) => {
   const real = await orig<typeof import("./mail-actions")>();
   return {

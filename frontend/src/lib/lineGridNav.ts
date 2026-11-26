@@ -42,13 +42,11 @@ const usable = (el: Element): el is Field =>
 const fieldsIn = (root: Element): Field[] =>
   Array.from(root.querySelectorAll(FIELD_SELECTOR)).filter(usable);
 
-/* ── Where the focused field sits ─────────────────────────────────────── */
 
 type Spot =
   | { kind: 'table'; row: HTMLTableRowElement; col: number; span: number; within: number }
   | { kind: 'card'; row: HTMLElement; key: string; index: number };
 
-/** A cell's visual column: the col-spans of the cells before it, summed. */
 const visualCol = (cell: HTMLTableCellElement): number => {
   let col = 0;
   for (let c = cell.previousElementSibling; c; c = c.previousElementSibling) {
@@ -80,7 +78,6 @@ export const cardColumnKey = (el: Field, row: Element): string => {
   const label = labelOf(el);
   if (label) return label;
   const aria = el.getAttribute('aria-label');
-  // "Line 3 debit" and "Line 4 debit" are one column: drop the line number.
   if (aria) return `aria:${aria.replace(/\d+/g, '#')}`;
   return `idx:${fieldsIn(row).indexOf(el)}`;
 };
@@ -98,21 +95,18 @@ const spotOf = (el: Field): Spot | null => {
   return { kind: 'table', row, col: visualCol(cell), span: cell.colSpan || 1, within: Math.max(0, inCell.indexOf(el)) };
 };
 
-/* ── Finding the destination ──────────────────────────────────────────── */
 
 const verticalTarget = (spot: Spot, dir: 1 | -1): Field | null => {
   if (spot.kind === 'table') {
     const rows = Array.from((spot.row.parentElement as HTMLTableSectionElement).rows);
     for (let i = rows.indexOf(spot.row) + dir; i >= 0 && i < rows.length; i += dir) {
       const cell = cellAtCol(rows[i]!, spot.col);
-      // A full-width detail row (one cell spanning the table) is not this column.
       if (!cell || (cell.colSpan || 1) !== spot.span) continue;
       const fields = fieldsIn(cell);
       if (fields.length) return fields[Math.min(spot.within, fields.length - 1)]!;
     }
     return null;
   }
-  // Card lines: every top-level line root on the page, in reading order.
   const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-grid-row]'))
     .filter((r) => !r.parentElement?.closest('[data-grid-row]'));
   for (let i = rows.indexOf(spot.row) + dir; i >= 0 && i < rows.length; i += dir) {
@@ -130,17 +124,15 @@ const horizontalTarget = (el: Field, spot: Spot, dir: 1 | -1): Field | null => {
   return at < 0 ? null : fields[at + dir] ?? null;
 };
 
-/* ── Key policy ───────────────────────────────────────────────────────── */
 
 const TEXTLIKE = new Set(['text', 'search', 'tel', 'url', 'email', 'password', '']);
 
-/** The caret can still move that way inside the field, so the key is the field's. */
 const caretCanMove = (el: Field, dir: 1 | -1): boolean => {
   if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return false;
   if (el instanceof HTMLInputElement && !TEXTLIKE.has(el.type)) return false;
   const { selectionStart: start, selectionEnd: end } = el;
   if (start == null || end == null) return false;
-  if (start !== end) return true; // a selection: let the key collapse it
+  if (start !== end) return true;
   return dir < 0 ? start > 0 : end < el.value.length;
 };
 
@@ -152,9 +144,9 @@ const keepsVerticalKeys = (el: Field): boolean =>
 const focusField = (el: Field) => {
   el.focus();
   if (el instanceof HTMLInputElement && TEXTLIKE.has(el.type)) {
-    try { el.select(); } catch { /* not selectable — focus is enough */ }
+    try { el.select(); } catch { }
   } else if (el instanceof HTMLInputElement && el.type === 'number') {
-    try { el.select(); } catch { /* number inputs may refuse select() */ }
+    try { el.select(); } catch { }
   }
 };
 
@@ -182,8 +174,6 @@ export const handleLineGridKey = (e: KeyboardEvent): boolean => {
     dest = horizontalTarget(el, spot, dir);
   }
 
-  // In a grid a select / number input never changes value on an arrow key,
-  // even at the edge with nowhere to go — that silent change was the trap.
   const ownsArrows = el instanceof HTMLSelectElement || (el instanceof HTMLInputElement && el.type === 'number');
   if (!dest) {
     if (ownsArrows) e.preventDefault();
@@ -195,8 +185,6 @@ export const handleLineGridKey = (e: KeyboardEvent): boolean => {
 };
 
 export const installLineGridNav = (doc: Document = document): (() => void) => {
-  // Bubble phase: a component's own handler (an open picker) runs first and
-  // can claim the key with preventDefault.
   const onKey = (e: KeyboardEvent) => { handleLineGridKey(e); };
   doc.addEventListener('keydown', onKey);
   return () => doc.removeEventListener('keydown', onKey);

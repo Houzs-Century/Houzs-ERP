@@ -1,9 +1,3 @@
-/* The handoff that makes "add a line" findable from the page you start on.
- *
- * The owner could not find it on a goods receipt: the detail page said nothing
- * about lines, and the affordance only appeared after pressing Edit, under a
- * fourth different name ("Add manual item" / "Add item" / "+ Add Line Item").
- */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -17,8 +11,6 @@ describe('addLineHref', () => {
   });
 
   it('keeps a query the detail page was already carrying', () => {
-    /* A detail page can hold a tab or a return-to; dropping it loses the
-       operator's place on the way back. */
     expect(addLineHref('/scm/grns/abc?from=list')).toBe('/scm/grns/abc?from=list&edit=1#add-line');
   });
 
@@ -49,8 +41,6 @@ describe('wantsAddLine', () => {
 
 describe('consumedAddLine', () => {
   it('drops the fragment so the intent fires ONCE', () => {
-    /* Left on the URL it re-opens the add row on every remount, which on a page
-       that remounts after a save is a form that will not stay shut. */
     expect(consumedAddLine('/scm/grns/abc?edit=1#add-line')).toBe('/scm/grns/abc?edit=1');
   });
 
@@ -66,18 +56,13 @@ describe('one name', () => {
 });
 
 describe('every document that CAN add a line offers it from the page you start on', () => {
-  /* The complaint was not "the feature is missing", it was "I cannot find it".
-     So the assertion is about REACH: each detail page must both build the
-     handoff URL and print the shared word, and each editor must consume the
-     handoff. A page that adds one and forgets the other is the half-wiring that
-     put the affordance out of sight in the first place. */
   const read = (rel: string): string => {
     const roots = ['frontend/src/', 'src/'];
     for (const r of roots) {
-      try { return readFileSync(resolve(process.cwd(), r + rel), 'utf8'); } catch { /* try next */ }
+      try { return readFileSync(resolve(process.cwd(), r + rel), 'utf8'); } catch { }
     }
     for (const r of roots) {
-      try { return readFileSync(resolve(process.cwd(), '..', r + rel), 'utf8'); } catch { /* try next */ }
+      try { return readFileSync(resolve(process.cwd(), '..', r + rel), 'utf8'); } catch { }
     }
     throw new Error(`${rel} not found from ${process.cwd()} — this scan must never pass on an empty read`);
   };
@@ -106,21 +91,12 @@ describe('every document that CAN add a line offers it from the page you start o
   for (const editor of EDITORS) {
     it(`${editor} opens its add row on the handoff, and consumes it`, () => {
       const src = read(editor);
-      /* Through the shared hook, not a per-file paste: the first version of
-         this WAS a per-file paste, and in two of the four files it landed below
-         an early return — a rules-of-hooks violation the linter caught. */
       expect(src).toContain('useAddLineHandoff');
       expect(src).toContain('addLineHandoff.current =');
     });
   }
 
   it('the SALES INVOICE uses the shared word WITHOUT a handoff — it has no editor to hand off to', () => {
-    /* The fifth document, added 2026-09-13. Its add row opens IN PLACE on
-       `SalesInvoiceDetailV2.tsx`, because unlike the four above it has no
-       separate V1 editor page and `addLineHref` would point at nothing. The
-       word on the button is still the shared one, which is the part the owner
-       reads; asserting the ABSENCE of `addLineHref` here stops a later sweep
-       "fixing" this page into a link to a page that does not exist. */
     const page = read('pages/scm-v2/SalesInvoiceDetailV2.tsx');
     expect(page).toContain('useSalesInvoiceAddLine');
     expect(page).not.toContain('addLineHref');
@@ -146,8 +122,6 @@ describe('every document that CAN add a line offers it from the page you start o
   });
 
   it('the PHONE decides "still open for a line" with the same rules the desktop editors use', () => {
-    /* A phone copy of the lock would be invisible to check-shared-mirrors.
-       The desktop editors and the phone must import the same functions. */
     const map = read('mobile/mobile-add-line.ts');
     expect(map).toContain("from \"../vendor/scm/lib/line-add-lock\"");
     for (const fn of ['purchaseOrderLinesLocked', 'goodsReceiptLinesLocked', 'purchaseInvoiceLinesLocked', 'salesInvoiceLinesOpen']) {
@@ -156,11 +130,6 @@ describe('every document that CAN add a line offers it from the page you start o
   });
 
   it('the PHONE sales order offers it from the detail and hands off to the editor with a new line open', () => {
-    /* The phone SO editor (MobileNewSO) could already add a line, under the
-       retired spelling "+ Add Line Item", and only after pressing Edit: the same
-       unfindable-affordance shape 0853 fixed on desktop. Reach, asserted: the
-       detail prints the shared word and calls the handoff; the shell carries the
-       intent; the editor consumes it and no longer spells the action its own way. */
     const detail = read('mobile/MobileSODetail.tsx');
     expect(detail).toContain('ADD_LINE_LABEL');
     expect(detail).toContain('onAddLine(docNo)');
@@ -172,8 +141,6 @@ describe('every document that CAN add a line offers it from the page you start o
   });
 
   it('no editor still spells the action its own way', () => {
-    /* Four documents had four names. A page that reintroduces one is a page
-       the owner will not find the button on. */
     for (const editor of EDITORS) {
       const src = read(editor)
         .replace(/\/\*[\s\S]*?\*\//g, '')

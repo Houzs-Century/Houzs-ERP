@@ -1,10 +1,3 @@
-// What a rack sticker's QR says, and how a scan of one becomes a rack row.
-// Kept apart from rack-label-pdf so the phone's scanner does not pull jsPDF in.
-//
-// The sticker carries the rack LABEL, not a row id: one shelf label is fanned
-// out to a warehouse_racks row per warehouse record, and a GRN line needs the
-// row of the receipt's own warehouse. So a scan is resolved against the racks
-// the caller already scoped to that warehouse.
 
 export const RACK_QR_PREFIX = 'HZRACK:';
 

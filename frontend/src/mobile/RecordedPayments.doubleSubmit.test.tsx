@@ -1,7 +1,3 @@
-// The phone's Add payment sheet records once per press (HC-SO-2609-164,
-// HC-SO-008674: one transfer booked twice, seconds apart). Record Payment is held
-// from the tap until the request settles; a refused save frees it, and the retry
-// carries the same Idempotency-Key.
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConvertSource } from '../vendor/scm/lib/so-money-queries';
@@ -37,7 +33,6 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-/* A converted row needs no slip upload, so the sheet is ready to record in two picks. */
 const openReadySheet = () => {
   render(<AddPaymentSheet docNo="HC-SO-2609-164" staff={[]} onClose={() => {}} onSaved={() => {}} />);
   fireEvent.change(screen.getByText('Method').parentElement!.querySelector('select')!, { target: { value: CONVERT_LABEL } });

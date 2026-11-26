@@ -1,27 +1,3 @@
-// /po-amendments — Purchase Order amendment / revision workflow.
-//
-// The PO-side sibling of routes/so-amendments.ts, built to the owner's SIMPLIFIED
-// model: an amendment is one request and one approval. A purchaser raises a
-// change against a Purchase Order (line qty / cost / spec / delivery, add or
-// remove a line, or the header supplier / delivery / notes); an authorized
-// approver either APPROVES it — which snapshots the current PO into po_revisions,
-// applies the diffs in place, bumps purchase_orders.revision, and writes an
-// AMENDMENT_PO_APPROVED audit row (lib/po-revision.ts applyPoAmendment) — or
-// closes it REJECTED. The requester may WITHDRAW their own still-open request.
-//
-// There is deliberately NO supplier-confirm / two-gate / send chain here (unlike
-// the SO amendment): the whole point of this module is the single-approver gate.
-// The pure state machine lives in ../shared/po-amendment.ts.
-//
-// Gates (hasHouzsPerm against the REAL Houzs caller — the SCM bridge pins
-// c.get('user') to one system row, so every finer decision keys off houzsUser):
-//   • create  → scm.po_amendment.create
-//   • approve → scm.po_amendment.approve
-//   • reject  → scm.po_amendment.approve (an approver's refusal)
-//   • withdraw→ the requester themselves, or scm.po_amendment.approve
-//
-// PO amendments are Houzs-NATIVE — there is no 2990 mirror / command dispatch
-// here (that machinery is SO-specific), so every handler applies locally.
 
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -31,9 +7,6 @@ import { canTransition, nextStatus, type PoAmendStatus, type PoAmendAction } fro
 import { applyPoAmendment, assertAddedSkusActive, InactiveSkuError, ReceivedFloorError } from '../lib/po-revision';
 import { recomputePoReceived } from './grns';
 import { planStockRelease, type AllocationRow } from '../lib/po-allocations';
-/* Two-lane rework: a follow-up row's approve re-derives its PO from the SO's
-   current truth. po-revision re-exports so-revision's ReceivedFloorError (same
-   class), so the one imported above already covers both engines. */
 import { reviseBoundPo } from '../lib/so-revision';
 import { enqueueEdit, type AcRetiredLine } from '../lib/autocount-outbox';
 import { recomputeSoPicked } from './mfg-purchase-orders';
@@ -61,11 +34,6 @@ import { refuseWithoutWriting } from '../lib/no-write-refusal';
 export const poAmendments = new Hono<{ Bindings: Env; Variables: Variables }>();
 poAmendments.use('*', supabaseAuth);
 
-/* The gate columns (approved_by / rejected_by) are scm.staff FKs the UI renders
-   as "who did this". c.get('user').id is the bridge's pinned system row shared by
-   EVERY caller, so stamping it makes them all read as one identity. Resolve the
-   caller's real mig-0066 staff row; fall back to the pinned row so the FK stays
-   valid when the sync row is missing (identical to so-amendments.gateActorStaffId). */
 async function gateActorStaffId(sb: any, houzsUserId: number | null | undefined, fallbackStaffId: string): Promise<string> {
   return (await resolveCallerStaffId(sb, houzsUserId)) ?? fallbackStaffId;
 }
@@ -78,10 +46,6 @@ type AmendmentForWrite = {
   status: PoAmendStatus;
   version: number;
   requested_by: string | null;
-  /* Two-lane rework (2026-07-27): set on a FOLLOW-UP row auto-raised by an SO
-     amendment's LINES-lane apply. Its approve re-derives the PO from the SO's
-     CURRENT truth (reviseBoundPo, scoped to this po) instead of applying the
-     preview lines; see lib/amendment-po-followup.ts. */
   source_so_amendment_id: string | null;
   source_so_amendment_no: string | null;
 };
@@ -101,10 +65,6 @@ async function loadAmendmentForWrite(
   return { ok: true, amendment: data as AmendmentForWrite };
 }
 
-/* ── GET / — amendment list (newest first) ─────────────────────────────────
-   Company-scoped (mig 0192 company_id); a PO is not salesperson-owned, so there
-   is no per-rep row scope like the SO amendment list carries. .limit(500) bounds
-   the result below PostgREST's default cap (SO/DO/GRN list convention). */
 poAmendments.get('/', async (c) => {
   const sb = c.get('supabase');
   const { data, error } = await scopeToCompany(sb.from('po_amendments')
@@ -152,9 +112,6 @@ poAmendments.get('/pending-count', async (c) => {
   }
 });
 
-/* ── GET /:id — amendment detail ───────────────────────────────────────────
-   Returns the amendment row + its po_amendment_lines + a light PO header summary
-   (po_number, status, revision). */
 poAmendments.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
 
@@ -179,8 +136,6 @@ poAmendments.get('/:id', async (c) => {
     .select('id, po_number, status, revision, supplier_id, expected_at')
     .eq('id', amendment.po_id).maybeSingle();
 
-  /* Whether the caller raised it — see the twin note on GET /so-amendments/:id.
-     Same identity rule PATCH /:id/withdraw enforces. */
   const callerStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id);
   const viewerIsRequester = callerStaffId != null && amendment.requested_by != null
     && callerStaffId === amendment.requested_by;
@@ -188,13 +143,6 @@ poAmendments.get('/:id', async (c) => {
   return c.json({ amendment, lines, purchaseOrder: poRow ?? null, viewerIsRequester });
 });
 
-/* ── POST / — raise a PO amendment ─────────────────────────────────────────
-   Guards, in order:
-     1. body has a poId + at least one change (line or header) → else 400
-     2. PO exists (company-scoped)                             → else 404
-     3. PO is not cancelled                                    → else 409
-     4. no OPEN (REQUESTED) amendment on this PO               → else 409
-        (the partial unique index uq_po_amendment_open is the DB backstop) */
 poAmendments.post('/', async (c) => {
   const sb = c.get('supabase'); const user = c.get('user');
 
@@ -224,8 +172,6 @@ poAmendments.post('/', async (c) => {
   if (!poId) return refuseWithoutWriting(c, { error: 'po_required', reason: 'A purchase order id is required.' }, 400);
 
   const rawHeaderChanges = (body.headerChanges ?? null) as Record<string, unknown> | null;
-  // Trust boundary — only these header columns may be requested (an unlisted key
-  // would otherwise be written straight to the PO on approve).
   const AMENDABLE_HEADER: Record<string, true> = { supplier_id: true, expected_at: true, notes: true };
   const headerChanges: Record<string, string | null> = {};
   if (rawHeaderChanges && typeof rawHeaderChanges === 'object') {
@@ -245,7 +191,6 @@ poAmendments.post('/', async (c) => {
     return refuseWithoutWriting(c, { error: 'amendment_empty', reason: 'There are no changes to request — change a line, a cost or the delivery date first, then submit the amendment.' }, 400);
   }
 
-  // Guard 2/3 — PO exists (company-scoped) and is not cancelled.
   const { data: poRow } = await scopeToCompany(sb.from('purchase_orders')
     .select('id, po_number, status, supplier_id, expected_at, notes')
     .eq('id', poId), c).maybeSingle();
@@ -255,8 +200,6 @@ poAmendments.post('/', async (c) => {
     return refuseWithoutWriting(c, { error: 'po_cancelled', reason: 'This Purchase Order is cancelled — it cannot be amended.' }, 409);
   }
 
-  // Guard 4 — one OPEN (REQUESTED) amendment per PO. The partial unique index is
-  // the backstop; pre-check here for a clean 409 + the amendment_no counter.
   const { data: priorRows } = await scopeToCompany(sb.from('po_amendments')
     .select('id, status').eq('po_id', poId), c);
   const prior = (priorRows ?? []) as Array<{ id: string; status: string }>;
@@ -276,8 +219,6 @@ poAmendments.post('/', async (c) => {
 
   const amendmentNo = `${po.po_number}/A${prior.length + 1}`;
 
-  // Header before-snapshot — only the keys actually being changed, read off the
-  // PO row we already hold (mirror so_amendments.old_header_snapshot).
   const oldHeaderSnapshot: Record<string, string | null> = {};
   if (hasHeaderChanges) {
     const cur = po as unknown as Record<string, unknown>;
@@ -301,7 +242,6 @@ poAmendments.post('/', async (c) => {
     old_header_snapshot: hasHeaderChanges ? oldHeaderSnapshot : null,
   }).select('id, po_id, po_number, amendment_no, status, reason, requested_by, created_at').single();
   if (insErr) {
-    // The partial unique index raced us — a clean 409, not a 500.
     if (/uq_po_amendment_open|duplicate key/i.test(insErr.message)) {
       return refuseWithoutWriting(c, { error: 'amendment_already_open', reason: 'An amendment is already open on this Purchase Order.' }, 409);
     }
@@ -319,15 +259,11 @@ poAmendments.post('/', async (c) => {
       new_variants:           (l.newVariants ?? null) as Record<string, unknown> | null,
       new_qty:                l.newQty ?? null,
       new_unit_price_sen:   l.newUnitPriceSen ?? null,
-      // `??` is nullish — a blank <input type="date"> posts "" and would reach
-      // po_amendment_lines.new_delivery_date (DATE, mig 0194:87), 500ing the
-      // insert and rolling the header amendment back at :268.
       new_delivery_date:      dateOrNull(l.newDeliveryDate),
       old_snapshot:           (l.oldSnapshot ?? null) as Record<string, unknown> | null,
     }));
     const { error: lineErr } = await sb.from('po_amendment_lines').insert(stampCompany(lineRows, c));
     if (lineErr) {
-      // Roll back the header so a half-written amendment can't wedge the one-open gate.
       await sb.from('po_amendments').delete().eq('id', amendment.id);
       return c.json({ error: 'create_failed', reason: lineErr.message }, 500);
     }
@@ -349,15 +285,6 @@ poAmendments.post('/', async (c) => {
   return c.json({ amendment: created }, 201);
 });
 
-/* ── PATCH /:id/approve ────────────────────────────────────────────────────
-   The single hard gate. Guard the transition (REQUESTED → APPROVED), then apply:
-   applyPoAmendment snapshots the current PO to po_revisions, applies the line +
-   header diffs in place, recomputes totals, bumps purchase_orders.revision, and
-   writes an AMENDMENT_PO_APPROVED audit row. Runs inside runScmPgCommand so the
-   claim + snapshot + mutations + audit + status flip are ONE transaction.
-
-   Received floor: applyPoAmendment throws ReceivedFloorError BEFORE mutating if a
-   revised qty would drop below that PO line's already-received_qty → 409. */
 export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Response> {
   const id = c.req.param('id'); const user = c.get('user');
 
@@ -376,9 +303,6 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
   const to = nextStatus(amendment.status, action);
   if (!to) return c.json({ error: 'bad_transition' }, 409);
 
-  /* Audit pre-flight (the owner's ruling — a change must never look saved when
-     its history row did not write). Ask the audit sink up front; if it refuses,
-     nothing has been mutated and "please try again" is true. */
   const pre = await assertAuditWritable(sb, {
     entityType: 'PURCHASE_ORDER',
     entityId: amendment.po_id,
@@ -387,9 +311,6 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
   });
   if (!pre.ok) return c.json(auditUnavailableBody(), 503);
 
-  /* Optimistic claim + apply-lease so a concurrent approve cannot double-apply.
-     The version predicate detects the conflict; the lease is released on a failed
-     apply so the operator can retry (snapshotPo is idempotent on (po_id, revision)). */
   const applyToken = crypto.randomUUID();
   const applyVersion = Number(amendment.version ?? 1);
   const claimNow = new Date().toISOString();
@@ -408,12 +329,6 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
   if (claimError) return c.json({ error: 'update_failed', reason: claimError.message }, 500);
   if (!claimed) return c.json({ error: 'amendment_version_conflict' }, 409);
 
-  /* Two-lane rework — a FOLLOW-UP row (source_so_amendment_id set) is the
-     purchaser's SECOND signature on an SO amendment: its lines are a preview,
-     and the real apply is reviseBoundPo scoped to THIS po — the same engine the
-     legacy approve-po gate ran — so the PO is re-derived from the Sales Order's
-     CURRENT truth at confirm time (a later product amendment approved in
-     between is picked up, never lost). A manual row keeps applyPoAmendment. */
   let appliedRevision: number;
   let appliedWarnings: string[];
   let appliedRetire: AcRetiredLine[] = [];
@@ -437,7 +352,6 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
       releasedSoItemIds = applied.releasedSoItemIds;
     }
   } catch (e) {
-    // Release the lease so a retry is clean.
     await sb.from('po_amendments').update({ apply_lease_token: null, apply_lease_expires_at: null })
       .eq('id', id).eq('version', applyVersion + 1).eq('apply_lease_token', applyToken);
     if (e instanceof InactiveSkuError) return c.json(e.body, 409);
@@ -452,14 +366,6 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
     return c.json({ error: 'apply_failed', reason: e instanceof Error ? e.message : 'Failed to apply the Purchase Order revision.' }, 500);
   }
 
-  /* The apply moves line QUANTITIES; the received status is a derived cache
-     (grns.ts recomputePoReceived) and nothing above re-derives it. Without this,
-     a fully-received PO amended UPWARD stays RECEIVED — and the whole GRN
-     surface gates on isReceivablePoStatus, so the added quantity cannot be
-     received through any path; amended DOWN to the received qty, it sits at
-     PARTIALLY_RECEIVED in the outstanding bucket with nothing receivable behind
-     it. Best-effort like the recount's other callers: the amendment applied, so
-     a recount hiccup is a warning, never a rollback. */
   {
     const { data: poLines, error: plErr } = await sb.from('purchase_order_items')
       .select('id').eq('purchase_order_id', amendment.po_id);
@@ -490,9 +396,6 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
   if (updErr) return c.json({ error: 'update_failed', reason: updErr.message }, 500);
   if (!updated) return c.json({ error: 'amendment_version_conflict' }, 409);
 
-  /* Sourced confirms audit here (applyPoAmendment writes its own audit on the
-     manual path; reviseBoundPo audits on the SO trail, so the PO's own history
-     needs this row to show the second signature). */
   if (amendment.source_so_amendment_id) {
     await recordEntityAudit(sb, {
       entityType: 'PURCHASE_ORDER',
@@ -510,12 +413,6 @@ export async function approvePoAmendmentHandler(c: any, sb: any): Promise<Respon
     });
   }
 
-  /* ERP -> AutoCount edit. The PO mirror of the SO amendment leg: both apply
-     engines (applyPoAmendment on the manual path, reviseBoundPo on the SO-sourced
-     one) rewrite the PO's header and lines in place, and neither told AutoCount.
-     Queued after the amendment's own optimistic-lock flip won, so one edit per
-     applied amendment. `enqueueEdit` swallows its own failures by design — an
-     approval that has already committed must not fail on a write-back. */
   await enqueueEdit(sb, {
     companyId: activeCompanyId(c),
     docType: 'PO',
@@ -552,12 +449,7 @@ poAmendments.patch('/:id/approve', (c) => {
   return runScmPgCommand(c, (sb) => approvePoAmendmentHandler(c, sb));
 });
 
-/* ── PATCH /:id/reject ─────────────────────────────────────────────────────
-   An approver refusing the request. NO document changes — the PO is untouched,
-   the amendment simply closes REJECTED (freeing uq_po_amendment_open). The reason
-   is REQUIRED and persisted so the requester can see WHY (mirror so-amendments). */
 poAmendments.patch('/:id/reject', async (c) => {
-  // WRITE: the company must RESOLVE (companyScope.ts strict rule).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
@@ -567,7 +459,7 @@ poAmendments.patch('/:id/reject', async (c) => {
   }
 
   let body: { reason?: string } = {};
-  try { body = (await c.req.json()) as typeof body; } catch { /* validated below */ }
+  try { body = (await c.req.json()) as typeof body; } catch { }
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
   if (!reason) {
     return c.json({ error: 'reason_required', message: 'Give a reason for rejecting this amendment — the person who raised it needs to know what to change.' }, 400);
@@ -593,9 +485,6 @@ poAmendments.patch('/:id/reject', async (c) => {
     rejected_at:      new Date().toISOString(),
     updated_at:       new Date().toISOString(),
   }).eq('id', id)
-    /* loadAmendmentForWrite scoped the LOAD; the predicate is repeated on the
-       WRITE because nothing re-checks between two PostgREST round trips - the
-       SCM client is service-role, so RLS never sees this statement. */
     .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
@@ -711,28 +600,19 @@ poAmendments.patch('/:id/reject', async (c) => {
   });
 });
 
-/* ── PATCH /:id/withdraw ───────────────────────────────────────────────────
-   The REQUESTER pulling their own request back (as distinct from an approver
-   refusing it). Lands on the same terminal REJECTED (resolution = 'WITHDRAWN'),
-   which releases uq_po_amendment_open so a corrected request can be raised.
-   REQUESTED only — the state machine enforces it. */
 poAmendments.patch('/:id/withdraw', async (c) => {
-  // WRITE: the company must RESOLVE (companyScope.ts strict rule).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   let body: { reason?: string } = {};
-  try { body = (await c.req.json()) as typeof body; } catch { /* reason optional */ }
+  try { body = (await c.req.json()) as typeof body; } catch { }
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
 
   const loaded = await loadAmendmentForWrite(sb, id, c);
   if (!loaded.ok) return c.json({ error: 'not_found' }, 404);
   const { amendment } = loaded;
 
-  // Only the person who raised it, or someone who could reject it anyway. Checked
-  // against the caller's REAL scm.staff uuid — the bridge pins user.id to one
-  // shared system row, so comparing that would let ANY caller withdraw ANY one.
   const callerStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id);
   const isRequester = callerStaffId != null && amendment.requested_by != null && callerStaffId === amendment.requested_by;
   if (!isRequester && !hasHouzsPerm(c, 'scm.po_amendment.approve')) {
@@ -760,9 +640,6 @@ poAmendments.patch('/:id/withdraw', async (c) => {
     rejected_at:      new Date().toISOString(),
     updated_at:       new Date().toISOString(),
   }).eq('id', id)
-    /* loadAmendmentForWrite scoped the LOAD; the predicate is repeated on the
-       WRITE because nothing re-checks between two PostgREST round trips - the
-       SCM client is service-role, so RLS never sees this statement. */
     .eq('company_id', co.companyId)
     .eq('status', amendment.status)
     .eq('version', Number(amendment.version ?? 1))
