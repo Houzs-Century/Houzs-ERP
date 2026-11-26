@@ -18,14 +18,15 @@ test("allowed places pass", () => {
 });
 
 test("plans, notes and nested module docs fail", () => {
-  const v = classify(["docs/PLAN.md", "HANDOFF.md", "docs/modules/scm/notes.md", "tasks/findings.md", "docs/bugs/x.MD"], []);
+  const v = classify(["docs/PLAN.md", "HANDOFF.md", "docs/modules/scm/notes.md", "tasks/findings.md", "docs/bugs/x.MD", "docs/notes/README.md", ".github/NOTES.md"], []);
   assert.equal(v.ok, false);
-  assert.deepEqual(v.blocked, ["docs/PLAN.md", "HANDOFF.md", "docs/modules/scm/notes.md", "tasks/findings.md", "docs/bugs/x.MD"]);
+  assert.deepEqual(v.blocked, ["docs/PLAN.md", "HANDOFF.md", "docs/modules/scm/notes.md", "tasks/findings.md", "docs/bugs/x.MD", "docs/notes/README.md", ".github/NOTES.md"]);
 });
 
 test("the docs-requested label waives, and says what it waived", () => {
   assert.deepEqual(classify(["docs/PLAN.md"], ["bug", "docs-requested"]), { ok: true, blocked: ["docs/PLAN.md"], waived: true });
   assert.equal(classify(["docs/PLAN.md"], ["no-test-needed"]).ok, false);
+  assert.equal(classify(["docs/PLAN.md"], ["Docs-Requested"]).waived, true);
 });
 
 const hook = path.join(root, ".claude/hooks/block-unsolicited-md.mjs");

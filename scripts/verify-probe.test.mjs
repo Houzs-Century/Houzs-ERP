@@ -9,7 +9,7 @@ test("parseArgs reads url, repeated clicks, out and wait", () => {
     clicks: ["#a", "text=Save"],
     waitMs: 50,
   });
-  assert.equal(parseArgs(["u"]).waitMs, 1000);
+  assert.equal(parseArgs(["u"]).waitMs, 5000);
 });
 
 test("parseArgs rejects missing url, unknown flag, missing value, bad wait", () => {
@@ -27,12 +27,14 @@ test("redactUrl strips query string and fragment", () => {
   assert.equal(redactUrl("/rel?x=1"), "/rel");
 });
 
-test("summarize counts page errors and console errors, not warnings or network", () => {
+test("summarize counts page errors, console errors, 5xx and failed requests, not warnings or 4xx", () => {
   const clean = summarize({ console: [{ type: "warning" }], network: [{ status: 404 }], pageErrors: [] });
   assert.equal(clean.verdict, "PROBE OK");
   assert.equal(clean.exitCode, 0);
   const bad = summarize({ console: [{ type: "error" }, { type: "warning" }], network: [], pageErrors: [{ message: "x" }] });
   assert.equal(bad.verdict, "PROBE ERRORS 2");
+  const net = summarize({ console: [], network: [{ status: 500 }, { failure: "net::ERR_FAILED" }, { status: 404 }], pageErrors: [] });
+  assert.equal(net.verdict, "PROBE ERRORS 2");
   assert.equal(bad.exitCode, 1);
   assert.match(bad.text, /console errors: 1, warnings: 1/);
 });

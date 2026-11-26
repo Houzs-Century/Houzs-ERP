@@ -128,6 +128,16 @@ const SOURCES = {
     source: ["purchase_order_items"],
     core: { file: "backend/src/scm/lib/grn-from-po-core.ts", fn: "createDraftGrnsFromPoItemsCore" },
   },
+  "backend/src/scm/routes/threepl-do-charges.ts::POST /from-ap/:apInvoiceId/read": {
+    doc: "AP invoice bill -> 3PL DO charge rows (read step). The AP invoice is loaded by id in loadApBill.",
+    source: ["ap_invoices"],
+    core: { file: "backend/src/scm/lib/threepl-bill-import.ts", fn: "loadApBill" },
+  },
+  "backend/src/scm/routes/threepl-do-charges.ts::POST /from-ap/:apInvoiceId/confirm": {
+    doc: "AP invoice bill -> 3PL DO charge rows (confirm step), same loadApBill read.",
+    source: ["ap_invoices"],
+    core: { file: "backend/src/scm/lib/threepl-bill-import.ts", fn: "loadApBill" },
+  },
   "backend/src/scm/routes/mfg-purchase-orders.ts::POST /from-sos": {
     doc: "SO -> PO, through the shared convertSosToPosCore",
     source: ["mfg_sales_order_items"],

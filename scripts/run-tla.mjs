@@ -1,12 +1,4 @@
 #!/usr/bin/env node
-// Run the TLC model checker on one TLA+ config with a pinned, checksummed jar.
-//
-//   node scripts/run-tla.mjs formal/ac-outbox-claim/AcOutboxClaim.cfg
-//   node scripts/run-tla.mjs --expect-violation formal/ac-outbox-claim/AcOutboxClaimBroken.cfg
-//
-// The module is the only .tla beside the cfg, or the optional second argument.
-// --expect-violation exits 0 only when TLC reports an invariant violation.
-// Needs java on PATH (CI: actions/setup-java, temurin 21).
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -36,14 +28,13 @@ export function parseArgs(argv) {
 }
 
 /**
- * TLC's output -> 'pass' | 'invariant' | 'property' | 'deadlock' | 'error'.
+ * TLC's output -> 'pass' | 'invariant' | 'property' | 'error'.
  * 'error' covers a parse/semantic failure or a run that never finished, so a
  * broken model is never read as a pass or as the expected violation.
  */
 export function verdictOf(output) {
   if (/Error: Invariant \S+ is violated/.test(output)) return 'invariant';
   if (/Error: Temporal properties were violated/.test(output)) return 'property';
-  if (/Error: Deadlock reached/.test(output)) return 'deadlock';
   if (/Model checking completed\. No error has been found\./.test(output)) return 'pass';
   return 'error';
 }
@@ -88,8 +79,6 @@ async function main() {
   const run = spawnSync('java', [
     '-XX:+UseParallelGC', '-cp', jar, 'tlc2.TLC',
     '-config', cfg, '-workers', 'auto', '-metadir', metadir,
-    // Terminal states (every row sent or failed) are the expected end, not a
-    // deadlock; a row stuck pending is caught by the liveness property instead.
     '-deadlock',
     basename(tla),
   ], { cwd: dirname(tla), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });

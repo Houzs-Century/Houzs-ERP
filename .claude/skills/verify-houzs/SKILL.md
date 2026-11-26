@@ -52,8 +52,8 @@ If any check fails, stop and report INCONCLUSIVE with which check failed.
 Headless probe (Playwright from `frontend/node_modules`; falls back to installed Chrome or Edge):
 `node scripts/verify-probe.mjs <url> [--out <dir>] [--click <selector>]... [--wait-ms n]`
 - Writes `console.json` (errors and warnings with location), `network.json` (failed requests and responses >= 400, query string stripped), `page-errors.json` (uncaught exceptions), `screenshot.png`, `summary.txt` to `--out`, default `.verify/<timestamp>/`.
-- Prints `PROBE OK` (exit 0) or `PROBE ERRORS n` (exit 1, n = page errors + console errors). Exit 2 = probe itself failed (bad args, selector not found, no browser: it prints `npx --prefix frontend playwright install chromium`).
-- `--click` takes Playwright selectors: prefer `role=button[name="Save"]`, `text=...`, `[data-testid=...]` over CSS position. Clicks run in order, `--wait-ms` after each.
+- Prints `PROBE OK` (exit 0) or `PROBE ERRORS n` (exit 1, n = page errors + console errors + failed or 5xx requests). Exit 2 = probe itself failed (bad args, selector not found, no browser: it prints `npx --prefix frontend playwright install chromium`).
+- `--click` takes Playwright selectors: prefer `role=button[name="Save"]`, `text=...`, `[data-testid=...]` over CSS position. Clicks run in order; after load and after each click the probe waits for network idle, capped by `--wait-ms` (default 5000).
 - Pages behind login: the probe has no session, so it sees the login screen. Use it for public pages, login itself, and crash checks; for logged-in flows use the suite below.
 Unit tests for the probe: `node --test scripts/verify-probe.test.mjs`.
 

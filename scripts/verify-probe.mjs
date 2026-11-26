@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export function parseArgs(argv) {
-  const opts = { url: null, out: null, clicks: [], waitMs: 1000 };
+  const opts = { url: null, out: null, clicks: [], waitMs: 5000 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--out") opts.out = argv[++i];
@@ -33,12 +33,13 @@ export function redactUrl(raw) {
 
 export function summarize({ console: logs, network, pageErrors }) {
   const consoleErrors = logs.filter((l) => l.type === "error").length;
-  const n = pageErrors.length + consoleErrors;
+  const badRequests = network.filter((r) => r.failure !== undefined || r.status >= 500).length;
+  const n = pageErrors.length + consoleErrors + badRequests;
   const lines = [
     n === 0 ? "PROBE OK" : `PROBE ERRORS ${n}`,
     `page errors: ${pageErrors.length}`,
     `console errors: ${consoleErrors}, warnings: ${logs.length - consoleErrors}`,
-    `failed or >=400 requests: ${network.length}`,
+    `failed or 5xx requests: ${badRequests}, 4xx: ${network.length - badRequests}`,
   ];
   return { verdict: lines[0], exitCode: n === 0 ? 0 : 1, text: lines.join("\n") + "\n" };
 }
@@ -77,11 +78,14 @@ async function main() {
   });
 
   await page.goto(opts.url, { waitUntil: "load" });
+  const settle = () => page.waitForLoadState("networkidle", { timeout: opts.waitMs }).catch((e) => {
+    if (e.name !== "TimeoutError") throw e;
+  });
+  await settle();
   for (const sel of opts.clicks) {
     await page.click(sel);
-    await page.waitForTimeout(opts.waitMs);
+    await settle();
   }
-  await page.waitForTimeout(opts.waitMs);
   await page.screenshot({ path: join(out, "screenshot.png"), fullPage: true });
   await browser.close();
 

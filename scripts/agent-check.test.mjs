@@ -5,6 +5,7 @@ import { buildSteps, lintApps } from "./agent-check.mjs";
 test("lint runs only for changed apps that have a lint script", () => {
   const changed = ["frontend/src/a.tsx", "frontend/src/b.tsx", "scripts/x.mjs", "e2e/t.spec.ts", "backend/src/c.ts"];
   assert.deepEqual(lintApps(changed, (app) => ["frontend", "backend"].includes(app)), ["backend", "frontend"]);
+  assert.deepEqual(lintApps(["scripts/eslint/houzs-plugin.mjs"], () => true), ["backend", "frontend"]);
 });
 
 test("full run is the four checks then lint per app; --fast drops lint", () => {

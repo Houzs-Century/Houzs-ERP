@@ -14,25 +14,25 @@ export function allowedMarkdown(p) {
     /^docs\/modules\/[^/]+\.md$/.test(p) ||
     p === "docs/bugs/README.md" ||
     p === "tasks/TODO.md" ||
-    path.posix.basename(p) === "README.md" ||
+    (path.posix.basename(p) === "README.md" && !p.startsWith("docs/")) ||
     /^\.claude\/skills\/.+\/SKILL\.md$/.test(p) ||
     /^\.claude\/skills\/.+\/references\//.test(p) ||
-    p.startsWith(".github/")
+    /^\.github\/(pull_request_template\.md|PULL_REQUEST_TEMPLATE\/[^/]+\.md|ISSUE_TEMPLATE\/[^/]+\.md)$/.test(p)
   );
 }
 
 export function classify(paths, labels) {
   const blocked = paths.filter((p) => !allowedMarkdown(p));
-  const waived = blocked.length > 0 && labels.includes(WAIVER_LABEL);
+  const waived = blocked.length > 0 && labels.some((l) => l.toLowerCase() === WAIVER_LABEL);
   return { ok: blocked.length === 0 || waived, blocked, waived };
 }
 
 const git = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).split("\n").map((s) => s.trim()).filter(Boolean);
 
 function addedFiles() {
-  if (process.env.BASE_SHA) return git(["diff", "--name-only", "--diff-filter=A", `${process.env.BASE_SHA}...${process.env.HEAD_SHA || "HEAD"}`]);
+  if (process.env.BASE_SHA) return git(["diff", "--name-only", "--no-renames", "--diff-filter=A", `${process.env.BASE_SHA}...${process.env.HEAD_SHA || "HEAD"}`]);
   const base = git(["merge-base", "origin/main", "HEAD"])[0];
-  return [...git(["diff", "--name-only", "--diff-filter=A", base]), ...git(["ls-files", "--others", "--exclude-standard"])];
+  return [...git(["diff", "--name-only", "--no-renames", "--diff-filter=A", base]), ...git(["ls-files", "--others", "--exclude-standard"])];
 }
 
 function main() {
@@ -41,7 +41,7 @@ function main() {
   try {
     files = addedFiles();
   } catch (err) {
-    console.error(`Could not list the files this PR adds: ${err.message}`);
+    console.error(`Could not list the files this PR adds (run git fetch origin main): ${err.message}`);
     process.exit(2);
   }
   const v = classify(files, labels);
@@ -53,7 +53,7 @@ function main() {
   console.error("This PR adds markdown files outside the allowed places:");
   console.error(v.blocked.map((f) => `  ${f}`).join("\n"));
   console.error(UNSOLICITED);
-  console.error(`Allowed: docs/modules/*.md, docs/bugs/README.md, tasks/TODO.md, any README.md, .claude/skills/**/SKILL.md or references/, .github/**. If the owner asked for this file, add the \`${WAIVER_LABEL}\` label.`);
+  console.error(`Allowed: docs/modules/*.md, docs/bugs/README.md, tasks/TODO.md, a README.md outside docs/, .claude/skills/**/SKILL.md or references/, .github PR and issue templates. If the owner asked for this file, add the \`${WAIVER_LABEL}\` label.`);
   process.exit(1);
 }
 

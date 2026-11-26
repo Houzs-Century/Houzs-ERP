@@ -1257,6 +1257,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: formal/.cache/tla2tools.jar
+          key: tla2tools-v1.7.4
       - run: node scripts/run-tla.mjs formal/ac-outbox-claim/AcOutboxClaim.cfg
       - run: node scripts/run-tla.mjs --expect-violation formal/ac-outbox-claim/AcOutboxClaimBroken.cfg
       - run: node scripts/run-tla.mjs --expect-violation formal/ac-outbox-claim/AcOutboxClaimFinding.cfg
@@ -1268,7 +1272,7 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [changes, frontend-tests, frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint]
+    needs: [changes, frontend-tests, frontend-checks, frontend-typecheck, frontend-build, frontend-perf, lint, agent-guardrails, tla]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -1303,6 +1307,8 @@ jobs:
           # (its dependency failed), and skipped passes the line below — so the
           # shards' own result is what carries a test failure to this context.
           ok frontend-tests "${{ needs.frontend-tests.result }}"
+          [ "${{ needs.agent-guardrails.result }}" = success ] || { echo "::error::agent-guardrails = ${{ needs.agent-guardrails.result }}"; exit 1; }
+          [ "${{ needs.tla.result }}" = success ] || { echo "::error::tla = ${{ needs.tla.result }}"; exit 1; }
           ok frontend-checks "${{ needs.frontend-checks.result }}"
           ok frontend-typecheck "${{ needs.frontend-typecheck.result }}"
           ok frontend-build "${{ needs.frontend-build.result }}"

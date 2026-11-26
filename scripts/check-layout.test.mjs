@@ -21,6 +21,7 @@ test("frontend importing backend fails, imports inside the app pass", () => {
     "frontend/src/pages/A.tsx imports ../../../backend/src/scm/x",
   ]);
   assert.equal(crossImports("backend/src/scm/a.ts", `const m = await import("../../../frontend/src/p");`).length, 1);
+  assert.equal(crossImports("backend/src/scm/a.ts", `import "../../../frontend/src/side-effect";`).length, 1);
   assert.deepEqual(crossImports("backend/src/scm/a.ts", `import p from '../../../scripts/lib/p.mjs';`), []);
 });
 

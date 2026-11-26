@@ -39,15 +39,15 @@ Not verified from this repo: whether the AutoCount SDK itself refuses a second d
 
 | Model | Code |
 |---|---|
-| `Claim(d, r)` | drain select `backend/src/scm/lib/autocount-outbox.ts:1958-1963`, Send now's checks `autocount-requeue.ts:1470-1494`, then `claimOutboxRow` `backend/src/scm/lib/autocount-claim.ts:68-83` (one `UPDATE ... WHERE id AND status='pending' AND claimed_at IS NULL`) |
-| `Mark(d, s)` | `mark()` `autocount-outbox.ts:1665-1675` (id only, clears `claimed_at`); attempts = read value + 1 `autocount-outbox.ts:1823` |
-| `SendFails(d)` | `callAcService` `backend/src/services/autocount-writeback.ts:1711-1800`; retry/give-up mark `autocount-outbox.ts:1920-1929`; masters refusal `autocount-outbox.ts:1847-1855` |
+| `Claim(d, r)` | drain select `backend/src/scm/lib/autocount-outbox.ts:1354-1359`, Send now's checks `autocount-requeue.ts:1056-1076`, then `claimOutboxRow` `backend/src/scm/lib/autocount-claim.ts:48-58` (one `UPDATE ... WHERE id AND status='pending' AND claimed_at IS NULL`) |
+| `Mark(d, s)` | `mark()` `autocount-outbox.ts:1127-1131` (id only, clears `claimed_at`); attempts = read value + 1 `autocount-outbox.ts:1239` |
+| `SendFails(d)` | `callAcService` `backend/src/services/autocount-writeback.ts:1391-1458`; retry/give-up mark `autocount-outbox.ts:1319-1328`; masters refusal `autocount-outbox.ts:1248-1256` |
 | `HostSaves(d)` | `so.Save()` `backend/scripts/autocount-service/AcSyncService.cs:1290`, `doc.Save()` `AcSyncService.cs:1486` and the other `Convert_` arms |
-| `AckSent(d)` | sent mark `autocount-outbox.ts:1867-1874` |
-| `AckLost(d)` | thrown fetch is retryable `autocount-writeback.ts:1734-1745`, then `autocount-outbox.ts:1920-1929` |
-| `Crash(d)` | Worker killed or `dispatchOne` throws: claim left standing `autocount-outbox.ts:1670-1672`, `autocount-requeue.ts:1496-1508` |
-| `ReleaseExpired(r)` | `releaseExpiredClaims` `autocount-claim.ts:104-114`, called at `autocount-outbox.ts:1957`; lease `AC_CLAIM_LEASE_MS` `autocount-claim.ts:38` |
-| `MaxAttempts` | `MAX_ATTEMPTS = 6` `autocount-outbox.ts:168` |
+| `AckSent(d)` | sent mark `autocount-outbox.ts:1268-1275` |
+| `AckLost(d)` | thrown fetch is retryable `autocount-writeback.ts:1414-1424`, then `autocount-outbox.ts:1319-1328` |
+| `Crash(d)` | Worker killed or `dispatchOne` throws: claim left standing `autocount-outbox.ts:1129`, `autocount-requeue.ts:1078-1085` |
+| `ReleaseExpired(r)` | `releaseExpiredClaims` `autocount-claim.ts:79-85`, called at `autocount-outbox.ts:1353`; lease `AC_CLAIM_LEASE_MS` `autocount-claim.ts:18` |
+| `MaxAttempts` | `MAX_ATTEMPTS = 6` `autocount-outbox.ts:111` |
 | table | `backend/src/db/migrations-pg/0277_scm_autocount_outbox.sql`, `0315_ac_outbox_claim.sql` |
 
 ## Bounds and assumptions

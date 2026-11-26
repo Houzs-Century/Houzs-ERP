@@ -18,7 +18,9 @@ if (input.tool_name !== "Write" || typeof file !== "string" || !file.toLowerCase
 const abs = path.resolve(root, file);
 const rel = path.relative(root, abs).split(path.sep).join("/").replace(/^\.claude\/worktrees\/[^/]+\//, "");
 if (rel.startsWith("..") || path.isAbsolute(rel) || fs.existsSync(abs)) process.exit(0);
-if (spawnSync("git", ["check-ignore", "-q", abs], { cwd: root }).status === 0) process.exit(0);
 if (classify([rel], []).ok) process.exit(0);
+let dir = path.dirname(abs);
+while (!fs.existsSync(dir)) dir = path.dirname(dir);
+if (spawnSync("git", ["check-ignore", "-q", abs], { cwd: dir }).status === 0) process.exit(0);
 console.error(`Blocked: ${rel} is a new markdown file outside the allowed places. ${UNSOLICITED} Write notes to your scratchpad instead, or ask the owner.`);
 process.exit(2);

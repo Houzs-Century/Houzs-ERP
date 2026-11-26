@@ -26,7 +26,7 @@ export function crossImports(file, source) {
   const app = file.split("/")[0];
   if (!APPS.includes(app) || isTest(file)) return [];
   const hits = [];
-  for (const m of source.matchAll(/(?:from|import\(|require\()\s*["'](\.\.?\/[^"']+)["']/g)) {
+  for (const m of source.matchAll(/(?:from|import\(|import|require\()\s*["'](\.\.?\/[^"']+)["']/g)) {
     const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), m[1]));
     const other = target.split("/")[0];
     if (other !== app && APPS.includes(other)) hits.push(`${file} imports ${m[1]}`);

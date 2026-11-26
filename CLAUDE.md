@@ -53,7 +53,7 @@ Loaded into every session, so it stays short. Adding a rule means removing or me
 ## Agent guardrails — enforced by tools, not prose
 - An owner correction becomes a lint rule (`scripts/eslint/houzs-plugin.mjs`) or a `scripts/check-*.mjs` with a test. Not a new paragraph here.
 - Before a PR: `npm run agent-check` (layout, unsolicited markdown, docs size, file size, lint). Skill: `.claude/skills/houzs-checks`.
-- No prose comments: `houzs/no-prose-comments` is ratcheted; new files have none. Allowed: `eslint-disable … -- reason`, `@ts-expect-error reason`, JSDoc on exports, licence, a URL or ticket id, `shortcut:`.
+- No prose comments: `houzs/no-prose-comments` is ratcheted; new files have none. Allowed: `eslint-disable … -- reason`, `@ts-expect-error reason`, JSDoc on exports, `@deprecated`, licence, a comment citing a ticket, PR, `docs/bugs/` or an owner decision, `shortcut:`.
 - No timers as fixes: `setTimeout`/`setInterval`/sleep are ratcheted. Poll with react-query `refetchInterval`; await the real promise.
 - New `.md` files only in `docs/modules/`, `docs/bugs/README.md`, `tasks/TODO.md`, a README or a skill. Anything else needs the PR label `docs-requested`.
 - New root entries or top-level `src/` folders go in `scripts/layout-allowlist.json` and `docs/CODEBASE-MAP.md`.
@@ -69,7 +69,7 @@ Loaded into every session, so it stays short. Adding a rule means removing or me
 - Every mutation shows its failure to the user (`frontend/src/vendor/scm/lib/mutation-error.ts`).
 - Polling, not WebSockets. URL is state (`useSearchParams`); localStorage only for personal preferences.
 - Project visibility is company-only (`requirePageAccess` + company predicate); crew scoping stays.
-- Comments only for a non-obvious WHY. Nothing beyond the task.
+- Nothing beyond the task.
 - The C# AutoCount service compiles locally (`backend/scripts/autocount-service/build-local.ps1`). Compiling is not deploying: the office host swaps via `deploy-on-host.ps1`.
 - Test UI changes in the browser before saying done.
 - Confirm before destructive operations (force push, dropping tables, deleting branches).

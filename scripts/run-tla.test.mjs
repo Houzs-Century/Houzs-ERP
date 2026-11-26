@@ -19,7 +19,6 @@ test('verdictOf reads each TLC ending', () => {
   assert.equal(verdictOf('...\nModel checking completed. No error has been found.\n'), 'pass');
   assert.equal(verdictOf('Error: Invariant NoDoublePost is violated.\nThe behavior up to this point is:'), 'invariant');
   assert.equal(verdictOf('Error: Temporal properties were violated.\n'), 'property');
-  assert.equal(verdictOf('Error: Deadlock reached.\n'), 'deadlock');
   assert.equal(verdictOf('***Parse Error***\n'), 'error');
   assert.equal(verdictOf(''), 'error');
 });

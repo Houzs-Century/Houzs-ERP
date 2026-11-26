@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export function lintApps(changed, hasLint) {
-  return [...new Set(changed.map((f) => f.split("/")[0]))].filter(hasLint).sort();
+  const tops = changed.flatMap((f) => (f.startsWith("scripts/eslint/") || f === "scripts/lint-ratchet.mjs" ? ["backend", "frontend"] : [f.split("/")[0]]));
+  return [...new Set(tops)].filter(hasLint).sort();
 }
 
 export function buildSteps({ fast, apps }) {
@@ -38,7 +39,16 @@ function hasLint(app) {
 
 function main() {
   const fast = process.argv.includes("--fast");
-  const steps = buildSteps({ fast, apps: fast ? [] : lintApps(changedFiles(), hasLint) });
+  let apps = [];
+  if (!fast) {
+    try {
+      apps = lintApps(changedFiles(), hasLint);
+    } catch (err) {
+      console.error(`agent-check: cannot diff against origin/main (run \`git fetch origin main\`): ${err.message}`);
+      process.exit(1);
+    }
+  }
+  const steps = buildSteps({ fast, apps });
   const results = steps.map((s) => {
     console.log(`\n== ${s.name}`);
     const r = spawnSync(s.cmd, s.args, { cwd: root, stdio: "inherit", shell: s.shell ?? false });
