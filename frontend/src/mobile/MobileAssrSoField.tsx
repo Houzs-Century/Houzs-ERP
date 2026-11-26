@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { formatPhone } from "../vendor/shared/phone";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
 import { type Any, cellEllipsis, get } from "./assr-case-fields";
 import "./mobile.css";
 

@@ -12,7 +12,7 @@ import { CacheStamp } from "../../components/CacheStamp";
 import { useCacheRefresh, withFresh } from "../../lib/cacheStamp";
 import { api } from "../../api/client";
 import { formatCurrency, cn } from "../../lib/utils";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { Panel, Th, Td, Toggle, SELECT_CLS, SortTh, useTableSort } from "../../components/scm-v2/OverviewKit";
 import { VenueRentPanel } from "./VenueRentPanel";
 import { Columns, TONE, PALETTE } from "../../components/scm-v2/Charts";

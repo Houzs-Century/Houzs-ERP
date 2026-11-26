@@ -11,7 +11,7 @@
 // workbook and screen can never disagree. Nothing is recomputed here.
 // ----------------------------------------------------------------------------
 
-import { fmtSenPlain } from '../../shared/format';
+import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import { flattenLaid, fmtPct, linesVisible, pctOf, type LaidNode } from './report-layout';
 import type { FlatLine, MonthColumn, MonthlyLine } from './report-monthly';
 import { AUTOCOUNT_LINE_ID, AUTOCOUNT_LINE_LABEL, balanceParts, withAutoCountLine, type RpReport } from './rp-report-queries';

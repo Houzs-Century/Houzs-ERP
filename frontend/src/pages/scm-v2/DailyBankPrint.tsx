@@ -1,7 +1,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, Download, Printer, X } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { useBranding } from '../../hooks/useBranding';
 import { useAuth } from '../../auth/AuthContext';
 import styles from './DailyBankPrint.module.css';

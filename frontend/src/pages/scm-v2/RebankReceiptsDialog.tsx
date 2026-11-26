@@ -9,7 +9,7 @@
 // shown, the failures by name. Rules: backend/src/acc/receipt-rebank.ts.
 
 import { useState } from 'react';
-import { fmtDate, fmtSen } from '../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../shared/src/vendor/shared/format';
 import {
   REBANK_PER_CALL, useRebankCandidates, useRebankMove, type RebankOutcome, type RebankRow,
 } from '../../vendor/scm/lib/accounting-queries';

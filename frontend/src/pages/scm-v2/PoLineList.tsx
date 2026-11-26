@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { SortTh, Td, useTableSort } from "../../components/scm-v2/OverviewKit";
 

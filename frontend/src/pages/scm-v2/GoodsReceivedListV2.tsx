@@ -60,7 +60,7 @@ import {
   useCancelGrn,
 } from "../../vendor/scm/lib/grn-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
+import { withStatusLabels } from "../../../../shared/src/vendor/scm/lib/status-pill";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useBatchConfirm } from "../../vendor/scm/lib/batch-confirm";

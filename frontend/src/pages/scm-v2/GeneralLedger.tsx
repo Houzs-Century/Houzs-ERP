@@ -32,7 +32,7 @@ import {
   LEDGER_COLUMNS, type LedgerBlock, type LedgerLine, type LedgerParams,
 } from '../../vendor/scm/lib/ledger-queries';
 import { exportFileName } from '../../vendor/scm/lib/report-sheet';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { AccountCell } from './JournalEntryCards';
 import { useColumnWidths, type ColumnWidthSpec } from './finance/useColumnWidths';
 import { AccountingHeader } from './books/AccountingHeader';

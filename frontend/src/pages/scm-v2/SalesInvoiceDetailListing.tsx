@@ -1,7 +1,7 @@
 
 import { useCallback } from 'react';
-import { fmtDateOrDash, fmtMoneySen, fmtQty, fmtSen } from '../../vendor/shared/format';
-import { statusLabel } from '../../vendor/scm/lib/status-pill';
+import { fmtDateOrDash, fmtMoneySen, fmtQty, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { statusLabel } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useSalesInvoiceDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import type { GridColumn } from '../../components/DataGridCompat';

@@ -73,11 +73,11 @@ import { NOT_A_BILL_LABEL, claimEvidenceOf, isClaimForm, isNotABill, repeatsOf, 
 import type { AiReadStage } from '../../vendor/scm/lib/ai-read-job';
 import { clearPile, getPile, pileKey, updatePile, usePile, type PileState } from '../../vendor/scm/lib/bill-pile-store';
 import { getActiveCompanySnapshot, subscribeActiveCompany } from '../../lib/activeCompany';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import styles from './SalesOrderDetail.module.css';
 
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const ACCEPT_MIMES = 'image/jpeg,image/png,image/webp,application/pdf';

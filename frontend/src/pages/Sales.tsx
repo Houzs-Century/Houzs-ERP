@@ -11,7 +11,7 @@ import { useUdf, type UdfField, type UdfFieldType } from "../hooks/useUdf";
 import { useStickyFilters } from "../hooks/useStickyFilters";
 import { api } from "../api/client";
 import { downloadAllPagesCSV } from "../lib/csv";
-import { formatPhone } from "../vendor/shared/phone";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
 import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
 import { canSeeSoloOrganizer } from "../auth/salesAccess";

@@ -11,7 +11,7 @@ import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawe
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-import { fmtSen, todayMY } from "../../vendor/shared/format";
+import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, useDashboardPeriod, periodEnd } from "../../components/scm-v2/DashboardPeriod";

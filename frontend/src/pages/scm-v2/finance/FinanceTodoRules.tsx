@@ -1,7 +1,7 @@
 
 import { useState } from 'react';
 import { PageHeader } from '../../../components/Layout';
-import { fmtSenPlain } from '../../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import styles from './FinanceTasks.module.css';
 import { BUILT_IN_GROUPS } from './TaskDrawers';
 import { useAddGroup, useAddRule, useSaveRulesOff, useTodoSettings, useUpdateTask, type CustomRule, type TodoTask } from './finance-todo-queries';

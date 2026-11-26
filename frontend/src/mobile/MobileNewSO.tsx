@@ -106,16 +106,16 @@ import { askNewSoBackdateReason, isBackdateRequestRow, sendNewSoBackdateRequests
 import { convertedBody, rmInput, useMobileConvertSources, type MobileConvertPrefill } from "./MobileOrderMoney";
 import { CONVERT_LABEL } from "../vendor/scm/lib/so-money-queries";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
-import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
-import { missingVariantAxes } from "../vendor/shared/so-variant-rule";
-import { isColourKiv } from "../vendor/shared/variant-summary";
+import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../../../shared/src/vendor/shared/maintenance-pools";
+import { missingVariantAxes } from "../../../shared/src/vendor/shared/so-variant-rule";
+import { isColourKiv } from "../../../shared/src/vendor/shared/variant-summary";
 import { computeTotalHeight, isTotalHeightCategory, parseInches, TOTAL_HEIGHT_PARTS } from "../vendor/shared/total-height";
 import { activeCompanyTracksVariants } from "../vendor/scm/lib/binding-mode";
 import { CONSOLE_ATTACH_KEY, consoleAttachOptions, lineIdentity } from "@2990s/shared";
 import { Field, SpecSel } from "./mobile-fields";
-import { normalizePhone } from "../vendor/shared/phone";
+import { normalizePhone } from "../../../shared/src/vendor/shared/phone";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
-import { fmtSen as fmtSharedSen } from "../vendor/shared/format";
+import { fmtSen as fmtSharedSen } from "../../../shared/src/vendor/shared/format";
 import "./mobile.css"; import { FormTouchScope, useFormGuard } from "../hooks/useLeaveGuard";
 
 /* ---------------------------------------------------------------------------

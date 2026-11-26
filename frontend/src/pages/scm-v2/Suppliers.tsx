@@ -6,7 +6,7 @@ import { rememberScmListFocus, takeScmListFocus } from '../../lib/scmListReturn'
 import { Search, Plus, X } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
-import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
+import { humaniseStatusKey } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { FilterPills } from '../../components/FilterPills';
 import { cn } from '../../lib/utils';
 import { formatPhone } from '@2990s/shared/phone';

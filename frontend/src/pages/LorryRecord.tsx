@@ -27,7 +27,7 @@ import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { useLorries } from "../vendor/scm/lib/lorries-queries";
-import { fmtDate, fmtSen, todayMY } from "../vendor/shared/format";
+import { fmtDate, fmtSen, todayMY } from "../../../shared/src/vendor/shared/format";
 import { CapacityCard, PurchaseCard } from "./fleet/LorryVehicle";
 import { LorryTodayRoute } from "./fleet/LorryTodayRoute";
 import { RepairSpend, repairSpendOf } from "./fleet/RepairSpend";

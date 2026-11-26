@@ -14,7 +14,7 @@ import { DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawIn
 import { pcbHasFigure } from "../../vendor/shared/hr-pcb";
 import { tripMonthBounds } from "../../vendor/shared/hr-trip-pay";
 import type { Payslip } from "./hrApi";
-import { PDF_COMPRESS } from "../../vendor/scm/lib/pdf-options";
+import { PDF_COMPRESS } from "../../../../shared/src/vendor/scm/lib/pdf-options";
 
 type JsPdf = import("jspdf").jsPDF;
 type AutoTable = (doc: JsPdf, options: Record<string, unknown>) => void;

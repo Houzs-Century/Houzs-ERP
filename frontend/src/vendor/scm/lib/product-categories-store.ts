@@ -18,9 +18,9 @@ import {
   parseMfgCategory as parseIn,
   type MfgProductCategory,
   type ProductCategory,
-} from '../../shared/product-categories';
+} from '../../../../../shared/src/vendor/shared/product-categories';
 
-export { isSingleSkuCategory, type MfgProductCategory, type ProductCategory } from '../../shared/product-categories';
+export { isSingleSkuCategory, type MfgProductCategory, type ProductCategory } from '../../../../../shared/src/vendor/shared/product-categories';
 
 let loaded: readonly ProductCategory[] = [];
 

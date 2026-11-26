@@ -15,7 +15,7 @@
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { PO_ESTIMATE_DELIVERY_DATE_LABELS } from '../../vendor/scm/lib/po-line-export-columns';
-import { fmtDate, fmtSen } from '../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { soRefOfStamp, type SoRefStamp } from '../../lib/so-ref-search';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';

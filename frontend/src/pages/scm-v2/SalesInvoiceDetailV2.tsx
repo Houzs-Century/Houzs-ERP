@@ -66,13 +66,13 @@ import {
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
-import { statusLabel } from "../../vendor/scm/lib/status-pill";
+import { statusLabel } from "../../../../shared/src/vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetryNavigationState, planPaymentDraftFlush, readPaymentRetryHandoff, readPaymentRetryNavigationState } from "../../lib/paymentRetryHandoff";
 import { transferFromColumnLabel } from "../../lib/convertScope";
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 
 import { useSalesInvoiceAddLine } from "./SalesInvoiceAddLine";
 import { salesInvoiceLinesOpen } from "../../vendor/scm/lib/line-add-lock";

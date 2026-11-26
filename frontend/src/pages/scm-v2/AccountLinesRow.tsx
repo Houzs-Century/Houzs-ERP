@@ -2,7 +2,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { BookOpen, ChevronRight, X } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { ledgerHref } from '../../vendor/scm/lib/report-layout';
 import { counterLabel, fmtLedger, fmtSide, useLedger, type LedgerLine } from '../../vendor/scm/lib/ledger-queries';
 import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch } from './accounting-tabs';

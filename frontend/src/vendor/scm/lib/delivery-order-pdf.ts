@@ -46,7 +46,7 @@ import {
 } from '../../../lib/branding';
 import { DO_SIZE as S, DO_THEME as T, SANS, charSpace, pt, type Rgb } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
-import { stripBookText } from './book-text';
+import { stripBookText } from '../../../../../shared/src/vendor/scm/lib/book-text';
 import { drawQrIntoPdf } from './pdf-qr';
 import {
   appendPhotoMarker,
@@ -57,10 +57,10 @@ import {
   photoKeyOwners,
   photoKeysOf,
   type PdfPhotoImage,
-} from './pdf-item-photos';
+} from '../../../../../shared/src/vendor/scm/lib/pdf-item-photos';
 import { blobToSquarePdfImage } from './pdf-item-photos-canvas';
 import { fetchDoItemPhotoBlob } from './sales-order-queries';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 import { shortRackLabels } from './rack-label';
 
 type DoHeader = {

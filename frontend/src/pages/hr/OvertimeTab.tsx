@@ -11,7 +11,7 @@ import { useQuery } from "../../hooks/useQuery";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { minToHhmm } from "../../vendor/shared/hr-pay-rules";
 import { Field, Pill, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
 

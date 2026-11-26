@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDate } from '../../shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 import { useConfirm } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
 import { fileToBase64, PV_FILE_ACCEPT, type PvFile, type PvFilePayload } from '../lib/payment-voucher-queries';

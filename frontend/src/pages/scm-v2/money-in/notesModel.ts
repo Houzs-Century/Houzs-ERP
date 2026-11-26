@@ -2,7 +2,7 @@
 import type { ArListRow } from '../../../vendor/scm/lib/ar-invoice-queries';
 import type { CreditNote } from '../../../vendor/scm/lib/credit-note-queries';
 import { searchText } from '../../../lib/so-ref-search';
-import { fmtSen } from '../../../vendor/shared/format';
+import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { noteTag, type Tag } from './moneyInStatus';
 import { moneyInDocHref } from './moneyInDocs';
 

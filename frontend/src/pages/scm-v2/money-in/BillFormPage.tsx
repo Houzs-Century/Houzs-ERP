@@ -6,7 +6,7 @@ import {
 import { useArBillDetail } from '../../../vendor/scm/lib/ar-invoice-queries';
 import { useIdempotencyKeyFor } from '../../../lib/idempotency';
 import { useToastOptional } from '../../../hooks/useToast';
-import { fmtSen } from '../../../vendor/shared/format';
+import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { DebtorBillForm, emptyBillForm, type BillFormSubmit, type BillFormValues } from '../DebtorBillForm';
 import { DocFormShell } from './MoneyInDocPage';
 import { moneyInDocHref } from './moneyInDocs';

@@ -24,7 +24,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useUploadOfficialDoc } from '../../vendor/scm/lib/official-doc-queries';
 import { fileToBase64 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import type { TaskAttachment } from './types';
 
 export type PmsModalProps =

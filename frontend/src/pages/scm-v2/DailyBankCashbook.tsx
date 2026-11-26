@@ -12,7 +12,7 @@
 
 import { useState } from 'react';
 import { History, Pencil, Save, Trash2 } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import type { AuditLabelDictionary } from '../../components/audit/audit-labels';

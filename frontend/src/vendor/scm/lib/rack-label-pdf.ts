@@ -23,7 +23,7 @@ import { deliverPdf, ensurePdfCjkFont, safeName, type PdfAction } from './pdf-co
 import { drawQrIntoPdf } from './pdf-qr';
 import { rackQrPayload } from './rack-qr';
 import { compareRackLabels } from './warehouse-floorplan';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 const PAGE_W = 210;
 const PAGE_H = 297;

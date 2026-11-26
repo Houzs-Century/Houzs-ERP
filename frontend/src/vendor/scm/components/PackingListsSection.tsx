@@ -28,7 +28,7 @@ import { DataTable, type Column } from '../../../components/DataTable';
 import { usePackingLists, type PackingListRow } from '../lib/packing-list-queries';
 import { rollupDeliveryStatus, rollupLabel, fmtM3 } from '../lib/packing-list-model';
 import { generatePackingListPdf, packingRunUrl } from '../lib/packing-list-pdf';
-import { fmtDate } from '../../shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 
 const TONE_FOR: Record<string, 'neutral' | 'warning' | 'success'> = {
   Draft: 'neutral',

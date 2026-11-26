@@ -12,7 +12,7 @@
 // THE TABLE (「表很乱，看的不是很清楚」, every cost kept: 「还是需要每个费用的明细」):
 // a two-line project name, amounts without "RM" and a dash for nothing.
 
-import { fmtDayMonthRange } from "../../vendor/shared/format";
+import { fmtDayMonthRange } from "../../../../shared/src/vendor/shared/format";
 import type { Drill, OvProject } from "./projectOverviewModel";
 
 export type SortKey = "start" | "sales" | "np" | "npPct";

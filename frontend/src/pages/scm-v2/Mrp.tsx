@@ -43,7 +43,7 @@ import {
 } from './mrp-tree-rows';
 import { isSofaAccessory } from './mrp-sofa-accessory';
 import { checkSofaSetsBeforePo } from './mrp-sofa-set-gate';
-import { fmtDate, fmtDateTime, fmtQty } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtQty } from '../../../../shared/src/vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { Button } from '../../components/Button';

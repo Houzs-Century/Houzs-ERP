@@ -24,7 +24,7 @@ import {
   amountInWordsMyr, fmtRm, fmtDocDate, safeName, type PdfAction,
 } from './pdf-common';
 import { PAYMENT_METHOD_DEFAULT_LABELS } from '@2990s/shared/payment-methods';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type ReceiptPdfData = {
   or_number: string;

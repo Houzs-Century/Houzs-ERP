@@ -16,7 +16,7 @@ import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { SoSharedWith } from "../vendor/scm/components/SoSharedWith";
 import { HIST_FIELD_LABEL, HIST_MONEY_FIELDS } from "./so-history-labels";
 import { isStoredPhotoKey } from "../components/audit/audit-value";
-import { statusLabel } from "../vendor/scm/lib/status-pill";
+import { statusLabel } from "../../../shared/src/vendor/scm/lib/status-pill";
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover, SO_AMENDMENT_LANE_APPROVE_PERM } from "../vendor/scm/lib/amendment-approver";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { ACCESS_RANK } from "../types";
@@ -31,9 +31,9 @@ import {
   type SoAuditFieldChange,
 } from "../vendor/scm/lib/sales-order-queries";
 import { overlaySoLineCoverage } from "../vendor/scm/lib/so-coverage-overlay";
-import { buildVariantSummary } from "../vendor/shared/variant-summary";
-import { formatPhone } from "../vendor/shared/phone";
-import { fmtDateTime } from "../vendor/shared/format";
+import { buildVariantSummary } from "../../../shared/src/vendor/shared/variant-summary";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
+import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
 import { orderLineIdentity } from "@2990s/shared"; import { soEditOpensOnOverride } from "../vendor/scm/lib/so-after-do-client";
 import {
   CANCELLABLE_STATUSES,

@@ -46,7 +46,7 @@ import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import { DateField } from "./DateField";
 import { showsVariantEditor } from '../lib/variant-editor-groups';
 
-import { fmtMoneySen } from '../../../vendor/shared/format';
+import { fmtMoneySen } from '../../../../../shared/src/vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {

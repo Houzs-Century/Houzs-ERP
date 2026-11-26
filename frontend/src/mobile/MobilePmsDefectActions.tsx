@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { api } from "../api/client";
-import { fmtDateTime } from "../vendor/shared/format";
+import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { parseDefectCaption } from "../pages/projects/defectRemark";
 import {

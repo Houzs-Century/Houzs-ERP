@@ -28,7 +28,7 @@ import type {
   CommissionAdjustment, CommissionBasis, CommissionChange, CommissionChangedOrder, CommissionDeferredIn, CommissionEarlierOrder,
   CommissionFairRow, CommissionManualLine, CommissionMarkedOrder, CommissionMarkInfo, CommissionMonthAdjustment, CommissionSoRow, EventCommission,
 } from '../../vendor/scm/lib/event-queries';
-import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtDayMonthRange } from '../../../../shared/src/vendor/shared/format';
 import { AMOUNT_COLUMN, sheetText, type ReportSheet, type SheetColumn, type SheetRow, type SheetTable, type SheetValue } from '../../vendor/scm/lib/report-sheet';
 
 export const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);

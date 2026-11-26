@@ -34,7 +34,7 @@
 // ----------------------------------------------------------------------------
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 
-import { fmtMoneySen } from '../../../vendor/shared/format';
+import { fmtMoneySen } from '../../../../../shared/src/vendor/shared/format';
 const amountAtRest = (sen: number | null | undefined): string =>
   sen == null || sen === 0 ? '' : (sen / 100).toFixed(2);
 

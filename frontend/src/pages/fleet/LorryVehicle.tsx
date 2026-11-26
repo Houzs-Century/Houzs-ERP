@@ -7,7 +7,7 @@ import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { writeFailedAs } from "../../vendor/scm/lib/mutation-error";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { fmtDate, fmtSen } from "../../vendor/shared/format";
+import { fmtDate, fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { BTN_PRI, BTN_SEC, Fact, FactGrid, FleetCard, INPUT, LABEL } from "./FleetUi";
 

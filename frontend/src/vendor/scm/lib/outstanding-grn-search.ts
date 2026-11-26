@@ -13,7 +13,7 @@
 // ----------------------------------------------------------------------------
 
 import { buildVariantSummary } from '@2990s/shared';
-import { fmtDateOrDash } from '../../shared/format';
+import { fmtDateOrDash } from '../../../../../shared/src/vendor/shared/format';
 import type { OutstandingGrnItem } from './suppliers-queries';
 
 export function searchTerms(query: string): string[] {

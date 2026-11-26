@@ -1,7 +1,7 @@
 
 import type { ReceiptRow } from '../../../vendor/scm/lib/accounting-queries';
 import { searchText, soRefOfCamelStamp } from '../../../lib/so-ref-search';
-import { fmtSen } from '../../../vendor/shared/format';
+import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { pvStage } from '../PvDocParts';
 import { debtorReceiptTag, methodWord, officialReceiptTag, sundryReceiptTag, type Tag } from './moneyInStatus';
 import type { OfficialReceiptRow } from './moneyInDocQueries';

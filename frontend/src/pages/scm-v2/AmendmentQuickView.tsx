@@ -15,7 +15,7 @@
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { ExternalLink, X as XIcon } from "lucide-react";
-import { fmtDateTime } from "../../vendor/shared/format";
+import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { AmendmentStatusPill } from "../../vendor/scm/components/StatusPill";
 import { AmendmentApproverBadge } from "../../vendor/scm/components/AmendmentApproverBadge";

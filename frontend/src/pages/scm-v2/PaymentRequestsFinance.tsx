@@ -20,7 +20,7 @@ import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash, fmtSen, todayMY } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtSen, todayMY } from '../../../../shared/src/vendor/shared/format';
 import { BatchBar } from './money-in/MoneyInParts';
 import { EVENTS_PATH, RequestForm } from './PaymentRequestForm';
 import {

@@ -6,7 +6,7 @@
    chunks' answers are combined here into the one line the page shows. Pure, so
    desktop and mobile render the same words. */
 
-import { fmtTime } from "../vendor/shared/format";
+import { fmtTime } from "../../../shared/src/vendor/shared/format";
 
 export type ListMrpFallback = "missing" | "stale" | "refresh";
 

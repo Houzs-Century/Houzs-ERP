@@ -41,7 +41,7 @@ import { usePrompt } from "../../vendor/scm/components/PromptDialog";
 import { RelationshipMapButton } from "../../vendor/scm/components/RelationshipMapButton";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
-import { statusLabel } from "../../vendor/scm/lib/status-pill";
+import { statusLabel } from "../../../../shared/src/vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 import { FlowDocFilesCard } from "../../vendor/scm/components/FlowDocFilesCard";

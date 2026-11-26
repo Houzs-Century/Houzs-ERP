@@ -31,7 +31,7 @@ import { DateField } from '../../vendor/scm/components/DateField';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash, fmtSen, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtSen, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { Field, SetupModal, Skeleton, Tag } from './finance/SetupParts';
 import sp from './finance/SetupParts.module.css';
 import css from './OpeningBalance.module.css';

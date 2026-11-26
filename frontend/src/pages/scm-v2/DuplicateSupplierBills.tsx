@@ -11,8 +11,8 @@ import { useDuplicateSupplierBills, type DuplicateBillCopy, type DuplicateBillGr
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
-import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
-import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
+import { fmtDateOrDash, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { humaniseStatusKey } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { FinanceDocLink, financeDocHref } from './finance/FinanceDocLink';
 import { Tag } from './MoneyOutErpParts';
 import css from './MoneyOutErp.module.css';

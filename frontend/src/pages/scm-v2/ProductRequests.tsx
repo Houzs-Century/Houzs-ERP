@@ -49,7 +49,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };

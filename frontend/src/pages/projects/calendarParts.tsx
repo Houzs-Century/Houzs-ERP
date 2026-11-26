@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { fmtDate } from "../../vendor/shared/format";
+import { fmtDate } from "../../../../shared/src/vendor/shared/format";
 import type { ProjectStatus } from "./types";
 import { upcaseLeadingState } from "./projectHelpers";
 import { STATUS_BY_VALUE } from "./projectStatus";

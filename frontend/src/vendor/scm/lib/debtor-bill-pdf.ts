@@ -19,7 +19,7 @@ import {
 import { getBrandingCache } from '../../../lib/branding';
 import type { DebtorBill, OtherDebtor } from './accounting-queries';
 import { partyAddressLines, type DebtorPartyColumns } from './debtor-party';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type DebtorBillPdfData = {
   bill: DebtorBill;

@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Calendar, Check, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { placePopover } from '../lib/popoverPlacement';
-import { fmtDate } from '../vendor/shared/format';
+import { fmtDate } from '../../../shared/src/vendor/shared/format';
 import { DateField } from '../vendor/scm/components/DateField';
 import {
   addDays, daysInRange, monthStart, presetLabel, presetOf, presetRange, type RangePresetKey,

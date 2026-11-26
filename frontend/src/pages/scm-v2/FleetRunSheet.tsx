@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Printer, ArrowLeft } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
-import { fmtSen, fmtDate, todayMY } from '../../vendor/shared/format';
+import { fmtSen, fmtDate, todayMY } from '../../../../shared/src/vendor/shared/format';
 import { useFleetDay, type FleetDayTrip } from '../../vendor/scm/lib/fleet-day-queries';
 import { assignRouteColors, routeColorFor } from '../../vendor/scm/lib/fleet-colors';
 import { buildMapRoutes, etaLabel, windowLabel, kmLabel } from '../../vendor/scm/lib/fleet-day-model';

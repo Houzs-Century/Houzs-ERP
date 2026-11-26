@@ -38,7 +38,7 @@ import { ArrowLeft, Check, Plus, X } from 'lucide-react';
 import { ReportShell } from './reports/ReportShell';
 import { DataTable, type Column } from '../../components/DataTable';
 import { buildVariantSummary, fmtQty, orderLineIdentity } from '@2990s/shared';
-import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { useAuth } from '../../auth/AuthContext';
 import { fairAllowedStages, isFairManagementUser } from '../../auth/salesAccess';
 import { useOpenDocInTab } from '../../lib/openDocInTab';

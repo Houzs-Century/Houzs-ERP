@@ -12,7 +12,7 @@ import { ASSR_STAGE_LABEL } from "../../vendor/scm/lib/assr-stage-labels";
 import { useDialog } from "../../hooks/useDialog";
 import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PortalStatusColor } from "../types";
-import { fmtDate } from "../../vendor/shared/format";
+import { fmtDate } from "../../../../shared/src/vendor/shared/format";
 import { formatCurrency } from "../../lib/utils";
 
 const ALLOWED_EXT = ["jpg", "jpeg", "png", "webp"];

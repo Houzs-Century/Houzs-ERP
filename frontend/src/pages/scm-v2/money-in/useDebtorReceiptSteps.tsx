@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useDebtorReceiptAction, useVoidDebtorReceipt } from '../../../vendor/scm/lib/accounting-queries';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
-import { fmtSen } from '../../../vendor/shared/format';
+import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { AskBanner, type Ask } from './AskBanner';
 import type { MenuItem } from './MoneyInParts';
 import type { DebtorStage } from './receiptsModel';

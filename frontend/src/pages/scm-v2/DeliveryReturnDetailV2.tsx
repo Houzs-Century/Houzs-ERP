@@ -48,7 +48,7 @@ import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { transferFromColumnLabel } from "../../lib/convertScope";
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 import { FlowDocFilesCard } from "../../vendor/scm/components/FlowDocFilesCard";
 
 

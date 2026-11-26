@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ConvertPicker, RefundPicker } from '../../vendor/scm/components/OrderMoneyPanel';
 import { newOrderWithMoneyHref, useOrdersWithMoney, type ConvertPick, type ConvertSource } from '../../vendor/scm/lib/so-money-queries';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 
 export type TickedOrder = { docNo: string; status: string; customer: string | null };
 

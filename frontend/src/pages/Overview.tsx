@@ -10,7 +10,7 @@ import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
 import { AckTrendCard, AnnouncementBannerStack, TeamPendingCard } from "../components/AnnouncementDashboard";
 import { cn } from "../lib/utils";
-import { fmtDate, fmtSen, todayMY } from "../vendor/shared/format";
+import { fmtDate, fmtSen, todayMY } from "../../../shared/src/vendor/shared/format";
 import { formatCurrency } from "../lib/utils";
 import { totalsOf, type OvProject } from "./projects/projectOverviewModel";
 import { ManagementWatch, type WatchInputs } from "./overview/ManagementWatch";

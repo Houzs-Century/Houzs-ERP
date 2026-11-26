@@ -93,8 +93,8 @@ import { capability } from "../../auth/capabilities";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { soExemptionExpiryOf } from "../../lib/so-exemption-expiry";
 import { formatPhone } from "@2990s/shared/phone";
-import { customerRefOf } from '../../lib/customer-ref';
-import { soStreetTail } from '../../vendor/scm/lib/order-address';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
+import { soStreetTail } from '../../../../shared/src/vendor/scm/lib/order-address';
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { soListBalanceSen, soListPaidSen } from "../../vendor/scm/lib/so-list-balance";
 

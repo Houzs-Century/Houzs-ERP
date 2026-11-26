@@ -12,7 +12,7 @@
 // what they MEAN lives on the server.
 
 import type { CSSProperties } from 'react';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 import type { SettlementBucket } from './settlement-queries';
 
 export const ICON = { size: 16, strokeWidth: 1.75 } as const;

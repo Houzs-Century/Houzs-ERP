@@ -2,7 +2,7 @@
 import type { ApListRow } from '../../vendor/scm/lib/ap-invoice-queries';
 import type { CreditNote } from '../../vendor/scm/lib/credit-note-queries';
 import type { ApListingRow } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 
 export type BillKindTab = 'ALL' | 'API' | 'PI' | 'SCN';
 export type BillChip = 'all' | 'unpaid' | 'overdue' | 'draft' | 'paid' | 'cancelled';

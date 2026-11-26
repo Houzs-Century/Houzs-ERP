@@ -5,8 +5,8 @@ import {
   correlatedFetch,
   requestIdFromResponse,
 } from "./requestCorrelation";
-import { HOUZS_COMPANY_CODE } from "./branding-text";
-export { HOUZS_COMPANY_CODE, shortCompanyName, composeCompanyAddress } from "./branding-text";
+import { HOUZS_COMPANY_CODE } from "../../../shared/src/lib/branding-text";
+export { HOUZS_COMPANY_CODE, shortCompanyName, composeCompanyAddress } from "../../../shared/src/lib/branding-text";
 
 export interface Branding {
   companyName: string;

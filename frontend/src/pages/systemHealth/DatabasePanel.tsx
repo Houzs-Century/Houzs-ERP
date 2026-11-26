@@ -4,7 +4,7 @@ import { ListSkeleton } from "../../components/Skeleton";
 import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 import { cn } from "../../lib/utils";
-import { fmtDate, fmtDateTime } from "../../vendor/shared/format";
+import { fmtDate, fmtDateTime } from "../../../../shared/src/vendor/shared/format";
 
 
 type Verdict = "ok" | "warning" | "critical";

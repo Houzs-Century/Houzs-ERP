@@ -2,8 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { writeFailed } from './mutation-error';
-import { sameState } from './state-key';
-export { stateKey, sameState } from './state-key';
+import { sameState } from '../../../../../shared/src/vendor/scm/lib/state-key';
+export { stateKey, sameState } from '../../../../../shared/src/vendor/scm/lib/state-key';
 
 export interface LocalityRow {
   id?: string;

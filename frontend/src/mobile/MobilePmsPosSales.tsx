@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { formatDateTime } from "../lib/utils";
-import { fmtSen } from "../vendor/shared/format";
+import { fmtSen } from "../../../shared/src/vendor/shared/format";
 import {
   EMPTY_POS_FILTER,
   normalizeProjectPosSales,

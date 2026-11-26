@@ -19,9 +19,9 @@
 
 import { useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { fmtDateTime } from '../../vendor/shared/format';
+import { fmtDateTime } from '../../../../shared/src/vendor/shared/format';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
-import { STATUS_TONES } from '../../vendor/scm/lib/status-pill';
+import { STATUS_TONES } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { cancelRequestReferenceOf } from '../../vendor/scm/lib/amendment-queue-rows';
 import {
   approvalRemarksOf,

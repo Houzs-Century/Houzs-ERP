@@ -6,7 +6,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { fmtDate } from '../../shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 import { triggerDownload } from './fabric-csv';
 import { guardFormula } from '../../../lib/csv';
 

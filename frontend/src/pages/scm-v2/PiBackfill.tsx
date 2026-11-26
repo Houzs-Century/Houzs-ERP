@@ -15,7 +15,7 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
-import { fmtSen, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtSen, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { useToastOptional } from '../../hooks/useToast';
 import { DataTable, type Column } from '../../components/DataTable';
 import { Tag } from './finance/SetupParts';

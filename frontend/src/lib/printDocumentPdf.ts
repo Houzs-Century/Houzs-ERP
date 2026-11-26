@@ -2,7 +2,7 @@
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import type { PrintTarget } from "./printChain";
-import { purchaseOrderPrintBundle, salesOrderPrintBundle } from "../vendor/scm/lib/print-bundle";
+import { purchaseOrderPrintBundle, salesOrderPrintBundle } from "../../../shared/src/vendor/scm/lib/print-bundle";
 
 type Json = Record<string, unknown>;
 type Bundle = { header: Json; items: unknown[]; payments?: unknown[]; pwpCodes?: unknown[] };

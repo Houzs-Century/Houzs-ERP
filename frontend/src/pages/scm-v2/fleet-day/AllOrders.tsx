@@ -1,6 +1,6 @@
 import { cn } from '../../../lib/utils';
 import { Camera } from 'lucide-react';
-import { fmtSen } from '../../../vendor/shared/format';
+import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import type { StopStatus } from '../../../vendor/scm/lib/delivery-stop-status';
 import { clockMY, type LorryRunVM, type DocRowVM } from './vm';
 import { jobRefOf, jobKey } from '../../../vendor/scm/lib/delivery-job';

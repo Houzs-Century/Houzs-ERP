@@ -1,5 +1,5 @@
 
-import { fmtDate } from '../../../vendor/shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 import type { ReportSheet, SheetColumn, SheetRow } from '../../../vendor/scm/lib/report-sheet';
 import type { JournalEntryGrouped } from '../accounting-phase1-queries';
 

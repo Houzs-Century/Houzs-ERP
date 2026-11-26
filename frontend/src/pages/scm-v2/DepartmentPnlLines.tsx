@@ -12,7 +12,7 @@ import { useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { BookOpen, ChevronRight, X } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { ledgerHref } from '../../vendor/scm/lib/report-layout';
 import { useDepartmentLines, type DeptEntry, type DeptLinesAsk } from '../../vendor/scm/lib/department-queries';
 import { fmtMoney } from './reports/FinanceGrid';

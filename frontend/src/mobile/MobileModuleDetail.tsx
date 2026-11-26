@@ -4,7 +4,7 @@ import { offersRecordPayment, piPaymentHint } from "./doc-payment";
 import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices, canPostGoodsReceipts } from "../auth/salesAccess";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lineIdentity, orderLineIdentity } from "@2990s/shared";
-import { buildVariantSummary } from "../vendor/shared/variant-summary";
+import { buildVariantSummary } from "../../../shared/src/vendor/shared/variant-summary";
 import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
@@ -37,7 +37,7 @@ import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
-import { humaniseStatusKey, statusLabel, type StatusDocType } from "../vendor/scm/lib/status-pill";
+import { humaniseStatusKey, statusLabel, type StatusDocType } from "../../../shared/src/vendor/scm/lib/status-pill";
 import "./mobile.css";
 
 

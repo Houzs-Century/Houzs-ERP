@@ -1,5 +1,5 @@
 
-import { fmtDate } from '../../../vendor/shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 import { counterLabel, journalLabel, type LedgerBlock, type LedgerReport } from '../../../vendor/scm/lib/ledger-queries';
 import type { ReportSheet, SheetColumn, SheetRow } from '../../../vendor/scm/lib/report-sheet';
 

@@ -2,7 +2,7 @@
 // orders delivered, their amount, the average order, how many lorries went out
 // and the average a lorry carried; per region the same money in one table.
 import { useState } from "react";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { Columns, PALETTE, TONE } from "../../components/scm-v2/Charts";

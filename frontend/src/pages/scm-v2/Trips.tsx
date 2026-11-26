@@ -51,7 +51,7 @@ import {
   type MapFocus,
   type MapLatLng,
 } from '../../vendor/scm/lib/delivery-map-model';
-import { todayMY } from '../../vendor/shared/format';
+import { todayMY } from '../../../../shared/src/vendor/shared/format';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { cn } from '../../lib/utils';

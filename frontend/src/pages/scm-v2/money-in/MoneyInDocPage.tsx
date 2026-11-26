@@ -2,7 +2,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ListChecks, Printer } from 'lucide-react';
-import { fmtDate, fmtDateTime } from '../../../vendor/shared/format';
+import { fmtDate, fmtDateTime } from '../../../../../shared/src/vendor/shared/format';
 import { returnToWorkspaceOpener, useWorkspaceOpener } from '../../../lib/useWorkspaceOpener';
 import type { TaskLink } from '../finance/finance-todo-queries';
 import { VoucherTaskDrawer } from '../PvDocParts';

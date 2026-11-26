@@ -4,8 +4,8 @@ import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont,
   fmtDocDate, fmtDocStamp, type PdfAction,
 } from './pdf-common';
-import { fmtSenPlain } from '../../shared/format';
-import { PDF_COMPRESS } from './pdf-options';
+import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type Rgb = [number, number, number];
 export type Meta = { label: string; value: string };

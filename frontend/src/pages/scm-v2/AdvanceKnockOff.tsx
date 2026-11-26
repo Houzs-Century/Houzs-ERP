@@ -15,7 +15,7 @@ import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import type { KnockOffRow } from '../../vendor/scm/lib/credit-note-queries';
 import { useApplyAdvance, useSupplierAdvances } from '../../vendor/scm/lib/payment-voucher-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { KnockOffTable, pickSen, type KnockOffPick } from './CreditNoteKnockOff';
 import styles from './SalesOrderDetail.module.css';
 

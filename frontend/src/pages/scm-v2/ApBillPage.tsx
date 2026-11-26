@@ -20,7 +20,7 @@ import {
   type ApInvoiceDetail, type BillPayment,
 } from '../../vendor/scm/lib/ap-invoice-queries';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
-import { fmtDateOrDash, fmtDateTime, fmtSen, todayMY } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtDateTime, fmtSen, todayMY } from '../../../../shared/src/vendor/shared/format';
 import { returnToWorkspaceOpener, useWorkspaceOpener } from '../../lib/useWorkspaceOpener';
 import { AccountCell } from './JournalEntryCards';
 import { ApInvoiceForm, type ApFormSubmit } from './ApInvoiceForm';

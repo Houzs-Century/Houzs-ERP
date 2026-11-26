@@ -17,7 +17,7 @@ import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { statusLabel } from '../../vendor/scm/lib/status-pill';
+import { statusLabel } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { fmtDateOrDash, buildVariantSummary, fmtMoneySen, fmtQty, fmtSen } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';

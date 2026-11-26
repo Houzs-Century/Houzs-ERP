@@ -23,7 +23,7 @@ import {
   useCreditNoteKnockOff, usePartyKnockOff, useSetCreditNoteAllocations,
   type CreditAllocation, type CreditNote, type CreditNoteDetail, type KnockOffRow, type KnockOffTarget,
 } from '../../vendor/scm/lib/credit-note-queries';
-import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { DataTable, type Column } from '../../components/DataTable';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { moneyInDocHref } from './money-in/moneyInDocs';

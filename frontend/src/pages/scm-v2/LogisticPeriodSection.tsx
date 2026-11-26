@@ -6,7 +6,7 @@ import { jobDone, type Progress } from "./logisticDone";
 import { jobDate } from "./logisticFocus";
 import type { LorryJobDetail } from "../../vendor/shared/logistic-region";
 import { useState } from "react";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { ASSR_JOB_KIND_LABEL, type AssrJobKind, type PlanningOrder } from "../../vendor/scm/lib/delivery-planning-queries";
 import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { Tile } from "../../components/scm-v2/Charts";

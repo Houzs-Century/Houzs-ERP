@@ -30,10 +30,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { correlatedFetch } from "../lib/requestCorrelation";
-import { fmtDate, fmtDateTime } from "../vendor/shared/format";
+import { fmtDate, fmtDateTime } from "../../../shared/src/vendor/shared/format";
 import { formatCurrency } from "../lib/utils";
 import { todayMyt } from "../vendor/scm/lib/dates";
-import { PDF_COMPRESS } from "../vendor/scm/lib/pdf-options";
+import { PDF_COMPRESS } from "../../../shared/src/vendor/scm/lib/pdf-options";
 
 export type ShareMode = "contractor" | "brand";
 

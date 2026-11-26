@@ -13,7 +13,7 @@ import type {
   MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
 import { mfgCategoryLabel, type MfgProductCategory } from './product-categories-store';
-import { fmtSen } from '../../shared/format';
+import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
 
 export type PricedOption = MfgPricedOption;
 

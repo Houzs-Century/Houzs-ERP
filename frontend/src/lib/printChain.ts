@@ -64,7 +64,7 @@
    `source` is absent entirely — becomes none, which is the stricter direction.
    ---------------------------------------------------------------------------- */
 
-import { TRANSFER_DOC, type TransferDoc } from "../vendor/shared/transfer-vocabulary";
+import { TRANSFER_DOC, type TransferDoc } from "../../../shared/src/vendor/shared/transfer-vocabulary";
 
 /** One printable document: what the operator reads, and what the fetch uses. */
 export type PrintTarget = {

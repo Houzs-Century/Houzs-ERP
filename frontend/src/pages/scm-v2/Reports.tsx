@@ -38,7 +38,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { fmtDate, fmtSen, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtSen, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useAuth } from '../../auth/AuthContext';

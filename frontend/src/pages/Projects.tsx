@@ -98,7 +98,7 @@ import { PAYMENT_REQUEST_PERMS, RequestPaymentButton, RowRequests, isPayableSect
 import OutstandingReminders from "./projects/OutstandingReminders";
 import { DefectListView } from "./projects/DefectListView";
 import { canPurchaseDefect, canReviewDefect, defectActionLabel, defectStage, REVIEWER_DEFECT_ACTIONS, PURCHASER_DEFECT_ACTIONS, type DefectActionTone } from "./projects/defectReviewer";
-import { formatPhone } from "../vendor/shared/phone";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
 import { MediaLightbox } from "../components/MediaLightbox";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { formatDate, formatDateTime, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
@@ -127,7 +127,7 @@ import type {
 import { composeDefaultProjectName, viewableMime, googleCalendarUrl } from "./projects/projectHelpers";
 import { itemComplete } from "./projects/checklistDone";
 import { PROJECT_STAGES, projectStage, setupArrangedOf, driverKeyedOf } from "./projects/projectStage";
-import { todayMY } from "../vendor/shared/format";
+import { todayMY } from "../../../shared/src/vendor/shared/format";
 import { salesOrderProjectLabel, shownProjectName, shownOrganizer, isSoloMasked, maskSoloOrganizer, SOLO_ORGANIZER_MASK, type SoloMaskProject } from "./projects/soloOrganizerMask";
 import { SoloSafeName, useCanSeeSoloOrganizer } from "./projects/SoloSafeName";
 import { STATUS_OPTIONS, ProjectStatusSelect } from "./projects/projectStatus";

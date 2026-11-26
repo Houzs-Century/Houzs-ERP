@@ -6,7 +6,7 @@ import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
 import { clock12 } from "../../lib/clock12";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import {
   TRIP_EVENT_LABEL,

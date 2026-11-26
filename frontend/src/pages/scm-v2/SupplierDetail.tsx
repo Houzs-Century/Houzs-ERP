@@ -80,7 +80,7 @@ import { exportBindingsCsv, ImportBindingsDialog } from './SupplierBindingsCsv';
 import { UnmappedModelSkus } from './UnmappedModelSkus';
 import { EffectiveDatedHistory } from '../../vendor/scm/components/EffectiveDatedHistory';
 import { todayMyt } from '../../vendor/scm/lib/dates';
-import { statusLabel } from '../../vendor/scm/lib/status-pill';
+import { statusLabel } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { masterNeedsPostcode, masterPostcodeError } from '../../vendor/shared/master-postcode-rule';
 

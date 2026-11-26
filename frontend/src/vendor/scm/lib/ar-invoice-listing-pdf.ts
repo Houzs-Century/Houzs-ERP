@@ -15,7 +15,7 @@ import {
 } from './pdf-common';
 import type { ArListKind, ArListRow } from './ar-invoice-queries';
 import { todayMyt } from './dates';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type ArListingFilter = { kind: ArListKind; partyName?: string | null };
 

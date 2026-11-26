@@ -5,7 +5,7 @@ import { DataTable, type Column } from "../../components/DataTable";
 import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 import { cn } from "../../lib/utils";
-import { fmtDate } from "../../vendor/shared/format";
+import { fmtDate } from "../../../../shared/src/vendor/shared/format";
 import { FleetHealthCharts } from "../FleetHealthCharts";
 import { NewInHouseLorry } from "./NewInHouseLorry";
 import { LorrySide } from "../scm-v2/fleet/Lorry3D";

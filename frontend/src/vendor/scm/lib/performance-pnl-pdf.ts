@@ -6,7 +6,7 @@
 // paper, workbook and screen can never disagree (owner 2026-09-19).
 // ----------------------------------------------------------------------------
 
-import { fmtDate } from '../../shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 import type { PdfAction } from './pdf-common';
 import { fmtPerf, type PerformanceReport } from './performance-report-queries';
 import { performanceTables, type PerformanceSheetOptions, type ReportSheet } from './report-sheet';

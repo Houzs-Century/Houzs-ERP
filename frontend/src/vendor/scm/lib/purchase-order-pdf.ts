@@ -1,15 +1,15 @@
 
 import { deliverPdf, safeName, type PdfAction } from './pdf-common';
-import { poDisplayNumber } from './po-status';
+import { poDisplayNumber } from '../../../../../shared/src/vendor/scm/lib/po-status';
 import { ensureBrandingForActiveCompany } from '../../../hooks/useBranding';
 import { loadSupplierDocData } from './supplier-doc-data';
 import { loadSofaCompartmentArtForPrint, fetchPoItemPhotoBlob } from './sales-order-queries';
 import { blobToSquarePdfImage, PDF_EMAIL_PHOTO_PX, pdfImageAt } from './pdf-item-photos-canvas';
 import type { PoEmailPhotos } from './po-email-photos';
-import { PDF_COMPRESS } from './pdf-options';
-import { drawPurchaseOrderInto, finalizePoPdf, type PoPages, type PoPdfSources } from './purchase-order-pdf-render';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
+import { drawPurchaseOrderInto, finalizePoPdf, type PoPages, type PoPdfSources } from '../../../../../shared/src/vendor/scm/lib/purchase-order-pdf-render';
 
-export { poUrgencyLabel } from './purchase-order-pdf-render';
+export { poUrgencyLabel } from '../../../../../shared/src/vendor/scm/lib/purchase-order-pdf-render';
 
 type RenderArgs = Parameters<typeof drawPurchaseOrderInto>;
 type JsPdf = RenderArgs[0];

@@ -1,7 +1,7 @@
 
 import { useMemo, useState } from 'react';
 import { FileDown, Printer, X } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { useBranding } from '../../hooks/useBranding';
 import { useAuth } from '../../auth/AuthContext';
 import { byDateThenLine } from './bank-reconcile-pick';

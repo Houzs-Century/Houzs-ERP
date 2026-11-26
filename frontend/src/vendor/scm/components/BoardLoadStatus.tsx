@@ -1,4 +1,4 @@
-import { fmtDateTime } from '../../shared/format';
+import { fmtDateTime } from '../../../../../shared/src/vendor/shared/format';
 import type { BandedBoard } from '../lib/delivery-board-bands';
 
 type BandStatus = Pick<BandedBoard, 'loading' | 'failed'>;

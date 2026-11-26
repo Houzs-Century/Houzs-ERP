@@ -16,7 +16,7 @@ import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, X as XIcon } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtMoneySen } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtMoneySen } from '../../../../shared/src/vendor/shared/format';
 import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
 import { TonedPill } from '../../vendor/scm/components/StatusPill';
 import { useBackdateDecisions } from '../../vendor/scm/components/BackdateRequestsPanel';

@@ -33,7 +33,7 @@ import { docPageLabel,
 import { drawQrIntoPdf } from './pdf-qr';
 import { loadingOrder, fmtM3, formatRacksCompact } from './packing-list-model';
 import type { PackingListRow, PackingStop } from './packing-list-queries';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 const MARGIN = 14;
 /* 14mm, DOWN FROM 16 (owner, 2026-08-27: 「我不要 16mm，只想要 10mm，太大了可能

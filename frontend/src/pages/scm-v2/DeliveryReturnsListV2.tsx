@@ -56,7 +56,7 @@ import { deliveryReturnRowMenu } from "./row-menus";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { deliveryReturnPrintChain } from "../../lib/printChain";
 import { deliveryReturnPdfBundle } from "../../lib/printDocumentPdf";
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 import { deliveryReturnMatchesSearch } from '../../lib/so-ref-search';
 import {
   DR_LINE_COLUMNS,

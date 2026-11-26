@@ -3,7 +3,7 @@ import { memo } from 'react';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import type { AuditLabelDictionary } from '../../components/audit/audit-labels';
 import type { AuditEntityType } from '../../vendor/scm/lib/entity-audit-queries';
-import type { StatusDocType } from '../../vendor/scm/lib/status-pill';
+import type { StatusDocType } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import {
   PURCHASE_ORDER_AUDIT_LABELS,
   PURCHASE_INVOICE_AUDIT_LABELS,

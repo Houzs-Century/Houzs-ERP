@@ -1,8 +1,8 @@
 
 import { authedFetch } from './authed-fetch';
-import { makeSupplierDocLoaders } from './supplier-doc-data-core';
+import { makeSupplierDocLoaders } from '../../../../../shared/src/vendor/scm/lib/supplier-doc-data-core';
 
-export * from './supplier-doc-data-core';
+export * from '../../../../../shared/src/vendor/scm/lib/supplier-doc-data-core';
 
 const loaders = makeSupplierDocLoaders((path) => authedFetch(path));
 

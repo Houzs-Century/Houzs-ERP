@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { fmtDate, fmtSen } from "../../../vendor/shared/format";
+import { fmtDate, fmtSen } from "../../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../../vendor/scm/components/DateField";
 import { useConfirm } from "../../../vendor/scm/components/ConfirmDialog";
 import { writeFailedAs } from "../../../vendor/scm/lib/mutation-error";

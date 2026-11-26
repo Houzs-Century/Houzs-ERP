@@ -27,7 +27,7 @@
  * becomes the authority.
  * ------------------------------------------------------------------------- */
 
-import { missingVariantAxes } from "../vendor/shared/so-variant-rule";
+import { missingVariantAxes } from "../../../shared/src/vendor/shared/so-variant-rule";
 import {
   canOperateGoodsReceipts,
   canOperatePurchaseInvoices,

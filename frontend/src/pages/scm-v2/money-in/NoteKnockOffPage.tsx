@@ -15,7 +15,7 @@ import { useAccountRoles, useAccounts } from '../../../vendor/scm/lib/accounting
 import {
   useCreditNoteDetail, useCreditNoteKnockOff, useSetCreditNoteAllocations, type KnockOffRow,
 } from '../../../vendor/scm/lib/credit-note-queries';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { useToastOptional } from '../../../hooks/useToast';
 import { customerWords, pickFromRows, pickSen, pickTargets, type KnockOffPick } from '../CreditNoteKnockOff';
 import { DocFormShell } from './MoneyInDocPage';

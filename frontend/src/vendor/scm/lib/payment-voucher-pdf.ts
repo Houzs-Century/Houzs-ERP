@@ -25,9 +25,9 @@ import { docPageLabel,
 } from './pdf-common';
 /* The status WORD comes from the one home for it (POSTED prints "Approved" —
    the four-layer vocabulary, docs/modules/document-status-vocabulary.md). */
-import { statusLabel } from './status-pill';
+import { statusLabel } from '../../../../../shared/src/vendor/scm/lib/status-pill';
 import { fetchPvPrintBundle } from './payment-voucher-queries';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type PvPdfHeader = {
   pv_number: string; status: string; voucher_date: string | null;

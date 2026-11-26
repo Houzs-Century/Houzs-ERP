@@ -28,7 +28,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
-import { fmtSen } from "../vendor/shared/format";
+import { fmtSen } from "../../../shared/src/vendor/shared/format";
 import {
   zeroCostRefusalFrom,
   zeroCostRefusalText,

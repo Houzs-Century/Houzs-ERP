@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Camera } from 'lucide-react';
 import { cn } from '../../../lib/utils';
-import { fmtSen, fmtDate, todayMY } from '../../../vendor/shared/format';
+import { fmtSen, fmtDate, todayMY } from '../../../../../shared/src/vendor/shared/format';
 import { DateField } from '../../../vendor/scm/components/DateField';
 import { SearchInput } from '../../../components/Button';
 import { useDeliveryHistory } from '../../../vendor/scm/lib/fleet-day-queries';

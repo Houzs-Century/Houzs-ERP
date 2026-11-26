@@ -14,7 +14,7 @@ import { useFleetDay } from "../../vendor/scm/lib/fleet-day-queries";
 import { useActiveTripLocations } from "../../vendor/scm/lib/trip-locations-queries";
 import { useLorryPositions, useLorryTrack, useLorryKmCost } from "../../vendor/scm/lib/lorries-queries";
 import { ScheduleRouteMap, type RoutePoint } from "../../vendor/scm/components/ScheduleRouteMap";
-import { fmtSen, fmtTime, todayMY } from "../../vendor/shared/format";
+import { fmtSen, fmtTime, todayMY } from "../../../../shared/src/vendor/shared/format";
 import { BTN_SEC, Tile } from "./FleetUi";
 import { fmtDrive, fmtKm, useRoadFigures } from "../../vendor/scm/lib/lorry-routes-queries";
 import { drivenPath, useLorryRoadTrack } from "../../vendor/scm/lib/lorry-road-track";

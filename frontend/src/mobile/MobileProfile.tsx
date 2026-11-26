@@ -12,7 +12,7 @@ function appFooterLabel(): string {
     : `${shortCompanyName(getBrandingCache().companyName)} ERP`;
 }
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { formatPhone } from "../vendor/shared/phone";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useThemePreference, type ThemePreference } from "../lib/theme";

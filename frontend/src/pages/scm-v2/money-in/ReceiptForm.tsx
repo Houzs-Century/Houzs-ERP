@@ -9,7 +9,7 @@ import { AccountSelect } from '../../../vendor/scm/components/AccountSelect';
 import { DateField } from '../../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../../vendor/scm/components/MoneyInput';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../../vendor/scm/lib/use-save-hotkey';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import ui from '../MoneyIn.module.css';
 
 export type SundryLine = { rid: number; description: string; creditAccountCode: string; amountSen: number };

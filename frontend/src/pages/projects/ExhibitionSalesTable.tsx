@@ -1,7 +1,7 @@
 import { CheckSquare, Pencil, Send, Trash2, X } from "lucide-react";
 import { DataTable, type Column } from "../../components/DataTable";
 import { cn, formatCurrency, formatDate } from "../../lib/utils";
-import { formatPhone } from "../../vendor/shared/phone";
+import { formatPhone } from "../../../../shared/src/vendor/shared/phone";
 import {
   STATUS_BADGE as SALES_STATUS_BADGE,
   PAYMENT_TYPE_LABEL,

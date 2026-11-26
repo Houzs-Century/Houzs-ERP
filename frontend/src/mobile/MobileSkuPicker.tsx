@@ -3,7 +3,7 @@ import { useMfgProducts, matchesProductQuery, type MfgCategory, type MfgProductR
 import { useProductCategories } from "../vendor/scm/lib/product-categories-store";
 import { dropOneMultiPick, isSofaGroup, multiPickCount, tapMultiPick } from "../vendor/scm/lib/sofa-piece-lines";
 import { pickDefaultVariants } from "../vendor/shared/model-default-variants";
-import { isServiceCategory } from "../vendor/shared/service-sku";
+import { isServiceCategory } from "../../../shared/src/vendor/shared/service-sku";
 import "./mobile.css";
 
 const RENDER_CAP = 60;

@@ -11,7 +11,7 @@ import { DataGridCompat, type GridColumn, type GridContextMenuItem } from '../..
 import type { TablePdfView } from '../../components/dataTableLineExport';
 import { pvListTotal, pvListTotalNote, ringgitSenOfPv } from '../../vendor/scm/lib/pv-list-total';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
-import { statusLabel } from '../../vendor/scm/lib/status-pill';
+import { statusLabel } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
@@ -27,7 +27,7 @@ import { AccountCell } from './JournalEntryCards';
 import styles from './Suppliers.module.css';
 import mo from './MoneyOut.module.css';
 import pvx from './PaymentVouchers.module.css';
-import { PDF_COMPRESS } from '../../vendor/scm/lib/pdf-options';
+import { PDF_COMPRESS } from '../../../../shared/src/vendor/scm/lib/pdf-options';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 

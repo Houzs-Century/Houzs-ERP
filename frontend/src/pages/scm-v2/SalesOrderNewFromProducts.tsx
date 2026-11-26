@@ -29,7 +29,7 @@ import {
 } from "../../vendor/scm/lib/sales-order-queries";
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { companyRequiresStockLocation } from "../../vendor/scm/lib/so-form-validate";
 import { authedFetch, type SaveProblem } from "../../vendor/scm/lib/authed-fetch";
 import { SaveBlockedIndicator } from "../../vendor/scm/components/SaveBlockedIndicator";
