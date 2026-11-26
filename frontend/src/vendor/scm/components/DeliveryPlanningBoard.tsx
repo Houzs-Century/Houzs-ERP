@@ -1171,6 +1171,7 @@ export function DeliveryPlanningBoard({
       accessor: (o) => strong(o.debtor_name ?? o.debtor_code ?? '—'),
       searchValue: (o) => `${o.debtor_name ?? ''} ${o.debtor_code ?? ''}`.trim(),
       groupValue: (o) => o.debtor_name ?? o.debtor_code ?? '(none)',
+      exportValue: (o) => o.debtor_name ?? o.debtor_code ?? '',
       sortFn: (a, b) => (a.debtor_name ?? '').localeCompare(b.debtor_name ?? ''),
     },
     {
@@ -1196,6 +1197,7 @@ export function DeliveryPlanningBoard({
       key: 'phone', label: 'Phone', width: 150,
       accessor: (o) => detail(formatPhone(o.phone) || '—'),
       searchValue: (o) => o.phone ?? '',
+      exportValue: (o) => formatPhone(o.phone) || '',
     },
     {
       /* Latest WhatsApp send for this SO / ASSR job, from scm.wa_message_log —
@@ -1250,6 +1252,7 @@ export function DeliveryPlanningBoard({
       accessor: (o) => detail(o.branding ?? '—'),
       searchValue: (o) => o.branding ?? '',
       groupValue: (o) => o.branding ?? '(none)',
+      exportValue: (o) => o.branding ?? '',
     },
     /* Address + postcode default-SHOW since the owner's 2026-08-04 column pass:
        where the lorry is going is a planning question, not a detail lookup. */
@@ -1257,6 +1260,7 @@ export function DeliveryPlanningBoard({
       key: 'address', label: 'Address', width: 220,
       accessor: (o) => detail(o.address ?? '—'),
       searchValue: (o) => o.address ?? '',
+      exportValue: (o) => o.address ?? '',
     },
     {
       key: 'postcode', label: 'Postcode', width: 100,
@@ -1277,11 +1281,13 @@ export function DeliveryPlanningBoard({
       accessor: (o) => o.house_type ?? '—',
       searchValue: (o) => o.house_type ?? '',
       groupValue: (o) => o.house_type ?? '(none)',
+      exportValue: (o) => o.house_type ?? '',
     },
     {
       key: 'replacement_disposal', label: 'New House / Replacement', width: 180,
       accessor: (o) => o.replacement_disposal ?? '—',
       searchValue: (o) => o.replacement_disposal ?? '',
+      exportValue: (o) => o.replacement_disposal ?? '',
     },
     {
       /* Reference — the order's own reference, `mfg_sales_orders.ref` (AutoCount
@@ -1294,6 +1300,7 @@ export function DeliveryPlanningBoard({
       accessor: (o) => o.so_ref ?? '—',
       searchValue: (o) => o.so_ref ?? '',
       groupValue: (o) => o.so_ref ?? '(none)',
+      exportValue: (o) => o.so_ref ?? '',
     },
     {
       /* The order's ACTUAL customer state (Kuala Lumpur / Selangor / Johor …).
@@ -1313,12 +1320,13 @@ export function DeliveryPlanningBoard({
       accessor: (o) => o.warehouse_code ?? '—',
       searchValue: (o) => `${o.warehouse_code ?? ''} ${o.warehouse_name ?? ''}`.trim(),
       groupValue: (o) => o.warehouse_code ?? '(none)',
+      exportValue: (o) => o.warehouse_code ?? '',
     },
     {
       key: 'so_date', label: 'SO Date', width: 120, sortable: true,
       accessor: (o) => detail(fmtDateOrDash(o.so_date)),
       searchValue: (o) => o.so_date ?? '',
-      sortFn: (a, b) => String(a.so_date ?? '').localeCompare(String(b.so_date ?? '')),
+      exportValue: (o) => (o.so_date ? fmtDate(o.so_date) : ''),      sortFn: (a, b) => String(a.so_date ?? '').localeCompare(String(b.so_date ?? '')),
       filterType: 'date', dateValue: (o) => o.so_date,
     },
     {
@@ -1334,8 +1342,7 @@ export function DeliveryPlanningBoard({
       key: 'processing_date', label: 'Processing Date', width: 140, sortable: true,
       accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : detail(fmtDateOrDash(o.processing_date))),
       searchValue: (o) => (o.row_type !== 'so' ? '' : (o.processing_date ?? '')),
-      exportValue: (o) => (o.row_type !== 'so' ? '' : (o.processing_date ?? '')),
-      sortFn: (a, b) => String(a.row_type === 'so' ? a.processing_date ?? '' : '').localeCompare(String(b.row_type === 'so' ? b.processing_date ?? '' : '')),
+      exportValue: (o) => (o.row_type !== 'so' || !o.processing_date ? '' : fmtDate(o.processing_date)),      sortFn: (a, b) => String(a.row_type === 'so' ? a.processing_date ?? '' : '').localeCompare(String(b.row_type === 'so' ? b.processing_date ?? '' : '')),
       filterType: 'date', dateValue: (o) => (o.row_type !== 'so' ? null : o.processing_date),
     },
     {
@@ -1348,7 +1355,7 @@ export function DeliveryPlanningBoard({
       key: 'customer_delivery_date', label: 'Sales Exemption Expiry Date', width: 170, sortable: true,
       accessor: (o) => detail(fmtDateOrDash(sxeDateOf(o))),
       searchValue: (o) => sxeDateOf(o) ?? '',
-      sortFn: (a, b) => String(sxeDateOf(a) ?? '').localeCompare(String(sxeDateOf(b) ?? '')),
+      exportValue: (o) => { const d = sxeDateOf(o); return d ? fmtDate(d) : ''; },      sortFn: (a, b) => String(sxeDateOf(a) ?? '').localeCompare(String(sxeDateOf(b) ?? '')),
       filterType: 'date', dateValue: (o) => sxeDateOf(o),
     },
     /* Amendment dates (migration 0199). "Amended" (the date WE confirmed / the
@@ -1359,7 +1366,7 @@ export function DeliveryPlanningBoard({
       key: 'amended_delivery_date', label: 'Delivery Date', width: 170, sortable: true, groupable: true,
       accessor: (o) => <DeliveryDateEditCell order={o} onSchedule={scheduleMutate} />,
       searchValue: (o) => o.amended_delivery_date ?? '',
-      /* Group by the DAY (owner 2026-10-24: day/month toggle = group by this
+      exportValue: (o) => (o.amended_delivery_date ? fmtDate(o.amended_delivery_date) : ''),      /* Group by the DAY (owner 2026-10-24: day/month toggle = group by this
          column for by-day, or "Delivery Month" for by-month). Formatted YYYY/MM/DD
          so the header reads in the app's date order; no date -> "No date" (sorts
          last, N > digits). */
@@ -1385,7 +1392,7 @@ export function DeliveryPlanningBoard({
       key: 'amend_date_from_customer', label: 'Customer Request Date', width: 140, sortable: true,
       accessor: (o) => detail(fmtDateOrDash(o.amend_date_from_customer)),
       searchValue: (o) => o.amend_date_from_customer ?? '',
-      sortFn: (a, b) => String(a.amend_date_from_customer ?? '').localeCompare(String(b.amend_date_from_customer ?? '')),
+      exportValue: (o) => (o.amend_date_from_customer ? fmtDate(o.amend_date_from_customer) : ''),      sortFn: (a, b) => String(a.amend_date_from_customer ?? '').localeCompare(String(b.amend_date_from_customer ?? '')),
       filterType: 'date', dateValue: (o) => o.amend_date_from_customer,
     },
     /* The customer's own reason for asking to move the date — what they tapped
@@ -1444,6 +1451,7 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => (isAssr(o) || isDp(o) ? '' : `${o.stock_remark} ${o.stock_status}`.trim()),
       sortFn: (a, b) => stockRemarkSortFn(a.stock_remark || a.stock_status, b.stock_remark || b.stock_status),
       groupValue: (o) => (isAssr(o) || isDp(o) ? '(n/a)' : o.stock_status),
+      exportValue: (o) => (isAssr(o) || isDp(o) ? '' : (o.stock_remark || o.stock_status || '')),
     },
     {
       /* "Delivery Status" (owner 2026-09-22) = the customer-message follow-up
@@ -1511,22 +1519,26 @@ export function DeliveryPlanningBoard({
           )} />
       ),
       searchValue: (o) => o.time_range ?? '',
+      exportValue: (o) => o.time_range ?? '',
     },
     {
       key: 'time_confirmed', label: 'Time Confirmed', width: 130, align: 'right', defaultHidden: true,
       accessor: (o) => (o.time_confirmed == null ? '—' : o.time_confirmed ? 'Yes' : 'No'),
       searchValue: (o) => (o.time_confirmed == null ? '' : o.time_confirmed ? 'Yes' : 'No'),
+      exportValue: (o) => (o.time_confirmed == null ? '' : o.time_confirmed ? 'Yes' : 'No'),
     },
     {
       key: 'arrival_at', label: 'Arrived At', width: 150, sortable: true, defaultHidden: true,
       accessor: (o) => dtOrDash(o.arrival_at),
       searchValue: (o) => o.arrival_at ?? '',
+      exportValue: (o) => (o.arrival_at ? fmtDateTime(o.arrival_at) : ''),
       sortFn: (a, b) => String(a.arrival_at ?? '').localeCompare(String(b.arrival_at ?? '')),
     },
     {
       key: 'departure_at', label: 'Departed At', width: 150, sortable: true, defaultHidden: true,
       accessor: (o) => dtOrDash(o.departure_at),
       searchValue: (o) => o.departure_at ?? '',
+      exportValue: (o) => (o.departure_at ? fmtDateTime(o.departure_at) : ''),
       sortFn: (a, b) => String(a.departure_at ?? '').localeCompare(String(b.departure_at ?? '')),
     },
     /* "Ship-out Date" column removed (owner 2026-11-20): the DO / delivery date
@@ -1536,6 +1548,7 @@ export function DeliveryPlanningBoard({
       key: 'eta_arriving_port', label: 'ETA Port', width: 150, defaultHidden: !isEmSg,
       accessor: (o) => o.eta_arriving_port ?? '—',
       searchValue: (o) => o.eta_arriving_port ?? '',
+      exportValue: (o) => o.eta_arriving_port ?? '',
     },
     /* EM-region cross-border transit-warehouse arrival date (migration 0199).
        Default-HIDDEN, but auto-SHOWS on the EM/SG region tabs like shipout / ETA
@@ -1544,7 +1557,7 @@ export function DeliveryPlanningBoard({
       key: 'arrives_em_warehouse_date', label: 'Arrives EM Warehouse', width: 150, sortable: true, defaultHidden: !isEmSg,
       accessor: (o) => detail(fmtDateOrDash(o.arrives_em_warehouse_date)),
       searchValue: (o) => o.arrives_em_warehouse_date ?? '',
-      sortFn: (a, b) => String(a.arrives_em_warehouse_date ?? '').localeCompare(String(b.arrives_em_warehouse_date ?? '')),
+      exportValue: (o) => (o.arrives_em_warehouse_date ? fmtDate(o.arrives_em_warehouse_date) : ''),      sortFn: (a, b) => String(a.arrives_em_warehouse_date ?? '').localeCompare(String(b.arrives_em_warehouse_date ?? '')),
       filterType: 'date', dateValue: (o) => o.arrives_em_warehouse_date,
     },
     /* EM cross-border transport (owner 2026-09-23) — the two 3PL legs (ESB
@@ -1555,40 +1568,45 @@ export function DeliveryPlanningBoard({
       key: 'em_delivery_status', label: 'EM Delivery Status', width: 170, groupable: true, defaultHidden: !isEmSg,
       accessor: (o) => o.em_delivery_status ?? '—',
       searchValue: (o) => o.em_delivery_status ?? '',
+      exportValue: (o) => o.em_delivery_status ?? '',
     },
     {
       key: 'consignment_no', label: 'Consignment No', width: 150, defaultHidden: !isEmSg,
       accessor: (o) => o.consignment_no ?? '—',
       searchValue: (o) => o.consignment_no ?? '',
+      exportValue: (o) => o.consignment_no ?? '',
     },
     {
       key: 'vessel_voyage', label: 'Vessel & Voyage', width: 170, defaultHidden: !isEmSg,
       accessor: (o) => o.vessel_voyage ?? '—',
       searchValue: (o) => o.vessel_voyage ?? '',
+      exportValue: (o) => o.vessel_voyage ?? '',
     },
     {
       key: 'etd_port_klang', label: 'ETD Port Klang', width: 130, sortable: true, defaultHidden: !isEmSg,
       accessor: (o) => detail(fmtDateOrDash(o.etd_port_klang)),
       searchValue: (o) => o.etd_port_klang ?? '',
-      sortFn: (a, b) => String(a.etd_port_klang ?? '').localeCompare(String(b.etd_port_klang ?? '')),
+      exportValue: (o) => (o.etd_port_klang ? fmtDate(o.etd_port_klang) : ''),      sortFn: (a, b) => String(a.etd_port_klang ?? '').localeCompare(String(b.etd_port_klang ?? '')),
       filterType: 'date', dateValue: (o) => o.etd_port_klang,
     },
     {
       key: 'bs_delivery_date', label: 'BS Delivery Date', width: 140, sortable: true, defaultHidden: !isEmSg,
       accessor: (o) => detail(fmtDateOrDash(o.bs_delivery_date)),
       searchValue: (o) => o.bs_delivery_date ?? '',
-      sortFn: (a, b) => String(a.bs_delivery_date ?? '').localeCompare(String(b.bs_delivery_date ?? '')),
+      exportValue: (o) => (o.bs_delivery_date ? fmtDate(o.bs_delivery_date) : ''),      sortFn: (a, b) => String(a.bs_delivery_date ?? '').localeCompare(String(b.bs_delivery_date ?? '')),
       filterType: 'date', dateValue: (o) => o.bs_delivery_date,
     },
     {
       key: 'esb_remarks', label: 'ESB Remarks', width: 180, defaultHidden: !isEmSg,
       accessor: (o) => o.esb_remarks ?? '—',
       searchValue: (o) => o.esb_remarks ?? '',
+      exportValue: (o) => o.esb_remarks ?? '',
     },
     {
       key: 'bs_remarks', label: 'BS Remarks', width: 180, defaultHidden: !isEmSg,
       accessor: (o) => o.bs_remarks ?? '—',
       searchValue: (o) => o.bs_remarks ?? '',
+      exportValue: (o) => o.bs_remarks ?? '',
     },
     {
       /* CTN is filled on the board (owner 2026-11-20) and pushed to ESB/BS, so it
@@ -1596,6 +1614,7 @@ export function DeliveryPlanningBoard({
       key: 'ctn', label: 'CTN', width: 90, defaultHidden: !isEmSg,
       accessor: (o) => <TextEditCell order={o} value={o.ctn} placeholder="CTN…" onCommit={(v) => updateFieldsMutate({ type: 'so', id: o.so_doc_no, ctn: v }, { onError: fieldNotSaved })} />,
       searchValue: (o) => o.ctn ?? '',
+      exportValue: (o) => o.ctn ?? '',
     },
     /* em_delivered_date ("Done Delivery") dropped as a board column (owner
        2026-09-24 — BS Delivery Date is the EM last-mile date); the field stays
@@ -1618,16 +1637,19 @@ export function DeliveryPlanningBoard({
         ? <span style={{ color: 'var(--c-burnt)' }} title="The driver was typed on the delivery order, not picked from Fleet. Pick the driver to fill the IC.">Pick driver</span>
         : <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>),
       searchValue: (o) => o.crew?.driver_1_ic ?? '',
+      exportValue: (o) => o.crew?.driver_1_ic ?? '',
     },
     {
       key: 'driver_contact', label: 'Driver Contact', width: 150, defaultHidden: true,
       accessor: (o) => (o.crew?.driver_1_contact ? formatPhone(o.crew.driver_1_contact) || o.crew.driver_1_contact : <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>),
       searchValue: (o) => o.crew?.driver_1_contact ?? '',
+      exportValue: (o) => (o.crew?.driver_1_contact ? formatPhone(o.crew.driver_1_contact) || o.crew.driver_1_contact : ''),
     },
     {
       key: 'driver_2', label: 'Driver 2', width: 150, defaultHidden: true,
       accessor: (o) => o.crew?.driver_2_name || <span style={{ color: 'var(--hz-c-ink-muted)' }}>—</span>,
       searchValue: (o) => o.crew?.driver_2_name ?? '',
+      exportValue: (o) => o.crew?.driver_2_name ?? '',
     },
     {
       key: 'helper_1', label: 'Helper 1', width: 160, defaultHidden: true,
@@ -1700,6 +1722,7 @@ export function DeliveryPlanningBoard({
         return nums.length > 0 ? <span style={DOCNO_STYLE}>{nums.join(', ')}</span> : '—';
       },
       searchValue: (o) => [...o.delivery_orders.map((d) => d.do_number), ...(o.related_do_nos ?? [])].join(' '),
+      exportValue: (o) => (o.delivery_orders.length > 0 ? o.delivery_orders.map((d) => d.do_number) : (o.related_do_nos ?? [])).join(', '),
     },
     {
       /* PO No. — the purchase orders RAISED from this SO, the SO list's muted
@@ -1710,6 +1733,7 @@ export function DeliveryPlanningBoard({
       accessor: (o) => (o.po_nos?.length ? <span style={DOCNO_STYLE}>{o.po_nos.join(', ')}</span> : '—'),
       searchValue: (o) => (o.po_nos ?? []).join(' '),
       groupValue: (o) => (o.po_nos?.length ? o.po_nos.join(', ') : '(none)'),
+      exportValue: (o) => (o.po_nos ?? []).join(', '),
     },
     /* DO Date — the latest DO's OWN document date (delivery_orders.do_date), from
        the same latest-DO lookup the crew / HC fields use. Default-HIDDEN since
@@ -1720,7 +1744,7 @@ export function DeliveryPlanningBoard({
       key: 'do_date', label: 'DO Date', width: 120, sortable: true, defaultHidden: true,
       accessor: (o) => detail(fmtDateOrDash(o.do_date)),
       searchValue: (o) => o.do_date ?? '',
-      sortFn: (a, b) => String(a.do_date ?? '').localeCompare(String(b.do_date ?? '')),
+      exportValue: (o) => (o.do_date ? fmtDate(o.do_date) : ''),      sortFn: (a, b) => String(a.do_date ?? '').localeCompare(String(b.do_date ?? '')),
       filterType: 'date', dateValue: (o) => o.do_date,
     },
     ];
