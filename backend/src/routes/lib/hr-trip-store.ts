@@ -260,7 +260,6 @@ export type PlanningStop = {
   dp_state: string | null;
   dp_postcode: string | null;
   dp_no: string | null;
-  /** The DP job's supplier name (a Supplier pickup); Hookka's own factories pay the "Supplier (Hookka)" rate. */
   dp_supplier_name: string | null;
   project_id: string | null;
   event_slug: string | null;
