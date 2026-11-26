@@ -35,6 +35,7 @@ export const TRIP_JOB_TYPES = [
   "SETUP",
   "DISMANTLE",
   "SUPPLIER",
+  "SUPPLIER_HOOKKA",
   "TRANSFER",
   "LORRY_SERVICE",
   "ASSR_INSPECTION",
@@ -49,6 +50,7 @@ export const TRIP_JOB_LABEL: Record<TripJobType, string> = {
   SETUP: "Setup",
   DISMANTLE: "Dismantle",
   SUPPLIER: "Supplier",
+  SUPPLIER_HOOKKA: "Supplier (Hookka)",
   TRANSFER: "Transfer item",
   LORRY_SERVICE: "Lorry service",
   ASSR_INSPECTION: "ASSR - Inspection",
@@ -59,6 +61,9 @@ export const TRIP_JOB_LABEL: Record<TripJobType, string> = {
 
 /** The job types whose allowance also depends on the project's event type, and which can be a 2nd trip. */
 export const isFairJob = (j: TripJobType): boolean => j === "SETUP" || j === "DISMANTLE";
+
+/** A Supplier pickup whose supplier is Hookka (its own factories), paid at the "Supplier (Hookka)" rate, not the generic Supplier rate. */
+export const isHookkaSupplierName = (name: string | null | undefined): boolean => /hookka/i.test(name ?? "");
 
 export const TRIP_EVENT_TYPES = ["EXHIBITION", "ROADSHOW"] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
@@ -160,6 +165,7 @@ export const DEFAULT_TRIP_RATES: TripRates = {
     fair("DISMANTLE", "EXHIBITION", 10000, 13500),
     fair("DISMANTLE", "ROADSHOW", 10000, 13500),
     { jobType: "SUPPLIER", eventType: null, perTripSen: 1500, secondTripSen: null },
+    { jobType: "SUPPLIER_HOOKKA", eventType: null, perTripSen: 3000, secondTripSen: null },
     { jobType: "TRANSFER", eventType: null, perTripSen: 1500, secondTripSen: null },
     { jobType: "ASSR_INSPECTION", eventType: null, perTripSen: 1500, secondTripSen: null },
     { jobType: "ASSR_PICKUP", eventType: null, perTripSen: 1500, secondTripSen: null },
@@ -273,10 +279,13 @@ export function resolveTripRatesAsOf(versions: ReadonlyArray<{ effectiveFrom: st
 
 /** The allowance a driver earns for one job: the exact job type + event type,
  *  else (Setup / Dismantle with an unknown event) the Exhibition rate, else the
- *  job type's first row. Null when the job type has no rate. */
+ *  job type's first row. A Supplier (Hookka) job with no rate of its own falls
+ *  back to the generic Supplier rate, so an older rate version never drops it to
+ *  nothing. Null when the job type has no rate. */
 export function jobAllowanceFor(rates: Pick<TripRates, "jobAllowances">, jobType: TripJobType, eventType: TripEventType | null): TripJobAllowance | null {
   if (jobType === "NONE") return null;
   const of = rates.jobAllowances.filter((a) => a.jobType === jobType);
+  if (jobType === "SUPPLIER_HOOKKA" && !of.length) return jobAllowanceFor(rates, "SUPPLIER", null);
   if (!isFairJob(jobType)) return of.length ? of[0] : null;
   return of.find((a) => a.eventType === (eventType ?? "EXHIBITION")) ?? (of.length ? of[0] : null);
 }
@@ -378,6 +387,7 @@ export function kindOfJobType(j: TripJobType): TripKind {
     SETUP: "FAIR",
     DISMANTLE: "FAIR",
     SUPPLIER: "SUPPLIER",
+    SUPPLIER_HOOKKA: "SUPPLIER",
     TRANSFER: "TRANSFER",
     LORRY_SERVICE: "NONE",
     ASSR_INSPECTION: "SERVICE_INSPECTION",
