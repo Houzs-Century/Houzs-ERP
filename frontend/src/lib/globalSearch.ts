@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type * as StatusPill from "../vendor/scm/lib/status-pill";
-import type { StatusDocType, StatusTone } from "../vendor/scm/lib/status-pill";
+import type * as StatusPill from "../../../shared/src/vendor/scm/lib/status-pill";
+import type { StatusDocType, StatusTone } from "../../../shared/src/vendor/scm/lib/status-pill";
 
 export const GLOBAL_SEARCH_MIN_LENGTH = 1;
 export const GLOBAL_SEARCH_DEBOUNCE_MS = 250;
@@ -49,7 +49,7 @@ let vocabulary: typeof StatusPill | null = null;
 let vocabularyLoad: Promise<typeof StatusPill> | null = null;
 
 export function loadSearchStatusVocabulary(): Promise<typeof StatusPill> {
-  vocabularyLoad ??= import("../vendor/scm/lib/status-pill").then(
+  vocabularyLoad ??= import("../../../shared/src/vendor/scm/lib/status-pill").then(
     (m) => {
       vocabulary = m;
       return m;

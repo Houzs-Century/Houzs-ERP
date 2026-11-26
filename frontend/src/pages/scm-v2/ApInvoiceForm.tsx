@@ -31,7 +31,7 @@ import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { useColumnWidths, type ColumnWidthSpec } from './finance/useColumnWidths';
 import styles from './SalesOrderDetail.module.css';
 import grid from './ApInvoiceForm.module.css';

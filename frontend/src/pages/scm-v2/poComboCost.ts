@@ -2,7 +2,7 @@
 import {
   pickComboMatch, spreadComboTotal, splitSofaCode, sofaHeightKey,
   type SofaComboRow, type SofaPriceTier,
-} from '../../vendor/shared/sofa-combo-pricing';
+} from '../../../../shared/src/vendor/shared/sofa-combo-pricing';
 
 export type ComboLine = {
   rid: string;

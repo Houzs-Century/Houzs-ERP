@@ -345,20 +345,29 @@ export const EXPORT_TTL_MS = 15 * 60 * 1000;
 export const EXPORT_PREFIX = "mcp-exports/";
 export const EXPORT_KEY_RE = /^[A-Za-z0-9_-]{40,64}$/;
 
-/** Documents get_pdf knows. `print` = the ERP's own server-side print route; otherwise the PDF is made in the browser. */
-export const PDF_KINDS: Record<string, { print: ((id: string) => string) | null; financeOnly: boolean }> = {
-  sales_order: { print: null, financeOnly: false },
-  delivery_order: { print: null, financeOnly: false },
-  sales_invoice: { print: null, financeOnly: false },
-  purchase_order: { print: null, financeOnly: false },
-  grn: { print: null, financeOnly: false },
-  purchase_invoice: { print: null, financeOnly: false },
-  credit_note: { print: null, financeOnly: false },
-  delivery_return: { print: null, financeOnly: false },
-  payment_voucher: { print: null, financeOnly: false },
-  assr_case: { print: (id) => `/api/assr-print/${encodeURIComponent(id)}?variant=customer`, financeOnly: false },
-  project: { print: (id) => `/api/projects-print/${encodeURIComponent(id)}`, financeOnly: true },
+/** Documents get_pdf knows.
+ *  `server` = drawn on the Worker as a finished PDF by the browser's own generator (services/mcp-pdf.ts);
+ *  `print` = the ERP's own server-side print route (HTML); neither = the PDF is made in the browser only. */
+export const PDF_KINDS: Record<string, { server: "so" | "po" | null; print: ((id: string) => string) | null; financeOnly: boolean }> = {
+  sales_order: { server: "so", print: null, financeOnly: false },
+  delivery_order: { server: null, print: null, financeOnly: false },
+  sales_invoice: { server: null, print: null, financeOnly: false },
+  purchase_order: { server: "po", print: null, financeOnly: false },
+  grn: { server: null, print: null, financeOnly: false },
+  purchase_invoice: { server: null, print: null, financeOnly: false },
+  credit_note: { server: null, print: null, financeOnly: false },
+  delivery_return: { server: null, print: null, financeOnly: false },
+  payment_voucher: { server: null, print: null, financeOnly: false },
+  assr_case: { server: null, print: (id) => `/api/assr-print/${encodeURIComponent(id)}?variant=customer`, financeOnly: false },
+  project: { server: null, print: (id) => `/api/projects-print/${encodeURIComponent(id)}`, financeOnly: true },
 };
+
+/** A server PDF's download name for the Content-Disposition header: an ASCII fallback plus the UTF-8 original. */
+export function pdfDisposition(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const utf8 = encodeURIComponent(filename).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
+}
 
 export const pdfKind = (t: string) => (Object.prototype.hasOwnProperty.call(PDF_KINDS, t) ? PDF_KINDS[t] : null);
 

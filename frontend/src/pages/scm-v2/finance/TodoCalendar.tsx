@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Paperclip } from 'lucide-react';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import styles from './TodoCalendar.module.css';
 import { useMarkTask, useTodoCalendar, type CalEvent, type CalKind } from './finance-todo-queries';
 import { usePlanBill } from '../../../vendor/scm/lib/ap-invoice-queries';

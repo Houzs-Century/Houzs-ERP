@@ -27,7 +27,7 @@ import {
   type ChargeAcquirer, type ChargeFigures, type MerchantChargesReport,
 } from '../../vendor/scm/lib/merchant-charges-queries';
 import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetColumn, type SheetRow } from '../../vendor/scm/lib/report-sheet';
-import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { useColumnWidths, type ColumnWidthSpec } from './finance/useColumnWidths';
 import { FinanceDateRange } from './reports/FinanceDateRange';
 import { useReportRange } from './reports/useReportRange';

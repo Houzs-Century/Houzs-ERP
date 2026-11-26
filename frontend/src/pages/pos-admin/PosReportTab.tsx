@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Download, Printer } from "lucide-react";
 import { useToast } from "../../hooks/useToast";
 import { cn } from "../../lib/utils";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { reportHtml, reportRows, rmCell, type ReportTotals } from "../../vendor/shared/pos-report";
 import { POS_PAYMENT_METHODS, posMethodLabel } from "../../vendor/shared/pos-vocabulary";
 import { DateField } from "../../vendor/scm/components/DateField";

@@ -33,7 +33,7 @@ import {
 } from '../../components/dataTableLineExport';
 import { DateField } from '../../vendor/scm/components/DateField';
 import type { UnmatchedPdfPart } from '../../vendor/scm/lib/unmatched-payments-pdf';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { danger, fmt, softText } from './settlement-ui';
 import top from './MerchantReports.module.css';
 import { useSettlementBatchDetails, useSettlementBatches } from './settlement-queries';

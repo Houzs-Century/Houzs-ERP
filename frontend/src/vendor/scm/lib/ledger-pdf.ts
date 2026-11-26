@@ -12,7 +12,7 @@ import {
   fmtDocDate, fmtDocStamp, type PdfAction,
 } from './pdf-common';
 import { LEDGER_COLUMNS, counterLabel, fmtLedger, fmtSide, journalLabel, type LedgerReport } from './ledger-queries';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type LedgerPdfLine = { kind: 'account' | 'bf' | 'line' | 'total' | 'grand'; cells: string[] };
 

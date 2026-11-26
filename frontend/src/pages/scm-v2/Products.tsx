@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
-import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
+import { humaniseStatusKey } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { fmtSen, fmtDate, fmtDateTime, maintActiveValues, maintEntryActive, maintEntryValue, maintEntryWithActive, maintEntryWithValue, maintValues, resolveSofaQuickPresets, SOFA_MODULES, type MaintPoolEntry, type SofaQuickPreset } from '@2990s/shared';
@@ -83,7 +83,7 @@ import { FabricsTable } from '../../vendor/scm/components/FabricsTable';
 import { SofaComboTab } from '../../vendor/scm/components/SofaComboTab';
 import { FabricTracking } from './FabricTracking';
 import { formatSizeRich, formatSizeRichWithCfg, resolveSizeInfo } from '../../vendor/scm/lib/size-info';
-import { formatPhone } from '../../vendor/shared/phone';
+import { formatPhone } from '../../../../shared/src/vendor/shared/phone';
 import { ProductModels, NewModelDialog } from './ProductModels';
 import { VariantsTab } from './products/VariantsTab';
 import { MergeCodesDialog } from './products/MergeCodesDialog';

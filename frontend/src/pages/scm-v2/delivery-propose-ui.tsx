@@ -17,7 +17,7 @@ import { CalendarCheck } from 'lucide-react';
 import { Button } from '../../components/Button';
 import type { AssignedTrip, OverflowGroup, ThreePlCarrier } from '../../vendor/scm/lib/delivery-zones-queries';
 import { findCrewLeave, crewLeaveLabel, type CrewLeaveRow } from '../../vendor/shared/crew-leave';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 

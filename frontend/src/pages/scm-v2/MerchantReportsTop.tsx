@@ -1,7 +1,7 @@
 
 import { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import styles from './MerchantReports.module.css';
 import type { AcquirerSetup, SettlementBatch } from './settlement-queries';
 import { payableOf } from './settlement-ui';

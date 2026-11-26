@@ -2,6 +2,7 @@
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
 import type { PrintTarget } from "./printChain";
+import { purchaseOrderPrintBundle, salesOrderPrintBundle } from "../../../shared/src/vendor/scm/lib/print-bundle";
 
 type Json = Record<string, unknown>;
 type Bundle = { header: Json; items: unknown[]; payments?: unknown[]; pwpCodes?: unknown[] };
@@ -47,31 +48,6 @@ export function deliveryReturnPdfBundle(data: {
   };
 }
 
-/** The Purchase Order print needs its ship-to warehouse resolved: the PO header
- *  carries `purchase_location_id` only and jspdf cannot call the API. The detail
- *  page reads it from the `useWarehouses` cache; a right-click has no such
- *  cache, so this reads the same small table directly. ONE request, on the
- *  click — never per row. Owner 2026-07-24: DELIVER TO shows the warehouse CODE
- *  only, never "code · name". */
-async function purchaseOrderHeaderForPdf(po: Json): Promise<Json> {
-  let code: string | null = null;
-  let location: string | null = null;
-  const wid = po.purchase_location_id as string | null;
-  if (wid) {
-    const res = await authedFetch<{ warehouses?: Array<Json> }>("/inventory/warehouses?includeInactive=true");
-    const wh = (res.warehouses ?? []).find((w) => w.id === wid);
-    code = (wh?.code as string | null) ?? null;
-    location = (wh?.location as string | null) ?? null;
-  }
-  return {
-    ...po,
-    purchase_location_name: code,
-    delivery_address: location,
-    your_ref_no: (po.your_ref_no as string | null) ?? null,
-    source_so_doc_no: (po.source_so_doc_no as string | null) ?? null,
-  };
-}
-
 /** A few identifying lines for the print preview card, so the operator can see
  *  they picked the right document BEFORE a printer runs. Deliberately shallow —
  *  the card is a summary, not a rendered PDF (owner's pick, 2026-08-06). */
@@ -100,33 +76,8 @@ export function printPreviewRows(target: PrintTarget, header: Json): Array<{ lab
 export async function fetchPrintBundle(target: PrintTarget): Promise<Bundle> {
   const k = encodeURIComponent(target.key);
   switch (target.doc) {
-    case "so": {
-      const [detail, pay] = await Promise.all([
-        authedFetch<{ salesOrder: Json; items: unknown[]; pwpCodes?: unknown[] }>(`/mfg-sales-orders/${k}`),
-        authedFetch<{ payments?: unknown[] }>(`/mfg-sales-orders/${k}/payments`),
-      ]);
-      return {
-        header: detail.salesOrder,
-        items: detail.items,
-        /* `?? []` is safe HERE and nowhere above it: we are past the await, so
-           the request SUCCEEDED and the server simply omitted the key on an SO
-           with no payments. An empty array is an answer; the absence of a
-           response is not.
-
-           A FAILED PAYMENTS READ MUST PROPAGATE, and this is the one place that
-           decides it. The read was "best effort" until 2026-07-19
-           (`.catch(() => ({ payments: [] }))`) so the PDF "still renders" — but
-           this PDF LEAVES THE BUILDING. An empty Payments table does not degrade
-           gracefully, it states a FALSE FACT: the customer has paid nothing and
-           owes the full total. "The read failed" became "nothing was paid" — the
-           same shape as #653 (MobilePOD told a driver to re-collect a paid
-           order) and #1158. Every caller wraps this in an error notice, so the
-           operator gets a sentence and NO document. Not printing is recoverable;
-           handing a customer a wrong statement of what they owe is not. */
-        payments: pay.payments ?? [],
-        pwpCodes: detail.pwpCodes ?? [],
-      };
-    }
+    case "so":
+      return salesOrderPrintBundle((path) => authedFetch(path), target.key);
     case "do": {
       const j = await authedFetch<{ deliveryOrder: Json; items: unknown[] }>(`/delivery-orders-mfg/${k}`);
       const { armDoScanToken } = await import("../vendor/scm/lib/do-scan-token-arm");
@@ -140,10 +91,8 @@ export async function fetchPrintBundle(target: PrintTarget): Promise<Bundle> {
       const j = await authedFetch<{ deliveryReturn: Json; items: Json[] }>(`/delivery-returns/${k}`);
       return deliveryReturnPdfBundle(j);
     }
-    case "po": {
-      const j = await authedFetch<{ purchaseOrder: Json; items: unknown[] }>(`/mfg-purchase-orders/${k}`);
-      return { header: await purchaseOrderHeaderForPdf(j.purchaseOrder), items: j.items };
-    }
+    case "po":
+      return purchaseOrderPrintBundle((path) => authedFetch(path), target.key);
     case "grn": {
       const j = await authedFetch<{ grn: Json; items: unknown[] }>(`/grns/${k}`);
       return { header: j.grn, items: j.items };

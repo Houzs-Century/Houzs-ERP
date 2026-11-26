@@ -13,7 +13,7 @@ import {
   amendmentBucketLabel,
   compareAmendmentsForList,
   type StatusTone,
-} from "../vendor/scm/lib/status-pill";
+} from "../../../shared/src/vendor/scm/lib/status-pill";
 import {
   AMENDMENT_APPROVER_LABEL,
   AMENDMENT_APPROVER_TONE,

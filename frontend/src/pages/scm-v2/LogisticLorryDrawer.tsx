@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { Th, Td } from "../../components/scm-v2/OverviewKit";
 

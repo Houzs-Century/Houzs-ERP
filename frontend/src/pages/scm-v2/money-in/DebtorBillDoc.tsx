@@ -10,7 +10,7 @@ import {
 import { useArBillDetail, type ArBillDetail } from '../../../vendor/scm/lib/ar-invoice-queries';
 import { generateDebtorBillPdf } from '../../../vendor/scm/lib/debtor-bill-pdf';
 import { partyAddressLines } from '../../../vendor/scm/lib/debtor-party';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
 import { useIdempotencyKeyFor } from '../../../lib/idempotency';

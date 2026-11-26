@@ -31,7 +31,7 @@ import {
   type JournalEntry, type JournalEntryLine, type JeLineIn,
 } from '../../vendor/scm/lib/accounting-queries';
 import { useEditJournalEntry, useJournalEntryCard, useReverseJournalEntry, type JournalDocument } from './accounting-phase1-queries';
-import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime } from '../../../../shared/src/vendor/shared/format';
 import { fmtLedger, fmtSide } from '../../vendor/scm/lib/ledger-queries';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import { DateField } from '../../vendor/scm/components/DateField';

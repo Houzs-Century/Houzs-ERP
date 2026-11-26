@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fmtTime } from "../../vendor/shared/format";
+import { fmtTime } from "../../../../shared/src/vendor/shared/format";
 import { BTN_SEC } from "./FleetUi";
 
 type PlayFix = { lat: number; lng: number; recorded_at: string; speed_kmh: number | null };

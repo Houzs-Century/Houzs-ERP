@@ -41,8 +41,8 @@ import { SoldByButtons, SoldByTag, soldByNoteOf } from './SoldByOtherCompany';
 import { DataTable, type Column } from '../../components/DataTable';
 import { HeaderExportMenu } from '../../components/DataTableExportItems';
 import { writeLineExportFile, type TablePdfView } from '../../components/dataTableLineExport';
-import { customerRefOf } from '../../lib/customer-ref';
-import { todayMY } from '../../vendor/shared/format';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
+import { todayMY } from '../../../../shared/src/vendor/shared/format';
 import { LINE_STATUS_WORDS, QR_REF_WORDS, isOpenLine, isQrLine, lineStatus, openReportsOf, ordersOf, reportLinesMatrix, statusWordsOf } from './merchantReconExport';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
@@ -57,7 +57,7 @@ import { PageHeader } from '../../components/Layout';
 import { AcquirerCards, ReportHead, ReportStrip, ReportTabs, TAB_EMPTY, acquirerCards, lineTab, type ReportTab } from './MerchantReportsTop';
 import top from './MerchantReports.module.css';
 import { useFinanceTodo } from './finance/finance-todo-queries';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
 import { rememberReturnScroll, useReturnScroll } from '../../lib/returnScroll';
 import { MarkPreviousButton, PressNote, usePaymentTicks, type PressResult } from './previousRecords';

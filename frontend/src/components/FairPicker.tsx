@@ -79,7 +79,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   useFairBooth, useFairDefault, useFairOptions, fairLabel, type FairBoothRequest, type FairOption, type FairWhy,
 } from '../vendor/scm/lib/fair-options-queries';
-import { fmtDayMonth } from '../vendor/shared/format';
+import { fmtDayMonth } from '../../../shared/src/vendor/shared/format';
 import { fairDaysOf, soleFairDay } from './fairPick';
 
 /** What the SO form stores. `organizer` is null whenever the form holds a place

@@ -12,6 +12,7 @@ import { classifyTests } from "./scripts/lib/classify-tests.mjs";
 // never instrumented — the failure mode where a shrinking denominator reads as
 // a RISING percentage.
 import { includeGlobsFor } from "../scripts/coverage-areas.mjs";
+import { PDF_SHARED_ALIASES } from "./scripts/lib/pdf-shared-aliases.mjs";
 
 // Wires vitest into the Cloudflare Workers runtime. Each test file gets
 // its own isolated D1 instance with the same schema as production
@@ -98,7 +99,13 @@ export default defineConfig(async () => {
     // must be declared here too, or every suite that imports an scm route
     // fails with "Failed to load url @shared/...".
     resolve: {
-      alias: { "@shared": path.resolve(__dirname, "../shared") },
+      alias: [
+        // The AI Connector's get_pdf imports the frontend's document layout
+        // code (src/lib/shared-pdf.ts); its bare @2990s/shared names, same map
+        // as wrangler.toml [alias] and tsconfig.json "paths". Longest first.
+        ...PDF_SHARED_ALIASES,
+        { find: "@shared", replacement: path.resolve(__dirname, "../shared") },
+      ],
     },
     test: {
       globals: true,

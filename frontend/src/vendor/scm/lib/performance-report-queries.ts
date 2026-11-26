@@ -11,7 +11,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
-import { fmtDateOrDash, fmtSenPlain } from '../../shared/format';
+import { fmtDateOrDash, fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import { flattenLaid, type LaidNode } from './report-layout';
 
 /** `also`: the accounts the rate covers besides `account`, each with the accounts under it. */

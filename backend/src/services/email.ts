@@ -549,8 +549,10 @@ function escapeHtml(s: string): string {
 // emitting corruption. Writing a BACKEND generator to attach one would mean a
 // SECOND engine that cannot do that — HOOKKA has exactly that and its backend
 // PDF crashes on any Chinese character, smart quote or em-dash. Owner's
-// direction (2026-07-17): Houzs does not build engine two. backend/package.json
-// has no pdf dependency; keep it that way.
+// direction (2026-07-17): Houzs does not build engine two. Since 2026-11-26 the
+// Worker does run jsPDF — but it is engine ONE: the AI Connector's get_pdf
+// bundles the browser's own generator and its cmap check (services/mcp-pdf.ts,
+// lib/shared-pdf.ts). A second, Worker-only layout is still the thing to avoid.
 //
 // The part that IS now stale: this comment used to also say "deliverViaResend
 // has no attachment param". It has one — the Mail Center added it (SendOptions

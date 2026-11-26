@@ -102,7 +102,7 @@ import {
   Square,
   Paperclip,
 } from "lucide-react";
-import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../vendor/shared/format";
+import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../../../shared/src/vendor/shared/format";
 import { mytDayOf, todayMyt } from "../../vendor/scm/lib/dates";
 
 type MailThreadRow = {

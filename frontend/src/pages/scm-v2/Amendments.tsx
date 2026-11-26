@@ -24,7 +24,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AmendmentQuickView, amendmentJobCardPath, type AmendmentQuickViewTarget } from './AmendmentQuickView';
-import { fmtDateTime } from '../../vendor/shared/format';
+import { fmtDateTime } from '../../../../shared/src/vendor/shared/format';
 import { useAmendments, type AmendmentRow } from '../../vendor/scm/lib/so-amendment-queries';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { TonedPill } from '../../vendor/scm/components/StatusPill';
@@ -35,7 +35,7 @@ import {
   amendmentBucketRank,
   compareAmendmentsForList,
   simplifiedAmendmentPill,
-} from '../../vendor/scm/lib/status-pill';
+} from '../../../../shared/src/vendor/scm/lib/status-pill';
 import {
   buildAmendmentQueueRows,
   type AmendmentQueueRow,
@@ -56,7 +56,7 @@ import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 
 // SIMPLIFIED status filter (owner 2026-07-24; Rejected added 2026-09-17): Requested / Approved / Rejected / All.
 // The backend so_amendment_status enum still carries the granular two-gate values

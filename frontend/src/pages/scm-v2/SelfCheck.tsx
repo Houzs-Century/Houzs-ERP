@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, HandCoins, Info, Loader2, Receipt, RefreshCw, Scale } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
-import { fmtDate, fmtDateTime, fmtSen } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { fmtLedger } from '../../vendor/scm/lib/ledger-queries';
 import { useCancelledWithMoney, type ConvertSource } from '../../vendor/scm/lib/so-money-queries';
 import {

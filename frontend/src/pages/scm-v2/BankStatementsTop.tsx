@@ -1,7 +1,7 @@
 
 import { useState } from 'react';
 import { AlertCircle, BookOpen, Check, CheckCircle2, ChevronDown, ChevronRight, EyeOff, Landmark, Lock, Upload } from 'lucide-react';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { fmt } from './settlement-ui';
 import type { BankAccountSetup, BankMonth, BankMonthAssembly, BankMonthLock, Reconciliation } from './bank-queries';
 import styles from './BankStatements.module.css';

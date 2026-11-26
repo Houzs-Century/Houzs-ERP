@@ -40,7 +40,7 @@ import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '..
 import { DateField } from "../../vendor/scm/components/DateField";
 import { showsVariantEditor } from '../../vendor/scm/lib/variant-editor-groups';
 
-import { fmtMoneySen } from '../../vendor/shared/format';
+import { fmtMoneySen } from '../../../../shared/src/vendor/shared/format';
 import { supplierEmailList } from '../../vendor/shared/supplier-emails';
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 

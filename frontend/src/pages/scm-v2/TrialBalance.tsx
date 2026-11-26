@@ -6,7 +6,7 @@ import { useAccountBalances, type AccountBalance } from '../../vendor/scm/lib/ac
 import { counterLabel, fmtLedger, fmtSide, useLedger, type LedgerLine } from '../../vendor/scm/lib/ledger-queries';
 import { ledgerHref, linesVisible } from '../../vendor/scm/lib/report-layout';
 import { statementColumnsTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';
-import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { isIsoDay, monthStart } from '../../lib/dateRangePresets';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ResizableDrawer } from '../../components/ResizableDrawer';

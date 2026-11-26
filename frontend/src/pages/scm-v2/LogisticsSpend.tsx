@@ -13,7 +13,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, type ReactNode } from 'react';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import type { LogisticsLorrySpend, LogisticsSpendKind, LogisticsSpendLine } from '../../vendor/scm/lib/logistics-queries';
 import { FinanceGrid, fmtMoney, type GridColumn, type GridRow } from './reports/FinanceGrid';
 import { ReportExports, ReportHeaderActions, ReportMessage, ReportTiles, type ReportTile } from './reports/reportParts';

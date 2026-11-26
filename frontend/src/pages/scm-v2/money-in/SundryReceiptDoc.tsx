@@ -6,7 +6,7 @@ import {
   postableAccounts, useAccounts, useCreateReceipt, useReceiptDetail, useUpdateReceipt, useVoidReceipt,
   type ReceiptDetail,
 } from '../../../vendor/scm/lib/accounting-queries';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
 import { DataTable, type Column } from '../../../components/DataTable';

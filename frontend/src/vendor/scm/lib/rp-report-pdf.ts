@@ -7,7 +7,7 @@
 // disagree (owner 2026-09-19: 我这页显示什么就要 export 什么).
 // ----------------------------------------------------------------------------
 
-import { fmtDate, fmtSenPlain } from '../../shared/format';
+import { fmtDate, fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import type { PdfAction } from './pdf-common';
 import type { RpReport } from './rp-report-queries';
 import { cashFlowTable, type CashFlowSheetOptions, type ReportSheet } from './report-sheet';

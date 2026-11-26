@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { formatDate } from "../lib/utils";
-import { fmtSen } from "../vendor/shared/format";
+import { fmtSen } from "../../../shared/src/vendor/shared/format";
 import { generatePayslipPdf } from "../pages/hr/payslipPdf";
 import type { Payslip } from "../pages/hr/hrApi";
 

@@ -99,11 +99,12 @@ export function loadAllowlist(file) {
 
 function main() {
   const listOnly = process.argv.includes('--list');
-  const files = walk(SRC, []);
+  // shared/src is bundled into the frontend too (the PDF layout code moved there).
+  const files = walk(SRC, walk(path.join(frontendRoot, '..', 'shared', 'src'), []));
   const findings = [];
   for (const full of files) {
     const rel = path.relative(frontendRoot, full).split(path.sep).join('/');
-    if (isSkippedFile(path.relative(SRC, full))) continue;
+    if (isSkippedFile(rel)) continue;
     const src = fs.readFileSync(full, 'utf8');
     if (!CJK.test(src)) continue;
     for (const f of findCjkLiterals(full, src)) findings.push({ file: rel, ...f });

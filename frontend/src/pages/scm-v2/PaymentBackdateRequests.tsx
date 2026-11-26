@@ -11,7 +11,7 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { fmtDate, fmtDateTime, fmtMoneySen } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtMoneySen } from '../../../../shared/src/vendor/shared/format';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';

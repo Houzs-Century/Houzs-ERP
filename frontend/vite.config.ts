@@ -67,7 +67,7 @@ export default defineConfig(({ mode }) => {
         {
           find: /^@2990s\/shared\/phone$/,
           replacement: fileURLToPath(
-            new URL("./src/vendor/shared/phone.ts", import.meta.url)
+            new URL("../shared/src/vendor/shared/phone.ts", import.meta.url)
           ),
         },
         // @2990s/shared/mfg-pricing — the PO pages import the cost engine
@@ -75,7 +75,7 @@ export default defineConfig(({ mode }) => {
         {
           find: /^@2990s\/shared\/mfg-pricing$/,
           replacement: fileURLToPath(
-            new URL("./src/vendor/shared/mfg-pricing.ts", import.meta.url)
+            new URL("../shared/src/vendor/shared/mfg-pricing.ts", import.meta.url)
           ),
         },
         // @2990s/shared/payment-methods — the SO PaymentsTable + SO Maintenance
@@ -93,7 +93,7 @@ export default defineConfig(({ mode }) => {
         {
           find: /^@2990s\/shared\/so-variant-rule$/,
           replacement: fileURLToPath(
-            new URL("./src/vendor/shared/so-variant-rule.ts", import.meta.url)
+            new URL("../shared/src/vendor/shared/so-variant-rule.ts", import.meta.url)
           ),
         },
         // @2990s/shared/so-line-display — the real PDF generators (PO/GRN/PI/PR/
@@ -102,13 +102,13 @@ export default defineConfig(({ mode }) => {
         {
           find: /^@2990s\/shared\/so-line-display$/,
           replacement: fileURLToPath(
-            new URL("./src/vendor/shared/so-line-display.ts", import.meta.url)
+            new URL("../shared/src/vendor/shared/so-line-display.ts", import.meta.url)
           ),
         },
         {
           find: /^@2990s\/shared$/,
           replacement: fileURLToPath(
-            new URL("./src/vendor/shared/index.ts", import.meta.url)
+            new URL("../shared/src/vendor/shared/index.ts", import.meta.url)
           ),
         },
         // NOTE on 'react-router': the vendored 2990 pages import router bits

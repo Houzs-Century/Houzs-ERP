@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DataTable, type Column } from '../../components/DataTable';
 import { useSoBacklogCover, type Count, type CoverPart, type CoverRow, type SoBacklogCoverData } from '../../vendor/scm/lib/so-backlog-cover-queries';
-import { fmtDate, fmtQty, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtQty, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { MonthSelect } from './ProductChanges';
 import { monthBounds, periodText, pickableMonths } from './product-changes-view';

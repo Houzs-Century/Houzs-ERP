@@ -27,7 +27,7 @@ import {
   usePoSoCoverage,
   type FlowNodeType,
 } from "../vendor/scm/lib/flow-queries";
-import { statusLabel, humaniseStatusKey, type StatusDocType } from "../vendor/scm/lib/status-pill";
+import { statusLabel, humaniseStatusKey, type StatusDocType } from "../../../shared/src/vendor/scm/lib/status-pill";
 import {
   buildMobileMapModel,
   CHAIN_LEGEND,

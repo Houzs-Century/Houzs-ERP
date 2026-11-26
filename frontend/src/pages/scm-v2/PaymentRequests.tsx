@@ -42,7 +42,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtSen } from '../../../../shared/src/vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { EVENTS_PATH, RequestForm } from './PaymentRequestForm';
 import {

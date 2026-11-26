@@ -1,7 +1,7 @@
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { fmtSenPlain } from '../../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import { fmtPct, folderOpen, foldsChildren, totalsBelow } from '../../../vendor/scm/lib/report-layout';
 import { AccountLinesRow } from '../AccountLinesRow';
 import { AccountCell } from '../JournalEntryCards';

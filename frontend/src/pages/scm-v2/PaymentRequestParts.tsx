@@ -15,7 +15,7 @@ import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };

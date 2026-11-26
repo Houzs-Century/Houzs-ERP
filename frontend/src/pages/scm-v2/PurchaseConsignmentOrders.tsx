@@ -19,7 +19,7 @@ import {
   type PoItemRow,
   type Currency,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { poStatusLabel } from '../../vendor/scm/lib/po-status';
+import { poStatusLabel } from '../../../../shared/src/vendor/scm/lib/po-status';
 import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';

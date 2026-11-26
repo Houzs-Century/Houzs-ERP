@@ -40,7 +40,7 @@ import styles from './Suppliers.module.css';
 import look from './BankStatements.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { parseMoneyToSen } from '../../lib/money';
 
 type View = 'statements' | 'files' | 'money' | 'transit';

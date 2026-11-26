@@ -13,7 +13,7 @@ import { useGrnRackOptions } from '../lib/grn-line-rack';
 import { SearchableSelect } from './SearchableSelect';
 import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
-import { fmtDate, todayMY } from '../../shared/format';
+import { fmtDate, todayMY } from '../../../../../shared/src/vendor/shared/format';
 import {
   fetchSupplierSkus, isOddDate, newLineKey, poOptions, receiptItems, shortNote, skuOptions, printedText, skuValue, swappedDate, warehouseTone,
   type CheckDoc, type SkuOption, type CheckPoLine, type CheckSupplier, type GrnReview, type ReviewLine,

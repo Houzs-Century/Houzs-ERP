@@ -3,7 +3,7 @@ import { todayMyt } from "../vendor/scm/lib/dates";
 import { guardFormula, unguardFormula } from "../vendor/shared/csv-guard";
 export { guardFormula };
 
-export { isoForExport } from "../vendor/shared/format";
+export { isoForExport } from "../../../shared/src/vendor/shared/format";
 
 export interface CSVColumn<T> {
   key: string;

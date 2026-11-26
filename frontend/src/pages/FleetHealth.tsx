@@ -14,7 +14,7 @@ import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { parseMoneyToSen } from "../lib/money";
-import { fmtDate, fmtDateTime, todayMY } from "../vendor/shared/format";
+import { fmtDate, fmtDateTime, todayMY } from "../../../shared/src/vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { PlanServiceForm } from "./fleet/PlanServiceForm";
 import { BTN_GHOST, BTN_PRI, BTN_SEC, EMPTY, LABEL, PlateBadge, orNotSet } from "./fleet/FleetUi";

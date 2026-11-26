@@ -40,7 +40,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary, fmtDate, fmtDateTime, fmtMoneySen } from '@2990s/shared';
-import { poDisplayNumber } from '../../vendor/scm/lib/po-status';
+import { poDisplayNumber } from '../../../../shared/src/vendor/scm/lib/po-status';
 import { convertToLink } from '../../lib/convertScope';
 
 const fmtDmy = fmtDate;

@@ -74,7 +74,7 @@ import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
 import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
-import { fmtSen, fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtSen, fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import { parseMoneyToSen } from '../../lib/money';
 
 export const KIND_WORD: Record<NoteKind, string> = { CN: 'Credit note', DN: 'Debit note', SCN: 'Supplier credit note', OCN: 'Other debtor credit note' };

@@ -8,8 +8,8 @@ import { variantKeyLabel } from './variant-key-label';
 /* The status WORD comes from the one home for it, never from a caser here:
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
-import { statusLabel } from './status-pill';
-import { PDF_COMPRESS } from './pdf-options';
+import { statusLabel } from '../../../../../shared/src/vendor/scm/lib/status-pill';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 type StWarehouse = WarehouseLabelSource & { name?: string | null };
 

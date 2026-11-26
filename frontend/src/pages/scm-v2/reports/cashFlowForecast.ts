@@ -12,7 +12,7 @@
 // ----------------------------------------------------------------------------
 
 import { monthEnd } from '../../../lib/dateRangePresets';
-import { fmtSenPlain } from '../../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import type { CashFlowForecast } from '../../../vendor/scm/lib/cash-flow-forecast-queries';
 import type { RpReport } from '../../../vendor/scm/lib/rp-report-queries';
 import { monthName, type StatementColumn } from './statementColumns';

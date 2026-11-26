@@ -27,7 +27,7 @@ import { useStaffLookup } from "../../hooks/useStaffLookup";
 import {
   resolveStatusPill,
   type StatusTone,
-} from "../../vendor/scm/lib/status-pill";
+} from "../../../../shared/src/vendor/scm/lib/status-pill";
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover, SO_AMENDMENT_LANE_APPROVE_PERM } from "../../vendor/scm/lib/amendment-approver";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";

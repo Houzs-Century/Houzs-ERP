@@ -34,6 +34,7 @@ const BASELINE = join(BACKEND, 'scripts/data/swallowed-read-baseline.json');
 const ROOTS = [
   { dir: join(BACKEND, 'src'), ext: /\.ts$/ },
   { dir: join(REPO, 'frontend/src'), ext: /\.tsx?$/ },
+  { dir: join(REPO, 'shared/src'), ext: /\.tsx?$/ },
 ];
 const SKIP_DIR = new Set(['node_modules', 'dist', '.wrangler', 'artifacts']);
 const isTest = (p) => /\.(test|spec)\.tsx?$/.test(p) || /(^|\/)(tests|__tests__)\//.test(p);

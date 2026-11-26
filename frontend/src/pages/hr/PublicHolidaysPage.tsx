@@ -3,7 +3,7 @@ import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { errText } from "../pos-admin/posAdminUi";
 import { hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";

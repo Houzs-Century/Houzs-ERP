@@ -49,7 +49,7 @@ import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useToastOptional } from '../../hooks/useToast';
-import { fmtDate, fmtSen, todayMY } from '../../vendor/shared/format';
+import { fmtDate, fmtSen, todayMY } from '../../../../shared/src/vendor/shared/format';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { AskBanner, type Ask } from './money-in/AskBanner';
 import { BillFormPage } from './money-in/BillFormPage';

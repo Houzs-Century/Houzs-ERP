@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { History } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import type { AuditLabelDictionary } from '../../components/audit/audit-labels';
 import { EntityHistoryPanel } from './EntityHistoryPanel';

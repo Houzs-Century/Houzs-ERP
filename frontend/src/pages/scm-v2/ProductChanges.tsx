@@ -21,7 +21,7 @@ import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
 import { monthEnd } from '../../lib/dateRangePresets';
 import { useProductChanges, type ProductChangeRow } from '../../vendor/scm/lib/product-change-queries';
-import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import {
   BUCKET_LABEL, CHANGE_NOTES, SUMMARY_LINES, bySalesperson, detailSheet, filterRows, fmtDelta, lineText, monthBounds, monthsBetween,
   ordersScope, ordersShown, periodText, pickableMonths, routeShort, routeText, summaryColumns, summaryRed, summarySheet, totalsOf, typesText, whoText, type BucketView, type SalespersonRow,

@@ -19,7 +19,7 @@ import { Modal } from '../../../vendor/scm/components/Modal';
 import { useToastOptional } from '../../../hooks/useToast';
 import { parseMoneyToSen } from '../../../lib/money';
 import { fmtMoneyAtRest } from '../../../vendor/scm/components/MoneyInput';
-import { fmtSenPlain } from '../../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import { useForecastInputs, useSaveForecastInputs, type ForecastInputs, type KeyedInputs } from '../../../vendor/scm/lib/cash-flow-forecast-queries';
 import { monthName } from './statementColumns';
 import f from './Forecast.module.css';

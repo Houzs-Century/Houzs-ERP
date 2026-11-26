@@ -19,7 +19,7 @@ import { useActiveTripLocations } from "../../vendor/scm/lib/trip-locations-quer
 import { useLorries, useLorryPositions, useLorryTrack, useLorryKmCost } from "../../vendor/scm/lib/lorries-queries";
 import { ScheduleRouteMap, type RoutePoint } from "../../vendor/scm/components/ScheduleRouteMap";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { fmtSen, fmtTime, todayMY } from "../../vendor/shared/format";
+import { fmtSen, fmtTime, todayMY } from "../../../../shared/src/vendor/shared/format";
 import { BTN_SEC, Tile } from "./FleetUi";
 import { fmtDrive, fmtKm, useRoadFigures } from "../../vendor/scm/lib/lorry-routes-queries";
 import { drivenPath, useLorryRoadTrack } from "../../vendor/scm/lib/lorry-road-track";

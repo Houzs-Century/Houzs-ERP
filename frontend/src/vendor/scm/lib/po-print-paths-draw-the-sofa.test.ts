@@ -22,7 +22,8 @@ import { dirname, resolve } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (p: string) => readFileSync(resolve(here, p), 'utf8');
 
-const GEN = read('./purchase-order-pdf.ts');
+const GEN = read('../../../../../shared/src/vendor/scm/lib/purchase-order-pdf-render.ts');
+const BROWSER = read('./purchase-order-pdf.ts');
 
 const CALLERS = [
   ['V2 detail', '../../../pages/scm-v2/PurchaseOrderDetailV2.tsx'],
@@ -33,14 +34,14 @@ const CALLERS = [
 
 describe('one sheet, whichever button raised it', () => {
   test('the GENERATOR loads the artwork itself', () => {
-    expect(GEN).toContain('loadSofaCompartmentArtForPrint');
+    expect(BROWSER).toContain('sofaArt: (codes) => loadSofaCompartmentArtForPrint(codes),');
     /* The lookup ALWAYS runs; a supplied map only overrides per code. "Supplied
        wins outright" let a partial map (the V2 detail page passed only codes
        with a stored imageKey) blank every other piece: HC-PO-2610-007 printed
        1A / Console / 2S as bare boxes (owner 2026-10-03). */
-    expect(GEN).toContain('...await loadSofaCompartmentArtForPrint(');
+    expect(GEN).toContain('...await sources.sofaArt(');
     expect(GEN).toContain('...opts?.sofaPhotos,');
-    expect(GEN).not.toContain('?? await loadSofaCompartmentArtForPrint(');
+    expect(GEN).not.toContain('?? await sources.sofaArt(');
     expect(GEN).toContain('cells.map((c) => c.moduleId)');
     expect(GEN).toContain('DIAGRAM_H, sofaArt)');
     expect(GEN).not.toContain('DIAGRAM_H, opts?.sofaPhotos)');

@@ -7,7 +7,7 @@ import { SearchableSelect, type SearchableSelectOption } from "../../vendor/scm/
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { cn, formatDate } from "../../lib/utils";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { MALAYSIAN_BANKS } from "../../vendor/shared/pick-lists";
 import {
   EMPLOYEE_STATUSES,

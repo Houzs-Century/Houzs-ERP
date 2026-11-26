@@ -3,7 +3,7 @@
 // owner, a search, and the lorry drawer on a click.
 import { useMemo, useState } from "react";
 import { cn } from "../../../lib/utils";
-import { fmtSen } from "../../../vendor/shared/format";
+import { fmtSen } from "../../../../../shared/src/vendor/shared/format";
 import { expiryStatus, type ComplianceTone } from "../../../vendor/shared/lorry-compliance";
 import { LORRY_TYPE_LABEL, useLorries, useLorryPositions, type LorryRow } from "../../../vendor/scm/lib/lorries-queries";
 import { useDrivers } from "../../../vendor/scm/lib/drivers-queries";

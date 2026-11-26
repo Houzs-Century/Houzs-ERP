@@ -66,7 +66,7 @@ describe('what the document actually renders', () => {
 
 describe('the two copies of this module are the same file', () => {
   test('backend/src/scm/shared/phone.ts is byte-identical to this one', () => {
-    const here = resolve(process.cwd(), 'src/vendor/shared/phone.ts');
+    const here = resolve(process.cwd(), '../shared/src/vendor/shared/phone.ts');
     const there = resolve(process.cwd(), '../backend/src/scm/shared/phone.ts');
     const norm = (p: string) => readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
     expect(norm(there)).toBe(norm(here));

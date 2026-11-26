@@ -34,7 +34,7 @@ import { GeneralLedger } from './GeneralLedger';
 import { JournalTab } from './JournalEntries';
 import { SelfCheckTab } from './SelfCheck';
 import { AccountingHeader } from './books/AccountingHeader';
-import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
+import { humaniseStatusKey } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 

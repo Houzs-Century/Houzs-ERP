@@ -111,7 +111,7 @@ describe("buildVariantSummary - recorded-only specials (owner choice 甲, 2026-0
 
 describe("the two copies of variant-summary.ts are identical", () => {
   test("frontend/src/vendor/shared === backend/src/scm/shared, byte for byte", () => {
-    const here = readFileSync(resolve(__dirname, "variant-summary.ts"), "utf8");
+    const here = readFileSync(resolve(__dirname, "../../../../shared/src/vendor/shared/variant-summary.ts"), "utf8");
     const there = readFileSync(
       resolve(__dirname, "../../../../backend/src/scm/shared/variant-summary.ts"),
       "utf8",

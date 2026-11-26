@@ -82,7 +82,7 @@ import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/
 import { formatPhone } from "@2990s/shared/phone";
 import { useHoldAction } from "./use-hold-action";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 import { todayMyt } from "../../vendor/scm/lib/dates";
 
 

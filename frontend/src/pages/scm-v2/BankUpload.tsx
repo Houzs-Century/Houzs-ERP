@@ -13,7 +13,7 @@ import { AlertTriangle, Check, FileText, Info, Upload, X } from 'lucide-react';
 import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
 import { useBankSetup, useUploadBankStatement } from './bank-queries';
 import { fmt, refusalText } from './settlement-ui';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import drawer from './finance/FinanceTasks.module.css';
 import styles from './UploadDrawer.module.css';
 

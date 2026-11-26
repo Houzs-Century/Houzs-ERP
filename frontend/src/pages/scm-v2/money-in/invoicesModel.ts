@@ -2,7 +2,7 @@
 import type { ArListRow } from '../../../vendor/scm/lib/ar-invoice-queries';
 import type { DepositInvoice } from '../../../vendor/scm/lib/deposit-invoice-queries';
 import { searchText } from '../../../lib/so-ref-search';
-import { fmtSen } from '../../../vendor/shared/format';
+import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { debtorBillTag, depositInvoiceTag, salesInvoiceTag, type Tag } from './moneyInStatus';
 import { moneyInDocHref } from './moneyInDocs';
 

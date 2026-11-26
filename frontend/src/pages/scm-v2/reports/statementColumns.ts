@@ -1,6 +1,6 @@
 
 import { addDays, daysInRange, monthEnd, monthStart } from '../../../lib/dateRangePresets';
-import { fmtDate } from '../../../vendor/shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 import type { FlatLine, MonthlyLine } from '../../../vendor/scm/lib/report-monthly';
 import { mergeColumns } from '../../../vendor/scm/lib/report-monthly';
 

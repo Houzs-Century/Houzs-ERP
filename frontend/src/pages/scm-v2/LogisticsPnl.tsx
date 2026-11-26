@@ -15,7 +15,7 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import {
   useSaveAreaRate, useSaveFairIncomeRate, useSaveIncomeRate, useSaveSpread, useSaveTripMark,
   type LogisticsAreaRate, type LogisticsMonth, type LogisticsPnl, type LogisticsSetupTrip, type LogisticsSpreadRow,

@@ -7,7 +7,7 @@
  * Shared by the desktop block, the mobile panel and the chat so they cannot
  * disagree. Pure; no fetching here.
  */
-import { fmtSen } from "../vendor/shared/format";
+import { fmtSen } from "../../../shared/src/vendor/shared/format";
 
 export type BillMatch = {
   status: "opened" | "not_opened";

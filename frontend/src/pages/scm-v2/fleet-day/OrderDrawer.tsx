@@ -4,7 +4,7 @@ import { X, Phone, Truck } from 'lucide-react';
 import { ResizableDetailDrawer } from '../../../components/ResizableDetailDrawer';
 import { Button } from '../../../components/Button';
 import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
-import { fmtSen, fmtDateTime } from '../../../vendor/shared/format';
+import { fmtSen, fmtDateTime } from '../../../../../shared/src/vendor/shared/format';
 import { useNotify } from '../../../vendor/scm/components/NotifyDialog';
 import { useDeliveryRemarks, useAddRemark } from '../../../vendor/scm/lib/delivery-remarks-queries';
 import { useMoveStop } from '../../../vendor/scm/lib/trips-queries';

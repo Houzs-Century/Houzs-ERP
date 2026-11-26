@@ -31,7 +31,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, Hand, Layers, PenLine, Plus, X } from 'lucide-react';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import {
   REPORT_TITLES, SPLIT_MAX_PART, addCategory, addSubtotal, categoryIds, itemKey, moveWithinSiblings, newCategoryId, newSubtotalId, placeItem, removeCategory, removeSubtotal, renameCategory,
   setAccountFlow, setAccountSplit, setCategoryFlow, setCategorySplit, setCategoryTick, setTotalLabel, splitChoice, splitOfChoice, splitPart, splitWord, unplaceAccount, unplacedAccounts,

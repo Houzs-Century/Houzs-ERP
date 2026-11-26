@@ -345,6 +345,20 @@ invocation_logs = true
 # CI build (Cloudflare's own error suggests this alias).
 [alias]
 zod = "./node_modules/zod"
+# The AI Connector's get_pdf bundles the shared document layout code
+# (src/lib/shared-pdf.ts -> ../shared/src). Those files import the vendored
+# shared kit by bare name (frontend/vite.config.ts aliases); resolve the same
+# names here, to shared/ directly.
+# Kept in step with tsconfig.json "paths" and both vitest configs.
+"@2990s/shared/phone" = "../shared/src/vendor/shared/phone.ts"
+"@2990s/shared/mfg-pricing" = "../shared/src/vendor/shared/mfg-pricing.ts"
+"@2990s/shared/so-variant-rule" = "../shared/src/vendor/shared/so-variant-rule.ts"
+"@2990s/shared/so-line-display" = "../shared/src/vendor/shared/so-line-display.ts"
+"@2990s/shared" = "../shared/src/vendor/shared/index.ts"
+# jsPDF's html()/SVG helpers (browser-only, never called here) — see the stub.
+html2canvas = "./src/lib/pdf-optional-stub.ts"
+canvg = "./src/lib/pdf-optional-stub.ts"
+dompurify = "./src/lib/pdf-optional-stub.ts"
 
 # ── Staging environment (isolated from prod) ──────────────────────────────
 # Separate Worker on its own Hyperdrive -> the staging Supabase

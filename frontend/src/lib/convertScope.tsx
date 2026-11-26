@@ -41,9 +41,9 @@ export {
   transferToColumnLabel,
   transferFromColumnLabel,
   type TransferDoc,
-} from '../vendor/shared/transfer-vocabulary';
+} from '../../../shared/src/vendor/shared/transfer-vocabulary';
 
-import type { TransferDoc } from '../vendor/shared/transfer-vocabulary';
+import type { TransferDoc } from '../../../shared/src/vendor/shared/transfer-vocabulary';
 
 /* Every transfer flow this ERP recognises, as source → destination. This is the
    VOCABULARY table, not a capability table: a row here says what the pair is

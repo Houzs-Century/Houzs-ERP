@@ -54,6 +54,7 @@ const WORDS = [
 const ESTATES = [
   { key: "backend route / lib", dir: "backend/src", exts: [".ts"], skip: /\.test\.ts$/ },
   { key: "frontend", dir: "frontend/src", exts: [".ts", ".tsx"], skip: /\.test\.tsx?$/ },
+  { key: "shared", dir: "shared/src", exts: [".ts", ".tsx"], skip: /\.test\.tsx?$/ },
   { key: "tests", dir: "backend/tests", exts: [".ts", ".mts", ".mjs"], skip: null },
   { key: "frontend tests", dir: "frontend/src", exts: [".test.ts", ".test.tsx"], skip: null },
   { key: "e2e", dir: "frontend/e2e", exts: [".ts"], skip: null },

@@ -171,6 +171,7 @@ process.on("exit", () => {
 const ROOTS = [
   path.join(repoRoot, "backend", "src"),
   path.join(repoRoot, "frontend", "src"),
+  path.join(repoRoot, "shared", "src"),
   /* An EXTRA root, used by tests/duplicatedDecisionGate.test.mjs to plant a
      violation OUTSIDE the source tree and watch this exit 1. A gate nobody has
      seen fail is not a gate, and proving it by hand once proves it for one

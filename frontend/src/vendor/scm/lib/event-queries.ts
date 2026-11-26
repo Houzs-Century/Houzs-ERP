@@ -8,7 +8,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
-import { fmtDayMonthRange } from '../../shared/format';
+import { fmtDayMonthRange } from '../../../../../shared/src/vendor/shared/format';
 
 export type EventOption = {
   id: number;

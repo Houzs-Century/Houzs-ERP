@@ -47,7 +47,7 @@ import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
 import { MobileVisibility } from "./MobileMailPersonal";
 import { reachTagOf, useMailVisibility } from "../pages/MailCenter/mail-sidebar";
 import "./mobile.css";
-import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
+import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../../shared/src/vendor/shared/format";
 import { mytDayOf, todayMyt } from "../vendor/scm/lib/dates";
 import { openLoadedTab } from "../lib/openLoadedTab";
 import { Paperclip } from "lucide-react";

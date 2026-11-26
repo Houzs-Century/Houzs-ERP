@@ -36,7 +36,7 @@ const KEY = 'specialsRecorded';
 const ALLOWED = new Set([
   // DISPLAY — Description 2, which carries the option to the factory on every print.
   'backend/src/scm/shared/variant-summary.ts',
-  'frontend/src/vendor/shared/variant-summary.ts',
+  'shared/src/vendor/shared/variant-summary.ts',
   'frontend/src/vendor/shared/variant-summary.test.ts',
   // DISPLAY — the Special Orders picker, as a ticked and locked row.
   'frontend/src/vendor/scm/components/SpecialOrders.tsx',
@@ -158,7 +158,7 @@ edit — which is the one thing the owner said must not happen.`).toEqual([]);
   test('the pricing modules do not mention it at all', () => {
     const pricing = [
       'backend/src/scm/shared/mfg-pricing.ts',
-      'frontend/src/vendor/shared/mfg-pricing.ts',
+      'shared/src/vendor/shared/mfg-pricing.ts',
       'backend/src/scm/lib/mfg-pricing-recompute.ts',
       'backend/src/scm/lib/po-pricing.ts',
     ];

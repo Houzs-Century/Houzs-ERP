@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from 'react-router-dom';
-import { fmtSen, todayMY } from '../../vendor/shared/format';
+import { fmtSen, todayMY } from '../../../../shared/src/vendor/shared/format';
 import { useLorries, useLorryKmDaily } from '../../vendor/scm/lib/lorries-queries';
 import { fmtKm, useRoadFigures } from '../../vendor/scm/lib/lorry-routes-queries';
 import { DateField } from '../../vendor/scm/components/DateField';

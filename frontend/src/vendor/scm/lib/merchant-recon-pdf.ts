@@ -13,7 +13,7 @@
 
 import autoTable, { type RowInput } from 'jspdf-autotable';
 import { fmtDocDate, type PdfAction } from './pdf-common';
-import { fmtSenPlain, todayMY } from '../../shared/format';
+import { fmtSenPlain, todayMY } from '../../../../../shared/src/vendor/shared/format';
 import {
   LISTING_CELL as CELL, LISTING_MARGIN as MARGIN, closeListing, listingDress, openListing, screenTable,
   type FootCell, type Meta, type Rgb, type ScreenTableView,

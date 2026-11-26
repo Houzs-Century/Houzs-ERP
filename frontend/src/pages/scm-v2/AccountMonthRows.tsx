@@ -13,7 +13,7 @@
 // beside them.
 
 import { Link } from 'react-router-dom';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { ledgerHref } from '../../vendor/scm/lib/report-layout';
 import { useLedger } from '../../vendor/scm/lib/ledger-queries';
 import type { MonthColumn } from '../../vendor/scm/lib/report-monthly';

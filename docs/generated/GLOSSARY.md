@@ -22,7 +22,7 @@ fails when one appears in CODE.
 | **Money (minor unit)** | `_sen` | ~~`_centi`~~ | `frontend/src/lib/money.ts` |
 | **Salesperson (order attribution)** | `salesperson_id` / `salespersonId` | — | `backend/src/scm/lib/so-agent.ts` |
 | **Warehouse (which building ships)** | `warehouse_id` / `warehouseId` | — | `backend/src/scm/lib/warehouse-label.ts` |
-| **Customer reference (their own PO / order number)** | `ref` | — | `frontend/src/lib/customer-ref.ts` |
+| **Customer reference (their own PO / order number)** | `ref` | — | `shared/src/lib/customer-ref.ts` |
 
 ## What each one means
 

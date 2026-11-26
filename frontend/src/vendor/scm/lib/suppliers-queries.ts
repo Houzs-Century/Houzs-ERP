@@ -18,7 +18,8 @@ import type { OutstandingScope } from '../../../lib/outstandingEmptyReason';
 export type SupplierStatus = 'ACTIVE' | 'INACTIVE' | 'BLOCKED';
 export type Currency = 'MYR' | 'RMB' | 'CNY' | 'USD' | 'SGD';
 export type MaterialKind = 'mfg_product' | 'fabric' | 'raw';
-export type PoStatus = 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CANCELLED';
+export type { PoStatus } from '../../../../../shared/src/vendor/scm/lib/po-status';
+import type { PoStatus } from '../../../../../shared/src/vendor/scm/lib/po-status';
 
 export type StatementType = 'OPEN_ITEM' | 'BALANCE_FORWARD' | 'NO_STATEMENT';
 export type AgingBasis    = 'INVOICE_DATE' | 'DUE_DATE';

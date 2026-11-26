@@ -17,8 +17,8 @@ import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont, paperText,
   fmtDocDate, fmtDocStamp, safeName, type PdfAction,
 } from './pdf-common';
-import { fmtSen as fmtRm } from '../../shared/format';
-import { PDF_COMPRESS } from './pdf-options';
+import { fmtSen as fmtRm } from '../../../../../shared/src/vendor/shared/format';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type CorrectionRowInput = {
   at: string;

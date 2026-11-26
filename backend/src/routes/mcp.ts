@@ -34,6 +34,7 @@ import {
   flowAnchorFromSearch,
   MAX_CONFIRMED_PER_DAY,
   PENDING_TTL_MS,
+  pdfDisposition,
   pdfKind,
   flowSpec,
   pickDateAmount,
@@ -45,6 +46,7 @@ import {
   type Proposal,
 } from "../services/mcp-actions";
 import { isFinanceViewer, isProductCostViewer } from "../services/pmsAccess";
+import { PdfReadError, purchaseOrderPdf, salesOrderPdf, type PdfReader } from "../services/mcp-pdf";
 import { docTitle, fetchKind, myToday, parseFetchId, pickFields, PROMPTS, promptText, resolveWindow, searchResults, singleMonth, summariseDelivery, summariseSales, type Window } from "../services/mcp-quick";
 import { classifyPath, moduleCatalog, readablePaths, redactMoney, redactSecrets, type RouteInfo } from "../services/mcp-access";
 import {
@@ -320,7 +322,7 @@ export const MCP_TOOLS = [
     name: "get_pdf",
     title: "PDF / printout of a document",
     description:
-      "A document's printout. A service case (customer copy) or a project debrief comes back as a download link valid for 15 minutes (open it, then print or save as PDF). Sales orders, delivery orders, invoices, purchase orders and the other trading documents make their PDF in the browser: you get the ERP page link, and the person presses Print / PDF there.",
+      "A document's printout. A sales order or purchase order comes back as a download link to the PDF file itself (the same document the ERP's Print / PDF button makes), valid for 15 minutes. A service case (customer copy) or a project debrief comes back as a printout link valid for 15 minutes (open it, then print or save as PDF). Delivery orders, invoices and the other trading documents make their PDF in the browser: you get the ERP page link, and the person presses Print / PDF there.",
     inputSchema: {
       type: "object",
       properties: {
@@ -450,6 +452,29 @@ async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, qu
   return { ok: true, status: res.status, value: money.value, removed: [...removed], target };
 }
 
+const PDF_BYTE_PREFIXES = ["/api/scm/mfg-sales-orders/", "/api/scm/mfg-purchase-orders/", "/api/branding/logo?", "/api/projects/brands/logo?"];
+function pdfReader(c: Context<HonoEnv>, token: string, company: string | null): PdfReader {
+  return {
+    json: async <T>(apiPath: string): Promise<T> => {
+      const [path, qs] = apiPath.split("?");
+      const r = await readValue(c, token, path, qs ? Object.fromEntries(new URLSearchParams(qs)) : undefined, company);
+      if (!r.ok) throw new PdfReadError(r.status, r.message, r.note);
+      return r.value as T;
+    },
+    bytes: async (apiPath) => {
+      if (!PDF_BYTE_PREFIXES.some((p) => apiPath.startsWith(p))) throw new Error(`not a printout image route: ${apiPath.slice(0, 80)}`);
+      const res = await innerGet(c, token, apiPath, company);
+      return { status: res.status, contentType: res.headers.get("content-type") ?? "", companyCode: res.headers.get("x-company-code"), body: new Uint8Array(await res.arrayBuffer()) };
+    },
+    asset: async (path) => {
+      if (!/^\/fonts\/[\w.-]+\.ttf$/.test(path)) throw new Error(`not a font asset: ${path.slice(0, 80)}`);
+      const res = await fetch(originOf(c) + path);
+      if (!res.ok) throw new Error(`${path} -> HTTP ${res.status}`);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+  };
+}
+
 /** Read one endpoint as the person, as tool text; shared with the leak check (routes/mcpAdmin.ts). */
 export async function readEndpoint(
   c: Context<HonoEnv>,
@@ -559,7 +584,7 @@ async function documentFlowTool(c: Context<HonoEnv>, token: string, q: string, c
   const extra = new Map<string, { date: string | null; amountRM: number | null }>();
   const todo = nodes.slice(0, FLOW_ENRICH_MAX);
   for (let i = 0; i < todo.length; i += FLOW_ENRICH_PARALLEL) {
-    // eslint-disable-next-line no-await-in-loop -- bounded fan-out: 5 in-process reads at a time, at most 15 in all
+     
     await Promise.all(
       todo.slice(i, i + FLOW_ENRICH_PARALLEL).map(async (n) => {
         const kind = fetchKind(String(flowSpec(String(n.type))?.fetch ?? ""));
@@ -592,6 +617,7 @@ async function getPdfTool(c: Context<HonoEnv>, id: Identity, token: string, type
     note: "",
     target,
   });
+  if (spec.server) return serverPdfTool(c, id, token, spec.server, type, docId, company, page, target, browserOnly);
   if (!spec.print) return browserOnly("This document's PDF is made in the browser by the ERP page, not on the server.");
   if (spec.financeOnly && !isFinanceViewer(id.user)) return browserOnly("This printout carries cost and profit, which the AI connector shows only to finance.");
   const res = await innerGet(c, token, spec.print(docId), company);
@@ -608,6 +634,42 @@ async function getPdfTool(c: Context<HonoEnv>, id: Identity, token: string, type
     result: text(JSON.stringify({ download: `${originOf(c)}/api/mcp/export/${key}`, expiresAt, page, howTo: "The link opens the ERP's own printout and works for 15 minutes. Open it, then print or save as PDF." })),
     status: 200,
     note: "",
+    target,
+  };
+}
+
+async function serverPdfTool(
+  c: Context<HonoEnv>,
+  id: Identity,
+  token: string,
+  kind: "so" | "po",
+  type: string,
+  docId: string,
+  company: string | null,
+  page: string,
+  target: string,
+  browserOnly: (why: string) => Outcome,
+): Promise<Outcome> {
+  let pdf: Awaited<ReturnType<typeof salesOrderPdf>>;
+  try {
+    const reader = pdfReader(c, token, company);
+    pdf = kind === "so" ? await salesOrderPdf(reader, docId) : await purchaseOrderPdf(reader, docId);
+  } catch (e) {
+    if (e instanceof PdfReadError) return { result: text(e.message, true), status: e.status, note: e.note, target };
+    const why = e instanceof Error ? e.message : String(e);
+    console.warn(`[mcp] get_pdf ${type} ${docId}: server render failed:`, why);
+    return { ...browserOnly(`The PDF could not be made here (${why.slice(0, 160)}).`), note: `server pdf failed: ${why}`.slice(0, 120) };
+  }
+  const key = randomToken(32);
+  const expiresAt = new Date(Date.now() + EXPORT_TTL_MS).toISOString();
+  await c.env.POD_BUCKET.put(`${EXPORT_PREFIX}${key}.pdf`, pdf.bytes, {
+    httpMetadata: { contentType: "application/pdf", contentDisposition: pdfDisposition(pdf.filename) },
+    customMetadata: { expiresAt, userId: String(id.user.id), doc: `${type}:${docId}` },
+  });
+  return {
+    result: text(JSON.stringify({ download: `${originOf(c)}/api/mcp/export/${key}`, filename: pdf.filename, pages: pdf.pages, expiresAt, page, serverPdf: true, howTo: "The link downloads the PDF itself (the same document the ERP's Print / PDF button makes) and works for 15 minutes." })),
+    status: 200,
+    note: `pdf ${pdf.pages}p ${Math.round(pdf.bytes.byteLength / 1024)}KB ${pdf.ms}ms`,
     target,
   };
 }
@@ -840,21 +902,23 @@ app.get("/export/:key", async (c) => {
   const gone = (status: 404 | 410) =>
     new Response("This printout link has expired or does not exist. Ask the AI for the PDF again.\n", { status, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
   if (!EXPORT_KEY_RE.test(key)) return gone(404);
-  const objKey = `${EXPORT_PREFIX}${key}.html`;
-  const obj = await c.env.POD_BUCKET.get(objKey);
+  const pdfKey = `${EXPORT_PREFIX}${key}.pdf`;
+  const pdfObj = await c.env.POD_BUCKET.get(pdfKey);
+  const objKey = pdfObj ? pdfKey : `${EXPORT_PREFIX}${key}.html`;
+  const obj = pdfObj ?? (await c.env.POD_BUCKET.get(objKey));
   if (!obj) return gone(404);
   if (!exportAlive(obj.customMetadata?.expiresAt, Date.now())) {
     await c.env.POD_BUCKET.delete(objKey);
     return gone(410);
   }
+  const common = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex", "X-Content-Type-Options": "nosniff" };
+  if (pdfObj) {
+    return new Response(obj.body, {
+      headers: { ...common, "Content-Type": "application/pdf", "Content-Disposition": obj.httpMetadata?.contentDisposition ?? 'attachment; filename="document.pdf"' },
+    });
+  }
   return new Response(obj.body, {
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": "sandbox allow-scripts allow-modals allow-popups",
-      "Cache-Control": "no-store",
-      "Referrer-Policy": "no-referrer",
-      "X-Robots-Tag": "noindex",
-    },
+    headers: { ...common, "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "sandbox allow-scripts allow-modals allow-popups" },
   });
 });
 

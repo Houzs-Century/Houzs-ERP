@@ -125,6 +125,10 @@ jobs:
             case "$f" in
               # Prose. Cannot affect either half's build or tests.
               docs/*|tasks/*|*.md) continue ;;
+              # Code both apps bundle (the SO / PO document layout behind the
+              # AI Connector's get_pdf): both halves, spelled out though the
+              # catch-all below would agree.
+              shared/*) backend=true; frontend=true ;;
               # One half only.
               backend/*)  backend=true ;;
               frontend/*) frontend=true ;;

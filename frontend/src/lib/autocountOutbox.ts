@@ -72,7 +72,7 @@ import { useCallback, useState } from "react";
 
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
-import { fmtDateTime } from "../vendor/shared/format";
+import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
 import {
   archiveAcOutboxDoc,
   restoreAcOutboxDoc,

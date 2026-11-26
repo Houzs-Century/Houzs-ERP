@@ -32,7 +32,7 @@ describe('the history drawer registry', () => {
   });
 
   it('gives every document a status vocabulary the StatusPill knows', () => {
-    const src = repoFile('frontend/src/vendor/scm/lib/status-pill.ts');
+    const src = repoFile('shared/src/vendor/scm/lib/status-pill.ts');
     const maps = /const MAPS: Record<StatusDocType, Record<string, Entry>> = \{([\s\S]*?)\};/.exec(src);
     expect(maps).not.toBeNull();
     const known = [...(maps as RegExpExecArray)[1].matchAll(/([A-Za-z]+):\s*[A-Z_]+/g)].map((m) => m[1]);

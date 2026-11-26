@@ -14,7 +14,7 @@ import {
 } from "./announcementCategory";
 import { useAnnouncementBanner, type BannerAnnouncement } from "./useAnnouncementBanner";
 import { ackRateBarCls } from "../pages/announcements/announcementModel";
-import { fmtDate } from "../vendor/shared/format";
+import { fmtDate } from "../../../shared/src/vendor/shared/format";
 
 
 const EYEBROW = "font-mono text-[10px] font-bold uppercase tracking-wider";

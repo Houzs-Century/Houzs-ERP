@@ -23,7 +23,7 @@
 // Linked must answer when it is clicked. Nodes with a real document navigate to
 // it; the ones that cannot (see below) say why in-app instead of doing nothing.
 
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 import { useCallback, useMemo } from 'react';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth } from '../../auth/AuthContext';

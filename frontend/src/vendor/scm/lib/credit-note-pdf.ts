@@ -27,7 +27,7 @@ import {
   amountInWordsMyr, fmtRm, fmtDocDate, safeName, DOC_TABLE_STYLES, DOC_TABLE_HEAD_STYLES, type PdfAction,
 } from './pdf-common';
 import type { CreditNoteDetail } from './credit-note-queries';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type CreditNotePdfHeader = {
   note_number: string;

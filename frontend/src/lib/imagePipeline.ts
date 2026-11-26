@@ -3,7 +3,8 @@
  *  mirrors this constant; a thumbnail for key `a/b/c.jpg` always lives at
  *  `a/b/c.jpg.thumb`. Appending to an already-encoded URL segment is safe
  *  because every character in the suffix is URL-unreserved. */
-export const THUMB_KEY_SUFFIX = ".thumb";
+export { THUMB_KEY_SUFFIX } from "../../../shared/src/lib/thumb-key";
+import { THUMB_KEY_SUFFIX } from "../../../shared/src/lib/thumb-key";
 
 /** Thumb URL for a main-image URL served by a key-suffix proxy route
  *  (product-model gallery, ASSR attachments, announcement attachments).

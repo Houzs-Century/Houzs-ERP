@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { serviceNotify } from "../vendor/scm/lib/dialog-service";
-import { fmtDateTime } from "../vendor/shared/format";
+import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
 
 /** The `cachedAt` every cached overview answers with. */
 export type Cached = { cachedAt?: string | null };

@@ -8,7 +8,7 @@ import { renderCreditNoteInto, type CreditNotePdfHeader, type CreditNotePdfLine 
 import { renderPurchaseInvoiceInto } from './purchase-invoice-pdf';
 import { pdfBytesToBase64 } from './payment-voucher-pdf';
 import { fetchPrintBundle } from './payment-voucher-queries';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 /** One paper to print: what it is, its id, and its number (the file's name, and the refusal's). */
 export type BillPrintDoc = { kind: 'API' | 'PI' | 'SCN'; id: string; number: string };

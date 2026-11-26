@@ -47,7 +47,7 @@ describe('every frontend reader extracts the same set from the same corpus', () 
 
 describe('the two copies of this module are the same file', () => {
   test('backend/src/scm/shared/transfer-vocabulary.ts is byte-identical to this one', () => {
-    const here = resolve(process.cwd(), 'src/vendor/shared/transfer-vocabulary.ts');
+    const here = resolve(process.cwd(), '../shared/src/vendor/shared/transfer-vocabulary.ts');
     const there = resolve(process.cwd(), '../backend/src/scm/shared/transfer-vocabulary.ts');
     const norm = (p: string) => readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
     expect(norm(there)).toBe(norm(here));

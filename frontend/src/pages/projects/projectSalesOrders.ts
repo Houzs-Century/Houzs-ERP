@@ -7,7 +7,7 @@
  * Shared by the desktop block and the mobile panel so the two cannot disagree
  * on what "not yet opened" means. Pure; no fetching here.
  */
-import { statusLabel } from "../../vendor/scm/lib/status-pill";
+import { statusLabel } from "../../../../shared/src/vendor/scm/lib/status-pill";
 
 export type ProjectSalesOrderRow = {
   doc_no: string;

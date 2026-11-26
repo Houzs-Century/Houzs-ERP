@@ -5,7 +5,7 @@ import { buildQueryKey, useQuery } from "../../hooks/useQuery";
 import { queryClient } from "../../lib/queryClient";
 import { useToast } from "../../hooks/useToast";
 import { cn } from "../../lib/utils";
-import { fmtDateTime } from "../../vendor/shared/format";
+import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
 
 export type MailReader = { userId: number; name: string; readAt: string | null };
 export type ThreadReaders = { members: MailReader[]; others: MailReader[] };
