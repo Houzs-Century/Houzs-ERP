@@ -431,7 +431,7 @@ export const FAQ_TOOLS = [
 ];
 export const FAQ_TOOL_NAMES = new Set(FAQ_TOOLS.map((t) => t.name));
 
-export const FAQ_INSTRUCTIONS = `- Overdue POs / what is still to be received: po_overdue. Late suppliers: supplier_lateness. What we owe suppliers: payables_summary. Overdue sales orders: so_overdue. Deliveries due today / this week: deliveries_due. Delivered-not-invoiced and unpaid invoices: receivables_summary.`;
+export const FAQ_INSTRUCTIONS = `- Overdue POs: po_overdue (POs still being received, by outlet: po_awaiting_receipt). Late suppliers: supplier_lateness. What we owe suppliers: payables_summary. Overdue sales orders: so_overdue. Deliveries due today / this week: deliveries_due. Delivered-not-invoiced and unpaid invoices: receivables_summary.`;
 
 export function runFaqTool(ctx: R3Ctx, name: string, args: Obj): Promise<R3Outcome> | null {
   switch (name) {

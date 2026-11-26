@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildXlsx, colName, crc32, flattenRow, moneyHeader, pickColumns, sheetXml, xmlText } from "./mcp-xlsx";
 import { answerCacheKey, cachedAnswer, DAILY_LIMIT_REACHED, rateDecision, RATE_PER_DAY, RATE_PER_MINUTE, stableArgs, TOO_MANY_PER_MINUTE, TtlCache } from "./mcp-ratelimit";
-import { daysBetween, pickPosEvents, summariseAfterSales, summariseAttendance, summariseOutletSales, summarisePosEvent } from "./mcp-quick2";
+import { daysBetween, summariseAfterSales, summariseAttendance } from "./mcp-quick2";
 import { addDays, briefApprovals, briefPurchaseOrders, briefSalesOrders, buildBrief, poDueDate } from "./mcp-brief";
 import { EXPORT_LISTS, EXPORT_MAX_ROWS, exportQuery, fetchAllRows, isRound3Tool, matchesSearch, ROUND3_TOOLS, runRound3Tool, type R3Ctx, type R3Read } from "./mcp-round3";
 
@@ -125,20 +125,6 @@ describe("rate limit and answer cache", () => {
 describe("round-3 quick answers", () => {
   const today = "2026-11-26";
 
-  it("outlet_sales splits today and month-to-date by showroom", () => {
-    const s = summariseOutletSales({ rows: [{ venue: "PJ", so_date: "2026-11-26", amount_sen: 10000 }, { venue: "PJ", so_date: "2026-11-02", amount_sen: 5000 }, { venue: "", so_date: "2026-11-26", amount_sen: 100 }] }, today);
-    expect(s.totals).toEqual({ todayOrders: 2, todayRm: 101, mtdOrders: 3, mtdRm: 151 });
-    expect(s.outlets[0]).toEqual({ outlet: "PJ", todayOrders: 1, todayRm: 100, mtdOrders: 2, mtdRm: 150 });
-    expect(s.outlets[1].outlet).toBe("(no showroom)");
-  });
-
-  it("pos_sales picks on-going and this month's events and reads today from by_day", () => {
-    const evs = pickPosEvents({ data: [{ project_id: 1, name: "Old", status: "DONE", end_date: "2026-10-30" }, { project_id: 2, name: "Now", status: "ON GOING", start_date: "2026-11-20" }, { project_id: 3, name: "Ended", status: "DONE", start_date: "2026-11-01", end_date: "2026-11-10" }] }, today);
-    expect(evs.map((e) => e.name)).toEqual(["Now", "Ended"]);
-    const e = summarisePosEvent(evs[0], { totals: { bills: 4, net_sen: 40000, by_day: [{ day: today, bills: 1, net_sen: 9900 }], by_method: [{ method: "QR", amount_sen: 40000 }], by_item: [] } }, today);
-    expect(e).toMatchObject({ todayBills: 1, todayNetRm: 99, mtdBills: 4, mtdNetRm: 400 });
-  });
-
   it("after_sales_summary buckets open cases by age", () => {
     expect(daysBetween("2026-11-20", today)).toBe(6);
     const s = summariseAfterSales(
@@ -205,7 +191,7 @@ describe("daily brief", () => {
 
 describe("round-3 tools through a fake ERP", () => {
   it("are registered with schemas", () => {
-    expect(ROUND3_TOOLS.map((t) => t.name)).toEqual(["outlet_sales", "pos_sales", "after_sales_summary", "attendance_today", "daily_brief", "export_excel", "po_overdue", "supplier_lateness", "payables_summary", "so_overdue", "deliveries_due", "receivables_summary"]);
+    expect(ROUND3_TOOLS.map((t) => t.name)).toEqual(["outlet_sales", "pos_sales", "after_sales_summary", "attendance_today", "daily_brief", "export_excel", "po_overdue", "supplier_lateness", "payables_summary", "so_overdue", "deliveries_due", "receivables_summary", "stock_check", "inventory_summary", "uninvoiced_deliveries", "po_awaiting_receipt", "customer_overview", "after_sales_sla", "service_cases", "company_report"]);
     expect(isRound3Tool("daily_brief")).toBe(true);
     expect(isRound3Tool("erp_get")).toBe(false);
   });
@@ -240,7 +226,7 @@ describe("round-3 tools through a fake ERP", () => {
     expect(calls[0].q).toMatchObject({ sources: expect.stringContaining("mail-waiting") });
   });
 
-  it("pos_sales reads every picked event's report in parallel", async () => {
+  it("pos_sales reads every picked event's window and comparison reports in parallel", async () => {
     const { ctx, calls } = fakeCtx(
       {
         "/api/pos-admin/events": () => ok({ data: [1, 2, 3].map((i) => ({ project_id: i, name: `E${i}`, status: "ON GOING", start_date: "2026-11-0" + i })) }),
@@ -251,8 +237,8 @@ describe("round-3 tools through a fake ERP", () => {
     const t0 = performance.now();
     const b = body(await runRound3Tool(ctx, "pos_sales", {}));
     expect(performance.now() - t0).toBeLessThan(30 * 3.5);
-    expect(calls).toHaveLength(4);
-    expect((b.totals as { mtdNetRm: number }).mtdNetRm).toBe(6);
+    expect(calls).toHaveLength(7);
+    expect((b.totals as { netRm: number }).netRm).toBe(6);
   });
 
   it("export_excel pages as the person, caps at 5,000 rows and stores a 15-minute file", async () => {

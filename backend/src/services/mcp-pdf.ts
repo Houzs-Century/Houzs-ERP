@@ -4,7 +4,9 @@ import autoTable from "jspdf-autotable";
 import { letterheadLogoKey } from "./branding";
 import { bytesToBase64, pdfImageFromBytes } from "../lib/pdf-image";
 import {
+  drawGrnInto,
   drawPurchaseOrderInto,
+  drawSalesInvoiceInto,
   drawSalesOrderInto,
   finalizePoPdf,
   letterheadFromBranding,
@@ -20,7 +22,9 @@ import {
   type PdfLogo,
   type PoPdfSources,
   type ProductCategory,
+  type GrnPdfSources,
   type ScmJsonGetter,
+  type SiPdfSources,
   type SoPdfSources,
 } from "../lib/shared-pdf";
 
@@ -75,6 +79,10 @@ async function readLogo(r: PdfReader, apiPath: string, key: string, company: str
 }
 
 async function serverHost(r: PdfReader): Promise<PdfHost> {
+  return (await serverLetterhead(r)).host;
+}
+
+async function serverLetterhead(r: PdfReader): Promise<{ host: PdfHost; branding: Record<string, unknown> }> {
   const got = await r.json<{ branding?: Record<string, unknown>; companyCode?: string }>("/api/branding");
   const b = got.branding ?? {};
   const companyCode = str(got.companyCode).toUpperCase();
@@ -94,9 +102,12 @@ async function serverHost(r: PdfReader): Promise<PdfHost> {
   const logo = key ? await readLogo(r, `/api/branding/logo?k=${enc(key)}${usingPrintSlot ? "&variant=print" : ""}`, key, companyCode || null) : null;
   const letterhead = letterheadFromBranding(branding, companyCode);
   return {
-    letterhead: () => letterhead,
-    companyLogo: () => logo,
-    fontFace: async (url) => bytesToBase64(await r.asset(url)),
+    host: {
+      letterhead: () => letterhead,
+      companyLogo: () => logo,
+      fontFace: async (url) => bytesToBase64(await r.asset(url)),
+    },
+    branding: b,
   };
 }
 
@@ -167,5 +178,43 @@ export async function purchaseOrderPdf(r: PdfReader, id: string): Promise<Server
     const rendered = await drawPurchaseOrderInto(doc, autoTable, sources, header, bundle.items as unknown as PoArgs[4], undefined);
     finalizePoPdf(doc, [rendered]);
     return finish(doc, `${poDisplayNumber(header.po_number, header.revision)}-${safeName(rendered.supplierName)}.pdf`, t0);
+  });
+}
+
+type SiArgs = Parameters<typeof drawSalesInvoiceInto>;
+type GrnArgs = Parameters<typeof drawGrnInto>;
+
+/** A Sales Invoice's PDF, made as the person: the detail read the ERP page prints from (`/api/scm/sales-invoices/:id`). */
+export async function salesInvoicePdf(r: PdfReader, id: string): Promise<ServerPdf> {
+  const t0 = Date.now();
+  const getJson: ScmJsonGetter = (path) => r.json(`/api/scm${path}`);
+  const got = await getJson<{ salesInvoice: Record<string, unknown>; items?: unknown[] }>(`/sales-invoices/${enc(id)}`);
+  const { host, branding } = await serverLetterhead(r);
+  const loaders = makeSupplierDocLoaders(getJson);
+  const sources: SiPdfSources = {
+    customerFabricMaps: (items) => loaders.loadCustomerFabricMaps(items),
+    customerPaymentDetails: () => str(branding.customerPaymentDetails ?? branding.customer_payment_details),
+  };
+  const header = got.salesInvoice as unknown as SiArgs[3];
+  return exclusive(host, async () => {
+    const doc = new jsPDF({ ...PDF_COMPRESS, unit: "mm", format: "a4" });
+    await drawSalesInvoiceInto(doc, autoTable, sources, header, (got.items ?? []) as unknown as SiArgs[4]);
+    return finish(doc, `${header.invoice_number}-${safeName(header.debtor_name || "customer")}.pdf`, t0);
+  });
+}
+
+/** A Goods Received Note's PDF, made as the person: the detail read the ERP page prints from (`/api/scm/grns/:id`). */
+export async function grnPdf(r: PdfReader, id: string): Promise<ServerPdf> {
+  const t0 = Date.now();
+  const getJson: ScmJsonGetter = (path) => r.json(`/api/scm${path}`);
+  const got = await getJson<{ grn: Record<string, unknown>; items?: unknown[] }>(`/grns/${enc(id)}`);
+  const host = await serverHost(r);
+  const loaders = makeSupplierDocLoaders(getJson);
+  const sources: GrnPdfSources = { supplierDocData: (supplierId, items) => loaders.loadSupplierDocData(supplierId, items) };
+  const header = got.grn as unknown as GrnArgs[3];
+  return exclusive(host, async () => {
+    const doc = new jsPDF({ ...PDF_COMPRESS, unit: "mm", format: "a4" });
+    await drawGrnInto(doc, autoTable, sources, header, (got.items ?? []) as unknown as GrnArgs[4]);
+    return finish(doc, `${header.grn_number}-${safeName(header.supplier?.name ?? "supplier")}.pdf`, t0);
   });
 }

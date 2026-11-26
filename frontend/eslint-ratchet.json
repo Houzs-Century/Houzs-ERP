@@ -5,7 +5,7 @@
     "@typescript-eslint/no-floating-promises": 684,
     "@typescript-eslint/no-unnecessary-condition": 1535,
     "houzs/no-imperative-timers": 150,
-    "houzs/no-prose-comments": 187,
+    "houzs/no-prose-comments": 185,
     "no-restricted-syntax": 129
   },
   "files": {
@@ -1326,9 +1326,6 @@
     "src/vendor/scm/lib/flow-queries.ts": {
       "@typescript-eslint/no-unnecessary-condition": 4
     },
-    "src/vendor/scm/lib/grn-pdf.ts": {
-      "houzs/no-prose-comments": 1
-    },
     "src/vendor/scm/lib/grn-queries.ts": {
       "@typescript-eslint/no-explicit-any": 10,
       "@typescript-eslint/no-floating-promises": 27
@@ -1407,9 +1404,6 @@
       "@typescript-eslint/no-unnecessary-condition": 1
     },
     "src/vendor/scm/lib/request-bill-read.ts": {
-      "houzs/no-prose-comments": 1
-    },
-    "src/vendor/scm/lib/sales-invoice-pdf.ts": {
       "houzs/no-prose-comments": 1
     },
     "src/vendor/scm/lib/sales-invoice-queries.ts": {

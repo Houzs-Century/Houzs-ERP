@@ -10,3 +10,5 @@ export { drawSalesOrderInto, type SoPdfSources } from "../../../shared/src/vendo
 export { drawPurchaseOrderInto, finalizePoPdf, type PoPdfSources } from "../../../shared/src/vendor/scm/lib/purchase-order-pdf-render";
 export { poDisplayNumber } from "../../../shared/src/vendor/scm/lib/po-status";
 export type { ProductCategory } from "../../../shared/src/vendor/shared/product-categories";
+export { drawSalesInvoiceInto, type SiPdfSources } from "../../../shared/src/vendor/scm/lib/sales-invoice-pdf-render";
+export { drawGrnInto, type GrnPdfSources } from "../../../shared/src/vendor/scm/lib/grn-pdf-render";

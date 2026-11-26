@@ -15,7 +15,8 @@ import { buildBrief, type BriefRead } from "./mcp-brief";
 import { FAQ_INSTRUCTIONS, FAQ_TOOL_NAMES, FAQ_TOOLS, runFaqTool } from "./mcp-faq";
 import { EXPORT_KEY_RE, EXPORT_PREFIX, EXPORT_TTL_MS, exportAlive } from "./mcp-actions";
 import { myToday } from "./mcp-quick";
-import { monthStartOf, pickPosEvents, summariseAfterSales, summariseAttendance, summariseOutletSales, summarisePosEvent, summarisePosSales } from "./mcp-quick2";
+import { summariseAfterSales, summariseAttendance } from "./mcp-quick2";
+import { PERIOD_TOOL_SCHEMA, ROUND4_INSTRUCTIONS, ROUND4_TOOL_NAMES, ROUND4_TOOLS, runRound4Tool } from "./mcp-round4";
 import { randomToken } from "./mcp-store";
 import { buildXlsx, flattenRow, pickColumns } from "./mcp-xlsx";
 
@@ -63,16 +64,16 @@ export const EXPORT_LISTS: Record<string, { path: string; rowsKey: string; pagin
 export const ROUND3_TOOLS = [
   {
     name: "outlet_sales",
-    title: "Sales by outlet today and this month (quick answer)",
-    description: "Today's and month-to-date sales orders and sales (RM) for every showroom / outlet, in ONE call. Same numbers as the Sales Report's Sales Order stage.",
-    inputSchema: noArgs,
+    title: "Sales by outlet for a period (quick answer)",
+    description: "Sales orders and sales (RM) for every showroom / outlet for a period (default: this month to date, with today's figures), vs the previous period and the same days last month, in ONE call. Same numbers as the Sales Report's Sales Order stage. company 2990 = the 2990's month to date.",
+    inputSchema: PERIOD_TOOL_SCHEMA,
     annotations: readOnly,
   },
   {
     name: "pos_sales",
-    title: "Booth POS sales (quick answer)",
-    description: "The booth POS (Cash & Carry and fair terminals): today's and month-to-date bills and net sales (RM) for each event on going or ended this month, payment methods and top items. Needs POS Admin access.",
-    inputSchema: noArgs,
+    title: "Booth POS sales for a period (quick answer)",
+    description: "The booth POS (Cash & Carry and fair terminals) for a period (default: this month to date): bills and net sales (RM) for the events active in it (up to 3), vs the previous period and the same days last month, payment methods and top items. Needs POS Admin access.",
+    inputSchema: PERIOD_TOOL_SCHEMA,
     annotations: readOnly,
   },
   {
@@ -119,42 +120,19 @@ export const ROUND3_TOOLS = [
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
   ...FAQ_TOOLS,
+  ...ROUND4_TOOLS,
 ];
 
 const NAMES = new Set(ROUND3_TOOLS.map((t) => t.name));
 export const isRound3Tool = (name: string): boolean => NAMES.has(name);
 /** The read-only summaries the route may answer from the 30-second cache (services/mcp-ratelimit.ts). */
-export const CACHEABLE_TOOLS = new Set(["sales_summary", "delivery_summary", "outlet_sales", "pos_sales", "after_sales_summary", "attendance_today", "daily_brief", ...FAQ_TOOL_NAMES]);
+export const CACHEABLE_TOOLS = new Set(["sales_summary", "delivery_summary", "outlet_sales", "pos_sales", "after_sales_summary", "attendance_today", "daily_brief", ...FAQ_TOOL_NAMES, ...ROUND4_TOOL_NAMES]);
 
-export const ROUND3_INSTRUCTIONS = `- Sales by showroom / outlet today and month to date: outlet_sales. Booth POS sales: pos_sales. Open service cases by status and age: after_sales_summary. Who is on leave or absent today (HR only): attendance_today.
+export const ROUND3_INSTRUCTIONS = `- Sales by showroom / outlet for a period (today, this week, month to date, last month...): outlet_sales {period}. Booth POS sales: pos_sales {period}. Open service cases by status and age: after_sales_summary. Who is on leave or absent today (HR only): attendance_today.
 - "What do I need to look at today?": daily_brief. A list as an Excel file: export_excel {list, search, status, from, to, fields}; give the person the download link.
-${FAQ_INSTRUCTIONS}`;
+${FAQ_INSTRUCTIONS}
+${ROUND4_INSTRUCTIONS}`;
 
-
-async function outletSales(ctx: R3Ctx): Promise<R3Outcome> {
-  const today = myToday(new Date(ctx.now));
-  const target = `outlets:${today}`;
-  const r = await ctx.read("/api/scm/reports/fair-report", { stage: "so", date_from: monthStartOf(today), date_to: today });
-  if (!r.ok) return refused(r, target, "the Sales Report");
-  return answer(summariseOutletSales(r.value, today), target);
-}
-
-async function posSales(ctx: R3Ctx): Promise<R3Outcome> {
-  const today = myToday(new Date(ctx.now));
-  const target = `pos:${today}`;
-  const ev = await ctx.read("/api/pos-admin/events", undefined);
-  if (!ev.ok) return refused(ev, target, "POS Admin");
-  const events = pickPosEvents(ev.value, today);
-  const reports = await Promise.all(events.map((e) => ctx.read("/api/pos-admin/report", { project_id: e.projectId, from: monthStartOf(today), to: today })));
-  const shaped: ReturnType<typeof summarisePosEvent>[] = [];
-  const unreadable: string[] = [];
-  reports.forEach((r, i) => {
-    if (r.ok) shaped.push(summarisePosEvent(events[i], r.value, today));
-    else unreadable.push(events[i].name);
-  });
-  const total = Array.isArray((ev.value as { data?: unknown }).data) ? ((ev.value as { data: unknown[] }).data.length) : 0;
-  return answer(summarisePosSales(shaped, unreadable, today, total), target);
-}
 
 const ASSR_PAGE = 200;
 const ASSR_PAGES_MAX = 3;
@@ -326,10 +304,6 @@ async function exportExcel(ctx: R3Ctx, args: Obj): Promise<R3Outcome> {
 /** Run one round-3 tool. */
 export async function runRound3Tool(ctx: R3Ctx, name: string, args: Obj): Promise<R3Outcome> {
   switch (name) {
-    case "outlet_sales":
-      return outletSales(ctx);
-    case "pos_sales":
-      return posSales(ctx);
     case "after_sales_summary":
       return afterSales(ctx);
     case "attendance_today":
@@ -339,7 +313,7 @@ export async function runRound3Tool(ctx: R3Ctx, name: string, args: Obj): Promis
     case "export_excel":
       return exportExcel(ctx, args);
     default:
-      return runFaqTool(ctx, name, args) ?? { result: text(`Unknown tool: ${name}`, true), status: 400, note: "", target: "" };
+      return runFaqTool(ctx, name, args) ?? runRound4Tool(ctx, name, args) ?? { result: text(`Unknown tool: ${name}`, true), status: 400, note: "", target: "" };
   }
 }
 
