@@ -19,6 +19,7 @@ import {
 } from "./mcp-quick";
 import { recallVerified, rememberVerified, VERIFIED_TTL_MS } from "./mcp-inner";
 import { MAX_RESULT_CHARS, MCP_INSTRUCTIONS, MCP_TOOLS } from "../routes/mcp";
+import { ROUND3_TOOLS } from "./mcp-round3";
 
 describe("AI Connector quick answers", () => {
   it("money and percent helpers", () => {
@@ -124,7 +125,8 @@ describe("AI Connector quick answers", () => {
   });
 
   it("prompts expand to a question; an unknown prompt is refused", () => {
-    expect(PROMPTS.map((p) => p.name)).toEqual(["monthly_sales_review", "delivery_review", "find_document"]);
+    expect(PROMPTS.map((p) => p.name)).toEqual(["monthly_sales_review", "delivery_review", "find_document", "daily-brief"]);
+    expect(promptText("daily-brief", {})).toMatch(/daily_brief/);
     expect(promptText("monthly_sales_review", { period: "2026-10" })).toMatch(/2026-10.*sales_summary/);
     expect(promptText("find_document", { number: "HC-SO-013402" })).toMatch(/HC-SO-013402/);
     expect(promptText("nope", {})).toBeNull();
@@ -138,14 +140,14 @@ describe("AI Connector quick answers", () => {
   });
 
   it("the tool list: quick answers first, reads read-only, only the action tools write, the instructions point at them", () => {
-    expect(MCP_TOOLS.map((t) => t.name)).toEqual(["sales_summary", "delivery_summary", "search", "fetch", "whoami", "list_modules", "list_endpoints", "erp_get", "document_flow", "get_pdf", "propose_meeting", "propose_email", "confirm_action", "cancel_action"]);
+    expect(MCP_TOOLS.map((t) => t.name)).toEqual(["sales_summary", "delivery_summary", "search", "fetch", "whoami", "list_modules", "list_endpoints", "erp_get", "document_flow", "get_pdf", "propose_meeting", "propose_email", "confirm_action", "cancel_action", ...ROUND3_TOOLS.map((t) => t.name)]);
     const writers = ["propose_meeting", "propose_email", "confirm_action", "cancel_action"];
     for (const t of MCP_TOOLS) expect(t.annotations.readOnlyHint).toBe(!writers.includes(t.name));
     for (const t of MCP_TOOLS.filter((x) => x.name.startsWith("propose_"))) {
       expect(t.annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
       expect(t.description).toContain("Only call confirm_action after they explicitly say yes.");
     }
-    for (const name of ["sales_summary", "delivery_summary", "search", "fetch", "document_flow", "get_pdf", "confirm_action"]) expect(MCP_INSTRUCTIONS).toContain(name);
+    for (const name of ["sales_summary", "delivery_summary", "search", "fetch", "document_flow", "get_pdf", "confirm_action", ...ROUND3_TOOLS.map((t) => t.name)]) expect(MCP_INSTRUCTIONS).toContain(name);
     expect(MAX_RESULT_CHARS).toBe(30_000);
   });
 });

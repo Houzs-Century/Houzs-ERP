@@ -32,6 +32,7 @@ import {
   setActionsEnabled,
   takeAuthRequest,
 } from "../services/mcp-store";
+import { RATE_PER_DAY, RATE_PER_MINUTE } from "../services/mcp-ratelimit";
 import { isMcpAdmin, mcpAppRoutes, publicOrigin, readEndpoint } from "./mcp";
 
 type HonoEnv = { Bindings: Env };
@@ -223,6 +224,7 @@ app.get("/admin/overview", async (c) => {
   return c.json({
     connectorUrl: connectorUrl(c),
     actionsEnabled: actionsOn,
+    limits: { perMinute: RATE_PER_MINUTE, perDay: RATE_PER_DAY },
     stats: { connectedPeople: num(stats ?? {}, "people"), callsToday: num(stats ?? {}, "calls_24h"), refusedToday: num(stats ?? {}, "refused_24h"), waiting: requests.results.length },
     requests: requests.results.map((r) => ({ id: s(r, "id"), userId: num(r, "user_id"), name: s(r, "name"), position: pos(r), reason: s(r, "reason"), createdAt: iso(r.created_at) })),
     connected: connected.results.map((r) => ({ tokenId: s(r, "id"), userId: num(r, "user_id"), name: s(r, "name"), position: pos(r), app: appLabel(s(r, "client_name")), connectedAt: iso(r.created_at), lastUsedAt: iso(r.last_used_at) })),
