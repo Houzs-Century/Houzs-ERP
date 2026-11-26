@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw, Search, X } from "lucide-react";
 import { api, buildQuery } from "../../api/client";
 import { useQuery } from "../../hooks/useQuery";
 import { useAuth } from "../../auth/AuthContext";
@@ -10,6 +10,7 @@ import { cn, formatDate, formatDateTime } from "../../lib/utils";
 import { PageHeader } from "../../components/Layout";
 import { EmptyState } from "../../components/EmptyState";
 import { MediaLightbox } from "../../components/MediaLightbox";
+import { DateField } from "../../vendor/scm/components/DateField";
 import { parseDefectCaption } from "./defectRemark";
 import {
   canPurchaseDefect,
@@ -100,6 +101,13 @@ interface ProjectGroup {
   start_date: string | null;
   end_date: string | null;
   rows: DefectRow[];
+}
+
+/** Normalize a stored date ("2026-12-18", "2026/12/18", or an ISO timestamp)
+ *  to "YYYY-MM-DD" so it compares lexicographically with <input type="date">. */
+function dateKey(value: string | null): string {
+  if (!value) return "";
+  return value.slice(0, 10).replace(/\//g, "-");
 }
 
 /** Group the flat feed by project, preserving the server's ordering (most
@@ -198,6 +206,9 @@ export function DefectListView() {
   const { user } = useAuth();
   const toast = useToast();
   const [showAll, setShowAll] = useState(false);
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [lightbox, setLightbox] = useState<number | null>(null);
   // One action editor open at a time, keyed by attachment id.
   const [draft, setDraft] = useState<{ attId: number; status: string } | null>(null);
@@ -216,10 +227,38 @@ export function DefectListView() {
   // events are handled elsewhere, so this list hides any event whose name
   // carries the MALL MGMT organizer and shows only the solo roadshows. Filtered
   // at the row level so the count, the grouping and the photo viewer all agree.
-  const rows = useMemo(
+  const allRows = useMemo(
     () => (q.data?.rows ?? []).filter((r) => !/mall\s*mgmt/i.test(r.name)),
     [q.data],
   );
+  const hasFilter = search.trim() !== "" || dateFrom !== "" || dateTo !== "";
+
+  // Filter client-side on the already-fetched feed: fast, and no extra request
+  // while the service team types. Search spans the event fields a user would
+  // recognise (name, code, brand, organizer, venue, booth, state); the date
+  // range keeps events whose run overlaps the chosen window.
+  const rows = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return allRows.filter((r) => {
+      if (term) {
+        const hay = [r.name, r.code, r.brand, r.organizer, r.venue, r.booth_no, r.state]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      if (dateFrom || dateTo) {
+        const start = dateKey(r.start_date);
+        const end = dateKey(r.end_date) || start;
+        if (!start && !end) return false;
+        // Overlap: event ends on/after dateFrom and starts on/before dateTo.
+        if (dateFrom && end && end < dateFrom) return false;
+        if (dateTo && start && start > dateTo) return false;
+      }
+      return true;
+    });
+  }, [allRows, search, dateFrom, dateTo]);
+
   const groups = useMemo(() => groupByProject(rows), [rows]);
   const mediaItems = useMemo(
     () => rows.map((r) => ({ r2_key: r.r2_key, content_type: r.content_type, caption: r.caption })),
@@ -288,7 +327,59 @@ export function DefectListView() {
         <span className="text-xs text-ink-muted">
           {rows.length} defect{rows.length === 1 ? "" : "s"} · {groups.length} project
           {groups.length === 1 ? "" : "s"}
+          {hasFilter && allRows.length !== rows.length && (
+            <span className="text-ink-muted"> (of {allRows.length})</span>
+          )}
         </span>
+      </div>
+
+      {/* Search + date filter — find an event by name/booth/organizer, or narrow
+          to a date window. All client-side over the fetched feed. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-muted" />
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search event, booth, organizer…"
+            className="w-full rounded-lg border border-border bg-surface py-1.5 pl-8 pr-2.5 text-xs outline-none focus:border-primary"
+          />
+        </div>
+        <label className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
+          From
+          <DateField
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={setDateFrom}
+            aria-label="Filter events from date"
+            className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink outline-none focus:border-primary"
+          />
+        </label>
+        <label className="inline-flex items-center gap-1.5 text-xs text-ink-muted">
+          To
+          <DateField
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={setDateTo}
+            aria-label="Filter events to date"
+            className="rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-ink outline-none focus:border-primary"
+          />
+        </label>
+        {hasFilter && (
+          <button
+            type="button"
+            onClick={() => {
+              setSearch("");
+              setDateFrom("");
+              setDateTo("");
+            }}
+            className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink-secondary hover:border-accent/40"
+          >
+            <X className="h-3.5 w-3.5" />
+            Clear
+          </button>
+        )}
       </div>
 
       {q.error && (
@@ -302,11 +393,13 @@ export function DefectListView() {
       ) : groups.length === 0 ? (
         <EmptyState
           icon={<AlertTriangle size={28} />}
-          message={showAll ? "No defects" : "No open defects"}
+          message={hasFilter ? "No matches" : showAll ? "No defects" : "No open defects"}
           description={
-            showAll
-              ? "No defect photos uploaded yet."
-              : "Switch the toggle above to include defects that are already closed."
+            hasFilter
+              ? "No defects match your search or date range. Try Clear to see all."
+              : showAll
+                ? "No defect photos uploaded yet."
+                : "Switch the toggle above to include defects that are already closed."
           }
         />
       ) : (
