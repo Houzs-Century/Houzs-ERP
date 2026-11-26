@@ -130,7 +130,7 @@ describe('allocation recompute makes progress under an edit lease', () => {
     expect(allocationSource).not.toContain('allocation header advance deferred');
     expect(allocationSource).not.toContain('allocation header regression deferred');
     expect(allocationSource).toContain('deferredDocNos.push(');
-    expect(allocationSource).toContain('SKIP AND CONTINUE');
+    expect(allocationSource.split('deferredDocNos.push(').length - 1).toBe(2);
   });
 
   test('a deferral is not a failure: attempts stay put and the job never dead-letters', async () => {

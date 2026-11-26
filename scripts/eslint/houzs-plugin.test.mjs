@@ -13,6 +13,7 @@ const prose = [{ messageId: 'prose' }];
 tester.run('no-prose-comments', houzsPlugin.rules['no-prose-comments'], {
   valid: [
     '// eslint-disable-next-line no-console -- startup banner\nconsole.log(1);',
+    "const K = 'houzs.returnPicks.v1'; // gitleaks:allow, a storage key name, not a credential",
     '/* eslint-disable no-console -- CLI script */',
     '// eslint-enable no-console',
     '/* global window */',

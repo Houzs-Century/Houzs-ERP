@@ -13,6 +13,7 @@ const KEPT_COMMENTS = [
   /^@ts-(expect-error|ignore|nocheck)\b[\s:-]*\S{3,}/,
   /^\/\s*<reference\s/,
   /^prettier-ignore\b/,
+  /^gitleaks:allow\b/,
   /^[#@]__(PURE|NO_SIDE_EFFECTS)__$/,
   /^@vite-ignore\b/,
   /^webpack[A-Z]\w*\s*:/,

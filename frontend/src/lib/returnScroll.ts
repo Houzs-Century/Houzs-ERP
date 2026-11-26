@@ -70,7 +70,7 @@ export function takeReturnScroll(href: string = here()): { main: number; window:
    fresh, the newest twenty. Read without being used up (React may run a state
    initializer twice) and dropped by the page once it has them. */
 
-export const RETURN_PICKS_KEY = "houzs.returnPicks.v1";
+export const RETURN_PICKS_KEY = "houzs.returnPicks.v1"; // gitleaks:allow — a sessionStorage key's name, not a credential
 
 export type ReturnPicks = { lines: number[]; entries: string[] };
 type PicksEntry = ReturnPicks & { at: number };
