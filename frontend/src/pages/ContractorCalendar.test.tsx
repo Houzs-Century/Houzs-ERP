@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ContractorCalendar } from "./ContractorCalendar";
 import { todayMyt } from "../vendor/scm/lib/dates";
 
-const TOKEN = "abcdefghijklmnopqrstuvwx012345_-";
+const TOKEN = "abcdefghijklmnopqrstuvwx012345_-"; // gitleaks:allow — a fixed 32-char test token, not a credential
 
 const fetchMock = vi.fn();
 
