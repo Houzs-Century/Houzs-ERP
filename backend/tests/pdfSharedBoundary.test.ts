@@ -62,6 +62,12 @@ describe("the frontend code the Worker bundles for get_pdf", () => {
     expect(frontend.filter((f) => browserOnly.test(f))).toEqual([]);
   });
 
+  it("resolves in each backend test runner (vitest reads neither tsconfig paths nor wrangler [alias])", () => {
+    for (const cfg of ["vitest.config.mts", "vitest.light.config.mts", "vitest.pg.config.ts"]) {
+      expect(readFileSync(resolve(here, "..", cfg), "utf8"), cfg).toContain("PDF_SHARED_ALIASES");
+    }
+  });
+
   it("is treated as backend by CI and by the deploy", () => {
     const ci = readFileSync(resolve(repo, ".github/workflows/ci.yml"), "utf8");
     const deploy = readFileSync(resolve(repo, ".github/workflows/deploy.yml"), "utf8");
