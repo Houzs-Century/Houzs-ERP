@@ -139,7 +139,11 @@ const isQuietSection = (sec: DailyBankSection): boolean =>
 /** What a quiet bank's one line says between its name and its balance. */
 export const QUIET_BANK_NOTE = 'No movement today · nothing pending';
 
-/** The board drawn onto a canvas as the table: the totals, the dark bar, a section per bank.
+/** The picture's last bar: every bank's balance added up, the page's "Closing · all bank & cash". */
+export const TOTAL_BANK_LABEL = 'TOTAL BANK BALANCE';
+
+/** The board drawn onto a canvas as the table: the totals, the dark bar, a section per bank,
+    then the total bank balance (owner 2026-11-26: total bank balance 不见了 — the picture never had it).
     Owner 2026-11-25 (这个0 不要有dash，然后可以优化一下): every word and figure in the page's
     sans, whose 0 has no stroke through it; a party or description too long for its column
     wraps onto a second line; a quiet bank is one line. */
@@ -197,7 +201,8 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
     }),
   }));
   const body = laid.reduce((s, l) => s + (l.quiet ? rowH : 2 * rowH + l.rows.reduce((t, x) => t + x.h, 0)) + 6, 0);
-  const H = P + 70 + body + 24 + P;
+  const totalH = 34;
+  const H = P + 70 + body + totalH + 6 + 24 + P;
   const scale = 2;
   canvas.width = W * scale;
   canvas.height = H * scale;
@@ -266,6 +271,11 @@ export function drawDailyBankCanvas(board: DailyBankBoard): HTMLCanvasElement {
     }
     y += 6;
   }
+  ctx.fillStyle = DB_COLORS.bar;
+  ctx.fillRect(P, y, W - 2 * P, totalH);
+  text(TOTAL_BANK_LABEL, P + 14, y + 22, { size: 14, bold: true, color: DB_COLORS.barText });
+  text(fmtSenPlain(board.totalClosingSen), X.bal, y + 22, { size: 14, bold: true, color: DB_COLORS.barText, right: true });
+  y += totalH + 6;
   text(boardSourceLine(board), P, y + 18, { size: 10.5, color: DB_COLORS.soft });
   return canvas;
 }
