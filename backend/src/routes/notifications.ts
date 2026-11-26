@@ -44,6 +44,14 @@ export function unreadWindowStart(now: number, days: number = UNREAD_WINDOW_DAYS
   return new Date(now - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+/** project_reads.last_read_at for "read now". Same shape as the
+ *  project_activity.created_at default ("YYYY-MM-DDTHH:MM:SSZ"): the unread
+ *  test is a TEXT compare, and a "YYYY-MM-DD HH:MM:SS" stamp sorts below every
+ *  "T" row of the same day, so that day's activity stayed unread. */
+export function readMarkStamp(now: number): string {
+  return new Date(now).toISOString().slice(0, 19) + "Z";
+}
+
 /** Postgres's answer to statement_timeout (SQLSTATE 57014). */
 function isStatementTimeout(err: unknown): boolean {
   const e = err as { code?: unknown; message?: unknown } | null;
