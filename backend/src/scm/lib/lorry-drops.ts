@@ -39,7 +39,7 @@ export async function loadDrops(
   const tripIds = (trips ?? []).map((t: { id: string }) => t.id);
   if (!tripIds.length) return { drops: [], error: null };
   const [stops, jobs] = await Promise.all([
-    sb.from('trip_stops').select('do_id').in('trip_id', tripIds).not('do_id', 'is', null),
+    scopeToAllowedCompanies(sb.from('trip_stops').select('do_id').in('trip_id', tripIds).not('do_id', 'is', null), c),
     scopeToAllowedCompanies(
       sb.from('job_progress').select('source_type, source_id, leg, pod_lat, pod_lng, pod_located_at, completed_at')
         .in('trip_id', tripIds).not('completed_at', 'is', null).not('pod_lat', 'is', null), c),

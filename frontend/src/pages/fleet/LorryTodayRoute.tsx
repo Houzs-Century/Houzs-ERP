@@ -11,7 +11,8 @@
 //     with the km it adds up to.
 //   - where it is meant to go: today's planned stops (GET /trips/day).
 import { Link, useSearchParams } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { PlaybackBar, useDayPlayback } from "./DayPlayback";
 import { useFleetDay } from "../../vendor/scm/lib/fleet-day-queries";
 import { useActiveTripLocations } from "../../vendor/scm/lib/trip-locations-queries";
 import { useLorryPositions, useLorryTrack, useLorryKmCost } from "../../vendor/scm/lib/lorries-queries";
@@ -34,16 +35,13 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
   const date = asked && DAY_RE.test(asked) && asked <= today ? asked : today;
   const isToday = date === today;
   const setDay = (d: string) => setParams((p) => { const n = new URLSearchParams(p); if (d && d !== today) n.set("day", d); else n.delete("day"); return n; }, { replace: true });
-  const [idx, setIdx] = useState<number | null>(null);
-  const [playing, setPlaying] = useState(false);
-  useEffect(() => { setIdx(null); setPlaying(false); }, [date]);
   const day = useFleetDay({ date });
   const runs = useMemo(
     () => (day.data?.trips ?? []).filter((t) => t.lorry?.id === lorryId && String(t.status).toUpperCase() !== "CANCELLED"),
     [day.data, lorryId],
   );
   const live = isToday && runs.some((t) => String(t.status).toUpperCase() === "IN_PROGRESS");
-  const positions = useLorryPositions();
+  const positions = useLorryPositions(isToday);
   const tracker = (positions.data ?? []).find((p) => p.lorry_id === lorryId) ?? null;
   const trackQ = useLorryTrack(lorryId, date);
   const track = trackQ.data;
@@ -74,20 +72,15 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
   const roadTrack = useLorryRoadTrack(lorryId, date);
   const fixes = useMemo(() => track?.fixes ?? [], [track]);
   const driven = useMemo(() => drivenPath(roadTrack.data, fixes), [roadTrack.data, fixes]);
-  const last = fixes.length - 1;
-  const playhead = idx != null && fixes[Math.min(idx, last)] ? fixes[Math.min(idx, last)]! : null;
-  useEffect(() => {
-    if (!playing) return;
-    const t = setInterval(() => setIdx((i) => Math.min((i ?? -1) + 1, last)), 400);
-    return () => clearInterval(t);
-  }, [playing, last]);
-  useEffect(() => { if (playing && idx != null && idx >= last) setPlaying(false); }, [playing, idx, last]);
+  const playback = useDayPlayback(fixes, date);
+  const playhead = playback.playhead;
   const drops = useMemo(() => track?.drops ?? [], [track]);
   const dropPoints: RoutePoint[] = useMemo(() => drops.map((d, i) => ({ ref: d.ref, lat: d.lat, lng: d.lng, order: i + 1, label: d.label })), [drops]);
   const dayWord = isToday ? "today" : date;
+  const dayOf = isToday ? "today's" : date;
 
   /* A failed read used to look exactly like "no run today / no position yet". */
-  const failed = [day.isError && `${isToday ? "today's" : date} runs`, isToday && positions.isError && "the GPS position", trackQ.isError && `${isToday ? "today's" : date} track`].filter(Boolean);
+  const failed = [day.isError && `${dayOf} runs`, isToday && positions.isError && "the GPS position", trackQ.isError && `${dayOf} track`].filter(Boolean);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -128,19 +121,7 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
         </p>
       )}
       {track?.dropsError && <p className="text-[12.5px] text-err">Drop points could not load: {track.dropsError}</p>}
-      {fixes.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#d9d3c6] bg-surface px-3 py-2">
-          <button type="button" className={BTN_SEC} aria-label={playing ? "Pause playback" : "Play the day"}
-            onClick={() => { if (playing) setPlaying(false); else { if (idx == null || idx >= last) setIdx(0); setPlaying(true); } }}>
-            {playing ? "Pause" : "Play"}
-          </button>
-          <input type="range" min={0} max={last} value={Math.min(idx ?? 0, last)} aria-label="Playback position"
-            onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="min-w-[160px] flex-1" />
-          <span className="text-[12.5px] tabular-nums text-ink-muted">
-            {playhead ? `${fmtTime(playhead.recorded_at)} MYT${playhead.speed_kmh != null ? ` · ${Math.round(playhead.speed_kmh)} km/h` : ""}` : `${fixes.length} fixes`}
-          </span>
-        </div>
-      )}
+      {fixes.length > 0 && <PlaybackBar p={playback} count={fixes.length} />}
       {MAPS_KEY && <p className="text-[12px] text-ink-muted">Grey line: where it drove {dayWord}{driven.byRoad ? ", along the roads" : ", joined straight between GPS fixes"}. Blue: planned stops. Orange: where it delivered.{isToday ? " Dark marker: where it is now." : ""}</p>}
       {drops.length > 0 && (
         <ol className="flex flex-col gap-2">

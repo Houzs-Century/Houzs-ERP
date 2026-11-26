@@ -51,13 +51,13 @@ export function vehiclePositionsFrom(locations: TripLocation[], runs: RunOfLorry
         ? { ...base, lat: p.lat, lng: p.lng, recordedAt: p.recordedAt, source: "phone" }
         : null;
     const cur = v ? out.get(v.key) : undefined;
-    if (v && (!cur || v.recordedAt > cur.recordedAt)) out.set(v.key, v);
+    if (v && (!cur || Date.parse(v.recordedAt) > Date.parse(cur.recordedAt))) out.set(v.key, v);
   }
   return [...out.values()];
 }
 
 export function useVehiclePositions(runs: RunOfLorry[], enabled: boolean, isToday: boolean): VehiclePosition[] {
   const q = useActiveTripLocations(enabled);
-  const trackers = useLorryPositions();
+  const trackers = useLorryPositions(enabled && isToday);
   return useMemo(() => vehiclePositionsFrom(q.data?.locations ?? [], runs, trackers.data ?? [], Date.now(), isToday), [q.data, trackers.data, runs, isToday]);
 }

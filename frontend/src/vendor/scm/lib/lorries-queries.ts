@@ -373,9 +373,10 @@ export function useLorryKmCost() {
   });
 }
 
-export function useLorryPositions() {
+export function useLorryPositions(enabled: boolean) {
   return useQuery({
     queryKey: ['lorries', 'positions', 'latest'],
+    enabled,
     queryFn: () => authedFetch<{ positions: LorryPosition[] }>('/lorries/positions/latest').then((r) => r.positions),
     refetchInterval: 60_000,
   });
