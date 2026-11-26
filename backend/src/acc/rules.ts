@@ -81,7 +81,13 @@ export type AccountRole =
      2026-11-26: 「从sales 扣回来，但是是开cn 的方式吧，account 不要放在sales 那边一起」),
      and its entry releases that 34% cost from the accrual
      (acc/autocount-deposits.ts). */
-  | 'AUTOCOUNT_DEPOSIT_SALES' | 'AUTOCOUNT_DEPOSIT_COST' | 'AUTOCOUNT_COST_ACCRUAL';
+  | 'AUTOCOUNT_DEPOSIT_SALES' | 'AUTOCOUNT_DEPOSIT_COST' | 'AUTOCOUNT_COST_ACCRUAL'
+  /* A deposit invoice's cost, as AutoCount booked its deposit sales (owner
+     2026-11-26: 「记」): a company with acc_company_settings.deposit_cost_pct
+     books that share of each deposit invoice as cost, Dr DEPOSIT_COST / Cr
+     DEPOSIT_COST_ACCRUAL, and the note that takes the deposit back (the final
+     invoice's, a refund's, a move's) releases it (acc/deposit-invoices.ts). */
+  | 'DEPOSIT_COST' | 'DEPOSIT_COST_ACCRUAL';
 
 /* Fallback = the accountant's own AutoCount codes (migration 0344; owner
    decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
@@ -126,6 +132,8 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   AUTOCOUNT_DEPOSIT_SALES: '511-0000',
   AUTOCOUNT_DEPOSIT_COST: '619-0000',
   AUTOCOUNT_COST_ACCRUAL: '410-0080',
+  DEPOSIT_COST: '619-0000',
+  DEPOSIT_COST_ACCRUAL: '410-0080',
 };
 
 /** The accounts each closing-stock bucket books on (acc/stock-close.ts). */
@@ -517,8 +525,9 @@ export function depositInvoiceLines(
   roles: RoleCodes,
   p: { diNumber: string; docNo: string; customerCode?: string | null; customerName?: string | null },
   amountSen: number,
+  costSen: number,
 ): RuleLine[] {
-  return [
+  const lines: RuleLine[] = [
     {
       accountCode: roles.AR,
       debitSen: amountSen,
@@ -538,6 +547,14 @@ export function depositInvoiceLines(
       notes: `Deposit received on ${p.docNo}`,
     },
   ];
+  if (costSen > 0) {
+    const why = `Cost booked on deposit invoice ${p.diNumber}`;
+    lines.push(
+      { accountCode: roles.DEPOSIT_COST, debitSen: costSen, creditSen: 0, partyType: null, partyCode: null, partyName: null, notes: why },
+      { accountCode: roles.DEPOSIT_COST_ACCRUAL, debitSen: 0, creditSen: costSen, partyType: null, partyCode: null, partyName: null, notes: why },
+    );
+  }
+  return lines;
 }
 
 export function customerPaymentLines(
