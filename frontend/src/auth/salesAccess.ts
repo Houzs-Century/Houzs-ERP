@@ -115,15 +115,17 @@ export function canSeeSoloOrganizer(user: AuthUser | null | undefined): boolean 
  * from it)? Owner 2026-10-14: "ummu, owner, weisiang". Owner 2026-10-30: add
  * Peter + per-event Sales Attendees. Owner 2026-11-09: open to every Sales
  * Director (position) and every Sales Person (role), so the sales floor can
- * post without being named one by one. The frontend check sees the global tier
- * only — a per-event attendee's UI gate comes from the backend's `can_save`
- * flag on the project-sales-bills payload, which already resolves the per-event
- * context. Backend (routes/lib/sales-report-bills.ts canSaveSalesReport) is the
- * authority.
+ * post without being named one by one. Owner 2026-11-26: add Loo Wen Wei
+ * (wenwei4046@gmail.com) by name and the Finance Manager (position). The
+ * frontend check sees the global tier only — a per-event attendee's UI gate
+ * comes from the backend's `can_save` flag on the project-sales-bills payload,
+ * which already resolves the per-event context. Backend
+ * (routes/lib/sales-report-bills.ts canSaveSalesReport) is the authority.
  */
 const SAVE_EMAILS = new Set([
   "weisiang329@gmail.com",
   "ummuaimanlm@gmail.com",
+  "wenwei4046@gmail.com",
 ]);
 
 export function canSaveSalesReport(user: AuthUser | null | undefined): boolean {
@@ -142,6 +144,8 @@ export function canSaveSalesReport(user: AuthUser | null | undefined): boolean {
   if (SAVE_EMAILS.has(email)) return true;
   if (position === "sales director" || role === "sales director") return true;
   if (role === "sales person") return true;
+  // Finance Manager (owner 2026-11-26) — finance posts/voids the chat report.
+  if (position === "finance manager") return true;
   return false;
 }
 
