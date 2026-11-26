@@ -14,6 +14,7 @@ import {
   useDpOrders,
   useCancelDpOrder,
   dpJobTypeLabel,
+  dpTotalAmountSen,
   type DpOrderRow,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
@@ -206,10 +207,10 @@ export const DpOrders = () => {
     },
     {
       key: 'total_amount', label: 'Total Amount', width: '130px', align: 'right',
-      getValue: (r) => (r.so_total_sen == null ? '' : r.so_total_sen / 100),
-      render: (r) => (r.so_total_sen == null
+      getValue: (r) => { const s = dpTotalAmountSen(r); return s == null ? '' : s / 100; },
+      render: (r) => { const s = dpTotalAmountSen(r); return s == null
         ? <span style={{ color: 'var(--fg-muted)' }}>—</span>
-        : <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700 }}>{fmtSen(r.so_total_sen)}</span>),
+        : <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700 }}>{fmtSen(s)}</span>; },
     },
     {
       key: 'trip', label: 'Trip', width: '90px',

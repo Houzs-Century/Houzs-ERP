@@ -1089,3 +1089,14 @@ export function salesAmountSenOf(text: string): number | null | undefined {
   const n = Number(t);
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : undefined;
 }
+
+/** The board's Total Amount for a DP row, in sen: a source-SO job reads its SO's
+ *  total (so_total_sen); a "Delivery (no SO)" reads the Sales Amount typed on the
+ *  DP order (sales_amount_sen, owner 2026-11-20) — the same figure Trip Pay pays
+ *  commission on once it is scheduled. Null when the row carries neither, so the
+ *  column renders a dash. */
+export function dpTotalAmountSen(r: Pick<DpOrderRow, 'so_total_sen' | 'sales_amount_sen'>): number | null {
+  if (r.so_total_sen != null) return r.so_total_sen;
+  const n = typeof r.sales_amount_sen === 'string' ? Number(r.sales_amount_sen) : r.sales_amount_sen;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
