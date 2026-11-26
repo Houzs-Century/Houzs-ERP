@@ -64,13 +64,13 @@ export function LorryLiveMap({ embedded }: { embedded: boolean }) {
   return (
     <div>
       {embedded ? (
-        <p className="text-[13px] text-ink-muted">Velocity trackers, updated every 5 min. Grey line: where each lorry drove today, along the roads. Lorries with no tracker, or no position in 24 h, are not shown.</p>
+        <p className="text-[13px] text-ink-muted">GPS trackers (Velocity and iTrack), updated every 5 min. Grey line: where each lorry drove today, along the roads. Lorries with no tracker, or no position in 24 h, are not shown.</p>
       ) : (
         <PageHeader
           dense
           eyebrow="Delivery · TMS"
           title="Lorry Live Map"
-          description="Velocity trackers, updated every 5 min. Grey line: where each lorry drove today, along the roads. Lorries with no tracker, or no position in 24 h, are not shown."
+          description="GPS trackers (Velocity and iTrack), updated every 5 min. Grey line: where each lorry drove today, along the roads. Lorries with no tracker, or no position in 24 h, are not shown."
         />
       )}
       <div className={embedded ? 'space-y-4 pt-3' : 'space-y-4 p-4'}>
