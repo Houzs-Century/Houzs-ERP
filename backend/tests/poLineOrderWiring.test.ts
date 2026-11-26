@@ -28,7 +28,7 @@ import poRoutesSrc from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import poRevisionSrc from '../src/scm/lib/po-revision.ts?raw';
 import soRevisionSrc from '../src/scm/lib/so-revision.ts?raw';
 // The PO layout lives in purchase-order-pdf-render.ts (shared with the AI Connector's get_pdf).
-import poPdfSrc from '../../frontend/src/vendor/scm/lib/purchase-order-pdf-render.ts?raw';
+import poPdfSrc from '../../shared/src/vendor/scm/lib/purchase-order-pdf-render.ts?raw';
 import poConvertLineSrc from '../src/scm/lib/po-convert-line.ts?raw';
 
 /** Comments quote the shapes this file forbids, so they are stripped. */
@@ -205,7 +205,7 @@ describe('sortLinesByStoredLineNo', () => {
        drifted copy of this rule would print a different document from the one
        the screen shows. */
     const be = (await import('../src/scm/shared/so-line-display.ts?raw')).default;
-    const fe = (await import('../../frontend/src/vendor/shared/so-line-display.ts?raw')).default;
+    const fe = (await import('../../shared/src/vendor/shared/so-line-display.ts?raw')).default;
     expect(fe.replace(/\r\n/g, '\n')).toBe(be.replace(/\r\n/g, '\n'));
   });
 });

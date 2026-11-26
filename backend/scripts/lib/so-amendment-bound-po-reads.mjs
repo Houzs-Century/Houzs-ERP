@@ -46,7 +46,7 @@ export const URL_BUDGET_BYTES = 4000;
 export const REFUSED_URI_BYTES = 19500;
 
 /** Statuses OUTSIDE the queue's Requested chip — `amendmentBucketOf` in
- *  frontend/src/vendor/scm/lib/status-pill.ts folds everything else into it. */
+ *  shared/src/vendor/scm/lib/status-pill.ts folds everything else into it. */
 export const CLOSED_STATUSES = ['REJECTED', 'SO_APPROVED', 'PO_APPROVED', 'SENT', 'APPROVED'];
 
 const n = (v) => (v == null ? 0 : Number(v));

@@ -125,10 +125,10 @@ jobs:
             case "$f" in
               # Prose. Cannot affect either half's build or tests.
               docs/*|tasks/*|*.md) continue ;;
-              # Frontend files the Worker also bundles (the AI Connector's get_pdf
-              # draws documents with the browser's layout code): both halves.
-              # Same list as backend/scripts/lib/pdf-shared-aliases.mjs.
-              frontend/src/vendor/scm/lib/*|frontend/src/vendor/shared/*|frontend/src/lib/branding-text.ts|frontend/src/lib/customer-ref.ts|frontend/src/lib/thumb-key.ts) backend=true; frontend=true ;;
+              # Code both apps bundle (the SO / PO document layout behind the
+              # AI Connector's get_pdf): both halves, spelled out though the
+              # catch-all below would agree.
+              shared/*) backend=true; frontend=true ;;
               # One half only.
               backend/*)  backend=true ;;
               frontend/*) frontend=true ;;

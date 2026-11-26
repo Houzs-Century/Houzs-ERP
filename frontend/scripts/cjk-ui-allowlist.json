@@ -387,12 +387,12 @@
       "reason": "Country picker search keywords so a Chinese-typed country name still finds the dial code. Matches input, never shown."
     },
     {
-      "file": "src/vendor/scm/lib/book-text.ts",
+      "file": "../shared/src/vendor/scm/lib/book-text.ts",
       "text": "账本原文",
       "reason": "Marker AutoCount writes into stored line remarks; used to strip book text from customer PDFs. Matches data, never shown."
     },
     {
-      "file": "src/vendor/scm/lib/pdf-core.ts",
+      "file": "../shared/src/vendor/scm/lib/pdf-core.ts",
       "text": "/[ -   　]/g",
       "reason": "Regex folding the ideographic space (U+3000) to a plain space before PDF printing. Not text."
     },

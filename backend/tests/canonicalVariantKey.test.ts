@@ -194,5 +194,5 @@ describe('DO line from an SO line takes the SO spec (company 2)', () => {
 
 test('backend and frontend copies of variant-key.ts are byte-identical', () => {
   const norm = (p: string) => readFileSync(join(__dirname, p), 'utf8').replace(/\r\n/g, '\n');
-  expect(norm('../../frontend/src/vendor/shared/variant-key.ts')).toBe(norm('../src/scm/shared/variant-key.ts'));
+  expect(norm('../../shared/src/vendor/shared/variant-key.ts')).toBe(norm('../src/scm/shared/variant-key.ts'));
 });

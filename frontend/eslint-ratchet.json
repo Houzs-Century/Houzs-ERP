@@ -3,10 +3,10 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 479,
     "@typescript-eslint/no-floating-promises": 684,
-    "@typescript-eslint/no-unnecessary-condition": 1572,
+    "@typescript-eslint/no-unnecessary-condition": 1535,
     "houzs/no-imperative-timers": 150,
-    "houzs/no-prose-comments": 189,
-    "no-restricted-syntax": 132
+    "houzs/no-prose-comments": 187,
+    "no-restricted-syntax": 129
   },
   "files": {
     "src/api/client.ts": {
@@ -1363,9 +1363,6 @@
       "@typescript-eslint/no-unnecessary-condition": 1,
       "houzs/no-imperative-timers": 2
     },
-    "src/vendor/scm/lib/pdf-core.ts": {
-      "no-restricted-syntax": 1
-    },
     "src/vendor/scm/lib/pdf-qr.test.ts": {
       "houzs/no-prose-comments": 1
     },
@@ -1374,9 +1371,6 @@
     },
     "src/vendor/scm/lib/po-amendment-queries.ts": {
       "@typescript-eslint/no-floating-promises": 7
-    },
-    "src/vendor/scm/lib/po-status.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
     },
     "src/vendor/scm/lib/product-models-queries.ts": {
       "@typescript-eslint/no-floating-promises": 12,
@@ -1398,10 +1392,6 @@
     "src/vendor/scm/lib/purchase-invoice-queries.ts": {
       "@typescript-eslint/no-explicit-any": 6,
       "@typescript-eslint/no-floating-promises": 13
-    },
-    "src/vendor/scm/lib/purchase-order-pdf-render.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 6,
-      "no-restricted-syntax": 1
     },
     "src/vendor/scm/lib/purchase-order-pdf-sofa.test.ts": {
       "no-restricted-syntax": 2
@@ -1425,10 +1415,6 @@
     "src/vendor/scm/lib/sales-invoice-queries.ts": {
       "@typescript-eslint/no-explicit-any": 5,
       "@typescript-eslint/no-floating-promises": 39
-    },
-    "src/vendor/scm/lib/sales-order-pdf-render.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 2,
-      "no-restricted-syntax": 1
     },
     "src/vendor/scm/lib/sales-order-queries.ts": {
       "@typescript-eslint/no-explicit-any": 5,
@@ -1463,14 +1449,8 @@
     "src/vendor/scm/lib/sofa-compartment-art.test.ts": {
       "houzs/no-prose-comments": 1
     },
-    "src/vendor/scm/lib/sofa-layout-pdf.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
-    },
     "src/vendor/scm/lib/state-warehouse-queries.ts": {
       "@typescript-eslint/no-floating-promises": 3
-    },
-    "src/vendor/scm/lib/status-pill.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 4
     },
     "src/vendor/scm/lib/stock-queries.ts": {
       "@typescript-eslint/no-floating-promises": 21
@@ -1480,9 +1460,6 @@
     },
     "src/vendor/scm/lib/stock-transfer-pdf.ts": {
       "houzs/no-prose-comments": 1
-    },
-    "src/vendor/scm/lib/supplier-doc-data-core.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
     },
     "src/vendor/scm/lib/supplier-sku-helpers.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
@@ -1505,33 +1482,8 @@
       "@typescript-eslint/no-unnecessary-condition": 1,
       "houzs/no-imperative-timers": 1
     },
-    "src/vendor/shared/format.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
-    },
-    "src/vendor/shared/mfg-pricing.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 4
-    },
     "src/vendor/shared/pdf-rasterize.ts": {
       "houzs/no-imperative-timers": 1
-    },
-    "src/vendor/shared/phone.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 2
-    },
-    "src/vendor/shared/so-line-display.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
-    },
-    "src/vendor/shared/so-variant-rule.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 2
-    },
-    "src/vendor/shared/sofa-build.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 7,
-      "houzs/no-prose-comments": 2
-    },
-    "src/vendor/shared/sofa-combo-pricing.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 3
-    },
-    "src/vendor/shared/variant-key.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 2
     }
   }
 }

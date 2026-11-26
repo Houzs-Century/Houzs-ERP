@@ -162,7 +162,7 @@
     },
     {
       "check": "D1",
-      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,FABRIC_ACCESSORY,MATTRESS,SERVICE,SOFA|backend/src/scm/shared/product-categories.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ItemGroups.tsx frontend/src/vendor/shared/product-categories.ts frontend/src/vendor/shared/so-branding-label.ts",
+      "key": "ACCESSORY,BEDFRAME,BEDLINES,CARPET,DIFFUSER,DINING,FABRIC_ACCESSORY,MATTRESS,SERVICE,SOFA|backend/src/scm/shared/product-categories.ts backend/src/scm/shared/so-branding-label.ts frontend/src/pages/scm-v2/ItemGroups.tsx shared/src/vendor/shared/product-categories.ts frontend/src/vendor/shared/so-branding-label.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 5 homes: MFG_PRODUCT_CATEGORIES + MFG_CATEGORY_LABELS (shared/product-categories.ts, the ONE list and label map since 2026-09-15, mirrored byte-identical to the frontend and read by the SKU Master tabs and the Modular page, which used to carry their own CATEGORIES copies), so-branding-label's productEnum, and ItemGroups' SUGGESTED — a per-category map of DEFAULT account bindings (values are accounts, keys just happen to be the vocabulary; the registry itself lives in scm.acc_item_groups seeded from the same enum). Cost of divergence is a blank chip or an unsuggested row, not a wrong number."
     },
     {
@@ -172,7 +172,7 @@
     },
     {
       "check": "D1",
-      "key": "APPROVED,PO_APPROVED,SENT,SO_APPROVED|frontend/src/mobile/MobileSODetail.tsx frontend/src/pages/scm-v2/AmendmentDetailV2.tsx frontend/src/vendor/scm/lib/amendment-pdf-map.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "key": "APPROVED,PO_APPROVED,SENT,SO_APPROVED|frontend/src/mobile/MobileSODetail.tsx frontend/src/pages/scm-v2/AmendmentDetailV2.tsx frontend/src/vendor/scm/lib/amendment-pdf-map.ts shared/src/vendor/scm/lib/status-pill.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: soApplied, APPLIED_STATES. Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -187,7 +187,7 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,CREDIT_NOTED,INSPECTED,PENDING,RECEIVED,REFUNDED,REJECTED|frontend/src/pages/scm-v2/ConsignmentReturnDetail.tsx frontend/src/pages/scm-v2/ConsignmentReturns.tsx frontend/src/pages/scm-v2/DeliveryReturnDetailV2.tsx frontend/src/vendor/scm/lib/status-pill.ts",
+      "key": "CANCELLED,CREDIT_NOTED,INSPECTED,PENDING,RECEIVED,REFUNDED,REJECTED|frontend/src/pages/scm-v2/ConsignmentReturnDetail.tsx frontend/src/pages/scm-v2/ConsignmentReturns.tsx frontend/src/pages/scm-v2/DeliveryReturnDetailV2.tsx shared/src/vendor/scm/lib/status-pill.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: STATUS_FLOW, STATUS_CLASS, STATUS_LABEL, STAGE_LABEL, DR. Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -212,7 +212,7 @@
     },
     {
       "check": "D1",
-      "key": "PO_APPROVED,REJECTED,REQUESTED,SENT,SO_APPROVED,SUPPLIER_PENDING|backend/src/scm/routes/amendment-mirror.ts backend/src/scm/shared/so-amendment.ts frontend/src/mobile/MobileSODetail.tsx frontend/src/vendor/scm/lib/status-pill.ts",
+      "key": "PO_APPROVED,REJECTED,REQUESTED,SENT,SO_APPROVED,SUPPLIER_PENDING|backend/src/scm/routes/amendment-mirror.ts backend/src/scm/shared/so-amendment.ts frontend/src/mobile/MobileSODetail.tsx shared/src/vendor/scm/lib/status-pill.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 4 homes: CANON_AMENDMENT_STATUS, FORWARD_RANK, AMENDMENT_STATUS_LABEL, SO_AMENDMENT. Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -257,7 +257,7 @@
     },
     {
       "check": "D1",
-      "key": "COLORCODE,COLOURCODE,FABRICCODE,FABRICCOLOR|backend/src/scm/shared/so-variant-rule.ts backend/src/scm/shared/variant-summary.ts frontend/src/vendor/shared/so-variant-rule.ts frontend/src/vendor/shared/variant-summary.ts",
+      "key": "COLORCODE,COLOURCODE,FABRICCODE,FABRICCOLOR|backend/src/scm/shared/so-variant-rule.ts backend/src/scm/shared/variant-summary.ts shared/src/vendor/shared/so-variant-rule.ts shared/src/vendor/shared/variant-summary.ts",
       "why": "A KEY-ALIAS list — the several spellings one attribute arrives under from AutoCount, forms and OCR. Adding a spelling in one reader and not another is a real risk, but the sets are readers of the same data, not two answers to one question. FABRIC_CODE_KEYS moved from lib/fabric-supplier-code.ts into shared/variant-summary.ts (and its vendored twin) so the supplier-code stamp and buildVariantSummary read one chain (2990-0067)."
     },
     {
@@ -322,7 +322,7 @@
     },
     {
       "check": "D1",
-      "key": ",1ST,2ND,3RD,4TH,5TH|backend/src/scm/shared/service-sku.ts frontend/src/vendor/shared/service-sku.ts",
+      "key": ",1ST,2ND,3RD,4TH,5TH|backend/src/scm/shared/service-sku.ts shared/src/vendor/shared/service-sku.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: FLOOR_ORDINALS."
     },
     {
@@ -347,52 +347,52 @@
     },
     {
       "check": "D1",
-      "key": "1A,1B,1NA,2A,2B,2NA|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "key": "1A,1B,1NA,2A,2B,2NA|backend/src/scm/shared/sofa-build.ts shared/src/vendor/shared/sofa-build.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: RECLINER_FAMILIES."
     },
     {
       "check": "D1",
-      "key": "1A,2A,CNR|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "key": "1A,2A,CNR|backend/src/scm/shared/sofa-build.ts shared/src/vendor/shared/sofa-build.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
       "check": "D1",
-      "key": "1A(L)(LHF),1A(L)(RHF),1A(LHF),1A(P)(LHF),1A(P)(RHF),1A(R)(LHF),1A(R)(RHF),1A(RHF),1B(LHF),1B(RHF),1NA,1NA(L),1NA(P),1NA(R),1S,1S(L),1S(P),1S(R),2A(LHF),2A(RHF),2B(LHF),2B(RHF),2NA,2S,3S,CNR,CONSOLE,L(LHF),L(RHF),STOOL|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "key": "1A(L)(LHF),1A(L)(RHF),1A(LHF),1A(P)(LHF),1A(P)(RHF),1A(R)(LHF),1A(R)(RHF),1A(RHF),1B(LHF),1B(RHF),1NA,1NA(L),1NA(P),1NA(R),1S,1S(L),1S(P),1S(R),2A(LHF),2A(RHF),2B(LHF),2B(RHF),2NA,2S,3S,CNR,CONSOLE,L(LHF),L(RHF),STOOL|backend/src/scm/shared/sofa-build.ts shared/src/vendor/shared/sofa-build.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: MODULE_EDGES_BASE."
     },
     {
       "check": "D1",
-      "key": "1A(LHF),1A(RHF),CONSOLE|backend/src/scm/shared/sofa-quick-presets.ts frontend/src/vendor/shared/sofa-quick-presets.ts",
+      "key": "1A(LHF),1A(RHF),CONSOLE|backend/src/scm/shared/sofa-quick-presets.ts shared/src/vendor/shared/sofa-quick-presets.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
       "check": "D1",
-      "key": "1A(LHF),2A(RHF),CNR|backend/src/scm/shared/sofa-quick-presets.ts frontend/src/vendor/shared/sofa-quick-presets.ts",
+      "key": "1A(LHF),2A(RHF),CNR|backend/src/scm/shared/sofa-quick-presets.ts shared/src/vendor/shared/sofa-quick-presets.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
       "check": "D1",
-      "key": "1A(RHF),2A(LHF),CNR|backend/src/scm/shared/sofa-quick-presets.ts frontend/src/vendor/shared/sofa-quick-presets.ts",
+      "key": "1A(RHF),2A(LHF),CNR|backend/src/scm/shared/sofa-quick-presets.ts shared/src/vendor/shared/sofa-quick-presets.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
       "check": "D1",
-      "key": "1NA,2A,L|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "key": "1NA,2A,L|backend/src/scm/shared/sofa-build.ts shared/src/vendor/shared/sofa-build.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
       "check": "D1",
-      "key": "1NA,2A(LHF),L(RHF)|backend/src/scm/shared/sofa-quick-presets.ts frontend/src/vendor/shared/sofa-quick-presets.ts",
+      "key": "1NA,2A(LHF),L(RHF)|backend/src/scm/shared/sofa-quick-presets.ts shared/src/vendor/shared/sofa-quick-presets.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
       "check": "D1",
-      "key": "1NA,2A(RHF),L(LHF)|backend/src/scm/shared/sofa-quick-presets.ts frontend/src/vendor/shared/sofa-quick-presets.ts",
+      "key": "1NA,2A(RHF),L(LHF)|backend/src/scm/shared/sofa-quick-presets.ts shared/src/vendor/shared/sofa-quick-presets.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
       "check": "D1",
-      "key": "1S,2.5S,2S|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "key": "1S,2.5S,2S|backend/src/scm/shared/sofa-build.ts shared/src/vendor/shared/sofa-build.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: SINGLE_PIECE_BUNDLES."
     },
     {
@@ -457,12 +457,12 @@
     },
     {
       "check": "D1",
-      "key": "ARM,BACK,FRONT|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "key": "ARM,BACK,FRONT|backend/src/scm/shared/sofa-build.ts shared/src/vendor/shared/sofa-build.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
       "check": "D1",
-      "key": "ARM,BACK,FRONT,OPEN|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "key": "ARM,BACK,FRONT,OPEN|backend/src/scm/shared/sofa-build.ts shared/src/vendor/shared/sofa-build.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
@@ -477,7 +477,7 @@
     },
     {
       "check": "D1",
-      "key": "BACK,FRONT,OPEN|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "key": "BACK,FRONT,OPEN|backend/src/scm/shared/sofa-build.ts shared/src/vendor/shared/sofa-build.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
@@ -507,7 +507,7 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,COMPLETED,POSTED|frontend/src/pages/scm-v2/PurchaseConsignmentReturns.tsx frontend/src/vendor/scm/lib/status-pill.ts",
+      "key": "CANCELLED,COMPLETED,POSTED|frontend/src/pages/scm-v2/PurchaseConsignmentReturns.tsx shared/src/vendor/scm/lib/status-pill.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: STATUS_COLOR, STATUS_LABEL, PR. Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -522,12 +522,12 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,DRAFT,POSTED|frontend/src/pages/scm-v2/GoodsReceivedDetailV2.tsx frontend/src/vendor/scm/lib/status-pill.ts",
+      "key": "CANCELLED,DRAFT,POSTED|frontend/src/pages/scm-v2/GoodsReceivedDetailV2.tsx shared/src/vendor/scm/lib/status-pill.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: STAGE_LABEL, PV. Cost of divergence is a blank chip, not a wrong number."
     },
     {
       "check": "D1",
-      "key": "CANCELLED,OPEN,PENDING_APPROVAL,POSTED|backend/src/scm/routes/stock-takes.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "key": "CANCELLED,OPEN,PENDING_APPROVAL,POSTED|backend/src/scm/routes/stock-takes.ts shared/src/vendor/scm/lib/status-pill.ts",
       "why": "ONE vocabulary, one definition and one PRESENTATION of it — a label/colour/order map is how a status is rendered, not a second answer to what the statuses are. 2 homes: VALID_STATUS, STOCK_TAKE. PENDING_APPROVAL added 2026-11-20 (over-limit counts await a supervisor). Cost of divergence is a blank chip, not a wrong number."
     },
     {
@@ -597,12 +597,12 @@
     },
     {
       "check": "D1",
-      "key": "DIVANHEIGHT,FABRICCODE,GAP,LEGHEIGHT,TOTALHEIGHT|backend/src/scm/shared/variant-key.ts frontend/src/vendor/shared/variant-key.ts",
+      "key": "DIVANHEIGHT,FABRICCODE,GAP,LEGHEIGHT,TOTALHEIGHT|backend/src/scm/shared/variant-key.ts shared/src/vendor/shared/variant-key.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
       "check": "D1",
-      "key": "DIVANHEIGHT,GAP,LEGHEIGHT|backend/src/scm/shared/so-variant-rule.ts backend/src/scm/shared/total-height.ts frontend/src/vendor/shared/so-variant-rule.ts frontend/src/vendor/shared/total-height.ts",
+      "key": "DIVANHEIGHT,GAP,LEGHEIGHT|backend/src/scm/shared/so-variant-rule.ts backend/src/scm/shared/total-height.ts shared/src/vendor/shared/so-variant-rule.ts frontend/src/vendor/shared/total-height.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: DIVANLESS_AXES. NEW HOMES since this was recorded: backend/src/scm/shared/total-height.ts and its vendored twin (TOTAL_HEIGHT_PARTS), landed by #2389 as the ONE home for a bedframe's Total Height after sixteen screens had each decided it separately. So this fingerprint is now TWO vendored PAIRS naming the same three axes for two DIFFERENT questions — which axes a divanless bedframe drops, and which parts sum to Total Height — and each pair is pinned by check-shared-mirrors.mjs. Merging them would tie a display formula to a validation rule that only coincides today."
     },
     {
@@ -642,7 +642,7 @@
     },
     {
       "check": "D1",
-      "key": "FABRICCODE,LEGHEIGHT,SEATHEIGHT|backend/src/scm/shared/variant-key.ts frontend/src/vendor/shared/variant-key.ts",
+      "key": "FABRICCODE,LEGHEIGHT,SEATHEIGHT|backend/src/scm/shared/variant-key.ts shared/src/vendor/shared/variant-key.ts",
       "why": "A VENDORED TWIN, not a second decision: the same module authored in backend/src and copied into frontend/src/vendor so the browser can run it. check-shared-mirrors.mjs compares this pair function-by-function and fails on DIVERGED. Symbols: unnamed inline literal(s)."
     },
     {
@@ -1197,7 +1197,7 @@
     },
     {
       "check": "D1",
-      "key": "DEPTH,SEATHEIGHT,SEATSIZE|backend/src/scm/shared/so-variant-rule.ts frontend/src/vendor/shared/so-variant-rule.ts",
+      "key": "DEPTH,SEATHEIGHT,SEATSIZE|backend/src/scm/shared/so-variant-rule.ts shared/src/vendor/shared/so-variant-rule.ts",
       "why": "A VENDORED TWIN, not a second decision: the sofa seatHeight ALIAS list in backend/src/scm/shared/so-variant-rule.ts and its copy under frontend/src/vendor/shared/ so the browser runs the same rule. Same file pair and same referee as the DIVANLESS_AXES entry — check-shared-mirrors.mjs compares the two function-by-function and fails on DIVERGED."
     },
     {
@@ -1227,7 +1227,7 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/lib/po-line-export-columns.ts backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/po-line-export-columns.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "key": "CANCELLED,DRAFT,ON_HOLD,PARTIALLY_RECEIVED,RECEIVED,SUBMITTED|backend/src/scm/lib/po-line-export-columns.ts backend/src/scm/routes/mfg-purchase-orders.ts frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx frontend/src/vendor/scm/lib/po-line-export-columns.ts shared/src/vendor/scm/lib/status-pill.ts",
       "why": "THE PURCHASE ORDER'S STATUS VOCABULARY, in its write home and its TWO display homes. VALID_STATUSES is what the PATCH accepts; status-pill's PO map is what a value reads as on a list; STAGE_LABEL is what it reads as on the detail page. Three homes, one vocabulary, and they must agree — a value the route accepts and a map cannot name renders as a raw slug, which is how ASSR printed the word \"voided\" on the customer portal. They became identical on 2026-08-21 when ON_HOLD (mig 0318) was added to all three. THE DIVERGENCE THAT MATTERS IS A DISPLAY MAP FALLING BEHIND THE ROUTE, and the detail page carries a THIRD thing to update alongside them: effectiveOf, whose fall-through answered CANCELLED, so a held purchase order told the buyer it was cancelled until this change named ON_HOLD there too. THIRD DISPLAY HOME, 2026-09-15: PO_STATUS_WORDS in lib/po-line-export-columns.ts (backend) and its byte-identical vendored twin (frontend, refereed by po-line-export-columns.canonical.test.ts). It is the word the Purchase Orders LIST shows — po-line-export-columns.canonical.test.ts asserts it says exactly what the STATUS_TONE map in PurchaseOrdersListV2 says — and the word the PO line export prints, owner 2026-09-15: export the word on screen, not the stored value. It lives in the mirror because the SERVER builds the export rows and cannot import a frontend map. Same divergence risk as the other display maps: a status the route accepts and this map cannot name prints as the raw value."
     },
     {
@@ -1312,7 +1312,7 @@
     },
     {
       "check": "D1",
-      "key": "LHF,MID,RHF|backend/src/scm/shared/sofa-build.ts frontend/src/vendor/shared/sofa-build.ts",
+      "key": "LHF,MID,RHF|backend/src/scm/shared/sofa-build.ts shared/src/vendor/shared/sofa-build.ts",
       "why": "THE MIRROR ITSELF, not a second decision. backend/src/scm/shared/ is the original and frontend/src/vendor/shared/ is its byte-identical copy; check-shared-mirrors.mjs --strict FAILS THE BUILD when they differ, which is the opposite of the drift this check exists to catch. SOFA_HANDS is declared ONCE per side and the rank map and the group walk both read it — the earlier version did have two statements of the order in one file (a Record plus a literal array) and this check caught it correctly; that is fixed. Cost of divergence here is a build failure, not a wrong sofa."
     },
     {
@@ -1522,7 +1522,7 @@
     },
     {
       "check": "D1",
-      "key": "CANCELLED,CLOSED,DRAFT,ON_HOLD,POSTED|backend/src/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/status-pill.ts",
+      "key": "CANCELLED,CLOSED,DRAFT,ON_HOLD,POSTED|backend/src/scm/lib/grn-line-export-columns.ts frontend/src/vendor/scm/lib/grn-line-export-columns.ts shared/src/vendor/scm/lib/status-pill.ts",
       "why": "THE GOODS RECEIVED STATUS WORDS, in their display home and the line export. status-pill.ts GRN is what the list shows (GoodsReceivedListV2 withStatusLabels(\"grn\")); GRN_STATUS_WORDS in grn-line-export-columns.ts (backend + its byte-identical frontend twin) is the word the GRN line export prints, owner 2026-09-15: export the word on screen. It lives in the mirror because the SERVER builds the export rows and cannot import a frontend map. grn-line-export-columns.canonical.test.ts reads status-pill.ts GRN block and asserts the two maps say the same words, so they cannot drift silently."
     },
     {
@@ -1842,17 +1842,17 @@
     },
     {
       "check": "D1",
-      "key": ",DEFAULT,N/A,NA,NIL,NONE,NULL,UNDEFINED|backend/src/scm/shared/variant-key.ts frontend/src/vendor/shared/variant-key.ts",
+      "key": ",DEFAULT,N/A,NA,NIL,NONE,NULL,UNDEFINED|backend/src/scm/shared/variant-key.ts shared/src/vendor/shared/variant-key.ts",
       "why": "A VENDORED TWIN, not a second decision: shared/variant-key.ts is authored in backend/src and copied byte for byte into frontend/src/vendor (canonicalVariantKey.test.ts fails on any difference). Symbol: PLACEHOLDERS, the values canonicalVariantKey treats as an absent variant field when comparing two stock keys (PR #5609 follow-up). One decision, one home per side."
     },
     {
       "check": "D1",
-      "key": "COLORCODE,COLOURCODE,DEPTH,DIVANHEIGHT,FABRICCODE,FABRICCOLOR,GAP,LEGHEIGHT,SEATHEIGHT,SEATSIZE,SOFALEGHEIGHT,SPECIALS,TOTALHEIGHT|backend/src/scm/shared/variant-key.ts frontend/src/vendor/shared/variant-key.ts",
+      "key": "COLORCODE,COLOURCODE,DEPTH,DIVANHEIGHT,FABRICCODE,FABRICCOLOR,GAP,LEGHEIGHT,SEATHEIGHT,SEATSIZE,SOFALEGHEIGHT,SPECIALS,TOTALHEIGHT|backend/src/scm/shared/variant-key.ts shared/src/vendor/shared/variant-key.ts",
       "why": "A VENDORED TWIN, not a second decision: shared/variant-key.ts is authored in backend/src and copied byte for byte into frontend/src/vendor (canonicalVariantKey.test.ts fails on any difference). Symbol: VARIANT_SPEC_FIELDS, the variants-jsonb keys a DO line linked to an SO line copies from the SO line on the server (lib/do-so-spec.ts). One decision, one home per side."
     },
     {
       "check": "D1",
-      "key": "DIVANHEIGHT,FABRICCODE,GAP,LEGHEIGHT,SEATHEIGHT,SPECIAL,TOTALHEIGHT|backend/src/scm/shared/variant-key.ts frontend/src/vendor/shared/variant-key.ts",
+      "key": "DIVANHEIGHT,FABRICCODE,GAP,LEGHEIGHT,SEATHEIGHT,SPECIAL,TOTALHEIGHT|backend/src/scm/shared/variant-key.ts shared/src/vendor/shared/variant-key.ts",
       "why": "A VENDORED TWIN, not a second decision: shared/variant-key.ts is authored in backend/src and copied byte for byte into frontend/src/vendor (canonicalVariantKey.test.ts fails on any difference). Symbol: SLUG_ORDER, the order canonicalVariantKey re-emits key slugs in so the comparison form is deterministic. It follows ATTRS_BY_GROUP in the same file; a slug it does not list sorts last, so a divergence changes only order, never equality."
     },
     {

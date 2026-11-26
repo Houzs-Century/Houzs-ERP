@@ -27,7 +27,7 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const files = walk(ROOT);
+const files = walk('../shared/src', walk(ROOT));
 
 type Shape = { name: string; rx: RegExp };
 

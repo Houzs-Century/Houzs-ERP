@@ -1,11 +1,12 @@
-// The Worker bundles part of the frontend: the document layout code behind the
-// AI Connector's get_pdf (src/lib/shared-pdf.ts). Two things must hold, and
-// nothing else would notice them breaking:
-//   1. every frontend file that import graph reaches sits under
-//      PDF_SHARED_FRONTEND_PATHS — so the list is the truth;
-//   2. ci.yml and deploy.yml treat exactly those paths as backend too — or a
-//      frontend-only edit to the SO layout would change the Worker's PDFs
-//      without testing or redeploying the Worker.
+// The Worker bundles the SO / PO document layout behind the AI Connector's
+// get_pdf (src/lib/shared-pdf.ts) from the root shared/ module, which the
+// frontend bundles too. What must hold, and nothing else would notice breaking:
+//   1. that import graph stays inside shared/ and never reaches frontend/ — the
+//      layout rule (scripts/check-layout.mjs) only sees relative imports written
+//      in backend/src, not where shared/ files lead;
+//   2. ci.yml and deploy.yml treat shared/ as both halves, or a shared-only edit
+//      would change the Worker's PDFs without testing or redeploying it;
+//   3. each backend test runner resolves the kit's bare names.
 // (That the graph stays DOM-free is held by the backend typecheck, which has no
 // DOM lib.)
 import { describe, expect, it } from "vitest";
@@ -45,35 +46,36 @@ function graph(entry: string): Set<string> {
   return seen;
 }
 
-const files = [...graph(resolve(here, "../src/lib/shared-pdf.ts"))].map(rel);
-const frontend = files.filter((f) => f.startsWith("frontend/"));
+const files = [...graph(resolve(here, "../src/lib/shared-pdf.ts"))].map(rel).filter((f) => !f.startsWith("backend/"));
 const covered = (f: string) => PDF_SHARED_FRONTEND_PATHS.some((p: string) => (p.endsWith("/") ? f.startsWith(p) : f === p));
 
-describe("the frontend code the Worker bundles for get_pdf", () => {
+describe("the shared code the Worker bundles for get_pdf", () => {
   it("reaches the layout code it is meant to", () => {
-    expect(frontend).toContain("frontend/src/vendor/scm/lib/sales-order-pdf-render.ts");
-    expect(frontend).toContain("frontend/src/vendor/scm/lib/purchase-order-pdf-render.ts");
-    expect(frontend).toContain("frontend/src/vendor/scm/lib/pdf-core.ts");
+    expect(files).toContain("shared/src/vendor/scm/lib/sales-order-pdf-render.ts");
+    expect(files).toContain("shared/src/vendor/scm/lib/purchase-order-pdf-render.ts");
+    expect(files).toContain("shared/src/vendor/scm/lib/pdf-core.ts");
   });
 
-  it("stays inside the declared paths and never reaches a browser-only module", () => {
-    expect(frontend.filter((f) => !covered(f))).toEqual([]);
-    const browserOnly = /pdf-common\.ts$|pdf-item-photos-canvas\.ts$|authed-fetch\.ts$|-queries\.ts$|\/api\/|lib\/branding\.ts$|hooks\//;
-    expect(frontend.filter((f) => browserOnly.test(f))).toEqual([]);
+  it("stays inside shared/ and never reaches into frontend/", () => {
+    expect(files.filter((f) => !covered(f))).toEqual([]);
+    expect(files.filter((f) => f.startsWith("frontend/"))).toEqual([]);
   });
 
   it("resolves in each backend test runner (vitest reads neither tsconfig paths nor wrangler [alias])", () => {
     for (const cfg of ["vitest.config.mts", "vitest.light.config.mts", "vitest.pg.config.ts"]) {
       expect(readFileSync(resolve(here, "..", cfg), "utf8"), cfg).toContain("PDF_SHARED_ALIASES");
     }
+    for (const a of PDF_SHARED_ALIASES) expect(existsSync(a.replacement), a.replacement).toBe(true);
   });
 
-  it("is treated as backend by CI and by the deploy", () => {
+  it("is tested and deployed as both halves", () => {
     const ci = readFileSync(resolve(repo, ".github/workflows/ci.yml"), "utf8");
     const deploy = readFileSync(resolve(repo, ".github/workflows/deploy.yml"), "utf8");
-    for (const p of PDF_SHARED_FRONTEND_PATHS as string[]) {
-      expect(ci, `ci.yml changes: ${p}`).toContain(p.endsWith("/") ? `${p}*` : p);
-      expect(deploy, `deploy.yml backend filter: ${p}`).toContain(p.endsWith("/") ? `'${p}**'` : `'${p}'`);
-    }
+    expect(ci).toContain("shared/*) backend=true; frontend=true ;;");
+    const filters = deploy.slice(deploy.indexOf("filters: |"));
+    const backend = filters.slice(filters.indexOf("backend:"), filters.indexOf("frontend:"));
+    const frontend = filters.slice(filters.indexOf("frontend:"), filters.indexOf("\n\n"));
+    expect(backend).toContain("'shared/**'");
+    expect(frontend).toContain("'shared/**'");
   });
 });

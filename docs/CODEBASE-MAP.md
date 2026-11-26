@@ -49,6 +49,7 @@ Two independently deployed apps in one repo, plus two small side services.
 | `backend/` | Cloudflare Worker (`autocount-sync-api`), Hono. The ONLY writer of business data. | `.github/workflows/deploy.yml` on push to `main` |
 | `frontend/` | React + Vite SPA on Cloudflare Pages, served at `erp.houzscentury.com`. | same workflow, separate job |
 | `pos/` | Houzs POS, the cash & carry booth app: its own Vite + React PWA on Cloudflare Pages (`houzs-pos`, `pos.houzscentury.com`), same Worker backend. Guide: `docs/modules/pos.md`. | `.github/workflows/deploy-pos.yml` on push to `main` |
+| `shared/` | Code BOTH apps bundle, imported by neither app's `src` from the other's (`scripts/check-layout.mjs`). Today: the Sales / Purchase Order PDF layout and what it reads (`shared/src/`, mirroring the `frontend/src/` paths it came from; the frontend keeps one-line re-exports at the old paths). The Worker reaches it only through `backend/src/lib/shared-pdf.ts` (AI Connector `get_pdf`). Kept DOM-free by the backend typecheck; `backend/tests/pdfSharedBoundary.test.ts` holds the graph and the workflows to it. Not covered by either app's ESLint config yet. | both jobs (`ci.yml` changes and `deploy.yml` filters list `shared/**` for both halves) |
 | `e2e/` | Playwright specs run against STAGING, not prod. | `staging-e2e.yml` |
 | `mail-sync/` | Standalone IMAP poller that POSTs received mail into the Mail Center ingest. | `mail-sync.yml` |
 | `reference/` | Non-code: the legacy Google Apps Script exports and brand assets. Never imported. | — |

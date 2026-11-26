@@ -61,7 +61,12 @@ const BE_DIRS = [
   path.join(backendRoot, "src", "scm", "shared"),
   path.join(backendRoot, "src", "scm", "lib"),
 ];
+/* shared/src first: the copies both apps bundle moved there (AI Connector
+   get_pdf) and frontend/src keeps one-line re-exports at the old paths, which
+   must never be what a pair is compared against. */
 const FE_DIRS = [
+  path.join(repoRoot, "shared", "src", "vendor", "shared"),
+  path.join(repoRoot, "shared", "src", "vendor", "scm", "lib"),
   path.join(repoRoot, "frontend", "src", "vendor", "shared"),
   path.join(repoRoot, "frontend", "src", "vendor", "scm", "lib"),
 ];

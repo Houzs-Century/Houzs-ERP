@@ -341,8 +341,10 @@ describe('the delivery order trap the owner was holding', () => {
 
 describe('no PDF generator hand-rolls a status label', () => {
   const HERE = dirname(fileURLToPath(import.meta.url));
-  const GENERATORS = readdirSync(HERE)
-    .filter((f) => f.endsWith('-pdf.ts') && !f.endsWith('.test.ts'))
+  const SHARED = join(HERE, '../../../../../shared/src/vendor/scm/lib');
+  const GENERATORS = [HERE, SHARED]
+    .flatMap((dir) => readdirSync(dir).map((f) => join(dir, f)))
+    .filter((f) => /-pdf(-render)?\.ts$/.test(f) && !f.endsWith('.test.ts'))
     .sort();
 
   const HAND_ROLLED = [
@@ -374,7 +376,7 @@ describe('no PDF generator hand-rolls a status label', () => {
   test('every generator in this directory is clean', () => {
     expect(GENERATORS.length).toBeGreaterThan(9);
     for (const file of GENERATORS) {
-      const src = readFileSync(join(HERE, file), 'utf8');
+      const src = readFileSync(file, 'utf8');
       for (const re of HAND_ROLLED) {
         expect(re.test(src), `${file} hand-rolls a status label — use statusLabel(docType, status)`).toBe(false);
       }

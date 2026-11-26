@@ -147,7 +147,7 @@ describe('the backend copy carries the identical rule', () => {
   };
 
   test('frontend and backend format.ts hold the same date block', () => {
-    const fe = readFileSync(resolve(__dirname, 'format.ts'), 'utf8');
+    const fe = readFileSync(resolve(__dirname, '../../../../shared/src/vendor/shared/format.ts'), 'utf8');
     const be = readFileSync(
       resolve(__dirname, '../../../../backend/src/scm/shared/format.ts'),
       'utf8',
