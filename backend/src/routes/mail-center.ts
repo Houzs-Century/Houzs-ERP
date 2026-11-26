@@ -30,6 +30,7 @@ import type { Env } from "../types";
 import type { AuthUser } from "../services/auth";
 import { hasPermission } from "../services/permissions";
 import { recipientList, sendEmail } from "../services/email";
+import { senderFrom } from "../lib/mail-sender";
 import { getBranding, getBrandingForCompany } from "../services/branding";
 import { toStoredMailAttachments, validateMailAttachments } from "../lib/mail-attachments";
 import { withThreadAttachments } from "../lib/mail-thread-attachments";
@@ -1835,6 +1836,14 @@ async function senderName(db: D1Database, userId: number | null): Promise<string
   }
 }
 
+// The From header for a Mail Center send: the signed-in staff member's name plus
+// the sending mailbox's company, so mail no longer reads as the company alone.
+async function mailFromHeader(c: Context<{ Bindings: Env }>, fromAddress: string): Promise<string | undefined> {
+  if (!fromAddress) return undefined;
+  const branding = await getBrandingForCompany(c.env, companyCodeForRecipient([fromAddress]));
+  return senderFrom(await senderName(c.env.DB, c.get("userId") ?? null), branding.companyName, fromAddress);
+}
+
 // Minimal HTML escape for wrapping a plain-text reply into an HTML body.
 function escapeHtml(s: string): string {
   return String(s)
@@ -1976,7 +1985,7 @@ app.post("/threads/:id/reply", async (c) => {
 
   // Send via Houzs sendEmail. purpose:"generic" (caller opted in). The From is
   // the operator's chosen mailbox (owner ask: replies come FROM the mailbox, not
-  // no-reply@) — sendEmail wraps it with the Branding company display name.
+  // no-reply@), shown as "Staff Name (Company)" (mailFromHeader).
   // replyTo is the same mailbox so the customer's reply lands back on it.
   // companyCode follows the SENDING mailbox's domain (not the session's active
   // company) so a hello@2990shome.com reply reads "2990's Home", and a
@@ -1989,7 +1998,7 @@ app.post("/threads/:id/reply", async (c) => {
     html: htmlBody,
     text: text || undefined,
     purpose: "generic",
-    from: fromAddress || undefined,
+    from: await mailFromHeader(c, fromAddress),
     replyTo: fromAddress || undefined,
     companyCode: companyCodeForRecipient([fromAddress]),
     headers,
@@ -2131,7 +2140,7 @@ app.post("/compose", async (c) => {
     html: htmlBody,
     text,
     purpose: "generic",
-    from: fromAddress || undefined,
+    from: await mailFromHeader(c, fromAddress),
     replyTo: fromAddress || undefined,
     companyCode: companyCodeForRecipient([fromAddress]),
     attachments: attachments.map((a) => ({
