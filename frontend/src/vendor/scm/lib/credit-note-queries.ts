@@ -143,8 +143,9 @@ export const useCreditNotes = (side: NoteSide, kind: NoteKind | 'ALL', status: N
     (API), an other debtor's bill (ODB), a customer's sales invoice (SI). */
 export type CreditDocKind = 'PI' | 'API' | 'ODB' | 'SI';
 /** Why a customer note knocks off nothing: it closed a deposit invoice at the
-    final invoice, or took a deposit back for a refund or a move. */
-export type DepositPaperKind = 'closes' | 'refund' | 'move';
+    final invoice, took a deposit back for a refund or a move, or brought the
+    deposit paid in AutoCount onto the customer at the order's invoice. */
+export type DepositPaperKind = 'closes' | 'refund' | 'move' | 'autocount';
 /* A supplier note's credit coming off the supplier's invoices (2026-10-01,
    Supplier CN part 2) — an other-debtor note's off the debtor's bills. */
 export type CreditAllocation = {

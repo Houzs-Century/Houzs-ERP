@@ -34,6 +34,7 @@ import { customerPartyCode } from './payments';
 import { loadControlLines, type ControlLine } from './party-ledger';
 import { splitLine, type AgingEntry, type AgingParty } from './aging';
 import { depositPapers } from './credit-note-si';
+import { isAutoCountDepositNote } from './autocount-deposit-note';
 import { partyNameKey } from './typed-text';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped in this family */
@@ -48,7 +49,8 @@ export type AgingLoad =
       controls: ControlBalance[];
       outside: { count: number; sen: number };
       /** AR only: what each order was paid before the ERP (payments brought over
-          from AutoCount, method 'imported' — never booked here), by order. */
+          from AutoCount, method 'imported') that no AutoCount deposit note has
+          brought into these books yet, by order. */
       paidBeforeErp?: Record<string, number>;
     }
   | { ok: false; reason: string };
@@ -165,6 +167,19 @@ export async function loadArAging(sb: Db, companyId: number, codes: readonly str
     if (p.method !== 'imported' || Number(p.amount_sen ?? 0) <= 0) continue;
     const so = String(p.so_doc_no);
     paidBeforeErp[so] = (paidBeforeErp[so] ?? 0) + Number(p.amount_sen);
+  }
+  /* What an AutoCount deposit note brought onto the customer is in the books
+     (acc/autocount-deposits.ts): only the rest is footnoted. */
+  const offsetByOrder = new Map<string, number>();
+  for (const l of lines) {
+    if (l.source_type !== 'CN') continue;
+    const n = noteByNo.get(String(l.source_doc_no ?? ''));
+    if (!n?.so_doc_no || !isAutoCountDepositNote(n)) continue;
+    const so = String(n.so_doc_no);
+    offsetByOrder.set(so, (offsetByOrder.get(so) ?? 0) + l.credit_sen - l.debit_sen);
+  }
+  for (const [so, offset] of offsetByOrder) {
+    if (so in paidBeforeErp) paidBeforeErp[so] = Math.max(0, (paidBeforeErp[so] ?? 0) - offset);
   }
   const orderByNo = new Map(orders.rows.map((o) => [String(o.doc_no), o]));
   const debtorById = new Map(debtors.rows.map((d) => [String(d.id), d]));
