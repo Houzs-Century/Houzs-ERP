@@ -1836,14 +1836,6 @@ async function senderName(db: D1Database, userId: number | null): Promise<string
   }
 }
 
-// The From header for a Mail Center send: the signed-in staff member's name plus
-// the sending mailbox's company, so mail no longer reads as the company alone.
-async function mailFromHeader(c: Context<{ Bindings: Env }>, fromAddress: string): Promise<string | undefined> {
-  if (!fromAddress) return undefined;
-  const branding = await getBrandingForCompany(c.env, companyCodeForRecipient([fromAddress]));
-  return senderFrom(await senderName(c.env.DB, c.get("userId") ?? null), branding.companyName, fromAddress);
-}
-
 // Minimal HTML escape for wrapping a plain-text reply into an HTML body.
 function escapeHtml(s: string): string {
   return String(s)
@@ -1984,12 +1976,13 @@ app.post("/threads/:id/reply", async (c) => {
   const headers = threadingHeaders(await threadMessageIds(c.env.DB, id));
 
   // Send via Houzs sendEmail. purpose:"generic" (caller opted in). The From is
-  // the operator's chosen mailbox (owner ask: replies come FROM the mailbox, not
-  // no-reply@), shown as "Staff Name (Company)" (mailFromHeader).
+  // the operator's chosen mailbox, not no-reply@, shown as "Staff Name (Company)".
   // replyTo is the same mailbox so the customer's reply lands back on it.
   // companyCode follows the SENDING mailbox's domain (not the session's active
   // company) so a hello@2990shome.com reply reads "2990's Home", and a
   // cron-drained retry renders the same identity.
+  const userId = c.get("userId") ?? null;
+  const fromName = await senderName(c.env.DB, userId);
   const result = await sendEmail(c.env, {
     to,
     cc: ccList.join(", ") || null,
@@ -1998,7 +1991,7 @@ app.post("/threads/:id/reply", async (c) => {
     html: htmlBody,
     text: text || undefined,
     purpose: "generic",
-    from: await mailFromHeader(c, fromAddress),
+    from: await senderFrom(c.env, fromName, companyCodeForRecipient([fromAddress]), fromAddress),
     replyTo: fromAddress || undefined,
     companyCode: companyCodeForRecipient([fromAddress]),
     headers,
@@ -2016,8 +2009,6 @@ app.post("/threads/:id/reply", async (c) => {
     );
   }
 
-  const userId = c.get("userId") ?? null;
-  const fromName = await senderName(c.env.DB, userId);
 
   const now = new Date().toISOString();
   const snippet = (text || stripHtml(htmlBody)).slice(0, 240);
@@ -2128,6 +2119,8 @@ app.post("/compose", async (c) => {
   // From = the operator's chosen mailbox (owner ask), not no-reply@. replyTo is
   // the same so the recipient's reply lands back on it. companyCode follows the
   // mailbox's domain so the display name matches the sending company.
+  const userId = c.get("userId") ?? null;
+  const fromName = await senderName(c.env.DB, userId);
   const result = await sendEmail(c.env, {
     to,
     /* Compose validated and STORED cc/bcc but never passed them to the
@@ -2140,7 +2133,7 @@ app.post("/compose", async (c) => {
     html: htmlBody,
     text,
     purpose: "generic",
-    from: await mailFromHeader(c, fromAddress),
+    from: await senderFrom(c.env, fromName, companyCodeForRecipient([fromAddress]), fromAddress),
     replyTo: fromAddress || undefined,
     companyCode: companyCodeForRecipient([fromAddress]),
     attachments: attachments.map((a) => ({
@@ -2156,8 +2149,6 @@ app.post("/compose", async (c) => {
     );
   }
 
-  const userId = c.get("userId") ?? null;
-  const fromName = await senderName(c.env.DB, userId);
 
   const now = new Date().toISOString();
   const snippet = text.slice(0, 200);
