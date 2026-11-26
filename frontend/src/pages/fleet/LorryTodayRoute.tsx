@@ -10,12 +10,13 @@
 //   - where it went: today's tracker fixes in order — the route actually driven,
 //     with the km it adds up to.
 //   - where it is meant to go: today's planned stops (GET /trips/day).
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMemo } from "react";
 import { PlaybackBar, useDayPlayback } from "./DayPlayback";
+import { FAR_FROM_ADDRESS_M, metresFromAddress, minutesOnSite } from "./drop-facts";
 import { useFleetDay } from "../../vendor/scm/lib/fleet-day-queries";
 import { useActiveTripLocations } from "../../vendor/scm/lib/trip-locations-queries";
-import { useLorryPositions, useLorryTrack, useLorryKmCost } from "../../vendor/scm/lib/lorries-queries";
+import { useLorries, useLorryPositions, useLorryTrack, useLorryKmCost } from "../../vendor/scm/lib/lorries-queries";
 import { ScheduleRouteMap, type RoutePoint } from "../../vendor/scm/components/ScheduleRouteMap";
 import { fmtSen, fmtTime, todayMY } from "../../vendor/shared/format";
 import { BTN_SEC, Tile } from "./FleetUi";
@@ -74,8 +75,18 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
   const driven = useMemo(() => drivenPath(roadTrack.data, fixes), [roadTrack.data, fixes]);
   const playback = useDayPlayback(fixes, date);
   const playhead = playback.playhead;
-  const drops = useMemo(() => track?.drops ?? [], [track]);
-  const dropPoints: RoutePoint[] = useMemo(() => drops.map((d, i) => ({ ref: d.ref, lat: d.lat, lng: d.lng, order: i + 1, label: d.label })), [drops]);
+  const drops = useMemo(() => {
+    const stopById = new Map(stops.map((s) => [s.id, s]));
+    return (track?.drops ?? []).map((d) => ({
+      ...d,
+      offBy: metresFromAddress(d, d.stopId ? stopById.get(d.stopId) ?? null : null),
+      onSite: minutesOnSite(d, fixes),
+    }));
+  }, [track, stops, fixes]);
+  const dropPoints: RoutePoint[] = useMemo(() => drops.flatMap((d, i) => d.lat != null && d.lng != null
+    ? [{ ref: d.ref, lat: d.lat, lng: d.lng, order: i + 1, label: d.label }] : []), [drops]);
+  const navigate = useNavigate();
+  const lorries = useLorries();
   const dayWord = isToday ? "today" : date;
   const dayOf = isToday ? "today's" : date;
 
@@ -83,6 +94,13 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-muted">Lorry
+          <select value={lorryId} onChange={(e) => navigate(`/fleet-health/${encodeURIComponent(e.target.value)}${isToday ? "" : `?day=${date}`}`)}
+            className="h-[34px] rounded-lg border border-[#d9d3c6] bg-surface px-2 text-[13px] font-normal text-ink">
+            {!(lorries.data ?? []).some((l) => l.id === lorryId) && <option value={lorryId}>This lorry</option>}
+            {(lorries.data ?? []).map((l) => <option key={l.id} value={l.id}>{l.plate}</option>)}
+          </select>
+        </label>
         <label className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-muted">Day
           <input type="date" value={date} max={today} onChange={(e) => setDay(e.target.value)}
             className="h-[34px] rounded-lg border border-[#d9d3c6] bg-surface px-2 text-[13px] font-normal text-ink" />
@@ -127,7 +145,14 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
           {drops.map((d, i) => (
             <li key={d.ref} className="flex items-start gap-2.5 text-[13px]">
               <span className="grid h-6 w-6 flex-none place-items-center rounded-full bg-[#ea580c] text-[12px] font-bold text-white">{i + 1}</span>
-              <span className="min-w-0 flex-1 font-semibold text-ink">{d.label}</span>
+              <span className="min-w-0 flex-1">
+                <span className="font-semibold text-ink">{d.label}</span>
+                <span className="block text-[12px] text-ink-muted">
+                  {d.lat == null && "Delivered, no GPS"}
+                  {d.onSite != null && <span className="mr-2">{d.onSite} min on site</span>}
+                  {d.offBy != null && <span className={d.offBy > FAR_FROM_ADDRESS_M ? "font-semibold text-err" : undefined}>{fmtKm(d.offBy)} from the address</span>}
+                </span>
+              </span>
               <span className="flex-none text-[12px] tabular-nums text-ink-muted">{fmtTime(d.at)}</span>
             </li>
           ))}

@@ -324,7 +324,7 @@ export type LorryTrack = {
   date: string;
   km: number;
   fixes: Array<{ lat: number; lng: number; recorded_at: string; speed_kmh: number | null; street: string | null }>;
-  drops: Array<{ kind: 'do' | 'job'; ref: string; label: string; lat: number; lng: number; at: string }>;
+  drops: Array<{ kind: 'do' | 'job'; ref: string; label: string; lat: number | null; lng: number | null; at: string; stopId: string | null }>;
   dropsError: string | null;
 };
 
