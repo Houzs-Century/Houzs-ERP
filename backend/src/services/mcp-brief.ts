@@ -14,6 +14,8 @@
 //   6. GET /api/announcements/banner       notices they have not acknowledged
 // ---------------------------------------------------------------------------
 
+import { SO_TERMINAL_STATES } from "../scm/shared/so-terminal-states";
+
 type Obj = Record<string, unknown>;
 
 const num = (v: unknown): number => {
@@ -63,7 +65,8 @@ export function briefApprovals(body: unknown): { title: string; count: number }[
     .filter((x) => x.count > 0);
 }
 
-const SO_DONE = new Set(["DRAFT", "SHIPPED", "DELIVERED", "INVOICED", "CLOSED", "CANCELLED", "COMPLETED"]);
+/** Not waiting to go out: the ERP's own terminal set (scm/shared/so-terminal-states.ts). */
+const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
 
 /** Their sales orders whose customer delivery date is past or within DUE_SOON_DAYS and not yet delivered. */
 export function briefSalesOrders(body: unknown, today: string, origin: string): BriefSection {

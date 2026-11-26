@@ -7,6 +7,7 @@
 // permissions, company scope and the money redaction already applied).
 // Money comes in as sen and goes out as RM (2 dp).
 // ---------------------------------------------------------------------------
+import { ATTENDANCE_STATUSES } from "../scm/shared/hr-attendance";
 import { rm } from "./mcp-quick";
 
 type Obj = Record<string, unknown>;
@@ -184,8 +185,10 @@ export function summariseAfterSales(summary: unknown, openRows: readonly Obj[], 
 
 // ── attendance_today ────────────────────────────────────────────────────────
 
-const LEAVE = new Set(["MEDICAL_LEAVE", "ANNUAL_LEAVE", "UNPAID_LEAVE", "HALF_DAY"]);
-const WORDS: Record<string, string> = { MEDICAL_LEAVE: "Medical leave", ANNUAL_LEAVE: "Annual leave", UNPAID_LEAVE: "Unpaid leave", HALF_DAY: "Half day" };
+/** Away for (part of) the day: the HR vocabulary's statuses other than present, absent and rest day (scm/shared/hr-attendance.ts). */
+const NOT_LEAVE = new Set(["PRESENT", "ABSENT", "REST_DAY"]);
+const LEAVE = new Set(ATTENDANCE_STATUSES.map((x) => x.value as string).filter((v) => !NOT_LEAVE.has(v)));
+const WORDS: Record<string, string> = Object.fromEntries(ATTENDANCE_STATUSES.map((x) => [x.value, x.label]));
 const NAMES_MAX = 40;
 
 /** HR attendance for one day (GET /api/hr/attendance?date=) → who is on leave, absent, late or has no record yet. */

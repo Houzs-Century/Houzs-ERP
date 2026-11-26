@@ -14,6 +14,9 @@
 // ERP's own (PO / SO / DO lists, the AP / AR aging, the unbilled-deliveries
 // report). Pure shaping functions are exported for the tests.
 // ---------------------------------------------------------------------------
+import { SO_TAB_STATUSES } from "../scm/lib/so-tab-statuses";
+import { DO_ARRIVED_STATES } from "../scm/shared/do-shipped-states";
+import { SO_TERMINAL_STATES } from "../scm/shared/so-terminal-states";
 import { addDays, poDueDate } from "./mcp-brief";
 import { rm, myToday } from "./mcp-quick";
 import { daysBetween } from "./mcp-quick2";
@@ -282,8 +285,9 @@ async function receivablesSummary(ctx: R3Ctx): Promise<R3Outcome> {
 // ── S1 / S2: sales orders and deliveries by date ────────────────────────────
 
 /** Statuses of an SO still waiting to go out (the list tabs). */
-export const SO_OPEN_TABS = ["CONFIRMED", "IN_PRODUCTION", "READY_TO_SHIP"];
-const DO_DONE = new Set(["SIGNED", "DELIVERED", "INVOICED", "CANCELLED"]);
+export const SO_OPEN_TABS = Object.keys(SO_TAB_STATUSES).filter((t) => t !== "ON_HOLD" && SO_TAB_STATUSES[t].every((st) => !(SO_TERMINAL_STATES as readonly string[]).includes(st)));
+/** Not still to deliver: arrived (the ERP's own set, scm/shared/do-shipped-states.ts) or cancelled. */
+const DO_DONE = new Set<string>([...DO_ARRIVED_STATES, "CANCELLED"]);
 
 /** Open SOs of every open tab, earliest customer delivery date first, read until the dates pass `horizon`. */
 async function openSalesOrders(ctx: R3Ctx, horizon: string): Promise<{ ok: true; rows: Obj[]; truncated: boolean } | { ok: false; r: R3Read & { ok: false } }> {
