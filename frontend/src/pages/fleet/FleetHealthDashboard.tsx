@@ -278,7 +278,7 @@ export function FleetHealth() {
             <button type="button" onClick={() => dash.reload()} className="inline-flex h-10 items-center rounded-lg bg-primary px-4 text-[14px] font-semibold text-white">Try again</button>
           </div>
         ) : (
-        <div className={cn(CARD, "overflow-hidden")}>
+        <div className={cn(CARD, "overflow-hidden [&>div>div:first-child]:px-4 [&>div>div:first-child]:pt-3")}>
           <DataTable<VehicleRow>
             tableId="fleet-health-board"
             exportName="fleet-health"

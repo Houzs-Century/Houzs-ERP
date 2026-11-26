@@ -2440,7 +2440,7 @@ function TaskRow({
       {it.due_date && <span style={{ fontSize: 9.5, color: "var(--hz-c-ink-soft)", whiteSpace: "nowrap" }}>{dm(it.due_date)}</span>}
       {canAttach && (
         <>
-          <input ref={fileRef} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; const cap = pendingCaptionRef.current; pendingCaptionRef.current = undefined; if (f) void upload(f, cap); }} />
+          <input ref={fileRef} type="file" multiple style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); const cap = pendingCaptionRef.current; pendingCaptionRef.current = undefined; for (const f of files) await upload(f, cap); if (fileRef.current) fileRef.current.value = ""; }} />
           <button className="tinybtn" style={{ minWidth: 60, display: "inline-flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, lineHeight: 1, boxSizing: "border-box", border: "none", background: "transparent", color: "var(--hz-c-ink-muted)", padding: "4px 6px" }} disabled={busy} onClick={() => void startAttach()} title={isDefectList ? "Write a remark, then upload" : attachments.length ? `${attachments.length} file(s)` : "Attach"}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M13.2 6.5 7 12.7a4.4 4.4 0 1 0 6.2 6.2l6.5-6.5a2.9 2.9 0 1 0-4.1-4.1l-6.5 6.5a1.5 1.5 0 1 0 2.1 2.1l6.1-6.2" /></svg>
             <span style={{ fontSize: 9, fontWeight: 700 }}>{attachments.length ? `Attach (${attachments.length})` : isDefectList ? "Add photo" : "Attach"}</span>
@@ -2738,7 +2738,7 @@ function SetupDismantle({
                 <UploadGlyph />
                 {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule (image or PDF)"}
               </button>
-              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadSchedule(f); }} />
+              <input ref={schedRef} type="file" multiple accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await uploadSchedule(f); if (schedRef.current) schedRef.current.value = ""; }} />
             </>
           )}
           {schedView && (
@@ -2792,7 +2792,7 @@ function SetupDismantle({
               <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => serviceRef.current?.click()}>
                 Add service photo
               </button>
-              <input ref={serviceRef} type="file" accept="image/*,video/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadService(f); }} />
+              <input ref={serviceRef} type="file" multiple accept="image/*,video/*,application/pdf,.heic" style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await uploadService(f); if (serviceRef.current) serviceRef.current.value = ""; }} />
             </>
           )}
           {serviceView && (
@@ -3085,7 +3085,7 @@ function PhaseBlock({
           </button>
         )}
       </div>
-      <input ref={fileRef} type="file" accept="image/*,.pdf,.mp4,.mov,.webm" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPhoto(f); }} />
+      <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.mp4,.mov,.webm" style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await uploadPhoto(f); if (fileRef.current) fileRef.current.value = ""; }} />
       {photoOpen && photoKey && (
         <MediaLightbox
           items={[{ r2_key: photoKey, content_type: mimeFromKey(photoKey), caption: photo?.caption ?? `${kind} photo` }]}
@@ -3354,7 +3354,7 @@ function FloorPlans({
             );
           })}
         </div>
-        <input ref={planUpRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPlanFile(f); }} />
+        <input ref={planUpRef} type="file" multiple accept="image/*,.pdf" style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await uploadPlanFile(f); if (planUpRef.current) planUpRef.current.value = ""; }} />
 
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)", margin: "10px 0 6px" }}>Stock transfer record</div>
         {stockOutAtts.length === 0 && <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)", marginBottom: 8 }}>No stock transfer recorded yet.</div>}
@@ -3439,9 +3439,10 @@ function FloorPlans({
             <input
               ref={stockRef}
               type="file"
+              multiple
               accept="image/*,.pdf"
               style={{ display: "none" }}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadStockOut(f); }}
+              onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await uploadStockOut(f); if (stockRef.current) stockRef.current.value = ""; }}
             />
           </>
         )}

@@ -668,7 +668,7 @@ export function SalesDocsCard({
           );
         })}
       </div>
-      <input ref={fileRef} type="file" accept="image/*,.pdf,.mp4,.mov,.webm" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); }} />
+      <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.mp4,.mov,.webm" style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await upload(f); if (fileRef.current) fileRef.current.value = ""; }} />
       {view && (
         <MediaLightbox
           items={view.items}
