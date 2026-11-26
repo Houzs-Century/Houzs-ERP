@@ -223,6 +223,8 @@ export function summariseAging(body: unknown, today: string, party: "supplier" |
     asOf: str(b.asOf) || today,
     totalRm: rm(obj(b.totals).balanceSen),
     aged: foldCells(obj(b.totals).cells),
+    unappliedRm: rm(obj(b.totals).unappliedSen),
+    agingNote: "total = the aged columns + unapplied (payments, advances and credit notes not yet knocked off a bill, shown negative). pastDue and dueThisWeek count open bills before unapplied money is set against them.",
     pastDueRm: rm(pastDueSen),
     dueThisWeekRm: rm(dueWeekSen),
     dueThisWeek: dueWeek.slice(0, TOP),
@@ -230,7 +232,7 @@ export function summariseAging(body: unknown, today: string, party: "supplier" |
       .filter((r) => num(r.balanceSen) > 0)
       .sort((x, y) => num(y.balanceSen) - num(x.balanceSen))
       .slice(0, TOP)
-      .map((r) => ({ name: str(r.name), balanceRm: rm(r.balanceSen), aged: foldCells(r.cells) })),
+      .map((r) => ({ name: str(r.name), balanceRm: rm(r.balanceSen), aged: foldCells(r.cells), unappliedRm: rm(r.unappliedSen) })),
   };
 }
 
