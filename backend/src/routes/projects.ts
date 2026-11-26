@@ -2775,9 +2775,8 @@ app.get("/:id/activity", requirePageAccess("projects.list"), async (c) => {
 });
 
 // ── Mark as read ─────────────────────────────────────────────
-// Upserts the (user, project, now) row into project_reads. The
-// frontend calls this when the user opens the chat / detail page;
-// drives the notification bell's unread count.
+// Upserts (user, project, now) into project_reads on opening a chat or
+// "Mark all read"; drives the notification bell's unread count.
 
 app.post("/:id/read", requirePageAccess("projects.list"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
