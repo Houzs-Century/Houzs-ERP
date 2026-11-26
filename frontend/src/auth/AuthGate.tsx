@@ -9,6 +9,7 @@ import {
   shortCompanyName,
 } from "../lib/branding";
 import { useIsMobile } from "../mobile/useIsMobile";
+import { useLocation } from "react-router-dom";
 
 // Code-split the mobile app: desktop users never download it, and it stays out
 // of the initial JS bundle (keeps the bundle-budget CI gate green).
@@ -29,6 +30,12 @@ export function mobileShellEnabled(isMobile: boolean): boolean {
 export function preloadMobileApp(): void {
   void MobileApp.preload().catch(headStartFailed);
 }
+// The AI Connector's "Allow?" screen (an AI app sends people here) and, on the
+// phone shell, the AI Connector page itself — so the owner can approve and
+// disconnect from a phone. Both render standalone, outside either app shell.
+const AiConnect = lazyPage(() => import("../pages/AiConnect").then((m) => ({ default: m.AiConnect })));
+const AiConnector = lazyPage(() => import("../pages/AiConnector").then((m) => ({ default: m.AiConnector })));
+
 const MobileLogin = lazy(() =>
   import("../mobile/MobileLogin").then((m) => ({ default: m.MobileLogin })),
 );
@@ -78,6 +85,7 @@ function AuthSplash() {
 export function AuthGate({ children }: { children: ReactNode }) {
   const { user, loading, hasUsers } = useAuth();
   const isMobile = useIsMobile();
+  const { pathname } = useLocation();
   // The mobile build exists ONLY for HOUZS (the owner's phone design). 2990 (and
   // any other company) has no mobile UI, so on the 2990 host we fall back to the
   // desktop app even on phones — "2990 手机关闭".
@@ -160,6 +168,23 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <LazySlot resetKey={slotKey("password-change")} fallback={<AuthSplash />}>
         <ForcedPasswordChangeScreen />
+      </LazySlot>
+    );
+  }
+
+  if (pathname === "/ai-connect") {
+    return (
+      <LazySlot resetKey={slotKey("ai-connect")} fallback={<AuthSplash />}>
+        <AiConnect />
+      </LazySlot>
+    );
+  }
+  if (mobileEnabled && pathname === "/ai-connector") {
+    return (
+      <LazySlot resetKey={slotKey("ai-connector-mobile")} fallback={<AuthSplash />}>
+        <div className="min-h-screen bg-surface-dim">
+          <AiConnector />
+        </div>
       </LazySlot>
     );
   }

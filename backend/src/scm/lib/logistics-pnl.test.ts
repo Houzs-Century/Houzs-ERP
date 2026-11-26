@@ -209,5 +209,7 @@ describe('the P&L', () => {
     expect(row('net_cost_per_do').sen.KL).toBe(Math.round((138_000 + inHouse - 444_210 - 40_000 - 386_400) / 2));
     expect(p.inHousePerTripSen).toBe(Math.round(inHouse / 4));
     expect(p.spreads.map((s) => s.lineId)).toEqual(['u']);
+    /* The lines it counts outside the spreads, as it counts them: an instalment's debit, no finance pay. */
+    expect(p.inHouseLines.map((l) => [l.kind, l.amountSen])).toEqual([['petrol', 814_726], ['instalment', 252_100], ['manpower', 1_978_363]]);
   });
 });

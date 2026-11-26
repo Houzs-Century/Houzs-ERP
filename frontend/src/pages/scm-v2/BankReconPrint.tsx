@@ -17,6 +17,7 @@ import { byDateThenLine } from './bank-reconcile-pick';
 import type { BankLine, BankMonthAssembly, BankMonthLock, LedgerEntry, Reconciliation } from './bank-queries';
 import styles from './DailyBankPrint.module.css';
 import look from './BankStatements.module.css';
+import { printPageAs } from '../../lib/printFrame';
 
 /** Lines set aside that change the balance: a person left them out of the
     ledger. A repeat of a line already recorded on another file is not one of
@@ -145,6 +146,7 @@ export function BankReconPrintModal({ d, onClose, onOldPdf }: { d: ReconSheetDat
   const { user } = useAuth();
   const [hint, setHint] = useState(false);
   const printedAt = useMemo(() => new Date().toISOString(), []);
+  const sheetName = `Bank reconciliation ${d.accountCode} ${d.month}`;
   return (
     <div className={styles.backdrop} role="dialog" aria-label="Print the reconciliation">
       <div className={styles.modal}>
@@ -155,8 +157,8 @@ export function BankReconPrintModal({ d, onClose, onOldPdf }: { d: ReconSheetDat
             <span>A4 portrait · {d.lock ? 'Final, locked' : `Marked Draft until ${d.monthTitle} is locked`} · matched lines are not printed</span>
           </div>
           <button type="button" className={styles.secondary} onClick={onOldPdf} title="The earlier PDF, kept for one more release">Old PDF</button>
-          <button type="button" className={styles.secondary} onClick={() => { setHint(true); window.print(); }}><FileDown size={14} />Save as PDF</button>
-          <button type="button" className={styles.primary} onClick={() => window.print()}><Printer size={14} />Print</button>
+          <button type="button" className={styles.secondary} onClick={() => { setHint(true); printPageAs(sheetName); }}><FileDown size={14} />Save as PDF</button>
+          <button type="button" className={styles.primary} onClick={() => printPageAs(sheetName)}><Printer size={14} />Print</button>
           <button type="button" className={styles.iconButton} onClick={onClose} aria-label="Close"><X size={15} /></button>
         </div>
         {hint && <div className={`${styles.hint} no-print`}>In the print dialog, choose “Save as PDF”.</div>}

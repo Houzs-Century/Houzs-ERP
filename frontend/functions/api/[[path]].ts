@@ -39,5 +39,11 @@ export const onRequest = async ({ request, env }: PagesContext): Promise<Respons
   const upstream = `${origin}${url.pathname}${url.search}`;
   // Forward the request verbatim (method, headers, streamed body). fetch()
   // sets the Host header from the upstream URL. Responses stream back.
-  return fetch(upstream, request);
+  // X-Forwarded-Host: the address the person used (erp.houzscentury.com /
+  // erp.2990shome.com). The AI Connector's OAuth issuer and links must name it,
+  // and the Worker only ever sees its own workers.dev host. The Worker believes
+  // it for company hosts only (backend routes/mcp.ts publicOrigin).
+  const fwd = new Request(upstream, request);
+  fwd.headers.set("X-Forwarded-Host", url.host);
+  return fetch(fwd);
 };

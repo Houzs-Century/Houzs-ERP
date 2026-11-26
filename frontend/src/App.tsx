@@ -74,6 +74,7 @@ const SystemHealth = lazyPage(() => import("./pages/SystemHealth").then((m) => (
 const AiUsage = lazyPage(() => import("./pages/AiUsage").then((m) => ({ default: m.AiUsage })));
 const OcrDashboard = lazyPage(() => import("./pages/OcrDashboard").then((m) => ({ default: m.OcrDashboard })));
 const AutoCountSync = lazyPage(() => import("./pages/AutoCountSync").then((m) => ({ default: m.AutoCountSync })));
+const AiConnector = lazyPage(() => import("./pages/AiConnector").then((m) => ({ default: m.AiConnector })));
 const VenturePortalFeed = lazyPage(() => import("./pages/VenturePortalFeed").then((m) => ({ default: m.VenturePortalFeed })));
 const ChangeLog = lazyPage(() => import("./pages/ChangeLog").then((m) => ({ default: m.ChangeLog })));
 const FleetHealth = lazyPage(() => import("./pages/fleet/FleetHealthDashboard").then((m) => ({ default: m.FleetHealth })));
@@ -706,6 +707,9 @@ const APP_ROUTES = (
         {/* AutoCount Sync — the read of scm.autocount_outbox. Gated on the same
             two keys the endpoint accepts, so the nav row, this door and the
             server all agree; the server is still the boundary. */}
+        {/* AI Connector: every staff member (connect / request access); the
+            admin parts are decided server-side (routes/mcpAdmin.ts). */}
+        <Route path="/ai-connector" element={<AiConnector />} />
         <Route
           path="/autocount-sync"
           element={

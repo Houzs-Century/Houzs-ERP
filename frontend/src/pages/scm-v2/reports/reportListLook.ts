@@ -8,27 +8,26 @@
 // first download (scripts/check-bundle-size.mjs). The icons and sentences are
 // only the list's, and the list is loaded with the reports. Keyed by ReportId,
 // so a report the catalog adds without its look fails the typecheck. A P&L's
-// own sentence shows on its choice in the P&L picker; the list's one P&L entry
-// has its own look (PNL_ENTRY_LOOK).
+// entry, its views folded into it, has its own look (PNL_LOOK).
 // ----------------------------------------------------------------------------
 
 import type { LucideIcon } from 'lucide-react';
 import {
-  ArrowLeftRight, Banknote, BarChart3, BookOpen, CalendarDays, CreditCard, FileText, Flag, Gauge, HandCoins, History,
+  ArrowLeftRight, Banknote, BarChart3, BookOpen, CalendarDays, Columns3, CreditCard, FileText, Flag, Gauge, HandCoins, History,
   LayoutDashboard, ListChecks, Network, Package, PieChart, Replace, Scale, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react';
-import type { ReportId } from '../reports-catalog';
+import type { PnlFamily, ReportId } from '../reports-catalog';
 
-/** The list's one entry for the P&Ls (owner 2026-11-25). */
-export const PNL_ENTRY_LOOK: { label: string; icon: LucideIcon; desc: string } = {
-  label: 'P&L',
-  icon: BarChart3,
-  desc: 'Every P&L in one place, picked at the top: Actual from the books, Department, Performance from the orders, Product changes, Forecast',
+/** The list's entry for each P&L, its views folded into it (owner 2026-11-25). */
+export const PNL_LOOK: Readonly<Record<PnlFamily, { label: string; icon: LucideIcon; desc: string }>> = {
+  overall: { label: 'Overall P&L', icon: BarChart3, desc: 'The company as a whole, in three views: Actual by sales invoice, Performance by sales order, Forecast' },
+  department: { label: 'Department P&L', icon: Network, desc: 'Each department by its own P&L — Exhibition, Operation, Logistics, G&A — Actual by sales invoice or Performance by sales order' },
 };
 
 export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: string }>> = {
   pnl: { icon: BarChart3, desc: 'Income and expenses for a period on the report layout, with each line’s % of sales' },
-  departments: { icon: Network, desc: 'G&A and Operation against their shares, and every account split across the departments' },
+  pnlviews: { icon: Columns3, desc: 'The Overall P&L’s views side by side — Actual, Performance and Forecast on the same rows, with their differences' },
+  departments: { icon: Network, desc: 'Each department by its own P&L: the Exhibition on its orders, Operation by its sheet, G&A against its share, Logistics with its whole cost report' },
   bs: { icon: Scale, desc: 'What the company owns and owes as at a day, with each line’s % of total assets' },
   rp: { icon: Banknote, desc: 'Money in and out of every bank and cash account, by layout row' },
   tb: { icon: ListChecks, desc: 'Debits and credits of every account; the difference must be 0.00' },
@@ -43,7 +42,7 @@ export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: st
   sotodo: { icon: PieChart, desc: "The month's orders by Processing Date, this month's and the backlog's, and the backlog cover rates with their average" },
   events: { icon: CalendarDays, desc: 'What each event cost, from the voucher and bill lines tagged with it' },
   commission: { icon: Users, desc: 'Each fair’s commission and the orders under it' },
-  logistics: { icon: Truck, desc: 'What delivery cost: by region, per trip, and setup & dismantle' },
+  logistics: { icon: Truck, desc: 'What delivery cost by DO: the P&L by region, per trip, setup & dismantle, and repairs by lorry' },
   charges: { icon: CreditCard, desc: 'What each merchant charged against the gross, month by month, cash and online included' },
   forecast: { icon: Flag, desc: 'Months across, P&L accounts down on the layout tree, a target per account' },
   dashboard: { icon: LayoutDashboard, desc: 'The statements’ actuals beside the forecast, per month or quarter' },

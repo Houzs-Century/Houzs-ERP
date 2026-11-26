@@ -1,7 +1,8 @@
 // ----------------------------------------------------------------------------
 // department-queries — the Department P&L (owner 2026-11-19: an Operation report =
 // his "Operation PNL - Auto" sheet, a G&A report = admin, IT, legal and HQ; 2026-11-25:
-// each department by its own method, All their own P&Ls side by side). Server:
+// each department its own P&L on one basis — Actual, the sales invoices, or
+// Performance, the sales orders — the selling department paying the others). Server:
 // backend/src/scm/routes/acc-departments.ts; which department an amount belongs
 // to: backend/src/scm/lib/department-rows.ts (the Chart of Accounts' Department
 // column and the salary journal's team lines). Money in sen.
@@ -15,16 +16,21 @@ import { writeFailedAs } from './mutation-error';
 export type Department = 'ga' | 'exhibition' | 'showroom' | 'operation' | 'logistics';
 export type DeptKey = Department | 'none';
 
-/** The view a department opens: G&A its share, Operation the sheet, Logistics the
-    Logistics P&L, any other its own P&L. */
-export type DeptViewKind = 'ga' | 'operation' | 'logistics' | 'dept';
-/** A department's own P&L: sales and cost of sales as booked, or from the orders (the Exhibition). */
-export type DeptBasis = 'books' | 'orders';
-/** The company's departments and the view each opens. */
+/** The view a department opens: G&A its share, Operation and Logistics (and Logistics'
+    branch, Setup & dismantle) what they are paid less their real cost, any other its own P&L. */
+export type DeptViewKind = 'ga' | 'operation' | 'logistics' | 'setupDismantle' | 'dept';
+/** Which sales the P&Ls stand on: the sales invoices (the books) or the sales orders by SO date. */
+export type DeptBasis = 'actual' | 'performance';
+/** The company's departments and the view each opens; Logistics' branch after it. */
 export type DepartmentPlan = {
-  departments: Array<{ key: Department; label: string; view: DeptViewKind; basis: DeptBasis | null }>;
+  departments: Array<{ key: Department; label: string; view: Exclude<DeptViewKind, 'setupDismantle'> }>;
   selling: Department;
+  branches: Array<{ key: 'setupDismantle'; label: string; under: 'logistics' }>;
 };
+/** A column of All: a department, or Logistics' branch. */
+export type DeptColumnKey = Department | 'setupDismantle';
+/** What the selling department pays, each of its sales excluding service, in basis points. */
+export type ChargeRates = { gaBp: number; operationBp: number; logisticsBp: number; setupDismantleBp: number; merchandiseBp: number };
 
 /** A node of the P&L's own tree, each figure split by department (All) or by month (G&A). */
 export type DeptNode = {
@@ -36,15 +42,16 @@ export type DeptNode = {
 };
 
 export type DeptBlock = 'tradingIncome' | 'costOfSales' | 'otherIncome' | 'expenses' | 'taxation';
-/** A department's own P&L in a few figures: what it earns by its own method, what that
-    income costs directly, its other income, its expenses and its result. */
-export type DeptSummary = { incomeSen: number; costSen: number; grossSen: number; otherIncomeSen: number; expensesSen: number; profitSen: number };
+/** A department's own P&L in a few figures: what it earns — its sales, or what the others
+    pay it — what that income costs directly, its other income, its expenses, what it pays
+    the other departments and its result. */
+export type DeptSummary = { incomeSen: number; costSen: number; grossSen: number; otherIncomeSen: number; expensesSen: number; chargesSen: number; profitSen: number };
 /** Every department's own P&L side by side (owner 2026-11-25), and their total. */
 export type DepartmentsAll = DepartmentPlan & {
-  from: string; to: string;
-  gaShareBp: number;
-  summary: Partial<Record<Department, DeptSummary>>;
-  /** The departments added up — not the company's profit (the P&L is). */
+  from: string; to: string; basis: DeptBasis;
+  rates: ChargeRates;
+  summary: Partial<Record<DeptColumnKey, DeptSummary>>;
+  /** The departments added up: what they pay each other comes out even. */
   total: DeptSummary;
   /** Expense accounts no department claims yet: in no department's figures. */
   unassigned: { label: string; lines: Array<{ code: string; name: string; amountSen: number }> };
@@ -54,7 +61,7 @@ export type DepartmentsAll = DepartmentPlan & {
 
 export type GaTeam = 'DIRECTOR OFFICE' | 'FINANCE' | 'HR' | 'IT' | 'MANAGEMENT' | 'OTHER';
 export type DepartmentsGa = {
-  from: string; to: string; months: string[]; shareBp: number;
+  from: string; to: string; basis: DeptBasis; months: string[]; shareBp: number;
   perMonth: Array<{ month: string; salesSen: number; shareSen: number; expenseSen: number; surplusSen: number }>;
   tree: DeptNode[];
   teams: Array<{ team: GaTeam; label: string; lines: Array<{ lineId: string; day: string; accountCode: string; notes: string | null; amountSen: number }> }>;
@@ -100,35 +107,60 @@ export type DepartmentsOperation = {
   logisticsProblem: string | null;
 };
 
-/** One department's own P&L month by month (the Exhibition P&L on its orders, the Showroom P&L). */
+/** One department's own P&L month by month (the Exhibition P&L, the Showroom P&L). */
 export type DepartmentView = {
   from: string; to: string; dept: Department; label: string; months: string[];
   basis: DeptBasis;
-  /** On orders: the orders counted and how many are not delivered yet. */
+  rates: ChargeRates;
+  /** Performance: the orders counted and how many are not delivered yet. */
   orders: { counted: number; notDelivered: number } | null;
-  perMonth: Array<{ month: string; salesSen: number; costOfSalesSen: number; grossSen: number; otherIncomeSen: number; expensesSen: number; taxationSen: number; netSen: number }>;
+  perMonth: Array<{
+    month: string; salesSen: number; costOfSalesSen: number; grossSen: number; otherIncomeSen: number; expensesSen: number; taxationSen: number;
+    /** What it pays the other departments, and the sales excluding service every rate is of (null: it pays none). */
+    chargesSen: number; baseSen: number | null; netSen: number;
+  }>;
   tree: Record<DeptBlock, DeptNode[]>;
+  /** What it pays the other departments, a row each (charge:ga, charge:operation, charge:setupDismantle). */
+  charges: DeptNode[];
+  /** The accounts merchandise stands in for in Performance (none: no merchandise). */
+  merchandiseAccounts: string[];
+};
+
+/** Operation, Logistics or Setup & dismantle: what it is paid less its real cost, month by month. */
+export type UnitKind = 'operation' | 'logistics' | 'setupDismantle';
+export type DepartmentUnit = {
+  from: string; to: string; basis: DeptBasis; label: string; unit: UnitKind; months: string[];
+  rates: ChargeRates;
+  /** The sales excluding service each month: what the rates are of. */
+  base: Record<string, number>;
+  /** Income, an expense, or what it pays another department (Operation's 3% to Logistics). */
+  rows: Array<{ key: string; label: string; group: 'income' | 'expense' | 'paid'; cells: Record<string, number> }>;
+  perMonth: Array<{ month: string; incomeSen: number; expenseSen: number; paidSen: number; netSen: number }>;
+  regions: Array<{ code: OpRegion; name: string }>;
+  /** Operation: the sheet's lines behind its rows. */
+  lines: OpLine[];
+  logisticsProblem: string | null;
 };
 
 /** One line behind a figure of a department's P&L or G&A: a ledger line, the stock
-    engine's opening / closing stock, or a commission bill (the Exhibition's commission,
-    in the month the bill pays for). `sen` in the figure's sign. */
+    engine's opening / closing stock, a commission bill (the Exhibition's commission, in
+    the month the bill pays for) or a month's merchandise at its rate. `sen` in the figure's sign. */
 export type DeptEntry = {
   id: string; month: string; day: string | null; accountCode: string; accountName: string | null;
   ref: string | null; text: string | null; dept: DeptKey; team: GaTeam | null; sen: number;
-  source: 'ledger' | 'stock_opening' | 'stock_closing' | 'rest' | 'bill';
+  source: 'ledger' | 'stock_opening' | 'stock_closing' | 'rest' | 'bill' | 'rate';
 };
 export type DeptLines = { lines: DeptEntry[]; totalSen: number };
 /** Which figure: the view, its column's months, the department and block, and the accounts
     (a code, or team:<TEAM> on G&A) under the row. */
 export type DeptLinesAsk =
-  | { view: 'dept'; d: Department; block: DeptBlock; from: string; to: string; keys: string[] }
-  | { view: 'ga'; from: string; to: string; keys: string[] };
+  | { view: 'dept'; basis: DeptBasis; d: Department; block: DeptBlock; from: string; to: string; keys: string[] }
+  | { view: 'ga' | 'sd'; basis: DeptBasis; from: string; to: string; keys: string[] };
 
 const KEY = ['acc-events', 'departments'] as const;
 
 export const deptLinesQuery = (ask: DeptLinesAsk): string => {
-  const q = new URLSearchParams({ view: ask.view, from: ask.from, to: ask.to });
+  const q = new URLSearchParams({ view: ask.view, dbasis: ask.basis, from: ask.from, to: ask.to });
   if (ask.view === 'dept') {
     q.set('block', ask.block);
     q.set('d', ask.d);
@@ -153,25 +185,32 @@ export function useDepartmentPlan() {
     staleTime: 60_000,
   });
 }
-export function useDepartmentView(dept: string, from: string, to: string, enabled: boolean) {
+export function useDepartmentView(dept: string, basis: DeptBasis, from: string, to: string, enabled: boolean) {
   return useQuery({
-    queryKey: [...KEY, 'dept', dept, from, to],
-    queryFn: () => authedFetch<DepartmentView>(`/acc-events/departments/dept?d=${encodeURIComponent(dept)}&from=${from}&to=${to}`),
+    queryKey: [...KEY, 'dept', dept, basis, from, to],
+    queryFn: () => authedFetch<DepartmentView>(`/acc-events/departments/dept?d=${encodeURIComponent(dept)}&dbasis=${basis}&from=${from}&to=${to}`),
     staleTime: 30_000, enabled,
   });
 }
 
-export function useDepartmentsAll(from: string, to: string, enabled: boolean) {
+export function useDepartmentsAll(basis: DeptBasis, from: string, to: string, enabled: boolean) {
   return useQuery({
-    queryKey: [...KEY, 'all', from, to],
-    queryFn: () => authedFetch<DepartmentsAll>(`/acc-events/departments/all?from=${from}&to=${to}`),
+    queryKey: [...KEY, 'all', basis, from, to],
+    queryFn: () => authedFetch<DepartmentsAll>(`/acc-events/departments/all?dbasis=${basis}&from=${from}&to=${to}`),
     staleTime: 30_000, enabled,
   });
 }
-export function useDepartmentsGa(from: string, to: string, enabled: boolean) {
+export function useDepartmentsGa(basis: DeptBasis, from: string, to: string, enabled: boolean) {
   return useQuery({
-    queryKey: [...KEY, 'ga', from, to],
-    queryFn: () => authedFetch<DepartmentsGa>(`/acc-events/departments/ga?from=${from}&to=${to}`),
+    queryKey: [...KEY, 'ga', basis, from, to],
+    queryFn: () => authedFetch<DepartmentsGa>(`/acc-events/departments/ga?dbasis=${basis}&from=${from}&to=${to}`),
+    staleTime: 30_000, enabled,
+  });
+}
+export function useDepartmentUnit(unit: UnitKind, basis: DeptBasis, from: string, to: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...KEY, 'unit', unit, basis, from, to],
+    queryFn: () => authedFetch<DepartmentUnit>(`/acc-events/departments/unit?u=${unit}&dbasis=${basis}&from=${from}&to=${to}`),
     staleTime: 30_000, enabled,
   });
 }
@@ -183,11 +222,12 @@ export function useDepartmentsOperation(from: string, to: string, enabled: boole
   });
 }
 
-/** G&A's share of the Performance sales, or Operation's income from the DOs' value, in percent. */
+/** G&A's share, Operation's rate or merchandise's, each of the sales excluding service, in percent. */
+export type RateKey = 'ga' | 'operation' | 'merchandise';
 export function useSaveDepartmentRate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { dept: 'ga' | 'operation'; pct: number }) => authedFetch<{ ok: true }>('/acc-events/departments/rate', { method: 'PUT', body: JSON.stringify(body) }),
+    mutationFn: (body: { dept: RateKey; pct: number }) => authedFetch<{ ok: true }>('/acc-events/departments/rate', { method: 'PUT', body: JSON.stringify(body) }),
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: KEY }); },
     onError: writeFailedAs('Rate not saved'),
   });

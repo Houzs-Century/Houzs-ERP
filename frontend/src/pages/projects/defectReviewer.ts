@@ -23,11 +23,26 @@ export const DEFECT_REGION_STATES = [
   "perak",
 ] as const;
 
+/** Owner 2026-11-26: the all-state defect finaliser (Farra, Service Exec) reviews
+ *  fresh defects in EVERY state, on top of the region split. Keyed on her ACCOUNT
+ *  ID because her role "Purchaser" and position "Operation Executive" are both
+ *  shared (an id, not her email, so no staff PII ships in the bundle). MIRRORS the
+ *  backend ALL_STATE_DEFECT_REVIEWER_IDS in backend/src/services/projectGates.ts —
+ *  keep the two in sync. */
+export const ALL_STATE_DEFECT_REVIEWER_IDS = [83] as const;
+
 export interface DefectReviewUser {
+  id?: number | null;
   permissions?: string[] | null;
   position_name?: string | null;
   role_name?: string | null;
   capabilities?: Record<string, unknown> | null;
+}
+
+/** True when this user finalises the whole defect list — reviews every state,
+ *  not just one side of the region split. Mirrors the backend predicate. */
+export function isAllStateDefectReviewer(user: DefectReviewUser | null | undefined): boolean {
+  return user?.id != null && (ALL_STATE_DEFECT_REVIEWER_IDS as readonly number[]).includes(user.id);
 }
 
 export function isDefectRegionState(state: string | null | undefined): boolean {
@@ -46,6 +61,8 @@ export function canReviewDefect(
   if (!user) return false;
   const perms = user.permissions ?? [];
   if (perms.includes("*") || perms.includes("projects.manage")) return true;
+  // The all-state finaliser (Farra) reviews every state, regardless of region.
+  if (isAllStateDefectReviewer(user)) return true;
   const inRegion = isDefectRegionState(state);
   const isShukor = user.capabilities
     ? user.capabilities["org.defect.reviewer"] === true

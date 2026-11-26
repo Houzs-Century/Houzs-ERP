@@ -16,13 +16,16 @@
 //     own debit lines (a single-group PI is simply that group);
 //   · an AP invoice → the bill's own lines' accounts, the same way;
 //   · a bill from before the books (an opening paper, its own line the opening
-//     clearing) → what that supplier's own bills in the ERP are for: the one
+//     clearing) → Finance's choice for it; else the sofa and the bedding it
+//     bought in AutoCount, the same way as a PI; the rest → Finance's choice for its
+//     supplier, else what that supplier's own bills in the ERP are for: the one
 //     account they sit on, else the one Cash Flow category those accounts print
 //     in (a line of its own there), else the creditor control (owner 2026-11-25);
 //   · money the voucher paid beyond what it settled → the creditor control
 //     itself (owner 2026-11-05), until the advance is knocked off against a
 //     bill: then it reads as what it settled;
-//   · paid out of a trade-finance account → its own line, TF-AP.
+//   · paid out of a trade-finance account, or paid by a trade-finance drawdown
+//     booked through another bank → its own line, TF-AP.
 // The opening journal is Balance b/f, never a receipt or a payment.
 // With `party=1` (AutoCount's "display trade debtor/creditor in details") the
 // control-account rows are named by the party instead and are not split.
@@ -59,7 +62,8 @@ import { resolveRoles, type RoleCodes } from '../../acc/rules';
 import { countsInTheBooks } from '../../acc/reversal-pairs';
 import { cashFlowHomes, layOutCashFlow, type LaidLine, type LaidNode, type SplitTo } from '../../acc/report-layout';
 import {
-  chosenPlace, loadOpeningPlaces, loadSupplierBillAccounts, openingBillHome, placeOf, type OpeningPlace, type PlaceAccount, type StoredPlace,
+  goodsParts, loadGroupPurchaseAccounts, loadOpeningBillGoods, loadOpeningPlaces, loadSupplierBillAccounts, openingBillHome, placeOf,
+  type GoodsParts, type OpeningPlace, type PlaceAccount, type StoredPlace,
 } from '../../acc/opening-bill-places';
 import { OPENING_CLEARING, OPENING_SOURCE } from '../../acc/opening-balance';
 import { inBankShares, loadCardPayoutFacts, merchantMatched, paymentKey, type CardPayoutFacts } from '../../acc/card-in-bank';
@@ -176,6 +180,61 @@ const OPENING_BILLS = 'OPENING-BILLS';
 const OPENING_BILLS_NAME = 'Opening bills (AutoCount)';
 /* A money account is a trade-finance one by its name (CASH AT BANK - MAYBANK (TRADE FINANCE)). */
 const isTradeFinanceAccount = (name: string | null | undefined): boolean => /TRADE\s*FINANCE/i.test(String(name ?? ''));
+/* Owner 2026-11-25 (不是应该和下面 drawdown 一样吗): a drawdown is the bank paying a supplier, so the
+   same money is Drawdown in and TF-AP out, whichever bank Finance books it through. The facility
+   is a liability named TRADE FINANCE that is no money account (460-0009). */
+const DRAWDOWN_PAIR_DAYS = 7;
+const dayNo = (d: string): number => Math.round(Date.parse(`${d}T00:00:00Z`) / 86_400_000);
+const onFacility = (l: GlLine, moneySet: Set<string>): boolean => !moneySet.has(l.account_code) && isTradeFinanceAccount(l.account_name);
+
+/** The supplier-payment vouchers a drawdown paid through a bank that is not a trade-finance one:
+    a drawdown line (that bank debited in a journal crediting the facility) pairs with the voucher
+    out of the same bank that puts the same amount on the creditor control, the nearest within
+    DRAWDOWN_PAIR_DAYS days either way; each line and each voucher once. */
+export function drawdownPaidVouchers(journals: Iterable<[string, GlLine[]]>, moneySet: Set<string>, tradeFinance: Set<string>, apControls: Set<string>): Set<string> {
+  const draws: Array<{ day: number; account: string; sen: number }> = [];
+  const vouchers: Array<{ jeNo: string; day: number; account: string; sen: number }> = [];
+  for (const [jeNo, lines] of journals) {
+    if (lines.some(isOpeningJournal)) continue; // the books' starting balances, not a drawdown
+    if (lines.some((l) => onFacility(l, moneySet) && sen(l) < 0)) {
+      for (const l of lines) {
+        if (moneySet.has(l.account_code) && !tradeFinance.has(l.account_code) && sen(l) > 0) draws.push({ day: dayNo(l.entry_date), account: l.account_code, sen: sen(l) });
+      }
+      continue;
+    }
+    if (String(lines[0]?.source_type ?? '').replace(/_REVERSAL$/, '') !== 'PV') continue;
+    const banks = [...new Set(lines.filter((l) => moneySet.has(l.account_code)).map((l) => l.account_code))];
+    const owed = lines.filter((l) => apControls.has(l.account_code)).reduce((s, l) => s + sen(l), 0);
+    if (banks.length === 1 && !tradeFinance.has(banks[0]!) && owed > 0) vouchers.push({ jeNo, day: dayNo(lines[0]!.entry_date), account: banks[0]!, sen: owed });
+  }
+  const paid = new Set<string>();
+  for (const d of draws.sort((a, b) => a.day - b.day)) {
+    let best: { jeNo: string; gap: number } | null = null;
+    for (const v of vouchers) {
+      if (paid.has(v.jeNo) || v.account !== d.account || v.sen !== d.sen) continue;
+      const gap = Math.abs(v.day - d.day);
+      if (gap <= DRAWDOWN_PAIR_DAYS && (best === null || gap < best.gap)) best = { jeNo: v.jeNo, gap };
+    }
+    if (best) paid.add(best.jeNo);
+  }
+  return paid;
+}
+
+/** A journal on the facility whose lines pair off into equal opposite amounts (a drawdown into one
+    bank with a bank charge taken from another) is read pair by pair, so the charge does not shave
+    the drawdown; any other journal is read whole. */
+function facilityParts(lines: GlLine[], moneySet: Set<string>): GlLine[][] {
+  if (lines.length < 4 || !lines.some((l) => onFacility(l, moneySet))) return [lines];
+  const left = [...lines].sort((a, b) => Number(moneySet.has(b.account_code)) - Number(moneySet.has(a.account_code)));
+  const parts: GlLine[][] = [];
+  while (left.length > 0) {
+    const a = left.shift()!;
+    const i = left.findIndex((b) => sen(b) !== 0 && sen(b) === -sen(a));
+    if (i < 0) return [lines];
+    parts.push([a, left.splice(i, 1)[0]!]);
+  }
+  return parts;
+}
 /* The opening journal (acc/opening-balance) is the books' starting position, not a
    receipt or a payment: its money legs are Balance b/f whatever their date. */
 const isOpeningJournal = (l: GlLine): boolean => String(l.source_type ?? '').replace(/_REVERSAL$/, '') === OPENING_SOURCE;
@@ -343,11 +402,14 @@ async function supplierPurposeSplits(
     }
   }
   /* An AP invoice's purpose = its own lines. An opening bill's own line is the opening
-     clearing, which says nothing of what was bought: its share carries Finance's choice for
-     the bill or its supplier and the accounts the supplier's own live bills in the ERP sit on
-     (owner 2026-11-25, acc/opening-bill-places.ts), which the report places. */
+     clearing, which says nothing of what was bought: Finance's choice for the bill comes
+     first; else what the bill bought in AutoCount, by product group, splits it the way a
+     purchase invoice splits, the rest of it carrying on; that share carries Finance's choice
+     for its supplier and the accounts the supplier's own live bills in the ERP sit on (owner
+     2026-11-25, acc/opening-bill-places.ts), which the report places. */
   const apiSplit = new Map<string, Split[]>();
   const openingShares = new Map<string, RpOpeningShare>();
+  const goodsSplit = new Map<string, Split[]>();
   if (apiIds.length > 0) {
     type ApHead = { id: string; supplier_id: string | null; opening: boolean | null };
     const heads = await chunkIn<ApHead>(apiIds, (batch, f, t) => sb.from('ap_invoices')
@@ -356,25 +418,36 @@ async function supplierPurposeSplits(
     const supplierOfOpening = new Map<string, string>();
     for (const h of heads.data) if (h.opening === true && h.supplier_id) supplierOfOpening.set(String(h.id), String(h.supplier_id));
     const noOpening = supplierOfOpening.size === 0;
-    const [own, places] = await Promise.all([
+    const [own, places, goods, groups] = await Promise.all([
       loadSupplierBillAccounts(sb, companyId, [...supplierOfOpening.values()]),
       noOpening ? Promise.resolve({ ok: true as const, suppliers: new Map(), bills: new Map() }) : loadOpeningPlaces(sb, companyId),
+      noOpening ? Promise.resolve({ ok: true as const, byBill: new Map() }) : loadOpeningBillGoods(sb, companyId, [...supplierOfOpening.keys()]),
+      noOpening ? Promise.resolve({ ok: true as const, accountOf: new Map<string, string>() }) : loadGroupPurchaseAccounts(sb, companyId),
     ]);
     if (!own.ok) return own;
     if (!places.ok) return places;
+    if (!goods.ok) return goods;
+    if (!groups.ok) return groups;
     type ApLine = { invoice_id: string; debit_account_code: string; amount_sen: number };
     const lines = await chunkIn<ApLine>(apiIds, (batch, f, t) => sb.from('ap_invoice_lines')
       .select('invoice_id, debit_account_code, amount_sen').eq('company_id', companyId).in('invoice_id', batch).range(f, t));
     if (lines.error) return { ok: false, reason: lines.error.message };
+    /* The bill's own choice, else its supplier's — for a bill read by its goods, the supplier's
+       places only the rest of it. */
     const chosen = new Map<string, StoredPlace>();
+    const goodsOf = new Map<string, GoodsParts>();
     for (const [id, supplier] of supplierOfOpening) {
-      const p = chosenPlace(places.bills.get(id), places.suppliers.get(supplier));
+      const billOwn = places.bills.get(id);
+      const parts = billOwn ? null : goodsParts(goods.byBill.get(id), groups.accountOf);
+      if (parts) goodsOf.set(id, parts);
+      const p = billOwn ?? places.suppliers.get(supplier);
       if (p) chosen.set(id, p);
     }
     const codes = [...new Set([
       ...lines.data.map((l) => String(l.debit_account_code)),
       ...[...supplierOfOpening.values()].flatMap((s) => own.bySupplier.get(s) ?? []),
       ...[...chosen.values()].flatMap((p) => (p.account ? [p.account] : [])),
+      ...[...goodsOf.values()].flatMap((g) => g.parts.map((p) => p.code)),
     ])];
     const names = new Map<string, string>();
     if (codes.length > 0) {
@@ -391,10 +464,17 @@ async function supplierPurposeSplits(
     }
     for (const [id, supplier] of supplierOfOpening) {
       const p = chosen.get(id);
-      openingShares.set(id, {
+      const share: RpOpeningShare = {
         set: p ? placeOf(p, nameOf) : null,
         accounts: (own.bySupplier.get(supplier) ?? []).map((code) => ({ code, name: nameOf(code) })),
-      });
+      };
+      const g = goodsOf.get(id);
+      if (g) {
+        goodsSplit.set(id, [
+          ...g.parts.map((x) => ({ code: x.code, name: nameOf(x.code), sen: x.sen })),
+          ...(g.restSen > 0 ? [{ code: OPENING_CLEARING, name: OPENING_CLEARING, sen: g.restSen, opening: share }] : []),
+        ]);
+      } else openingShares.set(id, share);
     }
   }
 
@@ -408,7 +488,7 @@ async function supplierPurposeSplits(
     const out = parts.map((p) => {
       const share = Math.floor((amount * p.sen) / total);
       left -= share;
-      return { code: p.code, name: p.name, sen: share };
+      return { ...p, sen: share };
     });
     const biggest = out.reduce((b, x, i) => (x.sen > out[b]!.sen ? i : b), 0);
     out[biggest]!.sen += left;
@@ -420,8 +500,12 @@ async function supplierPurposeSplits(
     const settled = Number(a.applied_sen ?? 0) > 0 ? Number(a.applied_sen) : Number(a.amount_sen ?? 0);
     if (settled <= 0) continue;
     const list = byPv.get(pv) ?? [];
-    const opening = !a.pi_id && a.ap_invoice_id ? openingShares.get(String(a.ap_invoice_id)) : undefined;
-    if (opening) {
+    const billId = !a.pi_id && a.ap_invoice_id ? String(a.ap_invoice_id) : null;
+    const goods = billId ? goodsSplit.get(billId) : undefined;
+    const opening = billId ? openingShares.get(billId) : undefined;
+    if (goods) {
+      list.push(...proportion(settled, goods));
+    } else if (opening) {
       list.push({ code: OPENING_CLEARING, name: OPENING_CLEARING, sen: settled, opening });
     } else {
       const parts = a.pi_id ? piSplit.get(String(a.pi_id)) : a.ap_invoice_id ? apiSplit.get(String(a.ap_invoice_id)) : undefined;
@@ -481,6 +565,8 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
       byJe.set(jeNo, net === 0 ? rest : [...rest, { ...onCard[0]!, account_code: CARD_COLUMN, account_name: CARD_COLUMN_NAME, debit_sen: Math.max(net, 0), credit_sen: Math.max(-net, 0) }]);
     }
   }
+  const drawdownPaid = drawdownPaidVouchers(byJe, moneySet, tradeFinance, apControls);
+  const readable: Array<[string, GlLine[]]> = [...byJe].flatMap(([jeNo, lines]) => facilityParts(lines, moneySet).map((part): [string, GlLine[]] => [jeNo, part]));
   const supplierPvs = supplierVouchersOf(loaded.period, colSet, apControls);
   const splits = byParty ? { ok: true as const, byPv: new Map<string, Split[]>() } : await src.splits(supplierPvs, controlCodes);
   const customerPayments = [...new Set([...byJe.values()].flatMap((ls) => {
@@ -527,7 +613,7 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
     row.totalSen += d;
   };
 
-  for (const [jeNo, lines] of byJe) {
+  for (const [jeNo, lines] of readable) {
     const moneyLegs = lines.filter((l) => colSet.has(l.account_code));
     if (moneyLegs.length === 0) continue;
     if (lines.some(isOpeningJournal)) continue; // counted in Balance b/f above
@@ -571,8 +657,9 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
         let placed = 0;
         const control = counterparts.find((l) => apControls.has(l.account_code))!;
         const supplierMeta = { ...meta, party: control.party_name ?? null };
-        /* Owner 2026-11-05: what a trade-finance account pays a supplier is its own line;
-           money paid ahead of a bill reads as the creditor control. */
+        /* Owner 2026-11-05: what a trade-finance account pays a supplier is its own line, as is
+           (2026-11-25) what a drawdown paid through another bank; money paid ahead of a bill
+           reads as the creditor control. */
         const toControl = (amt: number) => add(side, control.account_code, control.account_code, String(control.account_name ?? control.account_code), leg.account_code, amt, supplierMeta);
         /* Owner 2026-11-25: an opening bill reads as Finance set it for the bill or its supplier,
            else by the supplier's own bills in the ERP, else the creditor control. */
@@ -582,7 +669,7 @@ export async function buildReceiptsPayments(companyId: number, q: RpQuery, src: 
           else if (home.kind === 'account') add(side, home.code, home.code, home.name, leg.account_code, amt, supplierMeta);
           else add(side, `${OPENING_BILLS}:${home.id}`, null, OPENING_BILLS_NAME, leg.account_code, amt, supplierMeta, undefined, undefined, home.id);
         };
-        const tf = tradeFinance.has(leg.account_code);
+        const tf = tradeFinance.has(leg.account_code) || drawdownPaid.has(jeNo);
         for (const x of split) {
           const amt = Math.round(x.sen * scale);
           placed += amt;

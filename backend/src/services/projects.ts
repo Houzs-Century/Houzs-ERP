@@ -2234,17 +2234,42 @@ export async function setChecklistStatus(
   if (!item) return false;
 
   if (status === "done") {
+    // Completing an item (done/N/A) clears any review flag so it leaves the
+    // approver's queue (loadReviewQueue filters on review_status, not status).
+    // A manual tick is not an approval, so clear to NULL, not 'approved'.
+    // Done and N/A are TWO statements, not one `CASE WHEN ? = 'done' THEN ?`:
+    // over the Postgres shim an untyped `?` in a CASE/THEN defaults to text and
+    // the `completed_by` bigint assignment then fails to prepare ("column is of
+    // type bigint but expression is of type text"). SQLite (the test DB) does
+    // not type-check it, so the one-statement form passed CI but 500'd in prod.
     await env.DB.prepare(
       `UPDATE project_checklist
           SET status = 'done',
               completed_by = ?,
               completed_at = datetime('now'),
+              review_status = NULL,
+              rejection_reason = NULL,
               updated_at = datetime('now')
         WHERE id = ?`
     )
       .bind(userId, itemId)
       .run();
+  } else if (status === "na") {
+    // N/A completes the item with no completer, and likewise clears review state.
+    await env.DB.prepare(
+      `UPDATE project_checklist
+          SET status = 'na',
+              completed_by = NULL,
+              completed_at = NULL,
+              review_status = NULL,
+              rejection_reason = NULL,
+              updated_at = datetime('now')
+        WHERE id = ?`
+    )
+      .bind(itemId)
+      .run();
   } else {
+    // pending / blocked: not a completion, so review state is left untouched.
     await env.DB.prepare(
       `UPDATE project_checklist
           SET status = ?,

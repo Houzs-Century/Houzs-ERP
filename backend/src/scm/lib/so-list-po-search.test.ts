@@ -5,7 +5,7 @@
 // resolution rules through a minimal fake PostgREST client (same shape as
 // so-converted-po.test.ts, extended with ilike / limit / range for chunkIn).
 import { describe, expect, test } from 'vitest';
-import { soDocNosByPoNumber } from './so-list-po-search';
+import { soDocNosByPoNumber, soDocNosByPoNumberInCompanies } from './so-list-po-search';
 
 type Row = Record<string, unknown>;
 
@@ -132,5 +132,21 @@ describe('soDocNosByPoNumber', () => {
       ],
     });
     expect(await soDocNosByPoNumber(sb, ctx(2), 'HC-PO-5')).toEqual(['HC-SO-C2']);
+  });
+});
+
+// HC-0257: the Service Cases list holds an allow-list of companies, not one active company.
+describe('soDocNosByPoNumberInCompanies', () => {
+  const sb = () => fakeSb({
+    purchase_orders: [po('po-1', 'HC-PO-5001', 'SUBMITTED', 1), po('po-2', 'HC-PO-5002', 'SUBMITTED', 2)],
+    purchase_order_items: [poItem('po-1', 'si-1', 1), poItem('po-2', 'si-2', 2)],
+    mfg_sales_order_items: [soItem('si-1', 'HC-SO-C1', 1), soItem('si-2', 'HC-SO-C2', 2)],
+  });
+
+  test('scopes every read to the listed companies; [] finds nothing; undefined adds no predicate', async () => {
+    expect(await soDocNosByPoNumberInCompanies(sb(), [2], 'hc-po-5')).toEqual(['HC-SO-C2']);
+    expect((await soDocNosByPoNumberInCompanies(sb(), [1, 2], 'HC-PO-5')).sort()).toEqual(['HC-SO-C1', 'HC-SO-C2']);
+    expect(await soDocNosByPoNumberInCompanies(sb(), [], 'HC-PO-5')).toEqual([]);
+    expect((await soDocNosByPoNumberInCompanies(sb(), undefined, 'HC-PO-5')).sort()).toEqual(['HC-SO-C1', 'HC-SO-C2']);
   });
 });

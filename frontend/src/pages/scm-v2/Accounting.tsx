@@ -42,6 +42,7 @@ import { ProductChangesTab, ProductChangesSummaryTab } from './ProductChanges';
 import { SoBacklogCoverTab } from './SoBacklogCover';
 import { LogisticsCostTab } from './LogisticsCost';
 import { DepartmentPnlTab } from './DepartmentPnl';
+import { PnlSideBySideTab } from './PnlSideBySide';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { GeneralLedger } from './GeneralLedger';
@@ -104,8 +105,10 @@ export const Accounting = () => {
       {tab === 'changes' && <ProductChangesTab />}
       {tab === 'changesum' && <ProductChangesSummaryTab />}
       {tab === 'sotodo' && <SoBacklogCoverTab />}
-      {tab === 'logistics' && <LogisticsCostTab />}
+      {/* Logistics cost by DO, an entry of its own (owner 2026-11-25: 现有的logistics by DO的放side bar 先). */}
+      {tab === 'logistics' && <LogisticsCostTab departmentPicker={null} />}
       {tab === 'departments' && <DepartmentPnlTab />}
+      {tab === 'pnlviews' && <PnlSideBySideTab />}
     </AccountingFrame>
   );
 };

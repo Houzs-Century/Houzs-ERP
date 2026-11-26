@@ -7,6 +7,7 @@
 // copied from newSkuStartsOffPosTablet.test.ts.
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
+import { SEEDED_ITEM_GROUPS } from '../src/scm/lib/fake-item-groups';
 import { batchImportMfgProductsHandler, createMfgProductHandler } from '../src/scm/routes/mfg-products';
 
 type Row = Record<string, unknown>;
@@ -40,6 +41,7 @@ class FakeQuery {
 
 function harness(companyId: number, seed: { mfg_products?: Row[]; product_models?: Row[] } = {}) {
   const tables: Record<string, Row[]> = {
+    acc_item_groups: SEEDED_ITEM_GROUPS(),
     mfg_products: seed.mfg_products ?? [],
     product_models: seed.product_models ?? [],
   };

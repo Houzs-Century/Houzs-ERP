@@ -11,6 +11,7 @@
 // client, like destructiveGuardsRefuseUnreadableProbe.test.ts.
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
+import { SEEDED_ITEM_GROUPS } from '../src/scm/lib/fake-item-groups';
 import { batchImportMfgProductsHandler, patchMfgProductHandler } from '../src/scm/routes/mfg-products';
 
 const CO = 1;
@@ -44,6 +45,7 @@ class FakeQuery {
 
 function harness() {
   const tables: Record<string, Row[]> = {
+    acc_item_groups: SEEDED_ITEM_GROUPS(),
     mfg_products: [
       { id: 'p-1', company_id: CO, code: '810 BOLSTER', name: 'RDS BOLSTER 810', category: 'ACCESSORY', model_id: null, description: null },
       { id: 'p-2', company_id: CO, code: 'SOFA-1', name: 'SOFA ONE', category: 'SOFA', model_id: null },

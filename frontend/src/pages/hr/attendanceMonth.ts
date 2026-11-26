@@ -58,3 +58,30 @@ export function monthAttendanceStats(days: ReadonlyArray<WorkDay>): { perDay: Da
     });
   return { perDay, lateByEmp };
 }
+
+/** The employee names behind one day, split by state, for the chart's hover
+ *  card. Rest and no-punch days carry nobody. */
+export type DayDetail = { onTime: string[]; late: string[]; absent: string[]; leave: string[] };
+
+/** Per work date, the names on time / late / absent / on leave — built from the
+ *  working-hours `days` and the employee list. Only dates with a real record
+ *  appear. */
+export function monthDayDetail(
+  days: ReadonlyArray<WorkDay>,
+  employees: ReadonlyArray<{ id: number; name: string }>,
+): Map<string, DayDetail> {
+  const nameOf = new Map(employees.map((e) => [e.id, e.name]));
+  const m = new Map<string, DayDetail>();
+  for (const d of days) {
+    const c = cellOf(d, false);
+    if (c !== "present" && c !== "late" && c !== "absent" && c !== "leave") continue;
+    const cur = m.get(d.workDate) ?? { onTime: [], late: [], absent: [], leave: [] };
+    const name = nameOf.get(d.employeeId) ?? `#${d.employeeId}`;
+    if (c === "present") cur.onTime.push(name);
+    else if (c === "late") cur.late.push(name);
+    else if (c === "absent") cur.absent.push(name);
+    else cur.leave.push(name);
+    m.set(d.workDate, cur);
+  }
+  return m;
+}

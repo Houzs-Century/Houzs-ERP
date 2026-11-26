@@ -86,13 +86,15 @@ describe('GET /accounting/reports/performance/months', () => {
     ]);
     for (const m of body.months) {
       const full = (await (await app.request(`/accounting/reports/performance?from=${m.from}&to=${m.to}`)).json()) as {
-        totals: { salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null };
+        totals: { salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null; salesExServiceSen: number };
         otherIncomeSen: number; otherExpensesSen: number; operatingExpense: { amountSen: number }; netSen: number; netPct: number | null;
         orders: unknown; groups: Array<{ key: string; label: string; salesSen: number; cogsSen: number }>; commission: unknown;
       };
       expect(m).toEqual({
         month: m.month, from: m.from, to: m.to,
         salesSen: full.totals.salesSen, cogsSen: full.totals.cogsSen, gpSen: full.totals.gpSen, gpPct: full.totals.gpPct,
+        /* What the Department P&L's rates are of: the report's own sales excluding service. */
+        salesExServiceSen: full.totals.salesExServiceSen,
         otherIncomeSen: full.otherIncomeSen, expensesSen: full.operatingExpense.amountSen + full.otherExpensesSen,
         netSen: full.netSen, netPct: full.netPct,
         /* The groups, the orders and the commission the Department P&L's Exhibition reads: the report's own. */

@@ -45,6 +45,7 @@ import {
 } from "../lib/mail-threading";
 import { deliveryStatus } from "../lib/mail-delivery";
 import { MY_READ_JOIN, MY_UNREAD_SQL, isThreadUnreadFor, setThreadRead, threadReaders } from "../lib/mail-reads";
+import { maskLoginLinks } from "./lib/mail-outbox-mask";
 import { acksForMessages, myOwedOnThread, requestAcks, staffRecipients } from "../lib/mail-acks";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -1080,10 +1081,8 @@ app.get("/addresses", async (c) => {
 // (DO / invoice / document report / member+supplier invites) from no-reply@ via
 // the email outbox; there is no human "Sent" copy to look at — owner 2026-06-24
 // "因為是 noreply 所以看不到". These two read endpoints expose that durable log,
-// read-only, visible to a mail admin OR any user with a mailbox in scope (same
-// bar as the inbox). Ported from Hookka. Houzs `email_outbox` columns are
-// snake_case (read them snake here, like rowToThread/rowToAddress); statuses are
-// stored lowercase (pending/sent/failed) and surfaced UPPERCASE for the UI.
+// read-only, visible to a mail admin OR any user with a mailbox in scope (sign-in links masked for non-admins).
+// Ported from Hookka. Columns are snake_case; statuses stored lowercase, surfaced UPPERCASE.
 // ---------------------------------------------------------------------------
 type OutboxRow = {
   id: string;
@@ -1143,6 +1142,7 @@ app.get("/outbox", async (c) => {
       .bind(...binds, limit, offset)
       .all<OutboxRow>();
 
+    const admin = isMailAdmin(c.get("user")); // sign-in links only for a Mail admin (lib/mail-outbox-mask.ts)
     const rows = (res.results ?? []).map((r) => ({
       id: r.id,
       toAddress: r.to_address ?? "",
@@ -1152,7 +1152,7 @@ app.get("/outbox", async (c) => {
       lastError: r.last_error ?? null,
       sentAt: r.sent_at ?? null,
       createdAt: r.created_at ?? "",
-      snippet: outboxSnippet(r.body_text, r.body_html),
+      snippet: admin ? outboxSnippet(r.body_text, r.body_html) : maskLoginLinks(outboxSnippet(r.body_text, r.body_html)),
       attachmentNames: [] as string[],
     }));
 
@@ -1201,8 +1201,8 @@ app.get("/outbox/:id", async (c) => {
       lastError: r.last_error ?? null,
       sentAt: r.sent_at ?? null,
       createdAt: r.created_at ?? "",
-      bodyText: r.body_text ?? "",
-      bodyHtml: r.body_html ?? "",
+      bodyText: isMailAdmin(c.get("user")) ? r.body_text ?? "" : maskLoginLinks(r.body_text),
+      bodyHtml: isMailAdmin(c.get("user")) ? r.body_html ?? "" : maskLoginLinks(r.body_html),
       attachmentNames: [] as string[],
     });
   } catch (e) {

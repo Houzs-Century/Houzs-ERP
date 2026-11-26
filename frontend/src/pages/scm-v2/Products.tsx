@@ -98,7 +98,7 @@ import { SkuHistoryTabs } from './SkuHistoryTabs';
 import { AddSupplierBinding } from './AddSupplierBinding';
 import { DeleteBindingButton } from './DeleteBindingButton';
 import { ImportModelsMoved } from '../../vendor/scm/components/ImportModelsMoved';
-import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -236,10 +236,10 @@ export const Products = () => {
    SKU Master tab
    ════════════════════════════════════════════════════════════════════════ */
 
-// The tabs are the ONE category list, under the ONE label map (shared/product-categories.ts).
-const CATEGORIES: { value: MfgCategory | 'all'; label: string }[] = [
+// The tabs are the registry's categories (scm.acc_item_groups), under their registry names.
+const useCategoryTabs = (): { value: MfgCategory | 'all'; label: string }[] => [
   { value: 'all', label: 'All' },
-  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: MFG_CATEGORY_LABELS[c] })),
+  ...useProductCategories().active.map((c) => ({ value: c.code, label: c.name })),
 ];
 
 
@@ -262,6 +262,7 @@ const VIRTUAL_OVERSCAN = 12;
 const SKU_ROW_HEIGHT_ESTIMATE = 34; // px; corrected at runtime by measuring a real row
 
 const SkuMasterTab = () => {
+  const CATEGORIES = useCategoryTabs();
   const [category, setCategory] = useState<MfgCategory | 'all'>('all');
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
@@ -3614,6 +3615,7 @@ const FabricsMaintenancePanel = () => {
    ════════════════════════════════════════════════════════════════════════ */
 
 const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
+  const CATEGORIES = useCategoryTabs();
   const create = useCreateMfgProduct();
   const notify = useNotify();
   // Branding datalist — maintenance pool first, DISTINCT fallback. Free text

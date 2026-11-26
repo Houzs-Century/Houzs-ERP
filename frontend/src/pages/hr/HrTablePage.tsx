@@ -1,10 +1,15 @@
-/* Shared new-design scaffold for the HR sub-pages (step 2): a page header, four
- * stat cards, a toolbar (search + optional period chips + optional show-amounts
- * eye), a table with configurable columns, and a footer bar. Each page is config
- * over this, on REAL data — loading / error / empty states are handled here, and
- * each page renders its own add/edit modal as a sibling. */
+/* Shared new-design scaffold for the HR sub-pages: a page header, four stat
+ * cards, and — for the table itself — the SYSTEM DataTable, so every HR list
+ * reads and behaves like the rest of the ERP (search, per-column sort + funnel,
+ * the Columns chooser, column freeze, export). Each page is config over this on
+ * REAL data; loading / error / empty states and the money eye live here, and
+ * each page renders its own add/edit modal as a sibling.
+ *
+ * A column sorts, filters and exports only when it carries `getValue` (the raw
+ * value); a render-only column still shows and is searched by its cell text. */
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { DataTable, type Column } from "../../components/DataTable";
 import { HrPageHeader } from "./HrPageHeader";
 import { avatarColor, initials } from "./hrAvatar";
 
@@ -43,15 +48,33 @@ export function TimeSpan({ startMin, endMin, tone = "bg-primary" }: { startMin: 
 }
 
 export type HrStat = { label: string; value: (show: boolean) => ReactNode; sub: ReactNode; bar: string };
-export type HrCol<T> = { key: string; label: string; align?: "left" | "right" | "center"; render: (r: T, show: boolean) => ReactNode };
+/** A column over the HR DataTable. `render` draws the cell (given the money eye);
+ *  `getValue` is the raw value that makes the column sort / filter / export. */
+export type HrCol<T> = {
+  key: string;
+  label: string;
+  align?: "left" | "right" | "center";
+  width?: string;
+  render: (r: T, show: boolean) => ReactNode;
+  getValue?: (r: T, show: boolean) => string | number | boolean | null | undefined;
+  /** Footer total over the rows on screen. */
+  total?: (rows: T[], show: boolean) => ReactNode;
+  filterType?: "date" | "number";
+  disableSort?: boolean;
+};
+
+const slug = (s: string) => "hr-" + s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 export function HrTablePage<T extends { id: number | string }>({
-  title, subtitle, actions, stats, periods, period, onPeriod, rows, columns, searchOf, searchPlaceholder, footer, footerRight, onRowClick,
-  loading, error, emptyLabel, moneyToggle, toolbarExtra,
+  title, subtitle, actions, topSection, stats, periods, period, onPeriod, rows, columns, searchPlaceholder, footer, footerRight, onRowClick,
+  loading, error, emptyLabel, moneyToggle, toolbarExtra, tableId,
 }: {
   title: string;
   subtitle: ReactNode;
   actions?: ReactNode;
+  /** A block rendered between the header and the stat cards (e.g. the punch
+   *  rules card), for a page that carries its own controls above the table. */
+  topSection?: ReactNode;
   stats: HrStat[];
   /** Period chips: uncontrolled label-only, or controlled via period + onPeriod. */
   periods?: string[];
@@ -59,7 +82,9 @@ export function HrTablePage<T extends { id: number | string }>({
   onPeriod?: (p: string) => void;
   rows: T[];
   columns: HrCol<T>[];
-  searchOf: (r: T) => string;
+  /** Kept for callers; the DataTable's own search covers it (it matches each
+   *  column's getValue, else the cell text). */
+  searchOf?: (r: T) => string;
   searchPlaceholder?: string;
   footer?: (show: boolean) => ReactNode;
   footerRight?: ReactNode;
@@ -71,78 +96,92 @@ export function HrTablePage<T extends { id: number | string }>({
   moneyToggle?: boolean;
   /** Extra controls in the toolbar (filters), before the money toggle. */
   toolbarExtra?: ReactNode;
+  /** Stable id for persisting columns / sort / density. Defaults from the title. */
+  tableId?: string;
 }) {
   const [show, setShow] = useState(false);
-  const [query, setQuery] = useState("");
   const [localPeriod, setLocalPeriod] = useState(periods?.[0] ?? "");
   const activePeriod = period ?? localPeriod;
   const setPeriod = (p: string) => (onPeriod ? onPeriod(p) : setLocalPeriod(p));
-  const shown = useMemo(() => rows.filter((r) => query === "" || searchOf(r).toLowerCase().includes(query.toLowerCase())), [rows, query, searchOf]);
-  const alignCls = (a?: string) => (a === "right" ? "text-right" : a === "center" ? "text-center" : "text-left");
+
+  const dtColumns = useMemo<Column<T>[]>(
+    () =>
+      columns.map((c) => ({
+        key: c.key,
+        label: c.label,
+        align: c.align,
+        width: c.width,
+        render: (r: T) => c.render(r, show),
+        getValue: c.getValue ? (r: T) => c.getValue!(r, show) : undefined,
+        total: c.total ? (rs: T[]) => c.total!(rs, show) : undefined,
+        filterType: c.filterType,
+        dateValue: c.filterType === "date" && c.getValue ? (r: T) => String(c.getValue!(r, show) ?? "") : undefined,
+        numberValue: c.filterType === "number" && c.getValue ? (r: T) => Number(c.getValue!(r, show) ?? 0) : undefined,
+        disableSort: c.disableSort,
+      })),
+    [columns, show],
+  );
+
+  const toolbar = (
+    <span className="flex items-center gap-2">
+      {periods && periods.length > 0 && (
+        <span className="flex items-center gap-0.5 rounded-lg bg-surface-2 p-0.5">
+          {periods.map((p) => (
+            <button key={p} type="button" onClick={() => setPeriod(p)} className={cx("h-7 rounded px-2.5 text-[12px] font-semibold", activePeriod === p ? "bg-surface text-primary shadow-sm" : "text-ink-muted hover:text-ink")}>{p}</button>
+          ))}
+        </span>
+      )}
+      {toolbarExtra}
+      {moneyToggle && (
+        <button type="button" onClick={() => setShow((v) => !v)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-semibold text-ink-secondary hover:bg-surface-2">{show ? "Hide amounts" : "Show amounts"}</button>
+      )}
+    </span>
+  );
 
   return (
     <>
       <HrPageHeader title={title} subtitle={subtitle} actions={actions} />
       <div className="flex min-h-0 flex-1 flex-col gap-3 px-6 py-4">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {stats.map((s, i) => (
-            <div key={i} className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface">
-              <div className={cx("h-[3px] w-full", s.bar)} />
-              <div className="px-3.5 py-3">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">{s.label}</div>
-                <div className="mt-1 text-[22px] font-bold leading-none text-ink">{s.value(show)}</div>
-                <div className="mt-1.5 text-[11px] text-ink-muted">{s.sub}</div>
+        {topSection}
+        {stats.length > 0 && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {stats.map((s, i) => (
+              <div key={i} className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface">
+                <div className={cx("h-[3px] w-full", s.bar)} />
+                <div className="px-3.5 py-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">{s.label}</div>
+                  <div className="mt-1 text-[22px] font-bold leading-none text-ink">{s.value(show)}</div>
+                  <div className="mt-1.5 text-[11px] text-ink-muted">{s.sub}</div>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+        )}
+
+        <div className="flex min-h-0 flex-1 flex-col">
+          <DataTable<T>
+            tableId={tableId ?? slug(title)}
+            documentLabel={title}
+            columns={dtColumns}
+            rows={rows}
+            loading={loading}
+            error={error}
+            emptyLabel={emptyLabel ?? "Nothing here."}
+            getRowKey={(r) => r.id}
+            onRowClick={onRowClick}
+            clientSearch={{ placeholder: searchPlaceholder ?? "Search" }}
+            exportName={slug(title).replace(/^hr-/, "")}
+            exportXlsx
+            toolbarExtra={toolbar}
+          />
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-surface">
-          <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-3 py-2.5">
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={searchPlaceholder ?? "Search"} className="h-8 w-56 rounded-md border border-border bg-surface-2 px-3 text-[12px] text-ink placeholder:text-ink-muted focus:border-primary focus:outline-none" />
-            {periods && periods.length > 0 && (
-              <div className="flex items-center gap-0.5 rounded-lg bg-surface-2 p-0.5">
-                {periods.map((p) => (
-                  <button key={p} type="button" onClick={() => setPeriod(p)} className={cx("h-7 rounded px-2.5 text-[12px] font-semibold", activePeriod === p ? "bg-surface text-primary shadow-sm" : "text-ink-muted hover:text-ink")}>{p}</button>
-                ))}
-              </div>
-            )}
-            {toolbarExtra}
-            <span className="text-[12px] text-ink-muted">{shown.length} rows</span>
-            {moneyToggle && (
-              <button type="button" onClick={() => setShow((v) => !v)} className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-semibold text-ink-secondary hover:bg-surface-2">{show ? "Hide amounts" : "Show amounts"}</button>
-            )}
-          </div>
-
-          <div className="thin-scroll min-h-0 flex-1 overflow-auto">
-            <table className="w-full border-separate border-spacing-0 text-[12px]">
-              <thead>
-                <tr className="text-[10px] font-bold uppercase tracking-wide text-ink-muted">
-                  {columns.map((c) => (
-                    <th key={c.key} className={cx("sticky top-0 z-10 border-b border-border-subtle bg-surface-2 px-3 py-2", alignCls(c.align))}>{c.label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {shown.map((r) => (
-                  <tr key={r.id} className={cx("hover:bg-row-hover", onRowClick && "cursor-pointer")} onClick={onRowClick ? () => onRowClick(r) : undefined}>
-                    {columns.map((c) => (
-                      <td key={c.key} className={cx("border-b border-border-subtle px-3 py-2", alignCls(c.align))}>{c.render(r, show)}</td>
-                    ))}
-                  </tr>
-                ))}
-                {loading && <tr><td colSpan={columns.length} className="px-4 py-10 text-center text-[12px] text-ink-muted">Loading…</td></tr>}
-                {error && !loading && <tr><td colSpan={columns.length} className="px-4 py-10 text-center text-[12px] text-err">{error}</td></tr>}
-                {!loading && !error && shown.length === 0 && <tr><td colSpan={columns.length} className="px-4 py-10 text-center text-[12px] text-ink-muted">{emptyLabel ?? "Nothing here."}</td></tr>}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="flex items-center justify-between border-t border-border-subtle px-4 py-2 text-[11px]">
+        {(footer || footerRight) && (
+          <div className="flex items-center justify-between px-1 text-[11px]">
             <span className="text-ink-muted">{footer ? footer(show) : null}</span>
             {footerRight && <span className="text-ink-soft">{footerRight}</span>}
           </div>
-        </div>
+        )}
       </div>
     </>
   );

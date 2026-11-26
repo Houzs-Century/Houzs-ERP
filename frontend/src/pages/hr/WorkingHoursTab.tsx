@@ -94,13 +94,13 @@ export function WorkingHoursTab() {
   ];
 
   const columns: HrCol<EmpRow>[] = [
-    { key: "emp", label: "Employee", render: (r) => <Person name={r.name} sub={r.empNo} /> },
-    { key: "pos", label: "Position", render: (r) => <Tag tone="info">{r.position}</Tag> },
-    { key: "days", label: "Days", align: "right", render: (r) => r.days },
-    { key: "regular", label: "Regular", align: "right", render: (r) => <span className="font-mono">{h2(r.regular)} h</span> },
-    { key: "ot", label: "Overtime", render: (r) => (r.ot > 0 ? <span className="flex items-center gap-2"><Bar pct={(r.ot / maxOt) * 100} tone="bg-accent" w="w-16" /><span className="w-10 text-right font-mono text-[11px] text-ink-secondary">{h2(r.ot)} h</span></span> : <span className="text-ink-muted">—</span>) },
-    { key: "late", label: "Late", align: "right", render: (r) => (r.lateMin > 0 ? <span className="font-mono text-time">{r.lateMin} min</span> : <span className="text-ink-muted">—</span>) },
-    { key: "total", label: "Total", align: "right", render: (r) => <span className="font-mono font-semibold text-ink">{h2(r.total)} h</span> },
+    { key: "emp", label: "Employee", getValue: (r) => `${r.name} ${r.empNo}`, render: (r) => <Person name={r.name} sub={r.empNo} /> },
+    { key: "pos", label: "Position", getValue: (r) => r.position, render: (r) => <Tag tone="info">{r.position}</Tag> },
+    { key: "days", label: "Days", align: "right", filterType: "number", getValue: (r) => r.days, render: (r) => r.days },
+    { key: "regular", label: "Regular", align: "right", filterType: "number", getValue: (r) => r.regular, render: (r) => <span className="font-mono">{h2(r.regular)} h</span> },
+    { key: "ot", label: "Overtime", align: "right", filterType: "number", getValue: (r) => r.ot, render: (r) => (r.ot > 0 ? <span className="flex items-center gap-2"><Bar pct={(r.ot / maxOt) * 100} tone="bg-accent" w="w-16" /><span className="w-10 text-right font-mono text-[11px] text-ink-secondary">{h2(r.ot)} h</span></span> : <span className="text-ink-muted">—</span>) },
+    { key: "late", label: "Late", align: "right", filterType: "number", getValue: (r) => r.lateMin, render: (r) => (r.lateMin > 0 ? <span className="font-mono text-time">{r.lateMin} min</span> : <span className="text-ink-muted">—</span>) },
+    { key: "total", label: "Total", align: "right", filterType: "number", getValue: (r) => r.total, render: (r) => <span className="font-mono font-semibold text-ink">{h2(r.total)} h</span> },
   ];
 
   return (

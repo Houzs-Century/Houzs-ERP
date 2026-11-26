@@ -42,6 +42,7 @@ import { companyHeader } from '../../../lib/activeCompany';
 import { idempotentInit } from '../../../lib/idempotency';
 import { serviceNotify } from './dialog-service';
 import { askVpBrand, type VpBrandAsk } from './vp-brand-prompt';
+import { invalidateCancelRequestViews } from './document-cancel-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { prepareImageForUpload } from '../../../lib/imagePipeline';
 import { resolveLoadedSoVersion, runSoVersionedMutation } from './so-versioned-mutation';
@@ -525,11 +526,14 @@ export const useUpdateMfgSalesOrderStatus = () => {
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-detail', vars.docNo] });
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-status-changes', vars.docNo] });
       qc.invalidateQueries({ queryKey: ['mfg-sales-order-audit-log', vars.docNo] });
+      /* A cancel closes the order's cancellation request on the server; without
+         this the order page kept offering "Cancel now" on a cancelled order. */
+      if (vars.status.trim().toUpperCase() === 'CANCELLED') invalidateCancelRequestViews(qc, 'so', vars.docNo);
     },
   });
 };
 
-/* EDIT-LOCK OVERRIDE on a locked SO. The page used to fire the status hook
+/*EDIT-LOCK OVERRIDE on a locked SO. The page used to fire the status hook
    with the SO's own status and unlock on the spot, whatever came back — and
    the reason typed into the prompt was never sent, so a refused or failed
    override still unlocked editing and the timeline the banner points at had

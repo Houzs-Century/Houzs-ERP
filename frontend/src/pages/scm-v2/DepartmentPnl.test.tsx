@@ -1,27 +1,26 @@
 /* The Department P&L tab (owner 2026-11-19: an Operation report = his "Operation
    PNL - Auto" sheet, a G&A report, and 「我要可以看全部的，也要可以看单独部门的」;
-   2026-11-25: each department by its own method, the Exhibition on its orders).
+   2026-11-25: Actual or Performance, the selling department paying the others).
    The replies are made up in the handlers' own shapes over a two-month world
    (DepartmentPnl.fixture.json; the server half is backend/tests/departmentPnl.test.ts).
    Pinned:
-     • the company's own departments (Houzs: Exhibition, Operation, Logistics, G&A),
-       each with a view of its own — Logistics the Logistics P&L;
+     • the company's own departments (Houzs: Exhibition, Operation, Logistics and its
+       branch Setup & dismantle, G&A), each with a view of its own; the basis the
+       P&L picker names (dbasis) goes with every read;
      • All: each department's own P&L side by side, where each comes from under its
-       name, the total the departments added up; a figure says where it comes from
-       and opens its department;
+       name, what the Exhibition pays the others, the total the departments added up;
+       a figure says where it comes from and opens its department;
      • Exhibition: its sales orders' sales and cost by product group, less what it
-       booked and the commission bills; the orders' figures open nothing;
-     • Logistics: the Logistics cost report's own P&L view;
-     • G&A: the share of the Performance sales, the HQ teams under Salary & related,
-       the surplus; its rate saved;
-     • Operation: the owner's sheet by region with a % of DO beside; the rows in his
-       words; the warehouse insurance spread, its months saved;
+       booked, the commission bills and what it pays the others, each charge opening
+       its months at the rate; the orders' figures open nothing; merchandise's rate;
+     • Operation, Logistics, Setup & dismantle: what each is paid less its real cost;
+       Operation's rows open the sheet's lines, Setup & dismantle's accounts theirs;
+       Operation's sheet by DO and region beside, its spread saved;
+     • G&A: the share of the sales excluding service, the HQ teams under Salary &
+       related, the surplus; its rate saved;
      • the department switch lives in the URL;
-     • a figure opens the lines behind it (owner 2026-11-20: 「我希望这里点开也能看」):
-       the Operation sheet's from the report (the fixture's `lines`, derived from its
-       own rows and lists so that each row is its lines added up), totalled to the
-       figure; Exhibition and G&A read theirs for the figure's column (the
-       Exhibition's commission its bills); the results that add up rows open nothing. */
+     • a figure opens the lines behind it (owner 2026-11-20: 「我希望这里点开也能看」),
+       totalled to the figure; the results that add up rows open nothing. */
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -36,7 +35,8 @@ vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
   authedFetch: (path: string, init?: RequestInit) => fetchMock(path, init),
 }));
 
-import { DepartmentPnlTab } from './DepartmentPnl';
+import { DepartmentPnlTab, departmentChoices } from './DepartmentPnl';
+import type { DepartmentPlan } from '../../vendor/scm/lib/department-queries';
 
 /* What a figure of All, Exhibition or G&A reads when opened: made-up lines. */
 const LINES = {
@@ -60,7 +60,9 @@ fetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
   if (path.startsWith('/acc-events/departments/lines?') && path.includes('keys=900-C003')) return BILL_LINES;
   if (path.startsWith('/acc-events/departments/lines?')) return LINES;
   if (path.startsWith('/acc-events/departments/dept?d=exhibition&')) return fixture.exhibition;
-  if (path.startsWith('/acc-events/logistics/pnl?')) return fixture.logistics;
+  if (path.startsWith('/acc-events/departments/unit?u=operation&')) return fixture.unitOperation;
+  if (path.startsWith('/acc-events/departments/unit?u=logistics&')) return fixture.unitLogistics;
+  if (path.startsWith('/acc-events/departments/unit?u=setupDismantle&')) return fixture.unitSetupDismantle;
   const view = /\/acc-events\/departments\/(all|ga|operation)\?/.exec(path)?.[1] as 'all' | 'ga' | 'operation' | undefined;
   if (!view) throw new Error(`unexpected ${path}`);
   return (fixture as Record<string, unknown>)[view];
@@ -78,21 +80,21 @@ const rowText = (table: HTMLElement, label: string) => within(table).getAllByTex
 const rowOf = (table: HTMLElement, label: string) => within(table).getAllByText(label)[0]!.closest('tr')!;
 
 describe('All departments', () => {
-  test("each department's own P&L side by side, where each comes from under its name, the total the departments added up", async () => {
+  test("each department's own P&L side by side, where each comes from under its name, what the Exhibition pays, the total the departments added up", async () => {
     draw();
     const table = await screen.findByRole('table', { name: 'Department P&L, all departments' });
-    for (const h of ['Exhibition', 'Operation', 'Logistics', 'G&A', 'Total']) expect(within(table).getAllByText(h).length).toBeGreaterThan(0);
-    for (const sub of ['sales orders by SO date', 'Operation sheet, to Net Profit', 'Logistics P&L', '8% of Performance sales', 'departments added up']) {
+    for (const h of ['Exhibition', 'Operation', 'Logistics', 'Setup & dismantle', 'G&A', 'Total']) expect(within(table).getAllByText(h).length).toBeGreaterThan(0);
+    for (const sub of ['sales orders by SO date', '7% of sales, 3% on to Logistics', '3% from Operation', '1% of sales', '8% of sales', 'departments added up']) {
       expect(within(table).getAllByText(sub).length).toBeGreaterThan(0);
     }
-    /* Income: the Exhibition's orders, Operation's DO income and charges, Logistics' P&L, G&A's share. */
-    expect(rowText(table, 'Income')).toBe('Income4,300,000.00331,500.00151,000.00344,000.005,126,500.00');
-    expect(rowText(table, 'Cost of sales')).toBe('Cost of sales1,790,000.00132,000.00--1,922,000.00');
-    expect(rowText(table, 'PROFIT / (LOSS)')).toBe('PROFIT / (LOSS)676,000.00868.1011,000.0090,885.84778,753.94');
+    expect(rowText(table, 'Income')).toBe('Income4,300,000.00317,500.00141,000.0042,000.00336,000.005,136,500.00');
+    expect(rowText(table, 'Paid to other departments')).toBe('Paid to other departments672,000.00126,000.00---798,000.00');
+    expect(rowText(table, 'PROFIT / (LOSS)')).toBe('PROFIT / (LOSS)4,000.00(7,131.90)6,000.009,000.0082,885.8494,753.94');
     expect(within(table).queryByText('Other income')).toBeNull();
     expect(screen.getByText('Exhibition profit')).toBeTruthy();
     expect(screen.getByText('Departments added up')).toBeTruthy();
     expect(screen.getByText(/No department yet: 900-U014/)).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith('/acc-events/departments/all?dbasis=performance&from=2026-09-01&to=2026-10-31'))).toBe(true);
   });
 
   test("a figure says where it comes from and opens its department's own P&L", async () => {
@@ -101,27 +103,34 @@ describe('All departments', () => {
     fireEvent.click(within(rowOf(table, 'Income')).getByRole('button', { name: '4,300,000.00' }));
     const where = await screen.findByRole('region', { name: 'Exhibition · Income' });
     expect(within(where).getByText(/The sales orders dated in these months/)).toBeTruthy();
-    /* One figure open at a time: Operation's profit says it stops before the Logistics result. */
-    fireEvent.click(within(rowOf(table, 'PROFIT / (LOSS)')).getByRole('button', { name: '868.10' }));
+    fireEvent.click(within(rowOf(table, 'Paid to other departments')).getByRole('button', { name: '672,000.00' }));
+    const pays = await screen.findByRole('region', { name: 'Exhibition · Paid to other departments' });
+    expect(within(pays).getByText('G&A 8%, Operation 7%, Setup & dismantle 1% of its sales excluding service.')).toBeTruthy();
+    fireEvent.click(within(rowOf(table, 'PROFIT / (LOSS)')).getByRole('button', { name: '(7,131.90)' }));
     const op = await screen.findByRole('region', { name: 'Operation · PROFIT / (LOSS)' });
-    expect(within(op).getByText(/before Profit From Logistics/)).toBeTruthy();
     fireEvent.click(within(op).getByRole('button', { name: 'Open the Operation P&L' }));
     expect(await screen.findByRole('table', { name: 'Department P&L, Operation' })).toBeTruthy();
   });
 
-  test("the switch offers every department of the company — Logistics its own P&L — and lives in the URL", async () => {
+  test('Actual: the basis the picker names goes with the read', async () => {
+    draw('&dbasis=actual');
+    await screen.findByRole('table', { name: 'Department P&L, all departments' });
+    expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith('/acc-events/departments/all?dbasis=actual&from=2026-09-01'))).toBe(true);
+  });
+
+  test('the switch offers every department of the company, Setup & dismantle after Logistics, and lives in the URL', async () => {
     draw();
     await screen.findByRole('table', { name: 'Department P&L, all departments' });
     const group = screen.getByRole('group', { name: 'Department' });
-    await waitFor(() => expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['All departments', 'Exhibition', 'Operation', 'Logistics', 'G&A']));
+    await waitFor(() => expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['All departments', 'Exhibition', 'Operation', 'Logistics', 'Setup & dismantle', 'G&A']));
     fireEvent.click(within(group).getByRole('button', { name: 'Operation' }));
     expect(await screen.findByRole('table', { name: 'Department P&L, Operation' })).toBeTruthy();
-    expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith('/acc-events/departments/operation?from=2026-09-01&to=2026-10-31'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith('/acc-events/departments/unit?u=operation&dbasis=performance&from=2026-09-01&to=2026-10-31'))).toBe(true);
   });
 });
 
 describe('Exhibition', () => {
-  test("the Exhibition P&L on its orders: the product groups' sales and cost, less what Exhibition booked and its commission bills", async () => {
+  test("the Exhibition P&L on its orders: the product groups' sales and cost, less what it booked, its commission bills and what it pays the others", async () => {
     draw('&dv=exhibition');
     const table = await screen.findByRole('table', { name: 'Department P&L, Exhibition' });
     expect(within(table).getByText('SALES (SALES ORDERS BY SO DATE)')).toBeTruthy();
@@ -130,34 +139,96 @@ describe('Exhibition', () => {
     expect(rowText(table, 'Total cost of sales')).toContain('1,790,000.00');
     expect(rowText(table, 'GROSS PROFIT')).toContain('2,510,000.00');
     expect(within(table).getByText('900-C003 COMMISSION ( EVENT ) — the commission bills for Sep 2026, Oct 2026, in place of the monthly release')).toBeTruthy();
-    expect(rowText(table, 'EXHIBITION PROFIT / (LOSS)')).toContain('676,000.00');
+    expect(rowText(table, 'G&A — 8% of sales excluding service')).toContain('336,000.00');
+    expect(rowText(table, 'Total paid to other departments')).toContain('672,000.00');
+    expect(rowText(table, 'EXHIBITION PROFIT / (LOSS)')).toContain('4,000.00');
     expect(screen.getByText('40 orders by SO date')).toBeTruthy();
     /* The orders' figures are the Performance P&L's: no ledger line behind them. */
     expect(within(rowOf(table, 'Bedframe')).queryAllByRole('button')).toHaveLength(0);
     expect(within(rowOf(table, 'Total sales')).queryAllByRole('button')).toHaveLength(0);
   });
+
+  test("a charge opens its months at the rate; merchandise's rate is Finance's to set", async () => {
+    draw('&dv=exhibition');
+    const table = await screen.findByRole('table', { name: 'Department P&L, Exhibition' });
+    fireEvent.click(within(rowOf(table, 'G&A — 8% of sales excluding service')).getByRole('button', { name: '336,000.00' }));
+    const panel = await screen.findByRole('region', { name: 'Lines of G&A — 8% of sales excluding service' });
+    expect(within(panel).getByText("8% of the month's sales excluding service, 1,950,000.00")).toBeTruthy();
+    expect(within(panel).getByText("8% of the month's sales excluding service, 2,250,000.00")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Merchandise percent'), { target: { value: '2.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(putOf('/acc-events/departments/rate')).toContainEqual({ dept: 'merchandise', pct: 2.5 }));
+  });
 });
 
-describe('Logistics', () => {
-  test('the Logistics P&L, the Logistics cost report\'s own', async () => {
+describe('Operation, Logistics, Setup & dismantle', () => {
+  test('Operation: its 7% and what it billed, less the 3% to Logistics and the warehouse; a row opens its lines', async () => {
+    draw('&dv=operation');
+    const table = await screen.findByRole('table', { name: 'Department P&L, Operation' });
+    expect(rowText(table, 'Sales excluding service (sales orders by SO date)')).toContain('4,200,000.00');
+    expect(rowText(table, 'From the selling department (7% of sales excluding service)')).toContain('294,000.00');
+    expect(rowText(table, 'Logistics — 3% of sales excluding service')).toContain('126,000.00');
+    expect(rowText(table, 'Total paid to other departments')).toContain('126,000.00');
+    expect(rowText(table, 'Rental Warehouse')).toContain('96,600.00');
+    expect(rowText(table, 'OPERATION PROFIT / (LOSS)')).toContain('(7,131.90)');
+    fireEvent.click(within(rowOf(table, 'Rental Warehouse')).getByRole('button', { name: '96,600.00' }));
+    const rental = await screen.findByRole('region', { name: 'Lines of Rental Warehouse' });
+    expect(within(rental).getByText('96,600.00')).toBeTruthy();
+    fireEvent.click(within(rowOf(table, 'Logistics — 3% of sales excluding service')).getAllByRole('button', { name: '126,000.00' })[0]!);
+    const toLg = await screen.findByRole('region', { name: 'Lines of Logistics — 3% of sales excluding service' });
+    expect(within(toLg).getByText("3% of the month's sales excluding service, 1,950,000.00")).toBeTruthy();
+  });
+
+  test('Logistics: the 3% from Operation, the recharges and the trips, less the delivery cost', async () => {
     draw('&dv=logistics');
-    const table = await screen.findByRole('table', { name: 'Logistics P&L' });
-    expect(rowText(table, 'NET PROFIT')).toContain('11,000.00');
-    expect(fetchMock.mock.calls.some(([p]) => String(p).startsWith('/acc-events/logistics/pnl?from=2026-09-01&to=2026-10-31'))).toBe(true);
+    const table = await screen.findByRole('table', { name: 'Department P&L, Logistics' });
+    expect(rowText(table, 'From Operation (3% of sales excluding service)')).toContain('126,000.00');
+    expect(rowText(table, 'Outsource (3PL)')).toContain('85,000.00');
+    expect(rowText(table, 'LOGISTICS PROFIT / (LOSS)')).toContain('6,000.00');
+    /* A cost row is the Logistics cost report's: it opens nothing here. */
+    expect(within(rowOf(table, 'Outsource (3PL)')).queryAllByRole('button')).toHaveLength(0);
+  });
+
+  test('Setup & dismantle: its 1%, less the fair transport as booked and the in-house trips; an account opens its lines', async () => {
+    draw('&dv=setupDismantle');
+    const table = await screen.findByRole('table', { name: 'Department P&L, Setup & dismantle' });
+    expect(rowText(table, 'From the selling department (1% of sales excluding service)')).toContain('42,000.00');
+    expect(rowText(table, 'SETUP & DISMANTLE PROFIT / (LOSS)')).toContain('9,000.00');
+    fireEvent.click(within(rowOf(table, '900-T031 · TRANSPORT FAIR (KL, SLG, MLK, JHR, OTHERS)')).getByRole('button', { name: '28,000.00' }));
+    await screen.findByRole('region', { name: 'Lines of 900-T031 · TRANSPORT FAIR (KL, SLG, MLK, JHR, OTHERS)' });
+    expect(linesAsked().at(-1)).toEqual({ view: 'sd', dbasis: 'performance', from: '2026-09-01', to: '2026-10-31', keys: '900-T031' });
+  });
+
+  test('the Show switch keeps its place in the URL from one department to another', async () => {
+    draw('&dv=operation&dm=months');
+    await screen.findByRole('table', { name: 'Department P&L, Operation' });
+    fireEvent.click(within(screen.getByRole('group', { name: 'Department' })).getByRole('button', { name: 'Logistics' }));
+    await screen.findByRole('table', { name: 'Department P&L, Logistics' });
+    expect(within(screen.getByRole('group', { name: 'Whole range or by month' })).getByRole('button', { name: 'By month' }).getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+describe('departmentChoices', () => {
+  test("All, the company's own departments, Setup & dismantle after Logistics; nothing but All before the plan", () => {
+    expect(departmentChoices(undefined).map((c) => c.value)).toEqual(['all']);
+    expect(departmentChoices(fixture.plan as DepartmentPlan).map((c) => `${c.value}:${c.kind}`))
+      .toEqual(['all:all', 'exhibition:dept', 'operation:operation', 'logistics:logistics', 'setupDismantle:setupDismantle', 'ga:ga']);
+    expect(departmentChoices({ departments: [{ key: 'showroom', label: 'Showroom', view: 'dept' }, { key: 'ga', label: 'G&A', view: 'ga' }], selling: 'showroom', branches: [] })
+      .map((c) => `${c.value}:${c.kind}`)).toEqual(['all:all', 'showroom:dept', 'ga:ga']);
   });
 });
 
 describe('G&A', () => {
-  test('its share of the Performance sales against what it booked; the HQ teams; the surplus; the rate saved', async () => {
+  test('its share of the sales excluding service against what it booked; the HQ teams; the surplus; the rate saved', async () => {
     draw('&dv=ga');
     const table = await screen.findByRole('table', { name: 'Department P&L, G&A' });
-    expect(rowText(table, 'Performance sales')).toContain('4,300,000.00');
-    expect(rowText(table, 'G&A share (8% of Performance sales)')).toContain('344,000.00');
+    expect(rowText(table, 'Sales excluding service (sales orders by SO date)')).toContain('4,200,000.00');
+    expect(rowText(table, 'G&A share (8% of sales excluding service)')).toContain('336,000.00');
     expect(within(table).getByText('Finance team · salary, EPF, SOCSO, EIS, allowance')).toBeTruthy();
-    expect(rowText(table, 'SURPLUS / (DEFICIT)')).toContain('90,885.84');
+    expect(rowText(table, 'SURPLUS / (DEFICIT)')).toContain('82,885.84');
     fireEvent.change(screen.getByLabelText('G&A share percent'), { target: { value: '10' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(putOf('/acc-events/departments/rate')).toEqual([{ dept: 'ga', pct: 10 }]));
+    await waitFor(() => expect(putOf('/acc-events/departments/rate')).toContainEqual({ dept: 'ga', pct: 10 }));
   });
 
   test('by month: a Total, then one column per month', async () => {
@@ -169,10 +240,10 @@ describe('G&A', () => {
   });
 });
 
-describe('Operation', () => {
+describe("Operation's sheet by DO and region", () => {
   test("the owner's sheet by region, a % of DO beside; the fairs said when unread; the insurance spread saved", async () => {
-    draw('&dv=operation');
-    const table = await screen.findByRole('table', { name: 'Department P&L, Operation' });
+    draw('&dv=operation&dop=sheet');
+    const table = await screen.findByRole('table', { name: 'Operation sheet, by DO and region' });
     for (const h of ['Penang', 'KL', 'SBH & SWK', 'Total']) expect(within(table).getAllByText(h).length).toBeGreaterThan(0);
     expect(rowText(table, '7% Income from Delivery Order')).toContain('59,500.007.0%');
     expect(rowText(table, 'Income:- 2990 income')).toContain('18,000.00');
@@ -190,12 +261,12 @@ describe('Operation', () => {
   });
 });
 
-describe('A figure opens the lines behind it', () => {
-  const linesAsked = () => fetchMock.mock.calls.map(([p]) => String(p)).filter((p) => p.startsWith('/acc-events/departments/lines?')).map((p) => Object.fromEntries(new URLSearchParams(p.split('?')[1])));
+const linesAsked = () => fetchMock.mock.calls.map(([p]) => String(p)).filter((p) => p.startsWith('/acc-events/departments/lines?')).map((p) => Object.fromEntries(new URLSearchParams(p.split('?')[1])));
 
-  test("Operation: a row's figure opens its lines in that column, totalled to the figure; the results open nothing", async () => {
-    draw('&dv=operation');
-    const table = await screen.findByRole('table', { name: 'Department P&L, Operation' });
+describe('A figure opens the lines behind it', () => {
+  test("the sheet: a row's figure opens its lines in that column, totalled to the figure; the results open nothing", async () => {
+    draw('&dv=operation&dop=sheet');
+    const table = await screen.findByRole('table', { name: 'Operation sheet, by DO and region' });
     /* Rental Warehouse in KL over Sep and Oct: two ledger lines of 27,500.00. */
     fireEvent.click(within(rowOf(table, 'Rental Warehouse')).getByRole('button', { name: '55,000.00' }));
     const rental = await screen.findByRole('region', { name: 'Lines of Rental Warehouse' });
@@ -210,19 +281,17 @@ describe('A figure opens the lines behind it', () => {
     const pay = await screen.findByRole('region', { name: 'Lines of Warehouse Manpower - Logistic' });
     expect(within(pay).getAllByText('DO-value share of the line 10,000.00')).toHaveLength(2);
     expect(within(pay).getByText('14,534.17')).toBeTruthy();
-    /* What only adds up the rows above opens nothing. */
     for (const label of ['Gross Profit / (Loss)', 'Net Profit / (Loss)', 'Net Profit / (Loss) After Logistics & Setup/Dismantle']) {
       expect(within(rowOf(table, label)).queryAllByRole('button')).toHaveLength(0);
     }
-    /* The 7% income opens how it was worked out. */
     fireEvent.click(within(rowOf(table, '7% Income from Delivery Order')).getAllByRole('button')[0]!);
     const income = await screen.findByRole('region', { name: 'Lines of 7% Income from Delivery Order' });
     expect(within(income).getByText('7% of the DO value 450,000.00')).toBeTruthy();
   });
 
-  test("Operation: Total Warehouse Expenses opens every warehouse line, each with its row", async () => {
-    draw('&dv=operation');
-    const table = await screen.findByRole('table', { name: 'Department P&L, Operation' });
+  test('the sheet: Total Warehouse Expenses opens every warehouse line, each with its row', async () => {
+    draw('&dv=operation&dop=sheet');
+    const table = await screen.findByRole('table', { name: 'Operation sheet, by DO and region' });
     fireEvent.click(within(rowOf(table, 'Total Warehouse Expenses')).getByRole('button', { name: '198,631.90' }));
     const all = await screen.findByRole('region', { name: 'Lines of Total Warehouse Expenses' });
     expect(within(all).getByRole('columnheader', { name: /Row/ })).toBeTruthy();
@@ -237,24 +306,24 @@ describe('A figure opens the lines behind it', () => {
     const panel = await screen.findByRole('region', { name: 'Lines of Finance team · salary, EPF, SOCSO, EIS, allowance' });
     expect(await within(panel).findByText('FINANCE - SALARY - OCT2026')).toBeTruthy();
     expect(within(panel).getByText('16,400.00')).toBeTruthy();
-    expect(linesAsked().at(-1)).toEqual({ view: 'ga', from: '2026-09-01', to: '2026-10-31', keys: 'team:FINANCE' });
-    for (const label of ['Performance sales', 'G&A share (8% of Performance sales)', 'SURPLUS / (DEFICIT)']) {
+    expect(linesAsked().at(-1)).toEqual({ view: 'ga', dbasis: 'performance', from: '2026-09-01', to: '2026-10-31', keys: 'team:FINANCE' });
+    for (const label of ['Sales excluding service (sales orders by SO date)', 'G&A share (8% of sales excluding service)', 'SURPLUS / (DEFICIT)']) {
       expect(within(rowOf(table, label)).queryAllByRole('button')).toHaveLength(0);
     }
   });
 
-  test('Exhibition: a figure reads the department\'s lines', async () => {
+  test("Exhibition: a figure reads the department's lines on the page's basis", async () => {
     draw('&dv=exhibition');
     const table = await screen.findByRole('table', { name: 'Department P&L, Exhibition' });
     fireEvent.click(within(rowOf(table, '900-R032 · RENTAL - EXHIBITION')).getByRole('button', { name: '990,000.00' }));
     await screen.findByRole('region', { name: 'Lines of 900-R032 · RENTAL - EXHIBITION' });
-    expect(linesAsked().at(-1)).toEqual({ view: 'dept', from: '2026-09-01', to: '2026-10-31', block: 'expenses', d: 'exhibition', keys: '900-R032' });
+    expect(linesAsked().at(-1)).toEqual({ view: 'dept', dbasis: 'performance', from: '2026-09-01', to: '2026-10-31', block: 'expenses', d: 'exhibition', keys: '900-R032' });
     /* The commission opens its bill, said as such. */
     const label = '900-C003 COMMISSION ( EVENT ) — the commission bills for Sep 2026, Oct 2026, in place of the monthly release';
     fireEvent.click(within(rowOf(table, label)).getByRole('button', { name: '602,000.00' }));
     const bill = await screen.findByRole('region', { name: `Lines of ${label}` });
     expect(await within(bill).findByText('The commission bill for Oct 2026, in place of the monthly release')).toBeTruthy();
     expect(within(bill).getByText('The commission bill for Sep 2026, in place of the monthly release')).toBeTruthy();
-    expect(linesAsked().at(-1)).toEqual({ view: 'dept', from: '2026-09-01', to: '2026-10-31', block: 'expenses', d: 'exhibition', keys: '900-C003' });
+    expect(linesAsked().at(-1)).toEqual({ view: 'dept', dbasis: 'performance', from: '2026-09-01', to: '2026-10-31', block: 'expenses', d: 'exhibition', keys: '900-C003' });
   });
 });

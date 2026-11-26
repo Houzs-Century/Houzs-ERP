@@ -96,21 +96,6 @@
 const HOUZS = 'HOUZS';
 
 /**
- * Every category value the system can produce, with the source it was read
- * from. The test enumerates THIS — a hand-written list is exactly how a
- * category gets forgotten, and four of these nine were added after the rule
- * this module replaces was written.
- */
-export const CATEGORY_SOURCES = {
-  /** public/scm.mfg_product_category enum members (schema + migrations 0258-0265). */
-  productEnum: ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE',
-                'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET', 'FABRIC_ACCESSORY'] as const,
-  /** normCategory (backend/src/scm/lib/so-readiness.ts:66) output buckets — what
-   *  the SO list, Delivery Planning and the reports actually hand us. */
-  normBuckets: ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS'] as const,
-} as const;
-
-/**
  * Category text -> the noun we are willing to print for it.
  *
  * SUBSTRING matching, in this order, because the input is not always
@@ -135,6 +120,21 @@ const CATEGORY_NOUNS: ReadonlyArray<readonly [needle: string, noun: string]> = [
   ['DINING', 'Dining'],
   ['CARPET', 'Carpet'],
 ];
+
+/**
+ * Every category word the system can produce, with the source it was read
+ * from. The test enumerates THIS. The product categories themselves live in
+ * the database (scm.acc_item_groups); what this pure rule knows is the noun it
+ * prints for each, so the nouns are the list: a category with no noun still
+ * prints in Title Case.
+ */
+export const CATEGORY_SOURCES = {
+  /** The noun table above, upper-cased (BEDFRAME, SOFA, ..., CARPET). */
+  categoryNouns: CATEGORY_NOUNS.map(([, noun]) => noun.toUpperCase()),
+  /** normCategory (backend/src/scm/lib/so-readiness.ts:66) output buckets — what
+   *  the SO list, Delivery Planning and the reports actually hand us. */
+  normBuckets: ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS'] as const,
+} as const;
 
 /** The bucket the branded rules below switch on. Anything unrecognised is
  *  OTHER — which is a routing decision, NOT a licence to print nothing. */

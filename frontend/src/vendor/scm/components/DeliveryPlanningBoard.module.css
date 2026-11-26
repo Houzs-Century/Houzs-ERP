@@ -184,6 +184,12 @@
   border: 1px solid var(--hz-c-primary);
   border-radius: var(--radius-md);
 }
+/* Desktop: draw over the sidebar (z-50, later in the DOM than the sidebar, so
+   equal z wins; drawers at z-90 still cover it). Mobile keeps z-40 so the
+   sidebar drawer opens over the bar. */
+@media (min-width: 1024px) {
+  .bulkBar { z-index: 50; }
+}
 .bulkCount { font-weight: 600; color: var(--hz-c-primary-ink); white-space: nowrap; }
 .bulkSep { color: var(--hz-c-ink-muted); }
 .bulkLabel { font-size: var(--fs-12); color: var(--hz-c-ink-muted); }
