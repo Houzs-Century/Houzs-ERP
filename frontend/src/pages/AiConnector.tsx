@@ -18,6 +18,7 @@ type Person = { userId: number; name: string; position: string };
 type Overview = {
   connectorUrl: string;
   actionsEnabled: boolean;
+  limits?: { perMinute: number; perDay: number };
   stats: { connectedPeople: number; callsToday: number; refusedToday: number; waiting: number };
   requests: (Person & { id: string; reason: string; createdAt: string | null })[];
   connected: (Person & { tokenId: string; app: string; connectedAt: string | null; lastUsedAt: string | null })[];
@@ -373,6 +374,14 @@ function AdminView({ ov, reload }: { ov: Overview; reload: () => void }) {
       >
         <Empty>{ov.actionsEnabled ? "On: connected AIs may propose meetings and emails; nothing happens until the person confirms." : "Off: connected AIs can only read."}</Empty>
       </Section>
+
+      {ov.limits && (
+        <Section title="Limits" sub="Fixed for every person; the admin leak check is not counted.">
+          <Empty>
+            Each person may make up to {ov.limits.perMinute} AI lookups a minute and {ov.limits.perDay} a day. Over the limit the AI is told to wait a minute (or that the daily limit is reached); nothing breaks.
+          </Empty>
+        </Section>
+      )}
 
       <LeakCheck people={ov.allowed} />
 

@@ -365,6 +365,12 @@ export const PROMPTS = [
     description: "Find a sales order, delivery order, invoice, PO, customer or service case by number or name and summarise it.",
     arguments: [{ name: "number", description: "Document number, customer or supplier name", required: true }],
   },
+  {
+    name: "daily-brief",
+    title: "What do I need to look at today?",
+    description: "Your own to-do from the ERP: approvals and mail waiting for you, orders due or overdue, your open service cases, leave to approve, unacknowledged announcements.",
+    arguments: [],
+  },
 ];
 
 /** The message a prompt expands to (prompts/get). Unknown name → null. */
@@ -379,6 +385,9 @@ export function promptText(name: string, a: Record<string, unknown>): string | n
   }
   if (name === "find_document") {
     return `Find "${v("number")}" with search, open the best match with fetch, and summarise it: status, customer or supplier, items, amounts and dates. Give the ERP link.`;
+  }
+  if (name === "daily-brief") {
+    return "What do I need to look at today? Use daily_brief. Start with anything overdue, then what is due in the next 3 days, then approvals and mail waiting for me. Give each item's link. Keep it short, in plain language.";
   }
   return null;
 }
