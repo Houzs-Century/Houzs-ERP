@@ -10,7 +10,7 @@ describe('itrackSignature', () => {
 
 const rec = {
   imei: '358899123456789', course: 195, gpstime: 1419906052, speed: 40,
-  longitude: 101.886634, latitude: 2.703637, accstatus: 1, datastatus: 2,
+  longitude: 101.886634, latitude: 2.703637, accstatus: 1, datastatus: 2, mileage: 51654,
 };
 
 describe('devicePlate', () => {
@@ -30,9 +30,15 @@ describe('parseTrack', () => {
         deviceId: 'itrack:358899123456789', plate: 'VRH9058', lat: 2.703637, lng: 101.886634,
         speedKmh: 40, heading: 195, ignition: true, street: null,
         recordedAt: new Date(1419906052 * 1000).toISOString(),
+        odometerM: 51654,
       }],
       noPlate: [],
     });
+  });
+
+  it('keeps the odometer in metres; -1 (no mileage, iTrack doc 2.2) or missing is null', () => {
+    expect(parseTrack({ record: [{ ...rec, mileage: -1 }] }, plates).fixes[0].odometerM).toBeNull();
+    expect(parseTrack({ record: [{ ...rec, mileage: undefined }] }, plates).fixes[0].odometerM).toBeNull();
   });
 
   it('maps ACC off to ignition false and "no ACC status" to null', () => {

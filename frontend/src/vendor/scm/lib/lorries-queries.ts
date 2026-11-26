@@ -1,6 +1,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch, API_URL, humanApiError } from './authed-fetch';
+import { todayMY } from '../../shared/format';
 import { readAuthToken } from '../../../lib/authToken';
 import { companyHeader } from '../../../lib/activeCompany';
 import { prepareImageForUpload } from '../../../lib/imagePipeline';
@@ -310,9 +311,10 @@ export function useLorryKmCost() {
   });
 }
 
-export function useLorryPositions() {
+export function useLorryPositions(enabled: boolean) {
   return useQuery({
     queryKey: ['lorries', 'positions', 'latest'],
+    enabled,
     queryFn: () => authedFetch<{ positions: LorryPosition[] }>('/lorries/positions/latest').then((r) => r.positions),
     refetchInterval: 60_000,
   });
@@ -322,6 +324,8 @@ export type LorryTrack = {
   date: string;
   km: number;
   fixes: Array<{ lat: number; lng: number; recorded_at: string; speed_kmh: number | null; street: string | null }>;
+  drops: Array<{ kind: 'do' | 'job'; ref: string; label: string; lat: number | null; lng: number | null; at: string; stopId: string | null }>;
+  dropsError: string | null;
 };
 
 export function useLorryTrack(lorryId: string, date: string) {
@@ -329,6 +333,16 @@ export function useLorryTrack(lorryId: string, date: string) {
     queryKey: ['lorries', 'track', lorryId, date],
     queryFn: () => authedFetch<LorryTrack>(`/lorries/${encodeURIComponent(lorryId)}/track?date=${date}`),
     enabled: !!lorryId,
-    refetchInterval: 5 * 60_000,
+    refetchInterval: date === todayMY() ? 5 * 60_000 : (false as const),
+  });
+}
+
+/** Km per lorry per Malaysia day (GET /lorries/km-daily); null = no fixes that day. odoKm: by the iTrack odometer, null = no readings. */
+export type LorryKmDaily = { days: string[]; lorries: Array<{ id: string; plate: string; km: Array<number | null>; odoKm: Array<number | null> }> };
+
+export function useLorryKmDaily(from: string, to: string) {
+  return useQuery({
+    queryKey: ['lorries', 'km-daily', from, to],
+    queryFn: () => authedFetch<LorryKmDaily>(`/lorries/km-daily?from=${from}&to=${to}`),
   });
 }
