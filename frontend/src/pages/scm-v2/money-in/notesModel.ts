@@ -58,7 +58,7 @@ export function noteItem(n: CreditNote): NoteItem {
        off nothing — a close-out names the final invoice it closed against. */
     knocks: (n.kind === 'OCN' || (n.kind === 'CN' && !n.depositPaper)) && status === 'posted'
       ? { appliedSen: Number(n.appliedSen ?? 0), leftSen: Number(n.unusedSen ?? 0) } : null,
-    closesInvoice: n.depositPaper === 'closes' && status !== 'cancelled' ? (n.sales_invoice_number ?? null) : null,
+    closesInvoice: (n.depositPaper === 'closes' || n.depositPaper === 'autocount') && status !== 'cancelled' ? (n.sales_invoice_number ?? null) : null,
     note: n,
   };
 }

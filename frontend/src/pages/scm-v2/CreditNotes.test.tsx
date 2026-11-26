@@ -528,3 +528,14 @@ describe('a note as its own page', () => {
     expect(screen.getByText('Knocked off 2990-PI-2609-004')).toBeTruthy();
   });
 });
+
+describe('why a deposit note knocks nothing off', () => {
+  test('an AutoCount deposit note says it brings the AutoCount deposit onto the customer, at its invoice', async () => {
+    const { depositPaperLine } = await import('./CreditNoteKnockOff');
+    expect(depositPaperLine({ kind: 'autocount', di: null }, { id: 'si-8', number: 'HC-SI-2611-008', date: '2026-11-02', totalSen: 200_000 }))
+      .toBe("It brings the deposit paid in AutoCount onto the customer at invoice HC-SI-2611-008 — the order's deposit already lowers that invoice, so it knocks nothing off.");
+    expect(depositPaperLine({ kind: 'autocount', di: null }, null))
+      .toBe("It brings the deposit paid in AutoCount onto the customer — the order's deposit already lowers that invoice, so it knocks nothing off.");
+    expect(depositPaperLine(null, null)).toBeNull();
+  });
+});
