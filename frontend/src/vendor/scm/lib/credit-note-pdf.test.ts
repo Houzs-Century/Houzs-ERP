@@ -150,6 +150,8 @@ describe('KNOCKED OFF AGAINST', () => {
     expect(knockedOffOf({ note: { ...n, status: 'DRAFT' }, allocations: [al(10_000, 0)] })?.rows[0]?.knockedSen).toBe(10_000);
     expect(knockedOffOf({ note: n, allocations: [], depositPaper: { kind: 'closes', di: 'HC-DI-2611-001' }, closedInvoice: { id: 'si-7', number: 'HC-SI-2611-007', date: '2026-11-01', totalSen: 400_000 } }))
       .toEqual({ rows: [{ number: 'HC-SI-2611-007', date: '2026-11-01', totalSen: 400_000, knockedSen: 50_000 }], leftSen: 0 });
+    expect(knockedOffOf({ note: n, allocations: [], depositPaper: { kind: 'autocount', di: null }, closedInvoice: { id: 'si-8', number: 'HC-SI-2611-008', date: '2026-11-02', totalSen: 200_000 } }))
+      .toEqual({ rows: [{ number: 'HC-SI-2611-008', date: '2026-11-02', totalSen: 200_000, knockedSen: 50_000 }], leftSen: 0 });
     expect(knockedOffOf({ note: n, allocations: [], depositPaper: { kind: 'refund', di: 'HC-DI-2611-001' } })).toBeNull();
     expect(knockedOffOf({ note: { ...n, status: 'CANCELLED' }, allocations: [al(30_000, 30_000)] })).toBeNull();
     expect(knockedOffOf({ note: { ...n, kind: 'SCN' }, allocations: [] })).toBeNull();

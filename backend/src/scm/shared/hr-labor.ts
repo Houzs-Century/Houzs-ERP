@@ -57,6 +57,20 @@ export function punchShortfallHours(inMin: number, outMin: number, rules: Attend
   return round2(day.shortfallMin / 60);
 }
 
+/* The owner's deterrent (2026-11-23): a working day whose punch had no real
+ * clock-out — the system auto-closed it at the shift end — docks half a standard
+ * day. Earlier days, non-working days and days with a real clock-out are not
+ * docked by this rule. HR-credited days (a MANUAL hours or dock row, e.g. an
+ * outstation day HR signed off) are exempt; the caller, which knows the DB,
+ * passes 0 for those. */
+export const NO_CLOCKOUT_HALF_DAY_FROM = "2026-11-23";
+
+export function noClockoutDockHours(opts: { forgotten: boolean; workingDay: boolean; workDate: string; standardWorkMin: number }): number {
+  if (!opts.forgotten || !opts.workingDay) return 0;
+  if (opts.workDate < NO_CLOCKOUT_HALF_DAY_FROM) return 0;
+  return round2(opts.standardWorkMin / 2 / 60);
+}
+
 /** Lateness minutes a day's punch earns: past the grace, counted in full from
  *  shift start. Reuses computeAttendanceDay so the grace rule lives in one place;
  *  lateness does not depend on the clock-out, so an open day still reads late. */

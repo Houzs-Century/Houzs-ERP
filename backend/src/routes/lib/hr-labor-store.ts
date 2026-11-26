@@ -10,7 +10,7 @@ import type { Env } from "../../types";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_employees, hr_hour_deductions, hr_ot_claims, hr_public_holidays, hr_working_hours } from "../../db/schema";
 import { minutesFromWorkDate } from "../../scm/shared/hr-attendance";
-import { MIN_DOCK_HOURS, isWorkingDay, punchDayHours, punchShortfallHours, rulesForEmployeeHours } from "../../scm/shared/hr-labor";
+import { MIN_DOCK_HOURS, isWorkingDay, noClockoutDockHours, punchDayHours, punchShortfallHours, rulesForEmployeeHours } from "../../scm/shared/hr-labor";
 import { isDriverPosition, planAutoOtClaim, punchOtMinutes } from "./hr-ot";
 import { asDate } from "./hr-attendance-view";
 import type { AttendanceRules } from "../../scm/shared/hr-attendance";
@@ -144,9 +144,15 @@ export async function syncDayFromPunch(db: Db, companyId: number, attendanceId: 
     .where(and(eq(hr_public_holidays.company_id, companyId), eq(hr_public_holidays.holiday_date, day.work_date)))
     .limit(1);
   const workingDay = isWorkingDay(day.work_date, new Set(holiday.map((h) => h.d)));
-  const short = forgotten || broken || !workingDay ? 0 : punchShortfallHours(inMin, outMin, rules);
+  const hrCredited = rows.some((r) => r.source === "MANUAL");
+  const forgottenDock = hrCredited ? 0 : noClockoutDockHours({ forgotten, workingDay, workDate: day.work_date, standardWorkMin: rules.standardWorkMin });
+  const short = !workingDay ? 0 : forgotten ? forgottenDock : broken ? 0 : punchShortfallHours(inMin, outMin, rules);
   const late = Math.max(0, inMin - rules.startMin);
-  await applyDayDock(db, companyId, day.employee_id, day.work_date, short, `Auto: short ${short}h${late > rules.lateGraceMin ? `, late ${late} min` : ""} (from punch)`);
+  const dockNote =
+    forgotten && forgottenDock > 0
+      ? `Auto: no punch-out - half day ${short}h (from punch)`
+      : `Auto: short ${short}h${late > rules.lateGraceMin ? `, late ${late} min` : ""} (from punch)`;
+  await applyDayDock(db, companyId, day.employee_id, day.work_date, short, dockNote);
 
   /* Overtime from the same punch (HC-0125 hybrid). A forgotten or broken punch,
      and Sunday / holiday work (all OT via the hours path), earn no weekday claim. */
@@ -182,7 +188,7 @@ export async function settlePeriod(db: Db, companyId: number, period: string, to
   const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const last = `${period}-${String(lastDay).padStart(2, "0")}`;
   const until = last < today ? last : today;
-  const [employees, holidays, hours, days, shift] = await Promise.all([
+  const [employees, holidays, hours, days, shift, manualWhRows] = await Promise.all([
     db
       .select({ id: hr_employees.id, status: hr_employees.status, resigned_on: hr_employees.resigned_on, join_date: hr_employees.join_date, hours: hr_employees.working_hours_per_day })
       .from(hr_employees)
@@ -198,8 +204,13 @@ export async function settlePeriod(db: Db, companyId: number, period: string, to
       .from(hr_attendance)
       .where(and(eq(hr_attendance.company_id, companyId), gte(hr_attendance.work_date, first), lte(hr_attendance.work_date, until))),
     shiftRulesResolver(db, companyId, first, until),
+    db
+      .selectDistinct({ employee_id: hr_working_hours.employee_id, work_date: hr_working_hours.work_date })
+      .from(hr_working_hours)
+      .where(and(eq(hr_working_hours.company_id, companyId), eq(hr_working_hours.source, "MANUAL"), gte(hr_working_hours.work_date, first), lte(hr_working_hours.work_date, until))),
   ]);
   const holidaySet = new Set(holidays.map((h) => h.d));
+  const manualWh = new Set(manualWhRows.map((r) => `${r.employee_id}|${r.work_date}`));
   const logged = new Map(hours.map((h) => [`${h.employee_id}|${h.work_date}`, Number(h.hours)]));
   const punches = new Map(days.map((d) => [`${d.employee_id}|${d.work_date}`, d]));
   const result: SettleResult = { period, employees: employees.length, days: 0, docked: 0, cleared: 0, manualKept: 0 };
@@ -220,8 +231,14 @@ export async function settlePeriod(db: Db, companyId: number, period: string, to
           ? punchShortfallHours(minutesFromWorkDate(ymd, asDate(p.clock_in_at)), minutesFromWorkDate(ymd, asDate(p.clock_out_at)), rules)
           : 0;
       const underLogged = Math.max(0, round2(rules.standardWorkMin / 60 - loggedHours));
-      const short = Math.max(punchShort, underLogged);
-      const reason = await applyDayDock(db, companyId, e.id, ymd, short, `Auto: short ${round2(short)}h (month settled ${today})`);
+      const forgotten = !!(p?.clock_in_at && p.clock_out_at && p.out_source === "AUTO");
+      const forgottenDock = manualWh.has(`${e.id}|${ymd}`) ? 0 : noClockoutDockHours({ forgotten, workingDay: true, workDate: ymd, standardWorkMin: rules.standardWorkMin });
+      const short = Math.max(punchShort, underLogged, forgottenDock);
+      const noteReason =
+        forgotten && forgottenDock > 0 && forgottenDock >= punchShort && forgottenDock >= underLogged
+          ? `Auto: no punch-out - half day ${round2(short)}h (month settled ${today})`
+          : `Auto: short ${round2(short)}h (month settled ${today})`;
+      const reason = await applyDayDock(db, companyId, e.id, ymd, short, noteReason);
       if (reason === "applied") result.docked++;
       else if (reason === "manual-exists") result.manualKept++;
       else result.cleared++;

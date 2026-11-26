@@ -23,6 +23,7 @@ import { creditNoteLines, debitNoteLines, otherDebtorCreditNoteLines, supplierCr
 import { docMonthTag, mintMonthlyDocNo } from '../scm/lib/doc-no';
 import { todayMyt } from '../scm/lib/my-time';
 import { removeAllAllocations } from './credit-note-allocations';
+import { autoCountCostSen, isAutoCountDepositNote } from './autocount-deposit-note';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Db = any;
@@ -190,6 +191,16 @@ export async function postCreditNote(
     : kind === 'DN' ? debitNoteLines(roles, { note_number: String(note.note_number) }, party, lines)
     : kind === 'OCN' ? otherDebtorCreditNoteLines(roles, { note_number: String(note.note_number) }, party, lines)
     : supplierCreditNoteLines(roles, { note_number: String(note.note_number) }, party, lines);
+  if (isAutoCountDepositNote(note)) {
+    const costSen = autoCountCostSen(lines.reduce((t, l) => t + l.amountSen, 0));
+    if (costSen > 0) {
+      const why = `34% cost AutoCount booked on the deposit, released by ${String(note.note_number)}`;
+      ruleLines.push(
+        { accountCode: roles.AUTOCOUNT_COST_ACCRUAL, debitSen: costSen, creditSen: 0, partyType: null, partyCode: null, partyName: null, notes: why },
+        { accountCode: roles.AUTOCOUNT_DEPOSIT_COST, debitSen: 0, creditSen: costSen, partyType: null, partyCode: null, partyName: null, notes: why },
+      );
+    }
+  }
   const je = await postJournal(sb, {
     companyId: p.companyId,
     entryDate: String(note.note_date),

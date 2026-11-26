@@ -73,7 +73,15 @@ export type AccountRole =
   /* The monthly commission release (owner 2026-11-25): the bills from the
      company paying the salespeople sit on PREPAYMENT COMMISSION until their
      orders become sales, then move to the commission expense. */
-  | 'COMMISSION_PREPAID' | 'COMMISSION_EXPENSE';
+  | 'COMMISSION_PREPAID' | 'COMMISSION_EXPENSE'
+  /* The deposits AutoCount took (owner 2026-11-25): AutoCount counted them as
+     deposit sales at each month end and booked 34% of them as cost. At the
+     order's sales invoice the AutoCount deposit note takes the deposit back out
+     of sales on an account of its own, under SALES ADJUSTMENTS (owner
+     2026-11-26: 「从sales 扣回来，但是是开cn 的方式吧，account 不要放在sales 那边一起」),
+     and its entry releases that 34% cost from the accrual
+     (acc/autocount-deposits.ts). */
+  | 'AUTOCOUNT_DEPOSIT_SALES' | 'AUTOCOUNT_DEPOSIT_COST' | 'AUTOCOUNT_COST_ACCRUAL';
 
 /* Fallback = the accountant's own AutoCount codes (migration 0344; owner
    decision 2026-09-02: 迁到 AutoCount 码). Every company carries these codes,
@@ -115,6 +123,9 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   DEPOSIT_INCOME: '509-0000',
   COMMISSION_PREPAID: '360-0050',
   COMMISSION_EXPENSE: '900-C003',
+  AUTOCOUNT_DEPOSIT_SALES: '511-0000',
+  AUTOCOUNT_DEPOSIT_COST: '619-0000',
+  AUTOCOUNT_COST_ACCRUAL: '410-0080',
 };
 
 /** The accounts each closing-stock bucket books on (acc/stock-close.ts). */

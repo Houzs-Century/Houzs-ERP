@@ -251,6 +251,7 @@ export const depositPaperLine = (paper: CreditNoteDetail['depositPaper'], closed
   if (!paper) return null;
   if (paper.kind === 'refund') return 'It takes back a deposit for a refund — that money went back to the customer, so it knocks nothing off.';
   if (paper.kind === 'move') return 'It moved a deposit to another order — it knocks nothing off.';
+  if (paper.kind === 'autocount') return `It brings the deposit paid in AutoCount onto the customer${closedInvoice ? ` at invoice ${closedInvoice.number}` : ''} — the order's deposit already lowers that invoice, so it knocks nothing off.`;
   return `It closes deposit invoice ${paper.di ?? ''}${closedInvoice ? ` at the final invoice ${closedInvoice.number}` : ''} — the order's deposit lowers that invoice, so it knocks nothing off.`;
 };
 

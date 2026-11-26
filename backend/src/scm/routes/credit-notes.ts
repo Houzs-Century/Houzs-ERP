@@ -293,7 +293,7 @@ export const creditNoteDetailHandler = async (c: any): Promise<Response> => {
     const paper = papers.value.get(String(found.note.id)) ?? null;
     credit.depositPaper = paper;
     if (paper) credit.leftSen = 0;
-    if (paper?.kind === 'closes' && found.note.sales_invoice_id) {
+    if ((paper?.kind === 'closes' || paper?.kind === 'autocount') && found.note.sales_invoice_id) {
       const { data: si, error: siErr } = await scopeToCompany(sb.from('sales_invoices').select('id, invoice_number, invoice_date, total_sen').eq('id', found.note.sales_invoice_id), c).maybeSingle();
       if (siErr) return c.json({ error: 'load_failed', reason: siErr.message }, 500);
       const s = si as Row | null;

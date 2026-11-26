@@ -54,13 +54,14 @@ export type CreditNoteKnockedOff = {
 };
 
 /** The block off a note's detail: a posted note's knock-offs (a draft's plan),
-    or the final invoice a close-out closed against. Null when there is none to
-    print: a debit note, a supplier's, a refund's or a move's, a cancelled one. */
+    or the invoice a close-out (or an AutoCount deposit note) was raised at.
+    Null when there is none to print: a debit note, a supplier's, a refund's or
+    a move's, a cancelled one. */
 export function knockedOffOf(d: Pick<CreditNoteDetail, 'note' | 'allocations' | 'depositPaper' | 'closedInvoice'>): CreditNoteKnockedOff | null {
   const n = d.note;
   if ((n.kind !== 'CN' && n.kind !== 'OCN') || n.status === 'CANCELLED') return null;
   if (d.depositPaper) {
-    return d.depositPaper.kind === 'closes' && d.closedInvoice
+    return (d.depositPaper.kind === 'closes' || d.depositPaper.kind === 'autocount') && d.closedInvoice
       ? { rows: [{ number: d.closedInvoice.number, date: d.closedInvoice.date, totalSen: d.closedInvoice.totalSen, knockedSen: Number(n.total_sen) }], leftSen: 0 }
       : null;
   }

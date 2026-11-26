@@ -59,6 +59,7 @@ import { SI_STATUS_BUCKETS } from '../lib/si-status-buckets';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
 import { buildItemRow, createSalesInvoiceFromDoLines, migratedRefusalForDeliveries, nextSiNumber, recomputeTotals, recordSiCreate } from '../lib/si-from-do';
 import { releaseDepositInvoicesBestEffort } from '../../acc/deposit-invoices';
+import { releaseAutoCountDepositBestEffort } from '../../acc/autocount-deposits';
 import { releaseSalesInvoiceKnockOffs } from '../../acc/credit-note-si';
 import { siCreditNotesSen } from '../lib/si-credit-notes';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -1496,6 +1497,12 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
       actor: String((c.get('houzsUser') as { name?: string } | undefined)?.name ?? '') || null,
     });
     await releaseSalesInvoiceKnockOffs(sb, { companyId: auditCompanyId ?? null, siId: id });
+    /* The AutoCount deposit note goes back to DEFERRED REVENUE with it, and onto
+       the order's next live invoice if there is one (owner 2026-11-25). */
+    await releaseAutoCountDepositBestEffort(sb, {
+      companyId: auditCompanyId ?? null, siId: id, siNumber: d.invoice_number,
+      actor: String((c.get('houzsUser') as { name?: string } | undefined)?.name ?? '') || null,
+    });
 
     await recordEntityAudit(sb, {
       entityType: 'SALES_INVOICE',
