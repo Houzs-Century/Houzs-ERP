@@ -133,6 +133,9 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     };
   }).sort((a, b) => Number(b.internal) - Number(a.internal) || b.amountSen - a.amountSen);
 
+  const runsToday = today >= from && today <= to
+    ? [...plates].reduce((a, plate) => a + lorryTrips(lorryDayList.filter((x) => x.lorry === plate && x.date === today), lorryJobs.filter((j) => j.plate === plate && j.date === today)).trips, 0)
+    : null;
   const lorryDays = days.reduce((a, x) => a + x.lorries, 0);
   const lorryDos = out.filter((x) => x.lorry && countsForLorry(regionOf(x.state)));
   const lorrySen = lorryDos.reduce((a, x) => a + x.amountSen, 0);
@@ -140,6 +143,7 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     days,
     lorry: { lorryDays, recordedOrders: lorryDos.length, lorryRegionOrders: out.filter((x) => countsForLorry(regionOf(x.state))).length, perLorrySen: lorryDays ? Math.round(lorrySen / lorryDays) : null, workingDays: work },
     byLorry,
+    runsToday,
     lorryDayList: lorryDayList.slice(0, 400),
     byRegion: [...regions.values()].map((g) => ({ ...g, avgOrderSen: g.orders ? Math.round(g.amountSen / g.orders) : null }))
       .sort((a, b) => b.amountSen - a.amountSen),
