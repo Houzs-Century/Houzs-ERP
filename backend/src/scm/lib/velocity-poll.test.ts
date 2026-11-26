@@ -14,6 +14,7 @@ describe('parseDevices', () => {
       speedKmh: 0, heading: 317, ignition: true,
       street: 'Jalan Saujana Indah 2, Seremban',
       recordedAt: new Date(1791968775 * 1000).toISOString(),
+      odometerM: null,
     }]);
   });
 

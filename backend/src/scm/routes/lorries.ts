@@ -383,7 +383,12 @@ lorries.get('/km-daily', async (c) => {
   if (!ids.length) return c.json({ days, lorries: [] });
   const { data: rows, error } = await sb.from('lorries').select('id, plate').in('id', ids);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const out = rows.map((l) => ({ id: l.id as string, plate: l.plate as string, km: perDay.map((d) => d.km.get(l.id as string) ?? null) }))
+  const out = rows.map((l) => ({
+    id: l.id as string,
+    plate: l.plate as string,
+    km: perDay.map((d) => d.km.get(l.id as string) ?? null),
+    odoKm: perDay.map((d) => d.odoKm.get(l.id as string) ?? null),
+  }))
     .sort((a, b) => a.plate.localeCompare(b.plate));
   return c.json({ days, lorries: out });
 });

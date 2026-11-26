@@ -28,6 +28,22 @@ export function kmFromFixes(fixes: Fix[]): number {
   return Math.round(km * 10) / 10;
 }
 
+/** One lorry-day's km by the tracker's own odometer: the sum of forward steps between
+ *  readings of one device (the one with most readings). A step back (odometer reset)
+ *  or faster than MAX_KMH is skipped. null with fewer than two readings. */
+export function odometerKm(fixes: Array<{ device_id: string | null; recorded_at: string; odometer_m: number | null }>): number | null {
+  const read = oneTracker(fixes.filter((f) => f.odometer_m != null))
+    .sort((a, b) => Date.parse(a.recorded_at) - Date.parse(b.recorded_at));
+  if (read.length < 2) return null;
+  let m = 0;
+  for (let i = 1; i < read.length; i++) {
+    const step = read[i]!.odometer_m! - read[i - 1]!.odometer_m!;
+    const hours = (Date.parse(read[i]!.recorded_at) - Date.parse(read[i - 1]!.recorded_at)) / 3_600_000;
+    if (step > 0 && hours > 0 && step / 1000 / hours <= MAX_KMH) m += step;
+  }
+  return Math.round(m / 100) / 10;
+}
+
 /** null when the lorry has no rate set: unknown cost is not zero cost. */
 export function costSen(km: number, costPerKmSen: number | null): number | null {
   return costPerKmSen == null ? null : Math.round(km * costPerKmSen);

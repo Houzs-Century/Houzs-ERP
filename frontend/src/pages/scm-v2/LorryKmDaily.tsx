@@ -4,15 +4,14 @@ import { useLorries, useLorryKmDaily } from '../../vendor/scm/lib/lorries-querie
 import { fmtKm, useRoadFigures } from '../../vendor/scm/lib/lorry-routes-queries';
 import { DateField } from '../../vendor/scm/components/DateField';
 
-function Sub({ googleM, costSen }: { googleM: number | null; costSen: number | null }) {
-  if (googleM == null && costSen == null) return null;
-  return (
-    <span className="block text-[11px] text-ink-muted">
-      {googleM != null && <span title="Google km, from its warehouse and back">G {fmtKm(googleM)}</span>}
-      {googleM != null && costSen != null && ' · '}
-      {costSen != null && fmtSen(costSen)}
-    </span>
-  );
+function Sub({ odoKm, googleM, costSen }: { odoKm: number | null; googleM: number | null; costSen: number | null }) {
+  const parts = [
+    odoKm != null && <span key="o" title="Odometer km, from the iTrack device">O {odoKm.toFixed(1)}</span>,
+    googleM != null && <span key="g" title="Google km, from its warehouse and back">G {fmtKm(googleM)}</span>,
+    costSen != null && <span key="c">{fmtSen(costSen)}</span>,
+  ].filter(Boolean);
+  if (!parts.length) return null;
+  return <span className="block space-x-1.5 text-[11px] text-ink-muted">{parts}</span>;
 }
 
 export function LorryKmDaily() {
@@ -65,18 +64,19 @@ export function LorryKmDaily() {
                   const gpsKm = l.km.reduce<number>((a, k) => a + (k ?? 0), 0);
                   const g = days.map((d) => googleM.get(`${l.id}|${d}`) ?? null);
                   const gTotal = g.some((m) => m != null) ? g.reduce<number>((a, m) => a + (m ?? 0), 0) : null;
+                  const oTotal = l.odoKm.some((k) => k != null) ? l.odoKm.reduce<number>((a, k) => a + (k ?? 0), 0) : null;
                   return (
                     <tr key={l.id} className="border-t border-border align-top">
                       <td className="px-3 py-2 font-semibold text-ink">{l.plate}</td>
                       {l.km.map((k, i) => (
                         <td key={days[i]} className="px-3 py-2 text-right tabular-nums">
                           {k != null && <Link className="text-accent underline-offset-2 hover:underline" to={`/fleet-health/${l.id}?day=${days[i]}`}>{k.toFixed(1)}</Link>}
-                          <Sub googleM={g[i] ?? null} costSen={cost(l.id, k)} />
+                          <Sub odoKm={l.odoKm[i] ?? null} googleM={g[i] ?? null} costSen={cost(l.id, k)} />
                         </td>
                       ))}
                       <td className="px-3 py-2 text-right font-semibold tabular-nums">
                         {gpsKm.toFixed(1)}
-                        <Sub googleM={gTotal} costSen={cost(l.id, gpsKm)} />
+                        <Sub odoKm={oTotal} googleM={gTotal} costSen={cost(l.id, gpsKm)} />
                       </td>
                     </tr>
                   );
@@ -85,7 +85,7 @@ export function LorryKmDaily() {
             </table>
           </div>
           <p className="text-[12px] text-ink-muted">
-            Top: km by GPS. G: Google km for the planned run, warehouse and back.{' '}
+            Top: km by GPS. O: km by the lorry's own odometer (iTrack lorries only). G: Google km for the planned run, warehouse and back.{' '}
             RM: GPS km times the lorry's RM/km (set in Vehicle details).
             {road.isError && ' Google km could not load.'}
             {lorries.isError && ' RM/km could not load.'}
