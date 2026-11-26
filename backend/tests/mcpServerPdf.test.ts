@@ -13,7 +13,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
-import { PdfReadError, purchaseOrderPdf, salesOrderPdf, type PdfReader } from "../src/services/mcp-pdf";
+import { grnPdf, PdfReadError, purchaseOrderPdf, salesInvoicePdf, salesOrderPdf, type PdfReader } from "../src/services/mcp-pdf";
 import { imageSize, pdfImageFromBytes } from "../src/lib/pdf-image";
 import { BRANDING, FABRICS, PAYMENTS, PO, PO_ID, SO, TINY_JPEG } from "./mcpServerPdf.fixtures";
 
@@ -153,6 +153,55 @@ describe("server Purchase Order PDF", () => {
     expect(text).toContain("WH-KL");
     expect(text).toContain("SUP-1");
     expect(reader.reads).toContain("/api/scm/suppliers/sup-1");
+  });
+});
+
+const SI = {
+  salesInvoice: {
+    invoice_number: "HC-INV-2611-001", status: "SENT", so_doc_no: "HC-SO-099001", debtor_code: "C-1", debtor_name: "陈大文 Tan Dai Wen",
+    invoice_date: "2026-11-20", due_date: "2026-12-20", currency: "MYR", subtotal_sen: 250000, discount_sen: 0, tax_sen: 0, total_sen: 250000, paid_sen: 50000,
+    notes: "请在星期六送货", address1: "12 Jalan Contoh", city: "Puchong", state: "Selangor", postcode: "47100", phone: "0123456789",
+  },
+  items: [{ item_code: "MDL-039", description: "Sofa 3 seater", qty: 1, unit_price_sen: 250000, line_total_sen: 250000 }],
+};
+const GRN = {
+  grn: {
+    grn_number: "HC-GRN-2611-001", status: "POSTED", received_at: "2026-11-21", delivery_note_ref: "DN-88", notes: null, posted_at: "2026-11-21",
+    supplier_id: "sup-1", warehouse_name: "KL Warehouse", supplier: { code: "S-CN01", name: "佛山市家具有限公司" }, purchase_order: { id: "po-1", po_number: "HC-PO-2611-001" },
+  },
+  items: [{ item_code: "MDL-039", material_name: "Sofa frame", qty_received: 2, qty_accepted: 2, qty_rejected: 0, rejection_reason: null, unit_price_sen: 80000, supplier_sku: "FS-39" }],
+};
+
+describe("server Sales Invoice and GRN PDFs (round 4)", () => {
+  it("draws the sales invoice with the ERP page's own layout, payments and Chinese text", async () => {
+    const reader = fixtureReader({ json: { "/api/scm/sales-invoices/inv-1": SI } });
+    const pdf = await salesInvoicePdf(reader, "inv-1");
+    writeOut("si.pdf", pdf);
+    expect(pdf.filename).toBe("HC-INV-2611-001-陈大文 Tan Dai Wen.pdf");
+    const text = pdfText(pdf.bytes);
+    expect(text).toContain("SALES INVOICE");
+    expect(text).toContain("HC-INV-2611-001");
+    expect(text).toContain("陈大文");
+    expect(text).toContain("Payments received");
+    expect(text).toContain("Example Living Sdn Bhd");
+  });
+
+  it("draws the GRN with the supplier's Chinese name and the receiving warehouse", async () => {
+    const reader = fixtureReader({ json: { "/api/scm/grns/grn-1": GRN } });
+    const pdf = await grnPdf(reader, "grn-1");
+    writeOut("grn.pdf", pdf);
+    expect(pdf.filename).toBe("HC-GRN-2611-001-佛山市家具有限公司.pdf");
+    const text = pdfText(pdf.bytes);
+    expect(text).toContain("GOODS RECEIPT NOTE");
+    expect(text).toContain("佛山市家具有限公司");
+    expect(text).toContain("KL Warehouse");
+    expect(text).toContain("FS-39");
+  });
+
+  it("makes no document when the person cannot read the invoice or the GRN", async () => {
+    const r = fixtureReader({ json: { "/api/scm/sales-invoices/inv-1": { status: 403, message: "Not available to your role" }, "/api/scm/grns/grn-1": { status: 403, message: "Not available to your role" } } });
+    await expect(salesInvoicePdf(r, "inv-1")).rejects.toMatchObject({ status: 403 });
+    await expect(grnPdf(r, "grn-1")).rejects.toMatchObject({ status: 403 });
   });
 });
 

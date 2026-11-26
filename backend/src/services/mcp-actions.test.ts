@@ -144,10 +144,12 @@ describe("get_pdf plan", () => {
     expect(pdfKind("__proto__")).toBeNull();
   });
 
-  it("draws Sales and Purchase Orders on the server; the other trading documents stay browser-only", () => {
+  it("draws Sales / Purchase Orders, Sales Invoices and GRNs on the server; the other trading documents stay browser-only", () => {
     expect(pdfKind("sales_order")?.server).toBe("so");
     expect(pdfKind("purchase_order")?.server).toBe("po");
-    for (const t of ["delivery_order", "sales_invoice", "grn", "purchase_invoice", "credit_note", "delivery_return", "payment_voucher", "assr_case", "project"]) expect(pdfKind(t)?.server).toBeNull();
+    expect(pdfKind("sales_invoice")?.server).toBe("si");
+    expect(pdfKind("grn")?.server).toBe("grn");
+    for (const t of ["delivery_order", "purchase_invoice", "credit_note", "delivery_return", "payment_voucher", "assr_case", "project"]) expect(pdfKind(t)?.server).toBeNull();
   });
 
   it("names the download in plain ASCII and in UTF-8, so a Chinese supplier name survives", () => {

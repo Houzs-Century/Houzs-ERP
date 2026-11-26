@@ -109,14 +109,14 @@ const SURFACES: Array<{ file: string; anchor: string; span: number; mustCall: st
     why: 'the Record-Payment sheet PRE-FILLS this amount — it would ask the customer for the deposit twice',
   },
   {
-    file: 'src/vendor/scm/lib/sales-invoice-pdf.ts',
+    file: '../shared/src/vendor/scm/lib/sales-invoice-pdf-render.ts',
     anchor: "drawRow('Outstanding'",
     span: 200,
     mustCall: 'siDeposit',
     why: 'the invoice PDF handed to the customer who paid the deposit',
   },
   {
-    file: 'src/vendor/scm/lib/sales-invoice-pdf.ts',
+    file: '../shared/src/vendor/scm/lib/sales-invoice-pdf-render.ts',
     anchor: "drawRow('Outstanding'",
     span: 200,
     mustCall: '- credited',

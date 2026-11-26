@@ -46,7 +46,7 @@ import {
   type Proposal,
 } from "../services/mcp-actions";
 import { isFinanceViewer, isProductCostViewer } from "../services/pmsAccess";
-import { PdfReadError, purchaseOrderPdf, salesOrderPdf, type PdfReader } from "../services/mcp-pdf";
+import { grnPdf, PdfReadError, purchaseOrderPdf, salesInvoicePdf, salesOrderPdf, type PdfReader } from "../services/mcp-pdf";
 import { docTitle, fetchKind, myToday, parseFetchId, pickFields, PROMPTS, promptText, resolveWindow, searchResults, singleMonth, summariseDelivery, summariseSales, type Window } from "../services/mcp-quick";
 import { classifyPath, moduleCatalog, readablePaths, redactMoney, redactSecrets, type RouteInfo } from "../services/mcp-access";
 import {
@@ -322,7 +322,7 @@ export const MCP_TOOLS = [
     name: "get_pdf",
     title: "PDF / printout of a document",
     description:
-      "A document's printout. A sales order or purchase order comes back as a download link to the PDF file itself (the same document the ERP's Print / PDF button makes), valid for 15 minutes. A service case (customer copy) or a project debrief comes back as a printout link valid for 15 minutes (open it, then print or save as PDF). Delivery orders, invoices and the other trading documents make their PDF in the browser: you get the ERP page link, and the person presses Print / PDF there.",
+      "A document's printout. A sales order, purchase order, sales invoice or goods received note (grn) comes back as a download link to the PDF file itself (the same document the ERP's Print / PDF button makes), valid for 15 minutes. A service case (customer copy) or a project debrief comes back as a printout link valid for 15 minutes (open it, then print or save as PDF). Delivery orders (their printed QR is a public scan link minted at print time, so only the ERP page prints them) and the other trading documents make their PDF in the browser: you get the ERP page link, and the person presses Print / PDF there.",
     inputSchema: {
       type: "object",
       properties: {
@@ -642,7 +642,7 @@ async function serverPdfTool(
   c: Context<HonoEnv>,
   id: Identity,
   token: string,
-  kind: "so" | "po",
+  kind: "so" | "po" | "si" | "grn",
   type: string,
   docId: string,
   company: string | null,
@@ -653,7 +653,8 @@ async function serverPdfTool(
   let pdf: Awaited<ReturnType<typeof salesOrderPdf>>;
   try {
     const reader = pdfReader(c, token, company);
-    pdf = kind === "so" ? await salesOrderPdf(reader, docId) : await purchaseOrderPdf(reader, docId);
+    const draw = { so: salesOrderPdf, po: purchaseOrderPdf, si: salesInvoicePdf, grn: grnPdf }[kind];
+    pdf = await draw(reader, docId);
   } catch (e) {
     if (e instanceof PdfReadError) return { result: text(e.message, true), status: e.status, note: e.note, target };
     const why = e instanceof Error ? e.message : String(e);

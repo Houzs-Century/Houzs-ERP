@@ -348,12 +348,12 @@ export const EXPORT_KEY_RE = /^[A-Za-z0-9_-]{40,64}$/;
 /** Documents get_pdf knows.
  *  `server` = drawn on the Worker as a finished PDF by the browser's own generator (services/mcp-pdf.ts);
  *  `print` = the ERP's own server-side print route (HTML); neither = the PDF is made in the browser only. */
-export const PDF_KINDS: Record<string, { server: "so" | "po" | null; print: ((id: string) => string) | null; financeOnly: boolean }> = {
+export const PDF_KINDS: Record<string, { server: "so" | "po" | "si" | "grn" | null; print: ((id: string) => string) | null; financeOnly: boolean }> = {
   sales_order: { server: "so", print: null, financeOnly: false },
   delivery_order: { server: null, print: null, financeOnly: false },
-  sales_invoice: { server: null, print: null, financeOnly: false },
+  sales_invoice: { server: "si", print: null, financeOnly: false },
   purchase_order: { server: "po", print: null, financeOnly: false },
-  grn: { server: null, print: null, financeOnly: false },
+  grn: { server: "grn", print: null, financeOnly: false },
   purchase_invoice: { server: null, print: null, financeOnly: false },
   credit_note: { server: null, print: null, financeOnly: false },
   delivery_return: { server: null, print: null, financeOnly: false },
