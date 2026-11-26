@@ -55,6 +55,15 @@ describe("canSaveSalesReport", () => {
     // Sales Executive WITHOUT the Sales Person role is not in the open tier
     expect(canSaveSalesReport({ position_name: "Sales Executive", role_name: "Position Preview", email: "newjoiner@houzs.com" }, null)).toBe(false);
   });
+  test("Loo Wen Wei by email and the Finance Manager position pass; neither widens to Super Admin (owner 2026-11-26)", () => {
+    // Mr Loo (Wei Siang's co-director) by his named account — NOT by Super Admin.
+    expect(canSaveSalesReport({ position_name: "Super Admin", email: "wenwei4046@gmail.com" }, null)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Finance Manager", email: "chew.acchouzs@gmail.com" }, null)).toBe(true);
+    // A non-Loo Super Admin (Nico) is still out — grant is by email, not by position.
+    expect(canSaveSalesReport({ position_name: "Super Admin", email: "nico@houzs.com" }, null)).toBe(false);
+    // Only "Finance Manager" — a lower finance seat is still out.
+    expect(canSaveSalesReport({ position_name: "Finance Executive", email: "fin@houzs.com" }, null)).toBe(false);
+  });
   test("a sales attendee of THIS project is accepted via attendeeEmails; non-attendee non-Sales roles still rejected", () => {
     const attendees = new Set(["anthony@houzs.com", "adrian@houzs.com"]);
     expect(canSaveSalesReport({ position_name: "Driver", role_name: "Driver", email: "anthony@houzs.com" }, attendees)).toBe(true);

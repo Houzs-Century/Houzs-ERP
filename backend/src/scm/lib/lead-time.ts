@@ -59,7 +59,6 @@
 // make the agent unexplainable.
 // ----------------------------------------------------------------------------
 
-import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel } from '../shared/product-categories';
 
 /** A lead-time category is a product category code, lowercased ('sofa',
     'dining', 'fabric_accessory', …), or 'others'. The list is open: a category
@@ -73,27 +72,22 @@ export interface LeadCategoryOption { key: LeadCategory; label: string }
 type ItemGroupRow = { code: string; name: string | null; is_active: boolean | null };
 
 /**
- * The categories a lead time can be set for, in display order: the product
- * categories this build knows, then any the registry (scm.acc_item_groups) has
- * gained since, then Others. Service is left out (a service line raises no PO);
+ * The categories a lead time can be set for, in display order: the registry's
+ * groups (scm.acc_item_groups, the one category list) by name, then Others. Service is left out (a service line raises no PO);
  * a registry group switched off is left out too. Pure: the caller reads the
  * registry.
  */
 export function leadCategoryOptions(registry: ItemGroupRow[]): LeadCategoryOption[] {
   const reg = new Map(registry.map((r) => [r.code.toUpperCase(), r]));
-  const codes = [...MFG_PRODUCT_CATEGORIES as readonly string[]];
-  for (const r of [...reg.values()].sort((a, b) => (a.name ?? a.code).localeCompare(b.name ?? b.code))) {
-    if (!codes.includes(r.code.toUpperCase())) codes.push(r.code.toUpperCase());
-  }
   const out: LeadCategoryOption[] = [];
-  for (const code of codes) {
-    const row = reg.get(code);
+  for (const row of [...reg.values()].sort((a, b) => (a.name ?? a.code).localeCompare(b.name ?? b.code))) {
+    const code = row.code.toUpperCase();
     // Others is added once, last, below: the registry has its own OTHERS group,
     // and listing it too showed two rows for one stored key (2990-0063).
-    if (code === 'SERVICE' || code === OTHERS_LEAD_CATEGORY.toUpperCase() || row?.is_active === false) continue;
+    if (code === 'SERVICE' || code === OTHERS_LEAD_CATEGORY.toUpperCase() || row.is_active === false) continue;
     const key = code.toLowerCase();
     if (!LEAD_CATEGORY_RE.test(key)) continue;
-    out.push({ key, label: row?.name?.trim() || mfgCategoryLabel(code) });
+    out.push({ key, label: row.name?.trim() || code });
   }
   out.push({ key: OTHERS_LEAD_CATEGORY, label: 'Others' });
   return out;

@@ -13,7 +13,7 @@ const row = (over: Partial<AttendanceRow>): AttendanceRow => ({
   clock_in_at: null, clock_out_at: null, in_source: "PHONE", out_source: "PHONE",
   in_lat: null, in_lng: null, in_accuracy_m: null, in_geo: "IN", in_site_id: 3, in_distance_m: 40, in_photo_key: "k",
   out_lat: null, out_lng: null, out_accuracy_m: null, out_geo: null, out_site_id: null, out_distance_m: null, out_photo_key: null,
-  notes: null, ...over,
+  notes: null, segments: null, ...over,
 });
 const sites = new Map([[3, "KL WAREHOUSE"]]);
 

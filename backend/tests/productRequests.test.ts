@@ -25,6 +25,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { requireScmAccess } from '../src/middleware/auth';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
+import { SEEDED_ITEM_GROUPS } from '../src/scm/lib/fake-item-groups';
 import { productRequests } from '../src/scm/routes/product-requests';
 import { loadRequestForPco, markRequestPcoIssued, releaseRequestFromCancelledPo } from '../src/scm/lib/product-request-link';
 
@@ -43,6 +44,7 @@ const NOBODY: Who = { id: 50, name: 'Warehouse', perms: ['scm.access'], position
 function world() {
   const sb = fakeSb({
     companies: [{ id: CO, code: 'HC' }],
+    acc_item_groups: SEEDED_ITEM_GROUPS(),
     product_requests: [],
     product_request_lines: [],
     product_request_files: [],

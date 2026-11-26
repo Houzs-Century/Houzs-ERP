@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { patchProductModelHandler } from '../src/scm/routes/product-models';
+import { SEEDED_ITEM_GROUPS } from '../src/scm/lib/fake-item-groups';
 
 /* A model's category can be changed to any other category from the edit dialog
    (owner 2026-09-15: every category can move to a different one; it was only
@@ -29,6 +30,7 @@ class Q {
 
 function setup(category: string) {
   const data: Record<string, Row[]> = {
+    acc_item_groups: SEEDED_ITEM_GROUPS(),
     product_models: [
       { id: 'm1', company_id: 1, model_code: 'BC04', name: 'BACK CUSHION 04', category, allowed_options: {} },
       { id: 'm9', company_id: 2, model_code: 'BC04', name: 'other company', category, allowed_options: {} },
@@ -91,7 +93,8 @@ describe('PATCH /product-models/:id — category change', () => {
   test('a value that is not a category is refused and nothing is written', async () => {
     const { data, patch } = setup('ACCESSORY');
     const res = await patch({ category: 'CHAIR' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Row).error).toBe('category_change_not_allowed');
     expect(data.product_models[0].category).toBe('ACCESSORY');
     expect(data.mfg_products[0].category).toBe('ACCESSORY');
   });
@@ -122,7 +125,7 @@ describe('PATCH /product-models/:id — category change', () => {
             if (table === 'product_models' && this._isUpdate) {
               return Promise.resolve({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "product_models_company_code_category_unique"' } }).then(res);
             }
-            return Promise.resolve({ data: [], error: null }).then(res);
+            return Promise.resolve({ data: table === 'acc_item_groups' ? SEEDED_ITEM_GROUPS() : [], error: null }).then(res);
           },
         };
       },
