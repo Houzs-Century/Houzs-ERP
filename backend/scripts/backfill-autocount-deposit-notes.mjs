@@ -16,9 +16,14 @@
 // with AutoCount money (payment rows of method 'imported' above nought, dated
 // before the books' first day), a live, non-migrated sales invoice dated on or
 // after the books' first day that has posted its revenue (the earliest such is
-// the note's), and no live AutoCount deposit note yet. EXCLUDE (comma list of order
-// numbers) leaves orders out — one whose AutoCount deposit Finance already took
-// out of DEFERRED REVENUE by hand.
+// the note's), and no live AutoCount deposit note yet. An order whose only such
+// invoice bills RM 0 gets none (no sale, no receivable: AutoCount invoiced it
+// before the books). EXCLUDE (comma list of order numbers) leaves orders out —
+// one whose AutoCount deposit Finance already took out of DEFERRED REVENUE by hand.
+// PAID_BY_OPENING (comma list) names orders whose balance the import dated after
+// the opening day (AutoCount kept no payment date) though AutoCount's own record
+// shows them settled by it (owner 2026-11-26): their note carries ALL their
+// AutoCount money. Each must have such later-dated money, or the run stops.
 //
 // HOW.
 // MODE=plan (the default) reads and prints what it would raise; writes nothing.
@@ -35,11 +40,12 @@
 // entry Dr the deferred-revenue account / Cr AR with the invoice's party.
 //
 // RE-RUN: harmless. An order that carries a live AutoCount deposit note is not
-// selected again, and the app's function raises nothing for one that does.
+// selected again, and the app's function raises nothing for one that does; a
+// PAID_BY_OPENING order whose note is raised is passed over.
 //
-// Env: COMPANY_ID (1 = Houzs Century), DATABASE_URL, EXCLUDE, CONCURRENCY.
-//   COMPANY_ID=1 EXCLUDE=HC-SO-000000 npx tsx scripts/backfill-autocount-deposit-notes.mjs                       # plan
-//   COMPANY_ID=1 EXCLUDE=HC-SO-000000 MODE=apply CONFIRM="RAISE AUTOCOUNT DEPOSIT NOTES" npx tsx scripts/backfill-autocount-deposit-notes.mjs
+// Env: COMPANY_ID (1 = Houzs Century), DATABASE_URL, EXCLUDE, PAID_BY_OPENING, CONCURRENCY.
+//   COMPANY_ID=1 EXCLUDE=HC-SO-000000 PAID_BY_OPENING=HC-SO-000001 npx tsx scripts/backfill-autocount-deposit-notes.mjs   # plan
+//   COMPANY_ID=1 EXCLUDE=HC-SO-000000 PAID_BY_OPENING=HC-SO-000001 MODE=apply CONFIRM="RAISE AUTOCOUNT DEPOSIT NOTES" npx tsx scripts/backfill-autocount-deposit-notes.mjs
 
 import './lib/public-log-guard.mjs';
 import postgres from 'postgres';
@@ -51,15 +57,19 @@ const MODE = String(process.env.MODE || 'plan').trim().toLowerCase();
 const APPLY = MODE === 'apply' || process.env.APPLY === '1';
 const PHRASE = 'RAISE AUTOCOUNT DEPOSIT NOTES';
 const COMPANY_ID = Number(process.env.COMPANY_ID);
-const EXCLUDE = new Set(String(process.env.EXCLUDE ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+const list = (v) => [...new Set(String(v ?? '').split(',').map((s) => s.trim()).filter(Boolean))];
+const EXCLUDE = new Set(list(process.env.EXCLUDE));
+const PAID_BY_OPENING = list(process.env.PAID_BY_OPENING);
 const CONCURRENCY = Math.min(8, Math.max(1, Number(process.env.CONCURRENCY || 4) || 4));
-const WHO = 'Claude, for the owner (2026-11-25)';
+const WHO = 'Claude, for the owner (2026-11-26)';
 
 const stop = (msg, code = 1) => { console.error(msg); process.exit(code); };
 if (!Number.isInteger(COMPANY_ID) || COMPANY_ID <= 0) stop('COMPANY_ID is required (1 = Houzs Century).', 2);
 const confirm = (process.env.CONFIRM ?? '').trim();
 if (APPLY && confirm !== PHRASE) stop(`CONFIRM must be exactly "${PHRASE}" to apply. Nothing was written.`, 2);
 if (!process.env.DATABASE_URL) stop('DATABASE_URL is not set.', 2);
+const both = PAID_BY_OPENING.filter((so) => EXCLUDE.has(so));
+if (both.length > 0) stop(`${both.join(', ')}: in both EXCLUDE and PAID_BY_OPENING. Nothing was written.`, 2);
 
 /* A DATE comes back as its 'YYYY-MM-DD' text, as PostgREST hands it to the app
    (confirm-banked-receipts.mjs): postgres.js would hand the app a Date, and the
@@ -74,13 +84,20 @@ async function readPlan(sql) {
   if (!books?.books_start_date) throw new Error(`company ${COMPANY_ID} has no books start — nothing to offset.`);
   const start = day(books.books_start_date);
   /* The earliest invoice that POSTED its revenue — an RM 0 invoice posts none,
-     so it never stands in front of the order's real one. */
+     so it never stands in front of the order's real one. ac_sen is the note's
+     amount: money dated before the books' first day, or all of it for an order
+     named in PAID_BY_OPENING. */
   const rows = await sql`
     WITH ac AS (
-      SELECT p.so_doc_no, SUM(p.amount_sen)::bigint AS ac_sen
+      SELECT p.so_doc_no,
+             COALESCE(SUM(p.amount_sen) FILTER (WHERE p.paid_at < ${start}::date), 0)::bigint AS rule_sen,
+             SUM(p.amount_sen)::bigint AS all_sen,
+             (p.so_doc_no = ANY(${PAID_BY_OPENING}::text[])) AS paid_by_opening
         FROM scm.mfg_sales_order_payments p
-       WHERE p.company_id = ${COMPANY_ID} AND p.method = 'imported' AND p.amount_sen > 0 AND p.paid_at < ${start}::date
-       GROUP BY p.so_doc_no),
+       WHERE p.company_id = ${COMPANY_ID} AND p.method = 'imported' AND p.amount_sen > 0
+       GROUP BY p.so_doc_no
+      HAVING COALESCE(SUM(p.amount_sen) FILTER (WHERE p.paid_at < ${start}::date), 0) > 0
+          OR p.so_doc_no = ANY(${PAID_BY_OPENING}::text[])),
     live AS (
       SELECT s.id, s.invoice_number, s.invoice_date, s.so_doc_no, s.debtor_code, s.debtor_name, s.total_sen,
              EXISTS (SELECT 1 FROM scm.journal_entries j
@@ -93,17 +110,31 @@ async function readPlan(sql) {
     si AS (
       SELECT DISTINCT ON (live.so_doc_no) live.*
         FROM live
-       ORDER BY live.so_doc_no, live.revenue_posted DESC, live.invoice_date, live.invoice_number)
-    SELECT si.*, ac.ac_sen
+       ORDER BY live.so_doc_no, live.revenue_posted DESC, (live.total_sen > 0) DESC, live.invoice_date, live.invoice_number)
+    SELECT si.*, ac.rule_sen, ac.all_sen, ac.paid_by_opening,
+           (CASE WHEN ac.paid_by_opening THEN ac.all_sen ELSE ac.rule_sen END)::bigint AS ac_sen
       FROM si JOIN ac ON ac.so_doc_no = si.so_doc_no
      WHERE NOT EXISTS (SELECT 1 FROM scm.acc_credit_notes n
                         WHERE n.company_id = ${COMPANY_ID} AND n.kind = 'CN' AND n.so_doc_no = si.so_doc_no
                           AND n.source_doc_no = ${AUTOCOUNT_DEPOSIT_REF} AND n.status <> 'CANCELLED')
      ORDER BY si.invoice_date, si.invoice_number`;
-  const take = rows.filter((r) => r.revenue_posted && !EXCLUDE.has(r.so_doc_no));
-  const unposted = rows.filter((r) => !r.revenue_posted && !EXCLUDE.has(r.so_doc_no));
+  const mine = rows.filter((r) => !EXCLUDE.has(r.so_doc_no));
+  const take = mine.filter((r) => r.revenue_posted);
+  const zero = mine.filter((r) => !r.revenue_posted && !(Number(r.total_sen) > 0));
+  const unposted = mine.filter((r) => !r.revenue_posted && Number(r.total_sen) > 0);
   const excluded = rows.filter((r) => EXCLUDE.has(r.so_doc_no));
-  return { start, take, unposted, excluded };
+  /* A name in PAID_BY_OPENING that changes nothing is a typo or a wrong order —
+     unless its note is already raised (a re-run). */
+  const noted = new Set((await sql`
+    SELECT DISTINCT n.so_doc_no FROM scm.acc_credit_notes n
+     WHERE n.company_id = ${COMPANY_ID} AND n.kind = 'CN' AND n.source_doc_no = ${AUTOCOUNT_DEPOSIT_REF}
+       AND n.status <> 'CANCELLED' AND n.so_doc_no = ANY(${PAID_BY_OPENING}::text[])`).map((r) => r.so_doc_no));
+  const wrong = PAID_BY_OPENING.filter((so) => {
+    if (noted.has(so)) return false;
+    const r = take.find((t) => t.so_doc_no === so);
+    return !r || !(Number(r.all_sen) > Number(r.rule_sen));
+  });
+  return { start, take, zero, unposted, excluded, wrong };
 }
 
 /** The deferred-revenue and AR codes the notes book to (roles, else the defaults). */
@@ -134,7 +165,14 @@ for (const r of plan.take) {
 const totalSen = plan.take.reduce((s, r) => s + Number(r.ac_sen), 0);
 console.log(`Company ${COMPANY_ID}, books from ${plan.start}: ${plan.take.length} order(s) to raise, ${rm(totalSen)} from ${codes.deferred} onto ${codes.ar}.`);
 for (const [m, t] of [...byMonth].sort()) console.log(`  invoices of ${m}: ${t.orders} order(s), ${rm(t.sen)}`);
-for (const r of plan.take) console.log(`  ${r.so_doc_no} at ${r.invoice_number} (${day(r.invoice_date)}): ${rm(r.ac_sen)}`);
+for (const r of plan.take) {
+  const late = r.paid_by_opening ? ` (all its AutoCount money: ${rm(Number(r.all_sen) - Number(r.rule_sen))} the import dated after the opening day was paid by it)` : '';
+  console.log(`  ${r.so_doc_no} at ${r.invoice_number} (${day(r.invoice_date)}): ${rm(r.ac_sen)}${late}`);
+}
+if (plan.zero.length > 0) {
+  console.log(`No note — their invoice since the books started bills RM 0, ${plan.zero.length}:`);
+  for (const r of plan.zero) console.log(`  ${r.so_doc_no} at ${r.invoice_number} (${day(r.invoice_date)})`);
+}
 if (plan.unposted.length > 0) {
   console.log(`Left for their invoice's own posting (no invoice of theirs has posted revenue yet), ${plan.unposted.length}:`);
   for (const r of plan.unposted) console.log(`  ${r.so_doc_no} at ${r.invoice_number} (${day(r.invoice_date)})`);
@@ -142,6 +180,10 @@ if (plan.unposted.length > 0) {
 if (plan.excluded.length > 0) {
   console.log(`Left out by EXCLUDE, ${plan.excluded.length}:`);
   for (const r of plan.excluded) console.log(`  ${r.so_doc_no} at ${r.invoice_number} (${day(r.invoice_date)}): ${rm(r.ac_sen)}`);
+}
+if (plan.wrong.length > 0) {
+  await sql.end();
+  stop(`PAID_BY_OPENING ${plan.wrong.join(', ')}: not an order to raise with AutoCount money dated after the opening day. Nothing was written.`, 2);
 }
 if (plan.take.length === 0 || !APPLY) {
   await sql.end();
@@ -164,6 +206,7 @@ async function worker() {
       const res = await applyAutoCountDepositToInvoice(sb, {
         companyId: COMPANY_ID, siId: String(r.id), siNumber: r.invoice_number, soDocNo: r.so_doc_no,
         invoiceDate: day(r.invoice_date), party: party.party, actor: WHO,
+        amountSen: r.paid_by_opening ? Number(r.ac_sen) : null,
       });
       if (sb.__gaps.length > 0) { gap = `${r.so_doc_no}: the shim met a method it does not implement: ${sb.__gaps.join(' | ')}`; return; }
       if (!res.ok) throw new Error(res.reason);

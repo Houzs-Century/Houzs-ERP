@@ -6,10 +6,16 @@
        invoice day, Dr DEFERRED REVENUE 440-0000 / Cr AR (the invoice's party),
        source document AUTOCOUNT DEPOSIT, linked to the invoice;
      • the order's later invoice, and a re-post, raise nothing beside it;
-     • money AutoCount took after the opening day, a soft-launch invoice, a
-       company with no books start and a migrated invoice raise nothing;
+     • money AutoCount took after the opening day (a balance the second import
+       dated 1-7 Sep), a soft-launch invoice, a company with no books start and
+       a migrated invoice raise nothing;
+     • a balance AutoCount's own record shows paid by the opening day, though
+       the import dated it later, goes on the note when the caller passes the
+       amount (owner 2026-11-26) — never more than the order's AutoCount money;
+     • an order AutoCount invoiced before the books, whose ERP invoice bills
+       RM 0, gets no note (owner 2026-11-26);
      • a cancelled invoice cancels its note by contra, and the note is raised
-       again on the order's next live invoice;
+       again, for the same amount, on the order's next live invoice;
      • the note is a deposit paper: it knocks nothing off.
    Same fake-PostgREST harness as tests/depositInvoiceCloseout.test.ts. */
 
@@ -17,7 +23,8 @@ import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { postSiRevenue } from '../src/scm/lib/post-si-revenue';
 import {
-  AUTOCOUNT_DEPOSIT_REF, autoCountDepositSen, isAutoCountDepositNote, releaseAutoCountDepositFromInvoice,
+  AUTOCOUNT_DEPOSIT_REF, applyAutoCountDepositToInvoice, autoCountDepositSen, isAutoCountDepositNote,
+  releaseAutoCountDepositFromInvoice,
 } from '../src/acc/autocount-deposits';
 import { depositPaperRefusal, depositPapers } from '../src/acc/credit-note-si';
 
@@ -111,6 +118,8 @@ describe('the AutoCount deposit at the order\'s invoice', () => {
   });
 
   test('money AutoCount took after the opening day, a soft-launch invoice, no books start and a migrated invoice raise nothing', async () => {
+    /* The balance the second import found settled, dated by the order's last
+       edit in AutoCount (1-7 Sep): September money, not on the note. */
     const later = harness({ payments: [
       { id: 'p-ac', company_id: CO, so_doc_no: SO, method: 'imported', amount_sen: 120_000, paid_at: '2026-03-14' },
       { id: 'p-ac2', company_id: CO, so_doc_no: SO, method: 'imported', amount_sen: 40_000, paid_at: '2026-09-03' },
@@ -164,6 +173,45 @@ describe('the AutoCount deposit at the order\'s invoice', () => {
     expect(net(sb, '440-0000')).toBe(0);
     expect(await releaseAutoCountDepositFromInvoice(sb, { companyId: CO, siId: 'si-2', actor: 'Chew' }))
       .toEqual({ ok: true, released: [], movedTo: null });
+  });
+
+  test('a balance AutoCount settled by the opening day, though the import dated it later, goes on the note when the amount is passed, and stays on it when the note moves', async () => {
+    const sb = harness({ payments: [
+      { id: 'p-ac', company_id: CO, so_doc_no: SO, method: 'imported', amount_sen: 120_000, paid_at: '2026-03-14' },
+      { id: 'p-bal', company_id: CO, so_doc_no: SO, method: 'imported', amount_sen: 40_000, paid_at: '2026-09-07' },
+    ] });
+    invoice(sb, 'si-1', 'HC-SI-2609-001', '2026-09-20', 200_000);
+    invoice(sb, 'si-2', 'HC-SI-2610-004', '2026-10-03', 100_000);
+    const at = { companyId: CO, siId: 'si-1', siNumber: 'HC-SI-2609-001', soDocNo: SO, invoiceDate: '2026-09-20', party: { code: '300-C002', name: 'Mei Ling' }, actor: 'Chew' };
+    /* Never more than the order's AutoCount money, whatever its date. */
+    expect(await applyAutoCountDepositToInvoice(sb, { ...at, amountSen: 160_001 })).toMatchObject({ ok: false });
+    expect(notes(sb)).toHaveLength(0);
+    expect(await applyAutoCountDepositToInvoice(sb, { ...at, amountSen: 160_000 })).toMatchObject({ ok: true, status: 'raised', amountSen: 160_000 });
+    expect(notes(sb).map((n) => [n.note_number, n.sales_invoice_id, n.total_sen])).toEqual([['HC-CN-2609-001', 'si-1', 160_000]]);
+    expect(net(sb, '440-0000')).toBe(160_000);
+
+    /* The invoice cancelled: the note moves to the next invoice with its whole
+       amount, not the 120,000 the dates alone would give. */
+    (sb.tables.sales_invoices as Row[]).find((s) => s.id === 'si-1')!.status = 'CANCELLED';
+    expect(await releaseAutoCountDepositFromInvoice(sb, { companyId: CO, siId: 'si-1', actor: 'Chew' }))
+      .toEqual({ ok: true, released: ['HC-CN-2609-001'], movedTo: 'HC-CN-2610-001' });
+    expect(notes(sb).map((n) => [n.note_number, n.status, n.sales_invoice_id, n.total_sen])).toEqual([
+      ['HC-CN-2609-001', 'CANCELLED', 'si-1', 160_000],
+      ['HC-CN-2610-001', 'POSTED', 'si-2', 160_000],
+    ]);
+    expect(net(sb, '440-0000')).toBe(160_000);
+  });
+
+  test('an order AutoCount invoiced before the books, whose ERP invoice bills RM 0, gets no note', async () => {
+    const sb = harness();
+    invoice(sb, 'si-ac', 'HC-I-2608-0007', '2026-08-29', 150_000, { migrated_no_stock: true });
+    invoice(sb, 'si-0', 'HC-SI-2609-003', '2026-09-05', 0);
+    expect(await postSiRevenue(sb, 'HC-SI-2609-003')).toEqual({ ok: false, status: 'zero_total' });
+    const at = { companyId: CO, siId: 'si-0', siNumber: 'HC-SI-2609-003', soDocNo: SO, invoiceDate: '2026-09-05', party: { code: '300-C002', name: 'Mei Ling' }, actor: 'Chew' };
+    expect(await applyAutoCountDepositToInvoice(sb, { ...at, amountSen: null })).toMatchObject({ ok: true, status: 'nothing' });
+    expect(await applyAutoCountDepositToInvoice(sb, { ...at, amountSen: 120_000 })).toMatchObject({ ok: true, status: 'nothing' });
+    expect(notes(sb)).toHaveLength(0);
+    expect(jes(sb)).toHaveLength(0);
   });
 
   test('the note is a deposit paper: it knocks nothing off, said in its own words', async () => {
