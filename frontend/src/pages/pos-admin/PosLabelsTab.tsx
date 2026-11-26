@@ -3,7 +3,7 @@ import { Barcode, Printer } from "lucide-react";
 import { api } from "../../api/client";
 import { useToast } from "../../hooks/useToast";
 import { cn } from "../../lib/utils";
-import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import { SearchInput } from "../../components/Button";
 import { Pagination } from "../../components/Pagination";
 import { POS_ADMIN, useAdminLabels, type LabelRow } from "./posAdminApi";

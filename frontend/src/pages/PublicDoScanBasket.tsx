@@ -43,7 +43,7 @@
 import { useCallback, useRef, useState } from "react";
 import { Camera, Flashlight, Loader2, PackageCheck, Trash2, X } from "lucide-react";
 import { useQrScanner } from "../lib/use-qr-scanner";
-import { statusLabel } from "../../../shared/src/vendor/scm/lib/status-pill";
+import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { doScanLadderOrder, doScanStep, type DoScanStep } from "../vendor/shared/do-scan-ladder";
 import { correlatedFetch } from "../lib/requestCorrelation";
 

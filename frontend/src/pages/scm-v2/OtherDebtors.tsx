@@ -37,7 +37,7 @@ import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useToastOptional } from '../../hooks/useToast';
-import { fmtDate, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen } from '../../vendor/shared/format';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { BillFormPage } from './money-in/BillFormPage';
 import { DebtorFormPage } from './money-in/DebtorForm';

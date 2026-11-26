@@ -15,7 +15,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@2990s/design-system';
 import { Modal } from '../../../vendor/scm/components/Modal';
 import { useToastOptional } from '../../../hooks/useToast';
-import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
+import { fmtSenPlain } from '../../../vendor/shared/format';
 import {
   useSaveTradeFinance, useTradeFinance,
   type TfDue, type TfFacility, type TfMonth, type TfOff, type TfPlans, type TradeFinance,

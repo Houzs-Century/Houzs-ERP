@@ -45,7 +45,7 @@ import {
 import { clearPrintResume, peekPrintResume, trackPrintAction } from "../../lib/chunkActionRecovery";
 import { PrintPreviewModal } from "./PrintPreviewModal";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { TRANSFER_DOC } from "../../../../shared/src/vendor/shared/transfer-vocabulary";
+import { TRANSFER_DOC } from "../../vendor/shared/transfer-vocabulary";
 import type { PrintTarget } from "../../lib/printChain";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { printPreviewRows } from "../../lib/printDocumentPdf";

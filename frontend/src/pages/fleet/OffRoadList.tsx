@@ -1,5 +1,5 @@
 import { cn } from "../../lib/utils";
-import { fmtDate } from "../../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../../vendor/shared/format";
 import { Pill } from "../FleetHealth";
 import { offRoadRows, type OffRoadRow, type OffRoadWindow } from "./fleetHealthModel";
 

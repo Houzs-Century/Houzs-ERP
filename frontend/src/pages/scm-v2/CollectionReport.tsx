@@ -27,7 +27,7 @@ import {
 } from '../../vendor/scm/lib/collection-report-queries';
 import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetColumn, type SheetRow } from '../../vendor/scm/lib/report-sheet';
-import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../vendor/shared/format';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { useColumnWidths, type ColumnWidthSpec } from './finance/useColumnWidths';
 import { FinanceDateRange } from './reports/FinanceDateRange';

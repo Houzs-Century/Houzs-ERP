@@ -16,7 +16,7 @@ import { DateField } from '../../../vendor/scm/components/DateField';
 import { useDepositInvoiceSettings, useSaveDepositInvoiceSettings } from '../../../vendor/scm/lib/deposit-invoice-queries';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
-import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../../vendor/shared/format';
 import { Skeleton, Switch } from './SetupParts';
 import css from './SetupParts.module.css';
 

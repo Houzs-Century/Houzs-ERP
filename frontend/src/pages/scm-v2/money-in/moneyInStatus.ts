@@ -1,6 +1,6 @@
 
-import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
-import { humaniseStatusKey, statusLabel } from '../../../../../shared/src/vendor/scm/lib/status-pill';
+import { fmtDate } from '../../../vendor/shared/format';
+import { humaniseStatusKey, statusLabel } from '../../../vendor/scm/lib/status-pill';
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from '../../../vendor/scm/lib/payment-methods';
 import type { OutstandingModule } from '../../../vendor/scm/lib/outstanding-queries';
 import { dayDiff } from '../../../lib/dateRangePresets';

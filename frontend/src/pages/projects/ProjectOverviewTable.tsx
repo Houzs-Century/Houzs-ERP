@@ -12,8 +12,8 @@
 // by a range, the figures by a minimum and maximum.
 
 import { DataTable, type Column } from "../../components/DataTable";
-import { fmtDateOrDash, fmtDayMonth, isoForExport } from "../../../../shared/src/vendor/shared/format";
-import { fmtSenPlain } from "../../../../shared/src/vendor/shared/format";
+import { fmtDateOrDash, fmtDayMonth, isoForExport } from "../../vendor/shared/format";
+import { fmtSenPlain } from "../../vendor/shared/format";
 import { figuresOf, forecastKindOf, pctOf, type OvProject } from "./projectOverviewModel";
 import { projectLines } from "./projectOverviewView";
 

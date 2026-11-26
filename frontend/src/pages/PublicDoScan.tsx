@@ -37,7 +37,7 @@
 // ----------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Loader2, PackageCheck, PauseCircle, XCircle } from "lucide-react";
-import { statusLabel } from "../../../shared/src/vendor/scm/lib/status-pill";
+import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { humanHttpMessage } from "../api/client";
 import {
   consumeCorrelated,

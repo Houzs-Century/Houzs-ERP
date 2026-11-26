@@ -89,10 +89,10 @@ import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { canCreateEvent } from '../../auth/salesAccess';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
-import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
+import { customerRefOf } from '../../lib/customer-ref';
 import { cn } from '../../lib/utils';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
-import { fmtDateOrDash, fmtDayMonth } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash, fmtDayMonth } from '../../vendor/shared/format';
 import {
   useFairChecks,
   useFairPending,

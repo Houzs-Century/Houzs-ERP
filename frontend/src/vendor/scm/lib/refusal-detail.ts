@@ -1,4 +1,4 @@
-import { normaliseTypographicQuotes } from '../../../../../shared/src/vendor/shared/mfg-pricing';
+import { normaliseTypographicQuotes } from '../../shared/mfg-pricing';
 
 const FIELD_LABEL: Record<string, string | undefined> = {
   fabric:       'Fabric',

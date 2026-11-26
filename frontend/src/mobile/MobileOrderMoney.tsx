@@ -16,7 +16,7 @@ import {
   CONVERT_LABEL, CONVERTED_METHOD, useAddedConvertSources, useConvertSources, useOrdersWithMoney,
   type ConvertPick, type ConvertSource,
 } from "../vendor/scm/lib/so-money-queries";
-import { fmtSen } from "../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../vendor/shared/format";
 
 /** What Convert on a cancelled order's panel hands the New SO screen: the
     order whose customer and lines are copied, and one converted row per pick. */

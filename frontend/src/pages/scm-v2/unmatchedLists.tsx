@@ -13,8 +13,8 @@
 
 import { Link } from 'react-router-dom';
 import type { Column } from '../../components/DataTable';
-import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
-import { fmtDate } from '../../../../shared/src/vendor/shared/format';
+import { customerRefOf } from '../../lib/customer-ref';
+import { fmtDate } from '../../vendor/shared/format';
 import { danger, fmt, good, softText } from './settlement-ui';
 import styles from './Suppliers.module.css';
 import { lineTab } from './MerchantReportsTop';

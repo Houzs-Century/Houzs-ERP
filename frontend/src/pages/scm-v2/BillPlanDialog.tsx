@@ -5,7 +5,7 @@ import { Modal } from '../../vendor/scm/components/Modal';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useToastOptional } from '../../hooks/useToast';
 import { usePlanBill } from '../../vendor/scm/lib/ap-invoice-queries';
-import { fmtDate, fmtSen, todayMY } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen, todayMY } from '../../vendor/shared/format';
 import mo from './MoneyOut.module.css';
 
 export type PlannableBill = {

@@ -9,7 +9,7 @@
 
 import type { ChangedLine, ProductChangeBucket, ProductChangeRow, ProductChangeType } from '../../vendor/scm/lib/product-change-queries';
 import { AMOUNT_COLUMN, type ReportSheet, type SheetRow, type SheetValue } from '../../vendor/scm/lib/report-sheet';
-import { fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtSenPlain } from '../../vendor/shared/format';
 import { monthEnd } from '../../lib/dateRangePresets';
 import { monthName } from './reports/statementColumns';
 

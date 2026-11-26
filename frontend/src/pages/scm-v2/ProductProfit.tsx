@@ -24,7 +24,7 @@ import { useMemo, useRef, useState } from 'react';
 import { DataTable, type Column } from '../../components/DataTable';
 import { monthEnd, monthStart } from '../../lib/dateRangePresets';
 import { useProductProfit, type ProductCategory, type ProductProfitRow } from '../../vendor/scm/lib/product-profit-queries';
-import { fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtSenPlain } from '../../vendor/shared/format';
 import {
   CATEGORY_LABEL, CATEGORY_ORDER, compact, donutOf, rankingOf, freeBedframesText, giftsLabel, gpOf, gpPctOf, productProfitSheet, profitNotes,
   profitPeriod, showsFreeBedframes, totalsOf, unitsText, viewLabel, viewRows, waterfallOf, type ProfitView, type SortKey,

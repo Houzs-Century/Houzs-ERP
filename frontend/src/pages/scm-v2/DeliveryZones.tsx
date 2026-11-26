@@ -5,7 +5,7 @@ import { Pencil } from 'lucide-react';
 import { PageHeader } from '../../components/Layout';
 import { cn } from '../../lib/utils';
 import { writeLineExportFile, type ExportFormat, type LineExportMatrix } from '../../components/dataTableLineExport';
-import { todayMY } from '../../../../shared/src/vendor/shared/format';
+import { todayMY } from '../../vendor/shared/format';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 import {

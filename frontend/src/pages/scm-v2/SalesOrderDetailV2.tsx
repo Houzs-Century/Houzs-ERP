@@ -54,7 +54,7 @@ import {
 import { AuditHistoryPanel } from "../../components/audit/AuditHistoryPanel";
 import { SO_AUDIT_LABELS } from "./so-audit-labels";
 import { useSoHistoryWithRelated } from "./so-history-related";
-import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
+import { fmtDateTime } from "../../vendor/shared/format";
 import { brandingLabel } from "../../vendor/shared/so-branding-label";
 import { getBrandingCompanyCode } from "../../lib/branding";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
@@ -92,14 +92,14 @@ import {
 import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
 import { soAfterDoMode, soPriceAfterDoOn, soLinesAfterDoOn } from "../../vendor/scm/lib/so-after-do-client";
 import type { AfterDoTarget } from "../../vendor/shared/so-after-do-edit";
-import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
+import { customerRefOf } from '../../lib/customer-ref';
 
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
 import { OrderSlipPhoto } from "../../vendor/scm/components/OrderSlipPhoto";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 import { fairLabel } from "../../vendor/scm/lib/fair-options-queries";
 import { linkedEvent, type LinkedFair } from "../../components/fairPick";
-import { soStreetTail } from "../../../../shared/src/vendor/scm/lib/order-address";
+import { soStreetTail } from "../../vendor/scm/lib/order-address";
 
 type SoHeader = {
   doc_no: string;

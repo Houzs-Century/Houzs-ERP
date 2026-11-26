@@ -1,5 +1,5 @@
 
-import { resolveStatusPill, simplifiedAmendmentPill, STATUS_TONES, type StatusDocType } from '../../../../../shared/src/vendor/scm/lib/status-pill';
+import { resolveStatusPill, simplifiedAmendmentPill, STATUS_TONES, type StatusDocType } from '../lib/status-pill';
 import styles from './StatusPill.module.css';
 
 export type StatusPillProps = {

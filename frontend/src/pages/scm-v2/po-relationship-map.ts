@@ -27,7 +27,7 @@ import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, usePoSoCoverage, floatingSoDocNos, type FlowNode, type FlowEdge } from '../../vendor/scm/lib/flow-queries';
-import { parseProvenanceNote } from '../../../../shared/src/vendor/shared/transfer-vocabulary';
+import { parseProvenanceNote } from '../../vendor/shared/transfer-vocabulary';
 import type { ChainNode, AmendmentChip, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useDocChoice, type DocChoiceApi } from './doc-choice';
 

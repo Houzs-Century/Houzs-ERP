@@ -10,7 +10,7 @@ import { avatarColor, initials } from "./hrAvatar";
 import { punchOf, type PunchState } from "./attendanceToday";
 import { HR, useAttendance, useWorkingHours, type WorkDay } from "./hrApi";
 import { cellOf, monthBounds, pad2, type Cell } from "./attendanceMonth";
-import { todayMY } from "../../../../shared/src/vendor/shared/format";
+import { todayMY } from "../../vendor/shared/format";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 const WD = ["S", "M", "T", "W", "T", "F", "S"];

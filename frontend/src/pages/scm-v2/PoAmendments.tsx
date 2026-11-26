@@ -20,7 +20,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AmendmentQuickView, amendmentJobCardPath, type AmendmentQuickViewTarget } from './AmendmentQuickView';
-import { fmtDateTime } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateTime } from '../../vendor/shared/format';
 import { usePoAmendments } from '../../vendor/scm/lib/po-amendment-queries';
 import { useAmendments } from '../../vendor/scm/lib/so-amendment-queries';
 import {
@@ -37,7 +37,7 @@ import {
   amendmentBucketLabel,
   amendmentBucketRank,
   compareAmendmentsForList,
-} from '../../../../shared/src/vendor/scm/lib/status-pill';
+} from '../../vendor/scm/lib/status-pill';
 import { AmendmentApproverBadge } from '../../vendor/scm/components/AmendmentApproverBadge';
 import { AMENDMENT_APPROVER_LABEL } from '../../vendor/scm/lib/amendment-approver';
 import { PageHeader } from '../../components/Layout';

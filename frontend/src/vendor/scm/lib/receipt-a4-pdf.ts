@@ -3,7 +3,7 @@ import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, amountInWordsMyr, deliverPdf, drawHeader, drawInfoColumns, drawSignatureBoxes,
   ensurePdfCjkFont, fmtDocDate, fmtRm, type PdfAction,
 } from './pdf-common';
-import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
+import { PDF_COMPRESS } from './pdf-options';
 
 /** One receipt as the A4 paper draws it. */
 export type A4ReceiptPaper = {

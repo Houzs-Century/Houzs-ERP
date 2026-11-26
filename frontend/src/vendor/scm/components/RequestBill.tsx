@@ -8,7 +8,7 @@
 
 import { STAGE, billMatchText, type BillFamily, type BillMatch } from '../lib/payment-request-queries';
 import type { BillReadState } from '../lib/request-bill-read';
-import { fmtDateOrDash, fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash, fmtSen } from '../../shared/format';
 
 const box = (tone: 'note' | 'warn' | 'read'): React.CSSProperties => ({
   padding: '8px 10px',

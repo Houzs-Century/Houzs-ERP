@@ -15,7 +15,7 @@
 import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ExternalLink, X as XIcon } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtMoneySen, fmtQty } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtMoneySen, fmtQty } from '../../vendor/shared/format';
 import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';

@@ -10,7 +10,7 @@ import {
   simplifiedAmendmentPill,
   amendmentBucketOf,
   type StatusTone,
-} from "../../../shared/src/vendor/scm/lib/status-pill";
+} from "../vendor/scm/lib/status-pill";
 import {
   usePoAmendmentDetail,
   useApprovePoAmendment,

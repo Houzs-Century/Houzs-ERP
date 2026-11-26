@@ -60,7 +60,7 @@ import {
   type CommissionSoRow, type EventCommission,
 } from '../../vendor/scm/lib/event-queries';
 import { useConfirm, usePrompt } from '../../vendor/scm/components/ConfirmDialog';
-import { fmtDateOrDash, fmtDayMonthRange } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
 import { DataTable, type Column } from '../../components/DataTable';
 import { cn } from '../../lib/utils';
 import { useOpenDocInTab } from '../../lib/openDocInTab';

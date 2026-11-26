@@ -5,7 +5,7 @@ import {
   amendmentBucketLabel,
   simplifiedAmendmentPill,
   type StatusTone,
-} from "../../../shared/src/vendor/scm/lib/status-pill";
+} from "../vendor/scm/lib/status-pill";
 import {
   buildAmendmentQueueRows,
   type AmendmentQueueRow,
@@ -24,7 +24,7 @@ import {
 } from "../vendor/scm/lib/use-cancel-request-actions";
 import { useRefreshApprovalBadges } from "../hooks/useAmendmentApprovals";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
-import { customerRefOf } from "../../../shared/src/lib/customer-ref";
+import { customerRefOf } from "../lib/customer-ref";
 import { formatDate } from "../lib/utils";
 import { useStaffLookup } from "../hooks/useStaffLookup";
 import "./mobile.css";

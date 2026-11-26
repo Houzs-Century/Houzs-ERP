@@ -9,7 +9,7 @@
 
 import autoTable from 'jspdf-autotable';
 import type { PdfAction } from './pdf-common';
-import { fmtSenPlain, todayMY } from '../../../../../shared/src/vendor/shared/format';
+import { fmtSenPlain, todayMY } from '../../shared/format';
 import { LISTING_MARGIN, closeListing, listingDress, openListing, screenTable, type FootCell, type ScreenTableView } from './listing-pdf';
 
 /** `title` heads the part; `label` is its short name in the header's summary (a long

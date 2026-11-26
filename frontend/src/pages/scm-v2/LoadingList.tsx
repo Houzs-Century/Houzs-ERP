@@ -14,7 +14,7 @@ import { Link } from 'react-router-dom';
 import { Loader2, PackageSearch, Search, Truck, MapPin, CalendarDays, QrCode } from 'lucide-react';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { fmtDate } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import { matchesSearch, soRefOfStamp, type SoRefStamp } from '../../lib/so-ref-search';
 

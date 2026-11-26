@@ -29,7 +29,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useQueryClient, type Query, type QueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { scheduleRowRefresh } from './board-row-refresh';
-import { todayMY } from '../../../../../shared/src/vendor/shared/format';
+import { todayMY } from '../../shared/format';
 import { claimCrossTabRefresh } from '../../../lib/cross-tab-sync';
 import { loadedBoardCounts, runBoardRequest, COUNTS_PRIORITY } from './delivery-board-bands';
 import type { PlanningCounts } from './delivery-planning-queries';

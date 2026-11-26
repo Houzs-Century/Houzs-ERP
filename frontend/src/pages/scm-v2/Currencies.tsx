@@ -10,7 +10,7 @@ import {
 } from '../../vendor/scm/lib/currencies-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import { useToastOptional } from '../../hooks/useToast';
 import { Check, Field, PopMenu, SetupModal, Tag } from './finance/SetupParts';
 import sp from './finance/SetupParts.module.css';

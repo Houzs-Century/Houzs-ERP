@@ -15,7 +15,7 @@ import { cardPaymentKey, type BankCardPayment } from './bank-queries';
 import { useReconcilePick } from './bank-reconcile-pick';
 import { EntryDocument } from './bank-entry-doc';
 import { fmt } from './settlement-ui';
-import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import look from './BankStatements.module.css';
 import grid from './MerchantRecon.module.css';
 

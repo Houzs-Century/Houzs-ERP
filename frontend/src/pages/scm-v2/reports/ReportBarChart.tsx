@@ -1,6 +1,6 @@
 
 import { useMemo, useRef } from 'react';
-import { fmtDate, fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSenPlain } from '../../../vendor/shared/format';
 import { useFinanceDashboard, type DashboardPeriod } from '../../../vendor/scm/lib/dashboard-queries';
 import { monthEnd, monthStart } from '../../../lib/dateRangePresets';
 import { DashboardChart } from '../DashboardChart';

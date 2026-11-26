@@ -7,7 +7,7 @@
 
 import autoTable from 'jspdf-autotable';
 import type { PdfAction } from './pdf-common';
-import { fmtMoneySen, fmtSenPlain, todayMY } from '../../../../../shared/src/vendor/shared/format';
+import { fmtMoneySen, fmtSenPlain, todayMY } from '../../shared/format';
 import { closeListing, listingDress, openListing, screenTable, type FootCell, type ScreenTableView } from './listing-pdf';
 
 type Own = { currency?: string | null; total_sen?: number | null };

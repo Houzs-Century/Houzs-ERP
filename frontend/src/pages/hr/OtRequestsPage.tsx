@@ -16,7 +16,7 @@ import { useQuery } from "../../hooks/useQuery";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
-import { todayMY } from "../../../../shared/src/vendor/shared/format";
+import { todayMY } from "../../vendor/shared/format";
 import { avatarColor, initials } from "./hrAvatar";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");

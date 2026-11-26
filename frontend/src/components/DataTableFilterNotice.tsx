@@ -10,7 +10,7 @@
  */
 import { FilterX } from "lucide-react";
 import { headerLabel } from "../lib/columnHeaderLabel";
-import { fmtDate } from "../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../vendor/shared/format";
 import { isConditionToken, parseCondition, DATE_PRESETS } from "./dataTableConditionFilters";
 
 export type ActiveFilter = { key: string; label: string; detail: string };

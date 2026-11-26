@@ -33,7 +33,7 @@ import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './se
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { BankAccountTabs, currentAccount } from './BankAccountTabs';
-import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DataTable } from '../../components/DataTable';
 import { ReconcilePickProvider, byDateThenLine, useReconcilePick } from './bank-reconcile-pick';
 import { EntryDocument, entryDocText } from './bank-entry-doc';

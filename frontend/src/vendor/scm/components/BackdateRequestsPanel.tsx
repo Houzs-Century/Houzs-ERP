@@ -5,7 +5,7 @@
    answers the same split (GET /:docNo/payment-backdate-requests), so this only
    decides which buttons to draw. Renders nothing while the order has none. */
 import type { CSSProperties } from 'react';
-import { fmtDate, fmtMoneySen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtMoneySen } from '../../shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { usePrompt } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';

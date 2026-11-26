@@ -37,8 +37,8 @@ import { BANK_OTHER, MALAYSIAN_BANKS, PAYMENT_TERMS, PAYMENT_TERMS_CUSTOM, listE
 import { Modal } from '../../vendor/scm/components/Modal';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDate, fmtMoneySen, fmtSen } from '../../../../shared/src/vendor/shared/format';
-import { humaniseStatusKey, statusLabel } from '../../../../shared/src/vendor/scm/lib/status-pill';
+import { fmtDate, fmtMoneySen, fmtSen } from '../../vendor/shared/format';
+import { humaniseStatusKey, statusLabel } from '../../vendor/scm/lib/status-pill';
 import { FinanceDocLink, financeDocHref } from './finance/FinanceDocLink';
 import { Tag, Views, type ViewOption } from './MoneyOutErpParts';
 import styles from './SalesOrderDetail.module.css';

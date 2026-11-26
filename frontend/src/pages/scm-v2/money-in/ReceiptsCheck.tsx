@@ -9,7 +9,7 @@
 // ----------------------------------------------------------------------------
 
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
-import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../vendor/shared/format';
 import type { ReceiptsCheck as Check } from './moneyInDocQueries';
 import { methodWord } from './moneyInStatus';
 import { monthName } from './receiptsModel';

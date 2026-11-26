@@ -21,7 +21,7 @@ import { DateField } from '../../vendor/scm/components/DateField';
 import { useAccounts } from '../../vendor/scm/lib/accounting-queries';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { usePaymentListing, type PaymentListingRow, type PaymentListingStage } from '../../vendor/scm/lib/payment-voucher-queries';
-import { fmtDate, fmtMoneySen, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtMoneySen, fmtSenPlain } from '../../vendor/shared/format';
 import { FinanceDocLink, financeDocHref } from './finance/FinanceDocLink';
 import { Tag } from './MoneyOutErpParts';
 import styles from './SalesOrderDetail.module.css';

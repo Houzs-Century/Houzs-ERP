@@ -7,7 +7,7 @@ import {
   type TimelineRow,
   type TimelineTone,
 } from "../../vendor/scm/lib/assr/timeline";
-import { fmtDate, fmtTime } from "../../../../shared/src/vendor/shared/format";
+import { fmtDate, fmtTime } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 
 export interface CaseTimelineProps {

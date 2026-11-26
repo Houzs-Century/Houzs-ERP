@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { cn } from '../../../lib/utils';
 import { Button } from '../../../components/Button';
-import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../../vendor/shared/format';
 import { useNotify } from '../../../vendor/scm/components/NotifyDialog';
 import {
   useScheduleDelivery, useUpdateDeliveryFields, type PlanningOrder,

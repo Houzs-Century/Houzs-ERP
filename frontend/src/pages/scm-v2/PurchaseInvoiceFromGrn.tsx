@@ -5,7 +5,7 @@ import { writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { ArrowRight, Search, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash, fmtQty } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash, fmtQty } from '../../vendor/shared/format';
 import {
   useOutstandingGrnItems,
   type OutstandingGrnItem,
@@ -18,7 +18,7 @@ import { PageHeader } from '../../components/Layout';
 import { SearchInput } from '../../components/Button';
 import { SearchScopeHint } from '../../components/SearchScopeHint';
 
-import { fmtMoneySen } from '../../../../shared/src/vendor/shared/format';
+import { fmtMoneySen } from '../../vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number, currency = 'MYR'): string =>

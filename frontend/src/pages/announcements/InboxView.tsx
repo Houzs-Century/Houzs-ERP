@@ -4,7 +4,7 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { AnnouncementMedia } from "../../components/AnnouncementMedia";
 import { AnnouncementRichBody } from "../../components/AnnouncementRichBody";
 import { cn, relativeTime } from "../../lib/utils";
-import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
+import { fmtDateTime } from "../../vendor/shared/format";
 import {
   CATEGORY_META,
   INBOX_FILTERS,

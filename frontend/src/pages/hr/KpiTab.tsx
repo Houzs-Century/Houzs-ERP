@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useToast } from "../../hooks/useToast";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
-import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { computeKpi, finalScoreX100, KPI_WEEKS, resolveTier, type KpiMetricDef, type KpiRating, type KpiRole, type KpiTierDef } from "../../vendor/shared/hr-kpi";
 import { errText } from "../pos-admin/posAdminUi";
 import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";

@@ -20,12 +20,12 @@
     "baseUrl": ".",
     "paths": {
       "@2990s/design-system": ["./src/vendor/design-system/index.ts"],
-      "@2990s/shared/phone": ["../shared/src/vendor/shared/phone.ts"],
-      "@2990s/shared/mfg-pricing": ["../shared/src/vendor/shared/mfg-pricing.ts"],
+      "@2990s/shared/phone": ["./src/vendor/shared/phone.ts"],
+      "@2990s/shared/mfg-pricing": ["./src/vendor/shared/mfg-pricing.ts"],
       "@2990s/shared/payment-methods": ["./src/vendor/scm/lib/payment-methods.ts"],
-      "@2990s/shared/so-variant-rule": ["../shared/src/vendor/shared/so-variant-rule.ts"],
-      "@2990s/shared/so-line-display": ["../shared/src/vendor/shared/so-line-display.ts"],
-      "@2990s/shared": ["../shared/src/vendor/shared/index.ts"],
+      "@2990s/shared/so-variant-rule": ["./src/vendor/shared/so-variant-rule.ts"],
+      "@2990s/shared/so-line-display": ["./src/vendor/shared/so-line-display.ts"],
+      "@2990s/shared": ["./src/vendor/shared/index.ts"],
       "jspdf": ["./node_modules/jspdf"],
       "jspdf-autotable": ["./node_modules/jspdf-autotable"]
     }

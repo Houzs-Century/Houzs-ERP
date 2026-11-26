@@ -24,7 +24,7 @@ import { useMemo, useState } from 'react';
 import { SlidersHorizontal } from 'lucide-react';
 import { useAuth } from '../../auth/AuthContext';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
-import { fmtDate, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
 import {
   fmtPerf, performanceNotes, performanceReportPath, performanceSummaryLines, usePerformanceMonths, usePerformanceReport,
   useSavePerformanceSettings, type PerformanceMonth, type PerformanceReport,

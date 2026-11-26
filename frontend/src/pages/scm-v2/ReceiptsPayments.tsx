@@ -51,7 +51,7 @@ import { mergeColumns, rpLines } from '../../vendor/scm/lib/report-monthly';
 import { cashFlowSheet, fmtRp } from '../../vendor/scm/lib/rp-report-pdf';
 import { flattenLaid, leafKeys, linesVisible, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { statementColumnsTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';
-import { fmtDate, fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
 import { useReportTree, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
 import { FinanceDateRange } from './reports/FinanceDateRange';

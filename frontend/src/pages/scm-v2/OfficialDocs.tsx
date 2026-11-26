@@ -19,7 +19,7 @@ import { OfficialDocActions } from '../../vendor/scm/components/OfficialDoc';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
-import { fmtDate, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen } from '../../vendor/shared/format';
 import { FinanceDocLink, financeDocHref } from './finance/FinanceDocLink';
 import { Tag, Views, type Tone, type ViewOption } from './MoneyOutErpParts';
 import css from './MoneyOutErp.module.css';

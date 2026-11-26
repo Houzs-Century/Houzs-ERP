@@ -33,7 +33,7 @@ import { useAuth } from "../auth/AuthContext";
 import { isSalesDirectorUser } from "../auth/salesAccess";
 import { relativeTime, cn } from "../lib/utils";
 import { inviteExpiry, inviteLink } from "../lib/invitations";
-import { formatPhone } from "../../../shared/src/vendor/shared/phone";
+import { formatPhone } from "../vendor/shared/phone";
 import type { TeamMember, Invitation, Role, Department, Position } from "../types";
 import { MemberOrgPerformance } from "./team/MemberOrgPerformance";
 import { TeamDirectory } from "./team/TeamDirectory";
@@ -48,7 +48,7 @@ import { PositionsTab } from "./Positions";
 import { MailboxesTab } from "./MailboxesTab";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
-import { fmtDate } from "../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../vendor/shared/format";
 
 type TeamTabValue =
   | "hub"

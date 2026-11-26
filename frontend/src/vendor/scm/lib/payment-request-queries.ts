@@ -12,7 +12,7 @@ import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
 import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
 import type { EventSuggestion } from './event-queries';
-import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../shared/format';
 import { runOneAiRead, type AiReadStage } from './ai-read-job';
 
 export type RequestStage =

@@ -28,7 +28,7 @@ import {
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import { SaveBlockedIndicator } from "../../vendor/scm/components/SaveBlockedIndicator";
 import { useSoValidate } from "../../vendor/scm/lib/use-so-validate";
 import { SaveProblemsList, saveProblemsTitle, notifySaveProblems } from "../../vendor/scm/components/SaveProblemsList";

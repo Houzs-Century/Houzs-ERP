@@ -2,7 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
-import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../../vendor/shared/format';
 import type { DebtorReceipt, OtherDebtor } from '../../../vendor/scm/lib/accounting-queries';
 
 export type DocJournalLine = {

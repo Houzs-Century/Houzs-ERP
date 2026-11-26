@@ -27,7 +27,7 @@ import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-h
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
-import { fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import ui from './MoneyIn.module.css';
 
 /** projectId: the event a money line is for (item 6, optional) — null = none. */

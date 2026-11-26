@@ -21,7 +21,7 @@ import { Link } from 'react-router-dom';
 import { HandCoins } from 'lucide-react';
 import { STAGE, answerText, type PaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
 import { OfficialDocChip } from '../../vendor/scm/components/OfficialDoc';
-import { fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import { LazySlot } from '../../components/LazySlot';
 import type { TaskAttachment } from './types';
 

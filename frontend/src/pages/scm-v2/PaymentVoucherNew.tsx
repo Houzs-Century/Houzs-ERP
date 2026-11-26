@@ -33,13 +33,13 @@ import { NO_PAY_TO, isBlankPayTo, payToBody, payToOf, payToOfVoucher, samePayTo,
 import { PvPayToFields } from './PvPayToFields';
 import { BillMatchesNote } from '../../vendor/scm/components/RequestBill';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
-import { fmtDate } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { BackToPile } from '../../vendor/scm/components/BackToPile';
 import { resolveFxRate, deriveRateFromMyrPaid } from './fx-rate';
 
-import { fmtMoneySen, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtMoneySen, fmtSen } from '../../vendor/shared/format';
 import { afterCreatePath, sourceDocPath } from '../../lib/returnToSource';
 import { useToastOptional } from '../../hooks/useToast';
 import { useAuth as useHouzsAuthNew } from '../../auth/AuthContext';

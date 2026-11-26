@@ -3,7 +3,7 @@ import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatCurrency, formatDate } from "../../lib/utils";
-import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { DEFAULT_PAY_RULES, hhmmToMin, minToHhmm, normalizePayRules, payRulesProblem, type PayRulesConfig } from "../../vendor/shared/hr-pay-rules";
 import { Empty, Field, Toggle, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";

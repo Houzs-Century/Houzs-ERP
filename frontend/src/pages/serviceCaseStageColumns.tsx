@@ -4,7 +4,7 @@
 // ServiceCases.tsx, which sits at its size ceiling.
 import type { Column } from "../components/DataTable";
 import type { AssrCase } from "../types";
-import { todayMY } from "../../../shared/src/vendor/shared/format";
+import { todayMY } from "../vendor/shared/format";
 
 const DAY = 86400000;
 const daysSince = (iso: string | null | undefined) => {

@@ -24,11 +24,11 @@
 
 import { useState } from 'react';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
-import { fmtDateTime } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDateTime } from '../../shared/format';
 import { useConfirm, usePrompt as useConfirmWithText } from './ConfirmDialog';
 import { usePrompt } from './PromptDialog';
 import { serviceNotify } from '../lib/dialog-service';
-import { STATUS_TONES } from '../../../../../shared/src/vendor/scm/lib/status-pill';
+import { STATUS_TONES } from '../lib/status-pill';
 import {
   APPROVE_REMARK_INPUT,
   approveLabel,

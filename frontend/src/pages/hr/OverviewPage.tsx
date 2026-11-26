@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { minutesFromWorkDate } from "../../vendor/shared/hr-attendance";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";

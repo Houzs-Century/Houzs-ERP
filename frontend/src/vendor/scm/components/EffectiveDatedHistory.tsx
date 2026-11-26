@@ -1,6 +1,6 @@
 
 import { type CSSProperties, type ReactNode } from 'react';
-import { STATUS_TONES } from '../../../../../shared/src/vendor/scm/lib/status-pill';
+import { STATUS_TONES } from '../lib/status-pill';
 import { todayMyt } from '../lib/dates';
 
 

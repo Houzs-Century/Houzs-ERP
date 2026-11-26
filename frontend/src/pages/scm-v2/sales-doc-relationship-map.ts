@@ -1,5 +1,5 @@
 
-import { customerRefOf, type CustomerRefHeader } from '../../../../shared/src/lib/customer-ref';
+import { customerRefOf, type CustomerRefHeader } from '../../lib/customer-ref';
 import { useCallback, useMemo } from 'react';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useAuth } from '../../auth/AuthContext';

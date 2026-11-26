@@ -19,7 +19,7 @@ import {
   statusLabel as scmStatusLabel,
   type StatusDocType,
   type StatusTone,
-} from "../../../shared/src/vendor/scm/lib/status-pill";
+} from "../vendor/scm/lib/status-pill";
 import type { FormSchema } from "./MobileModuleForm";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { warehouseLabel } from "../vendor/scm/lib/warehouse-label";

@@ -7,9 +7,9 @@ import {
   type DepositInvoice,
 } from '../../../vendor/scm/lib/deposit-invoice-queries';
 import { useAccountRoles, useAccounts } from '../../../vendor/scm/lib/accounting-queries';
-import { orderAddressLines } from '../../../../../shared/src/vendor/scm/lib/order-address';
+import { orderAddressLines } from '../../../vendor/scm/lib/order-address';
 import type { PdfAction } from '../../../vendor/scm/lib/pdf-common';
-import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../vendor/shared/format';
 import { useToastOptional } from '../../../hooks/useToast';
 import { DataTable, type Column } from '../../../components/DataTable';
 import { AskBanner, type Ask } from './AskBanner';

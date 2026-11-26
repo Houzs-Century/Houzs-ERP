@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Lock } from 'lucide-react';
-import { fmtDate, todayMY } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, todayMY } from '../../../vendor/shared/format';
 import { DateField } from '../../../vendor/scm/components/DateField';
 import { useConfirm } from '../../../vendor/scm/components/ConfirmDialog';
 import { writeFailedAs } from '../../../vendor/scm/lib/mutation-error';

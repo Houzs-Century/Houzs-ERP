@@ -9,7 +9,7 @@
 import { authedFetch } from './authed-fetch';
 import type { ArBillDetail, ArListRow } from './ar-invoice-queries';
 import type { SiHeader, SiItem } from './sales-invoice-pdf';
-import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
+import { PDF_COMPRESS } from './pdf-options';
 
 const FETCH_AT_ONCE = 4;
 

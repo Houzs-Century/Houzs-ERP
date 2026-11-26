@@ -51,7 +51,7 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import grid from './MerchantRecon.module.css';
 import { downloadCSV, toCSV } from '../../lib/csv';
-import { fmtDate } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../vendor/shared/format';
 
 /** 2026-09 → 09/2026 — a month in the house's own numeric, unambiguous shape,
     one field shorter than fmtDate's 16/08/2026.

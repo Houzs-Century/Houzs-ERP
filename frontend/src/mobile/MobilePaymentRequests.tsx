@@ -46,7 +46,7 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useAuth } from "../auth/AuthContext";
 import { classifyLoadFailure } from "../lib/loadFailure";
-import { fmtDateOrDash, fmtSen } from "../../../shared/src/vendor/shared/format";
+import { fmtDateOrDash, fmtSen } from "../vendor/shared/format";
 import { openLoadedTab } from "../lib/openLoadedTab";
 
 const EVENTS_PATH = "/payment-requests/event-options" as const;

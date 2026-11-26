@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp, Info, Paperclip, Plus, Search, X } from 'lucide
 import { ResizableDetailDrawer } from '../../../components/ResizableDetailDrawer';
 import { DateField } from '../../../vendor/scm/components/DateField';
 import { todayMyt } from '../../../vendor/scm/lib/dates';
-import { fmtDate, fmtDateTime } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateTime } from '../../../vendor/shared/format';
 import styles from './FinanceTasks.module.css';
 import {
   useAddGroup, useAddRemark, useCreateTask, useDeleteTask, useEditRemark, useLinkSearch, useMarkTask, useTodoPeople, useTodoTask,

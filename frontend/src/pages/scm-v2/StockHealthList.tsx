@@ -6,7 +6,7 @@ import { variantWords } from "../../vendor/scm/lib/variant-key-label";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import { SortTh, Td, useTableSort } from "../../components/scm-v2/OverviewKit";
 
 export type DeadRow = { warehouse: string; category: string; itemCode: string; variantKey: string; name: string | null; qty: number; valueSen: number; idleDays: number | null };

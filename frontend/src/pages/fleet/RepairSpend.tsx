@@ -1,7 +1,7 @@
 // What this lorry has cost to keep running (owner, 2026-10-15: "整个历史的维修
 // amount"). Every repair and every recorded service is a work order, so the sum
 // of the work orders' totals is the lorry's whole repair spend.
-import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import { Tile } from "./FleetUi";
 
 type Wo = { totalSen: number; reportedAt: string | null; actualComplete: string | null; status: string };

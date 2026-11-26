@@ -23,7 +23,7 @@
    ---------------------------------------------------------------------------- */
 
 import { Badge } from '../../../components/Badge';
-import { STATUS_TONES } from '../../../../../shared/src/vendor/scm/lib/status-pill';
+import { STATUS_TONES } from '../lib/status-pill';
 import styles from './StatusPill.module.css';
 
 export type HoldChipProps = {

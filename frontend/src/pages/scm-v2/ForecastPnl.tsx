@@ -36,7 +36,7 @@ import { Plus, X } from 'lucide-react';
 import { ReportShell } from './reports/ReportShell';
 import { getActiveCompanyId } from '../../lib/activeCompany';
 import { fmtMoneyAtRest } from '../../vendor/scm/components/MoneyInput';
-import { fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtSenPlain } from '../../vendor/shared/format';
 import {
   FORECAST_BLOCKS, OTHER_SUPPLIER, blockOfSection, inheritMonth, inheritSuppliers, isAmountCell, isPurchaseAccount, isSalesAccount, monthFigures, nextMonth, sortedMonths,
   type ForecastAccount, type ForecastBlockKey, type ForecastCell, type ForecastFigures, type ForecastGrid, type ForecastLines, type SupplierGrid, type SupplierLines,

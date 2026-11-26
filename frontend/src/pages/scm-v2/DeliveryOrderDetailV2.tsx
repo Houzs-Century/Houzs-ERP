@@ -75,7 +75,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders, canRevertDelivery } from "../../auth/salesAccess";
 import { DO_SHIPPED_STATES, doHasArrived } from '../../vendor/shared/do-shipped-states';
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
-import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
+import { customerRefOf } from '../../lib/customer-ref';
 
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { isFocLine } from '../../vendor/scm/lib/foc-line';

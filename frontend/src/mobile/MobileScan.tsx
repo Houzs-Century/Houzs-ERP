@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useQuery } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { useAuth } from "../auth/AuthContext";
-import { splitE164 } from "../../../shared/src/vendor/shared/phone";
+import { splitE164 } from "../vendor/shared/phone";
 import { compressAllForOcr } from "../vendor/shared/image-compress";
 import type { ExtractedSlip } from "../vendor/scm/components/ScanOrderModal";
 import {

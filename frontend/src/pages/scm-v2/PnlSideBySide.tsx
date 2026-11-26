@@ -23,7 +23,7 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { monthEnd, monthStart } from '../../lib/dateRangePresets';
-import { fmtDate } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../vendor/shared/format';
 import { mergeColumns, monthlyDepth, pnlLines } from '../../vendor/scm/lib/report-monthly';
 import { linesVisible } from '../../vendor/scm/lib/report-layout';
 import { statementColumnsTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';

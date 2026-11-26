@@ -19,7 +19,7 @@
    kept: it prints the way the bank reconciliation does). */
 
 import { useMemo, useState } from 'react';
-import { fmtDate, fmtDateOrDash, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import type { ReportSheet, SheetColumn } from '../../vendor/scm/lib/report-sheet';
 import { usePaymentCorrections, type PaymentCorrectionRow } from './accounting-phase1-queries';

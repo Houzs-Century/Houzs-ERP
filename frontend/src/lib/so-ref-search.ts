@@ -10,7 +10,7 @@
    the client-side searches share.
    --------------------------------------------------------------------------- */
 
-import { customerRefOf } from '../../../shared/src/lib/customer-ref';
+import { customerRefOf } from './customer-ref';
 
 /** The Sales Order's raw reference pair, stamped onto a snake_case row. */
 export type SoRefStamp = { so_ref?: string | null; so_customer_so_no?: string | null };

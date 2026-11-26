@@ -19,7 +19,7 @@ import { Button } from '../../components/Button';
 import { TabStrip } from '../../components/TabStrip';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { cn } from '../../lib/utils';
-import { todayMY } from '../../../../shared/src/vendor/shared/format';
+import { todayMY } from '../../vendor/shared/format';
 import { useFleetDay } from '../../vendor/scm/lib/fleet-day-queries';
 import { assignRouteColors, routeColorFor } from '../../vendor/scm/lib/fleet-colors';
 import { DeliveryMapPanel, useMapPanelOpen } from '../../components/scm-v2/DeliveryMapPanel';

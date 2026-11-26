@@ -1,4 +1,4 @@
-import { fmtDate, fmtDateTime, fmtTimestamp } from "../../../shared/src/vendor/shared/format";
+import { fmtDate, fmtDateTime, fmtTimestamp } from "../vendor/shared/format";
 
 export function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");

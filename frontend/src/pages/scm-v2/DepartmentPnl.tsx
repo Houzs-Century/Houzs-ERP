@@ -28,7 +28,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { monthEnd, monthStart } from '../../lib/dateRangePresets';
-import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
   useDepartmentPlan, useDepartmentUnit, useDepartmentView, useDepartmentsAll, useDepartmentsGa, useDepartmentsOperation, useSaveDepartmentRate, useSaveOperationSpread,
   type ChargeRates, type DepartmentPlan, type DepartmentUnit, type DepartmentView, type DepartmentsAll, type DepartmentsGa, type DepartmentsOperation,

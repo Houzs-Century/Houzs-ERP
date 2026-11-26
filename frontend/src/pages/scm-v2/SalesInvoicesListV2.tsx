@@ -78,7 +78,7 @@ import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { salesInvoicePrintChain } from "../../lib/printChain";
-import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
+import { customerRefOf } from '../../lib/customer-ref';
 import { OVERDUE_CLASS, isPastDue } from '../../lib/tableHighlight';
 import { todayMyt } from "../../vendor/scm/lib/dates";
 

@@ -56,9 +56,9 @@ import { sortByText } from "../../vendor/scm/lib/sort-options";
 
 const ADDRESS_SELECT_CLS =
   "h-10 w-full rounded-lg border border-border bg-surface px-3 pr-8 text-[13.5px] text-ink outline-none focus:border-primary";
-import { splitE164, combineE164 } from "../../../../shared/src/vendor/shared/phone";
+import { splitE164, combineE164 } from "../../vendor/shared/phone";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { fmtDate } from "../../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { buildDoHeaderBody, seedDoHeaderForm, DO_HEADER_LOCKED_NOTICE } from "../../vendor/scm/lib/do-header-form";
 import { doHeaderLocked, isDoHeaderKeyLocked } from "../../vendor/shared/do-header-lock";

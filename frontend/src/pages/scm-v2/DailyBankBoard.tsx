@@ -1,7 +1,7 @@
 
 import { Link } from 'react-router-dom';
 import { ArrowRight, Hourglass } from 'lucide-react';
-import { fmtDate, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen } from '../../vendor/shared/format';
 import styles from './DailyBank.module.css';
 import type { DailyBankBlock, DailyBankBoard, DailyBankMovement, DailyBankPending } from './accounting-phase1-queries';
 

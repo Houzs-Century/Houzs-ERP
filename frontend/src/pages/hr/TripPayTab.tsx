@@ -7,7 +7,7 @@ import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
-import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { TRIP_EVENT_LABEL, TRIP_EVENT_TYPES, TRIP_JOB_LABEL, TRIP_JOB_TYPES, isFairJob, tripMonthOf, type TripEventType, type TripJobType } from "../../vendor/shared/hr-trip-pay";
 import { Field, Pill, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";

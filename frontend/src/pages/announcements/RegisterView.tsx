@@ -24,7 +24,7 @@ import { api } from "../../api/client";
 import { useAuth } from "../../auth/AuthContext";
 import { cn } from "../../lib/utils";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { fmtDate, fmtDateTime } from "../../../../shared/src/vendor/shared/format";
+import { fmtDate, fmtDateTime } from "../../vendor/shared/format";
 import type { Department } from "../../types";
 import type { DocumentTypeOption } from "./announcementModel";
 import { todayMyt } from "../../vendor/scm/lib/dates";

@@ -9,7 +9,7 @@ import { EmptyState } from "../components/EmptyState";
 import { useQuery } from "../hooks/useQuery";
 import { QualitySummary } from "./QualitySummary";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../components/scm-v2/DashboardPeriod";
-import { todayMY } from "../../../shared/src/vendor/shared/format";
+import { todayMY } from "../vendor/shared/format";
 import { Donut, type Slice } from "../components/scm-v2/Charts";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";

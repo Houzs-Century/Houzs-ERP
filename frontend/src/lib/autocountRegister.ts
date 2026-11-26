@@ -31,7 +31,7 @@
 // row unclicked, the page still opens on what is stuck, and a document already
 // in the account book still has nothing to open. Those are rulings, not layout.
 // ----------------------------------------------------------------------------
-import { fmtDate, fmtTime } from "../../../shared/src/vendor/shared/format";
+import { fmtDate, fmtTime } from "../vendor/shared/format";
 
 import type { AcDocGroup, AcOutboxRow } from "./autocountOutbox";
 

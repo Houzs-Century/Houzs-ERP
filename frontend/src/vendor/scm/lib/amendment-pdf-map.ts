@@ -8,8 +8,8 @@ import {
   FIELD_KIND_LABEL,
 } from './amendment-routing';
 import { amendmentLineChangedFields, amendmentVariantSummaries } from './so-amendment-line-diff';
-import { simplifiedAmendmentPill } from '../../../../../shared/src/vendor/scm/lib/status-pill';
-import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { simplifiedAmendmentPill } from './status-pill';
+import { fmtSen } from '../../shared/format';
 
 const money = (centi: number | null | undefined): string =>
   centi == null ? '—' : fmtSen(Number(centi));

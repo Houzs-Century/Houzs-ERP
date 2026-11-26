@@ -35,7 +35,7 @@
 import type { SheetData as WxlSheetData, Cell as WxlCell } from 'write-excel-file';
 import type { MrpResponse, MrpSku, MrpLine } from '../../vendor/scm/lib/mrp-queries';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
-import { fmtDate } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../vendor/shared/format';
 import { mrpViews, mrpCategoryOf, type MrpView } from './mrp-views';
 import {
   computeTabModels, type ModelGroup, type MrpFilters, type AccessoryBySoDoc,

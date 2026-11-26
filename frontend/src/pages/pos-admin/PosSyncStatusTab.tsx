@@ -5,7 +5,7 @@ import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { cn, formatDateTime } from "../../lib/utils";
-import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import { POS_ADMIN, useSyncStatus, type SyncAlert, type SyncStatusWord, type SyncTerminal } from "./posAdminApi";
 import { Empty, Pill, Table, errText, ghostBtn, td, th } from "./posAdminUi";
 

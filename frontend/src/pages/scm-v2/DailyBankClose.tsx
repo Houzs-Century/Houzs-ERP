@@ -1,7 +1,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Lock } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSenPlain } from '../../vendor/shared/format';
 import styles from './DailyBank.module.css';
 import { useConfirmDailyClose, useDailyClose, useSaveDailyClose, type DailyCloseRow } from './accounting-phase1-queries';
 

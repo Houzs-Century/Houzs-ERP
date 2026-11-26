@@ -13,7 +13,7 @@
 import { useMemo, useState } from 'react';
 import { Power, RefreshCw, X } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtDate, fmtDateTime, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSen } from '../../vendor/shared/format';
 import { fmtLedger } from '../../vendor/scm/lib/ledger-queries';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import {

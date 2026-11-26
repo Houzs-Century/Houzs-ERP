@@ -8,7 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ResizableDrawer } from "../../../components/ResizableDrawer";
 import { cn } from "../../../lib/utils";
 import { api } from "../../../api/client";
-import { fmtDate, fmtSen } from "../../../../../shared/src/vendor/shared/format";
+import { fmtDate, fmtSen } from "../../../vendor/shared/format";
 import { DateField } from "../../../vendor/scm/components/DateField";
 import { writeFailed, writeFailedAs } from "../../../vendor/scm/lib/mutation-error";
 import { useConfirm } from "../../../vendor/scm/components/ConfirmDialog";

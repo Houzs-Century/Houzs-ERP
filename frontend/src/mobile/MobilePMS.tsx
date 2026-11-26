@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { formatPhone } from "../../../shared/src/vendor/shared/phone";
+import { formatPhone } from "../vendor/shared/phone";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { MobileGantt } from "./MobileGantt";
 import { MediaLightbox, type MediaItem } from "../components/MediaLightbox";
@@ -25,7 +25,7 @@ import { ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
 import { isReviewableTitle } from "../vendor/scm/lib/pms-reviewable-titles";
 import { PROJECT_STATUS_OPTIONS, paymentPillOptions } from "../vendor/scm/lib/pms-project-status";
 import "./mobile.css";
-import { fmtTime } from "../../../shared/src/vendor/shared/format";
+import { fmtTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { EditProjectSheet } from "./MobileEditProjectSheet";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";

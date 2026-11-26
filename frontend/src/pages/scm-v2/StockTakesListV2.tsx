@@ -31,9 +31,9 @@ import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useAuth } from "../../auth/AuthContext";
-import { fmtDate } from "../../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
-import { withStatusLabels } from "../../../../shared/src/vendor/scm/lib/status-pill";
+import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
 import { stockTakeRowMenu } from "./row-menus";
 
 type StatusTab = "all" | "open" | "pending" | "posted" | "cancelled";

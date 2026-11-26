@@ -2,7 +2,7 @@
 // joins the tracker's 5-min fixes by road where Google can, straight where it cannot.
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { todayMY } from '../../../../../shared/src/vendor/shared/format';
+import { todayMY } from '../../shared/format';
 
 export type MapPoint = { lat: number; lng: number };
 export type LorryRoadTrack = { date: string; path: MapPoint[]; chunks: number; roadChunks: number };

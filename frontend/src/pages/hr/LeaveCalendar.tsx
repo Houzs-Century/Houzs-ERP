@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { todayMY } from "../../../../shared/src/vendor/shared/format";
+import { todayMY } from "../../vendor/shared/format";
 import { DAY_NAMES } from "../../lib/meetings";
 
 export type CalEntry = { id: number; name: string; type: string; startDate: string; endDate: string; status: string };

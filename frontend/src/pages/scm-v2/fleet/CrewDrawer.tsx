@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { formatPhone } from "@2990s/shared/phone";
 import { ResizableDrawer } from "../../../components/ResizableDrawer";
-import { todayMY } from "../../../../../shared/src/vendor/shared/format";
+import { todayMY } from "../../../vendor/shared/format";
 import { DateField } from "../../../vendor/scm/components/DateField";
 import { useConfirm } from "../../../vendor/scm/components/ConfirmDialog";
 import { writeFailedAs } from "../../../vendor/scm/lib/mutation-error";

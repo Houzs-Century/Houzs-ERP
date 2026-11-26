@@ -104,7 +104,7 @@ import { useFocusFromUrl } from "../hooks/useFocusFromUrl";
 import { useAuth } from "../auth/AuthContext";
 import { isSalesStaff } from "../auth/salesAccess";
 import { api, buildQuery } from "../api/client";
-import { formatPhone } from "../../../shared/src/vendor/shared/phone";
+import { formatPhone } from "../vendor/shared/phone";
 import { uploadAssrAttachment } from "../lib/assrAttachmentUpload";
 import { isPdfAttachment, openAssrAttachment } from "../lib/assrAttachmentOpen";
 import {
@@ -136,7 +136,7 @@ import type {
   AssrStage,
   PurchaseOrder,
 } from "../types";
-import { fmtDate } from "../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../vendor/shared/format";
 import { CaseDocChips } from "../components/assr/CaseDocChips";
 import { DateField } from "../vendor/scm/components/DateField";
 import {

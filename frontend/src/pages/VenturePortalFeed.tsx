@@ -12,7 +12,7 @@ import { cn } from "../lib/utils";
    09/12 would read as 12 September on one machine and 9 December on another —
    and this page's whole job is telling somebody WHEN something last got
    through. backend/scripts/check-date-formatting.mjs gates it. */
-import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
+import { fmtDateTime } from "../vendor/shared/format";
 import {
   VP_DEFAULT_RECEIVER_URL,
   VP_KEY_PASTE_LINE,

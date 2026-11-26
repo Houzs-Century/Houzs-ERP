@@ -5,7 +5,7 @@ import { skuOption } from './ScanGrnCheckCard';
 import { SearchableSelect } from './SearchableSelect';
 import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
-import { fmtDate, fmtSen, todayMY } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen, todayMY } from '../../shared/format';
 import { isOddDate, printedText, shortNote, swappedDate, type CheckSupplier } from '../lib/scan-gr-check';
 import { FREE_ROW_NOTE, billSkuOptions, grnOptions, isFreeRow, lineTierNote, newPiLineKey, piAmounts, piAmountsDiffer, piQtyTotals, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
 import type { CardProps } from './ScanCheckModal';

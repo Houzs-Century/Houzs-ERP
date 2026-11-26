@@ -8,7 +8,7 @@
 import type { Count, CoverPart, CoverRates, CoverRow, SoBacklogCoverData } from '../../vendor/scm/lib/so-backlog-cover-queries';
 import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetRow, type SheetTable } from '../../vendor/scm/lib/report-sheet';
 import { fmtPct } from '../../vendor/scm/lib/report-layout';
-import { fmtQty, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtQty, fmtSenPlain } from '../../vendor/shared/format';
 import { monthName } from './reports/statementColumns';
 
 export const PART_LABEL: Readonly<Record<CoverPart, string>> = {

@@ -15,7 +15,7 @@ import { useState } from 'react';
 import { Button } from '@2990s/design-system';
 import { Modal } from '../../../vendor/scm/components/Modal';
 import { useToastOptional } from '../../../hooks/useToast';
-import { fmtDate, fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSenPlain } from '../../../vendor/shared/format';
 import {
   useOpeningBillRows, useOpeningBills, useSaveOpeningBillPlace,
   type BillGoods, type OpeningBillsPayload, type OpeningSupplierRow, type PlaceChange, type PlaceOut,

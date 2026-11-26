@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { fmtDate } from "../../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { BTN_GHOST, CARD, orNotSet } from "./FleetUi";
 import { AddRenewalForm, AttachmentStrip, DOC_LABEL, DOC_TYPES, Pill, fmtDays, money, type DocType, type DocView, type Tone, type VehicleDetailPayload } from "../FleetHealth";

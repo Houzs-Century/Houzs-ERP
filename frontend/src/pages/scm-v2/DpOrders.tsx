@@ -8,7 +8,7 @@ import { DpRowActions } from './DpRowActions';
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDate, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen } from '../../vendor/shared/format';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import {
   useDpOrders,
@@ -23,7 +23,7 @@ import {
   type ScheduleDpOrderTarget,
 } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { statusLabel } from '../../../../shared/src/vendor/scm/lib/status-pill';
+import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';

@@ -3,7 +3,7 @@
    that already has part of it on a PO, is refused. Two models on two suppliers
    asks the operator to confirm first (owner 2026-11-11, HC-SO-2610-104). */
 import { findSofaSetSupplierSplits, sofaSetKey } from '../../vendor/shared/sofa-set-identity';
-import { splitSofaCode } from '../../../../shared/src/vendor/shared/sofa-combo-pricing';
+import { splitSofaCode } from '../../vendor/shared/sofa-combo-pricing';
 
 export interface SofaModuleOrderLine {
   soDocNo: string;

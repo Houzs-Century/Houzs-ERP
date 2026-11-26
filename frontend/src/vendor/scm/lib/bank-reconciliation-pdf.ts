@@ -42,7 +42,7 @@ import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont,
   fmtDocDate, fmtDocStamp, fmtRm, safeName, type PdfAction,
 } from './pdf-common';
-import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
+import { PDF_COMPRESS } from './pdf-options';
 
 
 export type ReconInput = {

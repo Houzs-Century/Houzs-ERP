@@ -309,7 +309,17 @@ const CEILINGS = {
   // module (its page, views and hooks are lazy) — one lazy() route in App.tsx,
   // its route label and its Bank & cards sidebar entry: initial 180.9 -> 181.1
   // KB gzip. Same shell-DATA mechanism as the notes above.
-  INITIAL_JS_GZIP: 182 * KB,
+  // 182 -> 182.2 on 2026-11-26: PR #6082 moved the SO / PO PDF layout and the
+  // modules it reads into the root shared/ module (scripts/check-layout.mjs:
+  // backend/src and frontend/src may not import each other), leaving one-line
+  // re-exports at the old frontend paths so no importer changed. The re-export
+  // hop made Rolldown split phone, status-pill and transfer-vocabulary into
+  // three lazy chunks of their own; their names in the entry's preload map are
+  // the whole cost (no eager module was added): initial 181.9 -> 182.1 KB gzip
+  // in run 45782725923. Pointing the ~440 importers at shared/ directly removes
+  // it, but was declined as churn against every open PR; doing that later, or
+  // dropping the re-exports, is how this 0.2 KB comes back.
+  INITIAL_JS_GZIP: 182.2 * KB,
   // Everything the app can lazy-load (users only fetch the routes they visit).
   // A soft guard against unbounded total growth, not a first-paint cost. Left
   // at 1800 deliberately — main is at ~99% of it and RAISING IT AGAIN IS NOT

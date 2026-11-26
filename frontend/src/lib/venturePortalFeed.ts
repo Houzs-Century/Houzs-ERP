@@ -34,7 +34,7 @@ import { useQuery } from "../hooks/useQuery";
    it is imported into the LOGIC layer rather than each surface: "generated
    13/09/2026 15:40" is a sentence, and every sentence on this page lives here.
    backend/scripts/check-date-formatting.mjs gates the rule. */
-import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
+import { fmtDateTime } from "../vendor/shared/format";
 
 export const VP_STATUS_PATH = "/api/scm/venture-portal-feed/status";
 export const VP_ROWS_PATH = "/api/scm/venture-portal-feed/rows";

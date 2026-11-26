@@ -33,7 +33,7 @@ import { fmtLedger, fmtSide, journalLabel, type LedgerJournal } from '../../vend
 import { exportFileName } from '../../vendor/scm/lib/report-sheet';
 import { triggerDownload } from '../../vendor/scm/lib/fabric-csv';
 import { guardFormula } from '../../lib/csv';
-import { fmtDate } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../vendor/shared/format';
 import { SearchScopeHint } from '../../components/SearchScopeHint';
 import { AccountCell, jeStatus, jeStatusTag, toneClass } from './JournalEntryCards';
 import { useColumnWidths, type ColumnWidthSpec } from './finance/useColumnWidths';

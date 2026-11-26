@@ -15,7 +15,7 @@ import {
 } from './pdf-common';
 import type { ApListRow } from './ap-invoice-queries';
 import { todayMyt } from './dates';
-import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
+import { PDF_COMPRESS } from './pdf-options';
 
 /** `showing`: the filter in words, as the page has it ("AP bills · All suppliers · Unpaid"). */
 export type ApListingFilter = { showing: string };

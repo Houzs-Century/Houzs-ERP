@@ -17,7 +17,7 @@ import { FinanceDocLink } from '../finance/FinanceDocLink';
 import type { SiHeader, SiItem } from '../../../vendor/scm/lib/sales-invoice-pdf';
 import { useAccounts } from '../../../vendor/scm/lib/accounting-queries';
 import type { PdfAction } from '../../../vendor/scm/lib/pdf-common';
-import { fmtDate, fmtSen, todayMY } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen, todayMY } from '../../../vendor/shared/format';
 import { DataTable, type Column } from '../../../components/DataTable';
 import {
   DocBooks, DocSection, DocState, MoneyInDocPage, PaperPreview, byTime, journalTrail, personOf,

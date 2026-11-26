@@ -20,7 +20,7 @@
 // Available, the transit figures, Available + in transit).
 // ----------------------------------------------------------------------------
 
-import { fmtDate, fmtSen, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen, fmtSenPlain } from '../../vendor/shared/format';
 import type { DailyBankBoard } from './accounting-phase1-queries';
 
 export type DailyBankRowKind =

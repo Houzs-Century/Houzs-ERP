@@ -14,7 +14,7 @@ import { DataTable, type Column } from "./DataTable";
 import type { DataTableLineExport, ExportCell, TablePdfView } from "./dataTableLineExport";
 import { gridLayoutToTableLayout } from "./dataTableLegacyGridLayout";
 import type { LayoutSeed } from "../lib/tableLayouts";
-import { isoForExport } from "../../../shared/src/vendor/shared/format";
+import { isoForExport } from "../vendor/shared/format";
 
 export type GridColumn<T> = {
   key: string;

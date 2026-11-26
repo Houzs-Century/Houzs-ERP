@@ -25,7 +25,7 @@
 import { useMemo, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { monthEnd, monthStart } from '../../lib/dateRangePresets';
-import { fmtDateOrDash, fmtDayMonthRange } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
 import { useLogisticsPnl, type LogisticsMonth, type LogisticsPnl, type PnlRegion } from '../../vendor/scm/lib/logistics-queries';
 import { FinanceGrid, fmtMoney, type GridRow } from './reports/FinanceGrid';
 import { FinanceDateRange } from './reports/FinanceDateRange';

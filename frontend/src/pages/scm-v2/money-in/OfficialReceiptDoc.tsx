@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAccounts } from '../../../vendor/scm/lib/accounting-queries';
 import { generateReceiptPdf } from '../../../vendor/scm/lib/receipt-pdf';
-import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../vendor/shared/format';
 import { useToastOptional } from '../../../hooks/useToast';
 import {
   DocBooks, DocState, MoneyInDocPage, byTime, journalTrail, personOf,

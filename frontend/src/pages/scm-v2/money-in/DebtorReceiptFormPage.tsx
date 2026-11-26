@@ -5,7 +5,7 @@ import {
   postableAccounts, useAccounts, useCreateDebtorReceipt, useDebtorReceiptAction, useUpdateDebtorReceipt,
 } from '../../../vendor/scm/lib/accounting-queries';
 import { useToastOptional } from '../../../hooks/useToast';
-import { todayMY } from '../../../../../shared/src/vendor/shared/format';
+import { todayMY } from '../../../vendor/shared/format';
 import { pvStage } from '../PvDocParts';
 import { DocFormShell } from './MoneyInDocPage';
 import { ReceiptForm, blankReceipt, type DebtorSave, type DebtorSubmit } from './ReceiptForm';

@@ -42,7 +42,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatCaseAddress } from "../vendor/scm/lib/assr-case-address";
 import { api } from "../api/client";
 import { formatDate, formatDateTime } from "../lib/utils";
-import { formatPhone } from "../../../shared/src/vendor/shared/phone";
+import { formatPhone } from "../vendor/shared/phone";
 import { orderDeliveryOf } from "../vendor/scm/lib/assr/order-delivery";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";

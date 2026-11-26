@@ -4,7 +4,7 @@ import { useQuery } from "../../hooks/useQuery";
 import { useToast } from "../../hooks/useToast";
 import { Button } from "../../components/Button";
 import { Eyebrow } from "./teamShared";
-import { fmtDate } from "../../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../../vendor/shared/format";
 
 type Pending = {
   id: string;

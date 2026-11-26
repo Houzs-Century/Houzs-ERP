@@ -4,7 +4,7 @@ import { AlertTriangle, Check, FileText, Info, Upload, X } from 'lucide-react';
 import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
 import { useUploadPayoutAdvice, useUploadStatement, type AcquirerSetup, type PayoutDay } from './settlement-queries';
 import { fmt, refusalText } from './settlement-ui';
-import { fmtDate } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../vendor/shared/format';
 import { parseMoneyToSen } from '../../lib/money';
 import drawer from './finance/FinanceTasks.module.css';
 import styles from './UploadDrawer.module.css';

@@ -3,7 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { authedFetch } from './authed-fetch';
 import { useDebouncedValue } from './hooks';
 import { writeFailedAs } from './mutation-error';
-import { fmtDayMonthRange } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDayMonthRange } from '../../shared/format';
 
 /** One brand's booth inside a row (backend twin `FairBooth`). */
 export type FairBooth = { projectId: number; brand: string | null };

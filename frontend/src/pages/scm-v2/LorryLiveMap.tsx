@@ -1,13 +1,13 @@
 
 import { fmtTime } from '@2990s/shared';
 import { Link } from 'react-router-dom';
-import { fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import { useMemo } from 'react';
 import { LorryKmDaily } from './LorryKmDaily';
 import { LiveTripMap, type LiveMarker, type LiveTrail } from '../../vendor/scm/components/LiveTripMap';
 import { useLorryRoadTracks } from '../../vendor/scm/lib/lorry-road-track';
-import { todayMY } from '../../../../shared/src/vendor/shared/format';
+import { todayMY } from '../../vendor/shared/format';
 import { useLorryKmCost, useLorryPositions, type LorryKmCost, type LorryPosition } from '../../vendor/scm/lib/lorries-queries';
 
 const STALE_MS = 15 * 60_000;

@@ -20,7 +20,7 @@ import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { useThreePLCompanies } from '../../vendor/scm/lib/threepl-companies-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import { formatDate } from '../../lib/utils';
 import styles from './Suppliers.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";

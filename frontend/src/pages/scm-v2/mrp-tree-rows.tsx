@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { ChevronDown, ChevronRight, Truck } from 'lucide-react';
 import type { DataTableChildRow } from '../../components/DataTable';
 import type { MrpLine, MrpSku } from '../../vendor/scm/lib/mrp-queries';
-import { fmtDate } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../vendor/shared/format';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { rowKey, type AccessoryRider, type ModelGroup } from './mrp-model-pipeline';
 import styles from './Mrp.module.css';

@@ -23,7 +23,7 @@ import {
 } from '../../vendor/scm/lib/aging-queries';
 import { AMOUNT_COLUMN, type ReportSheet, type SheetColumn, type SheetRow } from '../../vendor/scm/lib/report-sheet';
 import { DateField } from '../../vendor/scm/components/DateField';
-import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../vendor/shared/format';
 import { isIsoDay } from '../../lib/dateRangePresets';
 import { DataTable, type Column } from '../../components/DataTable';
 import { FinanceDocLink } from './finance/FinanceDocLink';

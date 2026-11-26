@@ -4,11 +4,11 @@ import {
   getBrandingCompanyCode,
   getBrandingLogoCache,
 } from '../../../lib/branding';
-import { setPdfHost } from '../../../../../shared/src/vendor/scm/lib/pdf-host';
-import { letterheadFromBranding } from '../../../../../shared/src/vendor/scm/lib/pdf-letterhead';
-import type { FontAssetUrl } from '../../../../../shared/src/vendor/scm/lib/pdf-core';
+import { setPdfHost } from './pdf-host';
+import { letterheadFromBranding } from './pdf-letterhead';
+import type { FontAssetUrl } from './pdf-core';
 
-export * from '../../../../../shared/src/vendor/scm/lib/pdf-core';
+export * from './pdf-core';
 
 const fetchFaceBase64 = async (url: FontAssetUrl): Promise<string> => {
   const res = await fetch(url);

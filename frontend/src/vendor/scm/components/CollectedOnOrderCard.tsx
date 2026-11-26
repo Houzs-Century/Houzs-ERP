@@ -13,7 +13,7 @@
    same week, cost every change log in the system its honesty
    (docs/bugs/0848). */
 
-import { fmtMoneySen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtMoneySen } from '../../shared/format';
 import { summariseCollected, type CollectedPayment } from '../lib/collected-on-order';
 
 export type CollectedOnOrderCardProps = {

@@ -1,6 +1,6 @@
 
 import { History } from 'lucide-react';
-import { fmtDateTime, todayMY } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateTime, todayMY } from '../../vendor/shared/format';
 import { fmtMoneySen } from '@2990s/shared';
 import { useEntityAuditLog } from '../../vendor/scm/lib/entity-audit-queries';
 import { useTodoSettings, type TaskLink } from './finance/finance-todo-queries';

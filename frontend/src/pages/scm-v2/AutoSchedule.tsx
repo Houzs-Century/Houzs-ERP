@@ -61,7 +61,7 @@ import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { DateField } from "../../vendor/scm/components/DateField";
-import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 

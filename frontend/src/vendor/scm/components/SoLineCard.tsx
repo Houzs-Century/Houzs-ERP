@@ -39,7 +39,7 @@ import { activeCompanyTracksVariants } from '../lib/binding-mode';
 
 const totalHeightPartsSig = (v: Record<string, unknown>): string =>
   [v.divanHeight, v.legHeight, v.gap].map((x) => String(x ?? '')).join('|');
-import { restrictPricedToPool, restrictStringsToPool } from '../../../../../shared/src/vendor/shared/maintenance-pools';
+import { restrictPricedToPool, restrictStringsToPool } from '../../shared/maintenance-pools';
 import { fabricAllowedByPool } from '../../shared/fabric-pool';
 import { activeOptions, CONSOLE_ATTACH_KEY, isColourKiv, isDeliveryFeeServiceCode, isServiceCategory, lineIdentity, maintPickerValues, fmtMoneySen, normalizeCompartmentCode } from '@2990s/shared';
 import {

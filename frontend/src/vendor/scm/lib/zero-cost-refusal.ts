@@ -26,7 +26,7 @@
 // clears the refusal").
 // ----------------------------------------------------------------------------
 
-import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../shared/format';
 
 export const ZERO_COST_RECEIPT_ERROR = 'zero_cost_receipt';
 

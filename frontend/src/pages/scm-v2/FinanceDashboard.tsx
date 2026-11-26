@@ -27,7 +27,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { ReportShell } from './reports/ReportShell';
 import { ReportMessage, ReportTool, ReportToolbar, useReportSubtitle } from './reports/reportParts';
 import { monthName } from './reports/statementColumns';
-import { fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtSenPlain } from '../../vendor/shared/format';
 import {
   useDashboardForecastMonths, useFinanceDashboard,
   type CompareGroup, type CompareTotals, type CostStructureGroup, type DashboardFigures, type DashboardPeriod, type Granularity, type Ratios,

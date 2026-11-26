@@ -39,7 +39,7 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useAuth } from "../auth/AuthContext";
-import { fmtDateOrDash } from "../../../shared/src/vendor/shared/format";
+import { fmtDateOrDash } from "../vendor/shared/format";
 import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
 import { docFileMime } from "../vendor/scm/lib/doc-file-mime";
 import { takePickedFiles } from "../vendor/scm/lib/pick-files";

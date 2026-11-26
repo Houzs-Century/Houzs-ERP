@@ -73,7 +73,7 @@ export const useHolidays = (): QueryState<{ holidays: PublicHoliday[] }> =>
 export const usePayRules = (): QueryState<PayRulesResponse> => useQuery(`${HR}/pay-rules`, () => api.get<PayRulesResponse>(`${HR}/pay-rules`));
 
 export const rmFromSen = (sen: number): string => (sen / 100).toFixed(2);
-export { fmtSen as fmtRm } from "../../../../shared/src/vendor/shared/format";
+export { fmtSen as fmtRm } from "../../vendor/shared/format";
 /** "1,800.50" / "1800.5" -> 180050 sen; NaN when not a number. */
 export const senFromRm = (rm: string): number => {
   const v = Number(rm.replace(/,/g, "").trim());

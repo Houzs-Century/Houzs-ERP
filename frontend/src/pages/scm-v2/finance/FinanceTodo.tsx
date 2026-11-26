@@ -16,7 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { PageHeader } from '../../../components/Layout';
-import { fmtDate, fmtSen, fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtSen, fmtSenPlain } from '../../../vendor/shared/format';
 import styles from './FinanceTodo.module.css';
 import { AddTaskDrawer, TaskDrawer } from './TaskDrawers';
 import { RequestsDrawer } from './RequestsDrawer';

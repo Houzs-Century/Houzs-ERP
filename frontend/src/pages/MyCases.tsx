@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Send, User, Package, MessageSquare, Search, X } from "lucide-react";
 import { api } from "../api/client";
-import { formatPhone } from "../../../shared/src/vendor/shared/phone";
+import { formatPhone } from "../vendor/shared/phone";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import { useQuery } from "../hooks/useQuery";
 import { formatCaseAddress } from "../vendor/scm/lib/assr-case-address";

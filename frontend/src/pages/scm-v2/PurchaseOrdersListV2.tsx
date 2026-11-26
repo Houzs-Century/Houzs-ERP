@@ -37,7 +37,7 @@ import { MrpAsOf } from "../../components/MrpAsOf";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
-import { poDisplayNumber } from "../../../../shared/src/vendor/scm/lib/po-status";
+import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import { diningLineRemark } from "../../vendor/scm/lib/po-dining-remark";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import {

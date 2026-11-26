@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { CheckCircle2, Info, Undo2, X } from 'lucide-react';
 import { ResizableDetailDrawer } from '../../../components/ResizableDetailDrawer';
 import { useOpenDocInTab } from '../../../lib/openDocInTab';
-import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../../vendor/shared/format';
 import {
   awaitsFinance, isRefundRequest, makeVoucherHref, requestKind, usePaymentRequests, useReturnPaymentRequest, type PaymentRequest,
 } from '../../../vendor/scm/lib/payment-request-queries';

@@ -6,7 +6,7 @@
      B. the score, 0–100;
      C. on time, the share of lines received by the date on the PO. */
 import { useMemo } from "react";
-import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { SortTh, Td, useTableSort } from "../../components/scm-v2/OverviewKit";
 

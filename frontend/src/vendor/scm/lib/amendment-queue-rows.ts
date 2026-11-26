@@ -29,8 +29,8 @@ import {
   type CancelRequestRow,
 } from './document-cancel-queries';
 import { AMENDMENT_APPROVER_LABEL, AMENDMENT_APPROVER_TONE, soAmendmentApprover } from './amendment-approver';
-import { customerRefOf } from '../../../../../shared/src/lib/customer-ref';
-import { amendmentBucketOf, compareAmendmentsForList, simplifiedAmendmentPill, type AmendmentBucket } from '../../../../../shared/src/vendor/scm/lib/status-pill';
+import { customerRefOf } from '../../../lib/customer-ref';
+import { amendmentBucketOf, compareAmendmentsForList, simplifiedAmendmentPill, type AmendmentBucket } from './status-pill';
 
 export type AmendmentQueueKind = 'AMENDMENT' | 'CANCEL';
 

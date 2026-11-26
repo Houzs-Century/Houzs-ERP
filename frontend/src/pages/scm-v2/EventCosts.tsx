@@ -20,7 +20,7 @@ import { DataTable, type Column } from '../../components/DataTable';
 import { monthEnd, monthStart } from '../../lib/dateRangePresets';
 import { eventLabel, useEventCosts, type EventCostRow, type EventCosts } from '../../vendor/scm/lib/event-queries';
 import { AMOUNT_COLUMN, type ReportSheet, type SheetRow } from '../../vendor/scm/lib/report-sheet';
-import { fmtDateOrDash, fmtDayMonthRange, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash, fmtDayMonthRange, fmtSenPlain } from '../../vendor/shared/format';
 import { AccountCell } from './JournalEntryCards';
 import { FinanceDateRange } from './reports/FinanceDateRange';
 import {

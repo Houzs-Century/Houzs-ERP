@@ -8,9 +8,9 @@ import {
   ensureBrandLogoLoaded,
   getBrandLogoCache,
 } from '../../../lib/branding';
-import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
+import { PDF_COMPRESS } from './pdf-options';
 import { ensureProductCategories } from './product-categories-store';
-import { drawSalesOrderInto, type SoPdfSources } from '../../../../../shared/src/vendor/scm/lib/sales-order-pdf-render';
+import { drawSalesOrderInto, type SoPdfSources } from './sales-order-pdf-render';
 
 
 export {
@@ -18,7 +18,7 @@ export {
   consignmentLoanTerms,
   CONSIGNMENT_ORDER_PDF_OPTS,
   soPdfPaidSen,
-} from '../../../../../shared/src/vendor/scm/lib/sales-order-pdf-render';
+} from './sales-order-pdf-render';
 
 export type { PdfAction } from './pdf-common';
 

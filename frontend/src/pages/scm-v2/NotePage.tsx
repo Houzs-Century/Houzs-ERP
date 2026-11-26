@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ListPlus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateTime } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateTime } from '../../vendor/shared/format';
 import { returnToWorkspaceOpener, useWorkspaceOpener } from '../../lib/useWorkspaceOpener';
 import { KIND_WORD, NoteActions, NoteBody, NoteForm, noteEditValues, useNoteDoc, type FormValues } from './CreditNotes';
 import { VoucherTaskDrawer } from './PvDocParts';

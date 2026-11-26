@@ -9,7 +9,7 @@ import { useReconcilePick } from './bank-reconcile-pick';
 import { EntryDocument, entryDocText } from './bank-entry-doc';
 import { ICON, fmt, refusalText } from './settlement-ui';
 import { monthShort } from './BankStatementsTop';
-import { fmtDate, fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
 import { BankRecordJournal, recordableLine } from './BankRecordJournal';
 import { useBooksToast } from './books/BooksToast';
 import tokens from './finance/finance-ui.module.css';

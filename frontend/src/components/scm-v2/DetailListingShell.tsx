@@ -1,7 +1,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { fmtMoneySen } from '../../../../shared/src/vendor/shared/format';
+import { fmtMoneySen } from '../../vendor/shared/format';
 import { ArrowLeft, ClipboardList, Printer, Eye, Filter, X, SlidersHorizontal, FileSearch } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
@@ -10,7 +10,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import type { DetailListingFilters, DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import styles from './DetailListingShell.module.css';
 import { PrintPreviewModal, usePrintPreview } from './PrintPreviewModal';
-import { fmtDate, fmtDateTime } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { printPageAs } from '../../lib/printFrame';

@@ -1,5 +1,5 @@
 
-import { PDF_THUMB_PX, sniffImageMime, type PdfPhotoImage } from '../../../../../shared/src/vendor/scm/lib/pdf-item-photos';
+import { PDF_THUMB_PX, sniffImageMime, type PdfPhotoImage } from './pdf-item-photos';
 
 /**
  * Decode any browser-displayable image blob and re-encode it as a JPEG data URL

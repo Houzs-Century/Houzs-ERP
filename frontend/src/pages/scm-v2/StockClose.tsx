@@ -14,7 +14,7 @@ import { useMemo, useState } from 'react';
 import { ChevronDown, RefreshCw } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
 import { monthEnd, monthStart } from '../../lib/dateRangePresets';
-import { fmtDate, fmtDateTime, fmtSen, todayMY } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSen, todayMY } from '../../vendor/shared/format';
 import { fmtLedger } from '../../vendor/scm/lib/ledger-queries';
 import {
   useRunStockClose, useStockClose, type ClosedStockMonth, type StockBucketValues, type StockCloseRun,

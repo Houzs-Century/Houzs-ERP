@@ -11,7 +11,7 @@
 
 import autoTable from 'jspdf-autotable';
 import type { PdfAction } from './pdf-common';
-import { fmtMoneySen, fmtSenPlain, todayMY } from '../../../../../shared/src/vendor/shared/format';
+import { fmtMoneySen, fmtSenPlain, todayMY } from '../../shared/format';
 import { closeListing, listingDress, openListing, screenTable, type FootCell, type ScreenTableView } from './listing-pdf';
 import { isForeignPv, pvListTotal, ringgitSenOfPv, type PvMoneyRow } from './pv-list-total';
 

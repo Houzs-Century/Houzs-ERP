@@ -5,7 +5,7 @@ import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { readImportGrid } from "../../lib/import-sheet";
 import { cn, formatDateTime } from "../../lib/utils";
-import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { SearchInput } from "../../components/Button";

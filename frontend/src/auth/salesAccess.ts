@@ -1,5 +1,5 @@
 import { ACCESS_RANK, type AuthUser, type AccessLevel } from "../types";
-import { COSTING_DISPLAY_ENABLED } from "../../../shared/src/vendor/shared/costing-enabled";
+import { COSTING_DISPLAY_ENABLED } from "../vendor/shared/costing-enabled";
 import { capability } from "./capabilities";
 
 /**

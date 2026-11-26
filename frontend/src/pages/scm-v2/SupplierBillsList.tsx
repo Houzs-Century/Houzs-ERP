@@ -7,7 +7,7 @@ import { DataTable, type Column } from '../../components/DataTable';
 import { SearchCombo } from '../../vendor/scm/components/SearchCombo';
 import { useCreditNotes } from '../../vendor/scm/lib/credit-note-queries';
 import type { ApListRow } from '../../vendor/scm/lib/ap-invoice-queries';
-import { fmtDateOrDash, fmtSen, todayMY } from '../../../../shared/src/vendor/shared/format';
+import { fmtDateOrDash, fmtSen, todayMY } from '../../vendor/shared/format';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 import {
   billKindWord, billTag, chipLabel, chipsOf, controlWord, daysLate, fromApRow, fromNote, inChip, inKind, isOpen, kindTabLabel, lifeOf,

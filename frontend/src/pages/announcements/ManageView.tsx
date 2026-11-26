@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Search } from "lucide-react";
 import { cn, relativeTime } from "../../lib/utils";
-import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
+import { fmtDateTime } from "../../vendor/shared/format";
 import { DataTable, type Column } from "../../components/DataTable";
 import {
   CATEGORY_META,

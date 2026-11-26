@@ -27,11 +27,11 @@ import { docPageLabel,
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, drawHeader, drawInfoColumns, drawPaymentDetails, drawSignatureBoxes,
   deliverPdf, deliverPdfBlob, ensurePdfCjkFont, amountInWordsMyr, fmtRm, fmtDocDate, safeName, type PdfAction,
 } from './pdf-common';
-import { billToBlock } from '../../../../../shared/src/vendor/scm/lib/pdf-party-blocks';
-import { orderAddressLines, type OrderAddressFields } from '../../../../../shared/src/vendor/scm/lib/order-address';
+import { billToBlock } from './pdf-party-blocks';
+import { orderAddressLines, type OrderAddressFields } from './order-address';
 import { getBrandingCache } from '../../../lib/branding';
 import { PAYMENT_METHOD_DEFAULT_LABELS } from './payment-methods';
-import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
+import { PDF_COMPRESS } from './pdf-options';
 
 /** The order behind a deposit invoice, as GET /deposit-invoices/sheets serves it. */
 export type DepositInvoiceOrder = OrderAddressFields & {

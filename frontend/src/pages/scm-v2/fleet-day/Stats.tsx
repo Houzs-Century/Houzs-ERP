@@ -1,5 +1,5 @@
 import { cn } from '../../../lib/utils';
-import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../../vendor/shared/format';
 import type { DayStats } from '../../../vendor/scm/lib/fleet-day-cards';
 
 type Tone = 'ok' | 'err' | 'default';

@@ -1,6 +1,6 @@
 import { Printer, Users, QrCode, Phone } from 'lucide-react';
 import { cn } from '../../../lib/utils';
-import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtSen } from '../../../vendor/shared/format';
 import { RUN_STATUS_LABEL, progressPct, departureDeltaMin, isDepartLate } from '../../../vendor/scm/lib/fleet-day-cards';
 import { clockMY, actualDepartOf, stopTimes, type LorryRunVM, type DocRowVM } from './vm';
 import {

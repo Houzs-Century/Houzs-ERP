@@ -26,7 +26,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MoneyInput } from './MoneyInput';
-import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../shared/format';
 import { useNotify } from './NotifyDialog';
 import {
   EMPTY_BANK, convertParamOf, newOrderWithMoneyHref, refundAskGaps, useAddedConvertSources, useOrderMoney, useRequestRefund, useRequestRefunds,

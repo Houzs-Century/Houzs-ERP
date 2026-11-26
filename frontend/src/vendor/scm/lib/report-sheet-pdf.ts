@@ -18,9 +18,9 @@ import autoTable from 'jspdf-autotable';
 import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont, fmtDocStamp, type PdfAction,
 } from './pdf-common';
-import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
+import { fmtSenPlain } from '../../shared/format';
 import { sheetText, sheetWithTotalsBelow, type ReportSheet, type SheetRow, type SheetRowKind, type SheetTable } from './report-sheet';
-import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
+import { PDF_COMPRESS } from './pdf-options';
 
 /** A printed column: which sheet columns it carries (an amount and the % beside it), whether
     a rule follows it, and the heading it shares with the columns beside it. */

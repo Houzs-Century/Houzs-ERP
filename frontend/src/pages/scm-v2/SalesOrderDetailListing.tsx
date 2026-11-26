@@ -16,7 +16,7 @@ import {
 } from '../../vendor/scm/lib/reports-queries';
 import { useAuth } from '../../auth/AuthContext';
 import styles from './SalesOrderDetailListing.module.css';
-import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
+import { customerRefOf } from '../../lib/customer-ref';
 import { soExemptionExpiryOf } from '../../lib/so-exemption-expiry';
 import { soListStatusWord } from '../../vendor/scm/lib/so-line-export-columns';
 

@@ -11,7 +11,7 @@ import {
   type AuditEntityType,
 } from '../../vendor/scm/lib/entity-audit-queries';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import type { StatusDocType } from '../../../../shared/src/vendor/scm/lib/status-pill';
+import type { StatusDocType } from '../../vendor/scm/lib/status-pill';
 
 export type EntityHistoryPanelProps = {
   entityType: AuditEntityType;

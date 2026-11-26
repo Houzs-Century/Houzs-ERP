@@ -56,7 +56,7 @@ import {
 import { canOperatePurchaseOrders } from "../../auth/salesAccess";
 import { skuMapFromBindings, supplierCodeFor } from "../../vendor/scm/lib/supplier-doc-data";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
-import { poDisplayNumber } from "../../../../shared/src/vendor/scm/lib/po-status";
+import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";

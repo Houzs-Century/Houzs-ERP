@@ -7,7 +7,7 @@ import { api, humanHttpMessage, tokenStore } from "../../api/client";
 import { companyHeader } from "../../lib/activeCompany";
 import { consumeCorrelated, correlateError, correlatedFetch, requestIdFromError, requestIdFromResponse } from "../../lib/requestCorrelation";
 import { cn } from "../../lib/utils";
-import { fmtDate } from "../../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../../vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 

@@ -4,14 +4,14 @@ import {
 } from '@2990s/shared/so-line-display';
 import { formatPhone } from '@2990s/shared/phone';
 import { docPageLabel, COMPANY, DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, drawInfoColumns, ensurePdfCjkFont, fmtRm, safeName, fmtDocDate, type PdfAction } from './pdf-common';
-import { supplierBlock } from '../../../../../shared/src/vendor/scm/lib/pdf-party-blocks';
+import { supplierBlock } from './pdf-party-blocks';
 import { loadSupplierDocData, supplierCodeFor, docVariantLine } from './supplier-doc-data';
 /* The status WORD comes from the one home for it, never from a caser here:
    what this document prints and what the screen shows must be the same word.
    docs/modules/document-status-vocabulary.md §1. */
-import { statusLabel } from '../../../../../shared/src/vendor/scm/lib/status-pill';
+import { statusLabel } from './status-pill';
 import { piPoNumbers } from './pi-header-pos';
-import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
+import { PDF_COMPRESS } from './pdf-options';
 
 type PiHeader = {
   invoice_number: string; supplier_invoice_ref: string | null; status: string;

@@ -52,7 +52,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { APIProvider, Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { X, MapPin as MapPinIcon, ChevronDown } from 'lucide-react';
-import { fmtSen, fmtTime } from '../../../../shared/src/vendor/shared/format';
+import { fmtSen, fmtTime } from '../../vendor/shared/format';
 import {
   clusterPins,
   legendFromRoutes,

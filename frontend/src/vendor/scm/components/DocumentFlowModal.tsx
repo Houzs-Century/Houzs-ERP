@@ -8,7 +8,7 @@ import {
   type FlowNodeType,
   type FlowEdgeKind,
 } from '../lib/flow-queries';
-import { statusLabel, humaniseStatusKey, simplifiedAmendmentPill, STATUS_TONES, type StatusDocType } from '../../../../../shared/src/vendor/scm/lib/status-pill';
+import { statusLabel, humaniseStatusKey, simplifiedAmendmentPill, STATUS_TONES, type StatusDocType } from '../lib/status-pill';
 
 type Props = { type: FlowNodeType; id: string; open: boolean; onClose: () => void };
 

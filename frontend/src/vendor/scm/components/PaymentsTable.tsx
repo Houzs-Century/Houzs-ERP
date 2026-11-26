@@ -78,7 +78,7 @@ import detailStyles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
 import paymentsStyles from '../../../pages/scm-v2/Payments.module.css';
 import { useUnsavedWork } from '../../../lib/unsavedWork';
 
-import { fmtMoneySen } from '../../../../../shared/src/vendor/shared/format';
+import { fmtMoneySen } from '../../../vendor/shared/format';
 const fmtAmt = (centi: number): string =>
   (centi / 100).toLocaleString('en-MY', {
     minimumFractionDigits: 2, maximumFractionDigits: 2,

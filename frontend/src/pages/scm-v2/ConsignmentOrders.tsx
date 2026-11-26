@@ -44,7 +44,7 @@ import soDetailStyles from './SalesOrderDetail.module.css';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
 import { transferToColumnLabel } from "../../lib/convertScope";
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
-import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
+import { customerRefOf } from '../../lib/customer-ref';
 
 type SoPaymentRow = {
   id: string;

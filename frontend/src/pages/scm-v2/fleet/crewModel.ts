@@ -4,7 +4,7 @@
 // The edit patch carries only what changed. inHouse in particular stays out unless the
 // employer actually moved, so renaming a 3PL-linked driver never trips the backend's
 // linked-to-carrier 409 (scm/lib/threepl-link.ts resolveCarrierLink).
-import { fmtDate } from "../../../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../../../vendor/shared/format";
 import type { DriverRow } from "../../../vendor/scm/lib/drivers-queries";
 import type { HelperRow } from "../../../vendor/scm/lib/helpers-queries";
 import type { DriverLeaveRow } from "../../../vendor/scm/lib/delivery-zones-queries";

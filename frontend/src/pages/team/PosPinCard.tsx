@@ -5,7 +5,7 @@ import { useDialog } from "../../hooks/useDialog";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { cn } from "../../lib/utils";
-import { fmtDate } from "../../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../../vendor/shared/format";
 import { Eyebrow } from "./teamShared";
 
 

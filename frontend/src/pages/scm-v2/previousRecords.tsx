@@ -17,7 +17,7 @@ import { useMemo, useState } from 'react';
 import { Archive, Undo2 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtDate } from '../../../../shared/src/vendor/shared/format';
+import { fmtDate } from '../../vendor/shared/format';
 import { danger, softText } from './settlement-ui';
 import styles from './Suppliers.module.css';
 import { docLink, moneyColumn } from './unmatchedLists';

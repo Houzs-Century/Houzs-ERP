@@ -27,9 +27,9 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { cancelledDocNoClass, cancelledRowClass } from "../../lib/scm";
-import { fmtDate } from "../../../../shared/src/vendor/shared/format";
+import { fmtDate } from "../../vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
-import { withStatusLabels } from "../../../../shared/src/vendor/scm/lib/status-pill";
+import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
 import { stockTransferRowMenu } from "./row-menus";
 
 type StatusTab = "all" | "posted" | "cancelled";

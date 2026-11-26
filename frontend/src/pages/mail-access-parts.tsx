@@ -5,7 +5,7 @@ import { Badge } from "../components/Badge";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { ListSkeleton } from "../components/Skeleton";
-import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
+import { fmtDateTime } from "../vendor/shared/format";
 import type { Department, TeamMember } from "../types";
 import { fetchSyncStatus, type MailboxSync } from "./MailCenter/mail-actions";
 

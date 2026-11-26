@@ -4,7 +4,7 @@ import { ModalOverlay } from "../../components/scm-v2/DocumentRelationshipMapMod
 import { Button } from "../../components/Button";
 import { useToast } from "../../hooks/useToast";
 import { readImportGrid, UNREADABLE_WORKBOOK } from "../../lib/import-sheet";
-import { todayMY } from "../../../../shared/src/vendor/shared/format";
+import { todayMY } from "../../vendor/shared/format";
 import { errText } from "../pos-admin/posAdminUi";
 import { IMPORT_COLUMNS, mapImportGrid, type ImportMapping } from "./employeeImport";
 import { bulkImportEmployees, useEmployeeOptions } from "./hrApi";

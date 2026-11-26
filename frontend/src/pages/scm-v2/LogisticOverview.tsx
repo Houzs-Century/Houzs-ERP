@@ -24,7 +24,7 @@ import { DELIVERY_STATES, DELIVERY_STATE_LABEL, type PlanningOrder } from "../..
 import { useBandedBoard } from "../../vendor/scm/lib/delivery-board-bands";
 import { useBoardRefresh } from "../../vendor/scm/lib/board-change-poll";
 import { BoardLoadStatus } from "../../vendor/scm/components/BoardLoadStatus";
-import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen, todayMY } from "../../vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, periodEnd, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";

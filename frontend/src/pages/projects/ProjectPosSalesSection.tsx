@@ -10,7 +10,7 @@ import { useCanViewProjectSales } from "../../hooks/useProjectSalesBills";
 import { useProjectPosSales } from "../../hooks/useProjectPosSales";
 import type { useToast } from "../../hooks/useToast";
 import { cn, formatCurrency, formatDateTime } from "../../lib/utils";
-import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { fmtSen } from "../../vendor/shared/format";
 import {
   EMPTY_POS_FILTER,
   POS_EXPORT_HEADERS,
