@@ -12,7 +12,7 @@
  * system rows elsewhere. */
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Send } from "lucide-react";
+import { Camera, Send } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { relativeTime } from "../lib/utils";
@@ -66,6 +66,13 @@ export function MobileProjectChat({
   const [failed, setFailed] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  // OCR flow (owner 2026-11-25): camera button next to Send opens the phone
+  // camera / gallery; the picked image goes to /sales-report-image/ocr, which
+  // returns the transcribed text; we drop that text into the draft box so the
+  // salesperson previews, corrects, and sends through the normal path. See
+  // backend/src/services/salesReportOcr.ts for the model prompt.
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   // Textarea grows with pasted content so the whole sales report is readable
   // before sending. Resets to one row after a successful send.
@@ -170,6 +177,50 @@ export function MobileProjectChat({
     const localId = `local-${Date.now()}`;
     post.mutate({ localId, note: trimmed });
   };
+
+  async function onPickImage(file: File) {
+    if (ocrBusy || post.isPending) return;
+    setFailed(null);
+    setNotice(null);
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type)) {
+      setFailed("Please attach a JPG, PNG, WEBP or GIF image.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setFailed("Image is over 5MB. Please shoot or crop a smaller one.");
+      return;
+    }
+    setOcrBusy(true);
+    try {
+      const data = await api.postBinary<{ text?: string }>(
+        `/api/projects/${projectId}/sales-report-image/ocr`,
+        file,
+        file.type,
+      );
+      const incoming = String(data.text ?? "").trim();
+      if (!incoming) {
+        setFailed("The image didn't carry a readable sales report.");
+        return;
+      }
+      setDraft((cur) => (cur.trim() ? `${incoming}\n\n${cur}` : incoming));
+      setNotice("Image read. Please check and send.");
+    } catch (e: unknown) {
+      /* postBinary throws HttpError whose message carries the response body
+         verbatim — our backend returns {"error":"..."} JSON for failures, so
+         pull .error back out before showing it. */
+      let msg = e instanceof Error ? e.message : "Couldn't read the image.";
+      try {
+        const parsed = JSON.parse(msg) as { error?: unknown };
+        if (parsed && typeof parsed === "object" && typeof parsed.error === "string") {
+          msg = parsed.error;
+        }
+      } catch { /* not JSON; keep as-is */ }
+      setFailed(msg);
+    } finally {
+      setOcrBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
 
   return (
     <details id={MOBILE_PROJECT_CHAT_ID} className="pacc" open>
@@ -287,11 +338,46 @@ export function MobileProjectChat({
             [projects.write, projects.chat]) so a stale frontend never writes. */}
         {canPost && (
           <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "flex-end" }}>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              /* capture="environment" opens the back camera first on iOS/Android.
+                 The native picker still lets the user swap to Gallery, so this
+                 is a hint, not a lock. */
+              capture="environment"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onPickImage(f);
+              }}
+            />
+            <button
+              type="button"
+              className="tinybtn"
+              onClick={() => fileRef.current?.click()}
+              disabled={ocrBusy || post.isPending}
+              aria-label="Attach a sales-report image"
+              title="Attach a sales-report image"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 40,
+                height: 40,
+                padding: 0,
+                borderRadius: 10,
+                color: "var(--hz-c-ink-secondary)",
+                borderColor: "#eceee9",
+              }}
+            >
+              <Camera size={16} />
+            </button>
             <textarea
               ref={taRef}
               className="fld-i"
               value={draft}
-              disabled={post.isPending}
+              disabled={post.isPending || ocrBusy}
               onChange={(e) => { setDraft(e.target.value); setFailed(null); setNotice(null); }}
               onKeyDown={(e) => {
                 /* Enter-to-send on the phone soft keyboard is unreliable (Go/Done
@@ -303,13 +389,13 @@ export function MobileProjectChat({
                 }
               }}
               rows={2}
-              placeholder="Type a message or paste the evening report…"
+              placeholder={ocrBusy ? "Reading the image…" : "Type a message or paste the evening report…"}
               style={{ flex: 1, fontSize: 13, padding: "8px 10px", resize: "none", lineHeight: 1.4, minHeight: 40 }}
             />
             <button
               type="button"
               className="tinybtn"
-              disabled={post.isPending || !draft.trim()}
+              disabled={post.isPending || ocrBusy || !draft.trim()}
               onClick={send}
               aria-label="Send"
               style={{

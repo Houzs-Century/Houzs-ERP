@@ -52,6 +52,7 @@ import { HEALTH_HUB_JOB, sendHealthReportToHub } from "./services/healthHub";
 import { runPushFleetReminders } from "./services/pushFleetReminders";
 import presence from "./routes/presence";
 import projects from "./routes/projects";
+import projectSalesReportOcr from "./routes/projectSalesReportOcr";
 import { projectSalesOrders } from "./routes/project-sales-orders";
 import { projectSalesBills } from "./routes/project-sales-bills";
 import { projectPosSales } from "./routes/project-pos-sales";
@@ -600,6 +601,11 @@ app.use("/api/projects/*", bustProjectOverviewOnWrite);
 app.use("/api/project-forecast/*", bustProjectOverviewOnWrite);
 app.use("/api/projects/overview/*", requirePageAccessOrDirector);
 app.route("/api/projects/overview", projectOverview);
+// The sales-report image OCR route (own file to keep projects.ts under its
+// size ceiling; see routes/projectSalesReportOcr.ts). Mounted BEFORE the
+// general /api/projects router so Hono's path matcher can still fall through
+// to it — the specific path registers first.
+app.route("/api/projects", projectSalesReportOcr);
 app.route("/api/projects", projects);
 // The office side of a brand's share link (generate / revoke). Own file because
 // routes/projects.ts is at its size ceiling. See routes/brandShare.ts.

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Send } from "lucide-react";
+import { Camera, Send } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useNotifications } from "../hooks/useNotifications";
@@ -73,6 +73,14 @@ export function ProjectChat({
   });
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  // OCR flow (owner 2026-11-25): a camera button on the composer opens the
+  // image picker; the picked image goes to /sales-report-image/ocr, which
+  // returns the transcribed text; we drop that text into the draft box so the
+  // salesperson can preview, correct the model's misreads, and send through
+  // the normal path. No image is stored — the note that ends up in the chat
+  // carries the text, same as a typed paste.
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   // Optimistic "Sending…" rows (owner 2026-11-19: "after salesman taip and
   // click send or save, tak ada show that sales report already inside"). The
   // desktop chat used to clear the textarea on Send and wait for the 3s
@@ -283,6 +291,60 @@ export function ProjectChat({
     }
   }
 
+  async function onPickImage(file: File) {
+    if (ocrBusy || sending) return;
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type)) {
+      toast.error("Please attach a JPG, PNG, WEBP or GIF image.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image is over 5MB. Please shoot or crop a smaller one.");
+      return;
+    }
+    setOcrBusy(true);
+    try {
+      const data = await api.postBinary<{ text?: string }>(
+        `/api/projects/${projectId}/sales-report-image/ocr`,
+        file,
+        file.type,
+      );
+      /* Prepend to whatever is already in the draft so a report half-typed
+         isn't lost; most of the time the box is empty so it reads as a
+         straight fill. Grow to fit so the whole transcription shows. */
+      const incoming = String(data.text ?? "").trim();
+      if (!incoming) {
+        toast.error("The image didn't carry a readable sales report.");
+        return;
+      }
+      setDraft((cur) => (cur.trim() ? `${incoming}\n\n${cur}` : incoming));
+      /* Focus the textarea so the sender can edit right away. growToFit runs
+         after the next paint; the ref is already set. */
+      setTimeout(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.focus();
+        growToFit(el);
+      }, 0);
+      toast.success("Image read. Please check and send.");
+    } catch (e: unknown) {
+      /* postBinary throws HttpError whose message carries the response body
+         verbatim — our backend returns {"error":"..."} JSON for failures, so
+         pull .error back out before showing it, or fall back to the whole
+         message when it isn't JSON. */
+      let msg = e instanceof Error ? e.message : "Couldn't read the image.";
+      try {
+        const parsed = JSON.parse(msg) as { error?: unknown };
+        if (parsed && typeof parsed === "object" && typeof parsed.error === "string") {
+          msg = parsed.error;
+        }
+      } catch { /* not JSON; keep as-is */ }
+      toast.error(msg);
+    } finally {
+      setOcrBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
   function scrollToBottom() {
     const el = scrollRef.current;
     if (!el) return;
@@ -397,18 +459,39 @@ export function ProjectChat({
 
       {canPost ? (
         <div className="flex items-end gap-2 border-t border-border bg-surface px-2.5 py-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void onPickImage(f);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={ocrBusy || sending}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-bg text-ink-muted transition-all hover:border-primary hover:text-primary disabled:opacity-50"
+            title="Attach a sales-report image"
+            aria-label="Attach a sales-report image"
+          >
+            <Camera size={14} />
+          </button>
           <textarea
             ref={inputRef}
             value={draft}
             onChange={(e) => { setDraft(e.target.value); growToFit(e.target); }}
             onKeyDown={onKey}
-            placeholder="Message…"
+            placeholder={ocrBusy ? "Reading the image…" : "Message…"}
             rows={1}
-            className="min-h-[36px] max-h-[160px] flex-1 resize-none rounded-2xl border border-border bg-bg px-3.5 py-2 text-[12.5px] text-ink outline-none placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
+            disabled={ocrBusy}
+            className="min-h-[36px] max-h-[160px] flex-1 resize-none rounded-2xl border border-border bg-bg px-3.5 py-2 text-[12.5px] text-ink outline-none placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
           />
           <button
             onClick={send}
-            disabled={sending || !draft.trim()}
+            disabled={sending || ocrBusy || !draft.trim()}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-white shadow-stone transition-all hover:bg-primary-ink disabled:bg-surface-dim disabled:text-ink-muted disabled:shadow-none"
             title="Send (Enter) · Shift+Enter for new line"
           >

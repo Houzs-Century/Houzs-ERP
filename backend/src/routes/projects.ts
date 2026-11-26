@@ -2719,6 +2719,9 @@ app.post("/:id/notes", requireAnyPermission(["projects.write", "projects.chat"])
   return c.json({ ok: true });
 });
 
+// Sales-report image OCR (owner 2026-11-25): routes/projectSalesReportOcr.ts.
+// Lives in its own file to keep this route file under its size ceiling.
+
 // ── Activity polling ─────────────────────────────────────────
 // Lightweight endpoint used by the chat pane to pull only rows newer
 // than its last-seen cursor. No ACL filter here beyond the existing
