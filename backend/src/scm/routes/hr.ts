@@ -99,7 +99,8 @@ import {
   type OverrideLevel,
   type SalespersonInput,
 } from '../shared/hr-commission';
-import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
+import { activeProductCategories } from '../shared/product-categories';
+import { loadProductCategories } from '../lib/product-category-registry';
 import { loadKpiUnitsByDoc } from '../lib/kpi-units';
 import { supabaseAuth } from '../middleware/auth';
 import { hasHouzsPerm } from '../lib/houzs-perms';
@@ -712,6 +713,7 @@ hr.get('/pickers', async (c) => {
   ]);
   const firstErr = staffRes.error || showroomRes.error || productRes.error || fabricRes.error || specialRes.error || trackingRes.error;
   if (firstErr) return c.json({ error: 'fetch_failed', reason: firstErr.message }, 500);
+  const categories = await loadProductCategories(sb);
 
   const { scoped: scopedStaff } = await scopeStaffRowsToActiveCompany(
     c,
@@ -722,7 +724,7 @@ hr.get('/pickers', async (c) => {
     staff: (scopedStaff as unknown as typeof staffRes.data ?? []).map((s) => ({ id: s.id, name: s.name, staffCode: s.staff_code, role: s.role })),
     showrooms: (showroomRes.data ?? []).map((s) => ({ id: s.id, name: s.name })),
     products: (productRes.data ?? []).map((p) => ({ ref: p.code, label: `${p.code} — ${p.name}` })),
-    categories: MFG_PRODUCT_CATEGORIES.map((code) => ({ ref: code, label: code })),
+    categories: activeProductCategories(categories).map((r) => ({ ref: r.code, label: r.name })),
     fabrics: (fabricRes.data ?? []).map((f) => ({ ref: f.id, label: f.label })),
     fabricSeries: fabricSeriesGroups(trackingRes.data ?? [], new Set((fabricRes.data ?? []).map((f) => f.id))),
     specials: (specialRes.data ?? []).map((s) => ({ ref: s.code, label: s.label })),

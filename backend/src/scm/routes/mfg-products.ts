@@ -23,7 +23,8 @@ import { PRODUCT_CODE_CASCADE } from '../lib/product-code-rename';
 import { moveModelCategory, planModelCategoryMoves, type ImportModelMove } from '../lib/model-category-move';
 import { ensureModelForSku, modelCodeForSku } from '../lib/ensure-model-for-sku';
 import { newSkuPosActive } from '../lib/new-sku-pos-active';
-import { MFG_PRODUCT_CATEGORIES, MFG_CATEGORY_LABELS, mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories';
+import { activeProductCategories, isMfgProductCategory, mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories';
+import { loadProductCategories } from '../lib/product-category-registry';
 import { mfgProductMerge } from './mfg-product-merge';
 
 export const mfgProducts = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -190,6 +191,19 @@ export const listMfgProductsHandler = async (c: AppContext) => {
 };
 mfgProducts.get('/', listMfgProductsHandler);
 
+/* GET /categories — the product categories, from scm.acc_item_groups (the one
+   list, HC-0258). Every screen's picker reads this, so a category added in
+   Accounting -> Item groups shows everywhere with no release. Inactive rows
+   come too, so an old row still shows its name; pickers offer the active ones.
+   openRead (scm/index.ts): any SCM user can read it. Global, no company scope. */
+mfgProducts.get('/categories', async (c) => {
+  try {
+    return c.json({ categories: await loadProductCategories(c.get('supabase')) });
+  } catch (e) {
+    return c.json({ error: 'load_failed', reason: (e as Error).message }, 500);
+  }
+});
+
 mfgProducts.get('/bound-codes', async (c) => {
   const supabase = c.get('supabase');
   const { data, error } = await paginateAll((from, to) =>
@@ -213,8 +227,6 @@ mfgProducts.get('/bound-codes', async (c) => {
   return c.json({ codes });
 });
 
-export { MFG_PRODUCT_CATEGORIES };
-const VALID_CATEGORIES = new Set<string>(MFG_PRODUCT_CATEGORIES);
 export const createMfgProductHandler = async (c: AppContext) => {
   const gate = await requireRole(c);
   if (!gate.ok) return gate.res;
@@ -228,12 +240,13 @@ export const createMfgProductHandler = async (c: AppContext) => {
   const category = String(body.category ?? '').trim();
   if (!code)  return c.json({ error: 'code_required' }, 400);
   if (!name)  return c.json({ error: 'name_required' }, 400);
-  if (!VALID_CATEGORIES.has(category)) return c.json({ error: 'invalid_category', allowed: [...VALID_CATEGORIES] }, 400);
 
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
   const supabase = c.get('supabase');
+  const active = activeProductCategories(await loadProductCategories(supabase));
+  if (!isMfgProductCategory(active, category)) return c.json({ error: 'invalid_category', allowed: active.map((r) => r.code) }, 400);
   // global in CF Workers; fall back if absent.
   const rand = (typeof crypto !== 'undefined' && crypto.randomUUID)
     ? crypto.randomUUID()
@@ -299,7 +312,8 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
   let created = 0;
   const failures: Array<{ code: string; reason: string }> = [];
 
-  const plan = await planModelCategoryMoves(supabase, co.companyId, list);
+  const categories = activeProductCategories(await loadProductCategories(supabase));
+  const plan = await planModelCategoryMoves(supabase, co.companyId, list, categories);
   if (!plan.ok) return c.json({ error: 'load_failed', reason: plan.reason }, 500);
   const modelsMoved: ImportModelMove[] = [];
   const moveFailed = new Map<string, string>();
@@ -314,7 +328,7 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
        A filled cell that is not a category is REPORTED: it used to be dropped
        without a word, so a batch category edit could save everything except
        the category and still say "updated" (owner 2026-09-15). */
-    const category = parseMfgCategory(categoryCell);
+    const category = parseMfgCategory(categories, categoryCell);
     if (!code) {
       failures.push({ code, reason: 'missing code' });
       continue;
@@ -341,7 +355,7 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
     if (categoryCell && !category) {
       failures.push({
         code,
-        reason: `category "${categoryCell}" is not a category — use one of: ${MFG_PRODUCT_CATEGORIES.map((c) => MFG_CATEGORY_LABELS[c]).join(', ')}.`,
+        reason: `category "${categoryCell}" is not a category — use one of: ${categories.map((r) => r.name).join(', ')}.`,
       });
       continue;
     }
@@ -359,7 +373,7 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
     if (!existing && (!name || !category)) {
       failures.push({
         code,
-        reason: `${code} is not in the system, so this row would CREATE it — a new SKU needs a name and a valid category (${[...VALID_CATEGORIES].join(', ')}).`,
+        reason: `${code} is not in the system, so this row would CREATE it — a new SKU needs a name and a valid category (${categories.map((r) => r.code).join(', ')}).`,
       });
       continue;
     }
@@ -401,11 +415,11 @@ export const batchImportMfgProductsHandler = async (c: AppContext) => {
     if (move) {
       let moveError = moveFailed.get(move.modelId);
       if (moveError === undefined && !modelsMoved.some((m) => m.modelId === move.modelId)) {
-        const moved = await moveModelCategory(supabase, co.companyId, move.modelId, move.to);
+        const moved = await moveModelCategory(supabase, co.companyId, move.modelId, move.to, categories);
         if (moved.ok) {
           modelsMoved.push({ ...move, skuCount: moved.skuCodes.length });
         } else {
-          moveError = `model ${move.modelCode} could not be moved to ${mfgCategoryLabel(move.to)} (${moved.reason}), so this row was not saved.`;
+          moveError = `model ${move.modelCode} could not be moved to ${mfgCategoryLabel(categories, move.to)} (${moved.reason}), so this row was not saved.`;
           moveFailed.set(move.modelId, moveError);
         }
       }
@@ -668,7 +682,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
     if (current.model_id) {
       return c.json({ error: 'category_on_model', reason: 'This SKU belongs to a model — change the category on the model, and its SKUs move with it.' }, 409);
     }
-    if (!categorySwapAllowed(current.category, body.category)) {
+    if (!categorySwapAllowed(await loadProductCategories(supabase), current.category, body.category)) {
       return c.json({ error: 'category_change_not_allowed', reason: `"${String(body.category)}" is not a product category.` }, 409);
     }
     updates.category = String(body.category).toUpperCase();

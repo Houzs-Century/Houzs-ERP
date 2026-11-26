@@ -108,7 +108,6 @@ import { CONVERT_LABEL } from "../vendor/scm/lib/so-money-queries";
 import { useFabricLibrary } from "../vendor/scm/lib/queries";
 import { activeOptions, maintPickerValues, restrictPricedToPool, restrictStringsToPool } from "../vendor/shared/maintenance-pools";
 import { missingVariantAxes } from "../vendor/shared/so-variant-rule";
-import { MFG_CATEGORY_LABELS } from "../vendor/shared/product-categories";
 import { isColourKiv } from "../vendor/shared/variant-summary";
 import { computeTotalHeight, isTotalHeightCategory, parseInches, TOTAL_HEIGHT_PARTS } from "../vendor/shared/total-height";
 import { activeCompanyTracksVariants } from "../vendor/scm/lib/binding-mode";
@@ -255,7 +254,7 @@ const LINE_CATS: Array<{ value: LineCat; label: string }> = [
   { value: "sofa", label: "Sofa" },
   { value: "bedframe", label: "Bedframe" },
   { value: "mattress", label: "Mattress" },
-  { value: "fabric_accessory", label: MFG_CATEGORY_LABELS.FABRIC_ACCESSORY },
+  { value: "fabric_accessory", label: "Sofa Accessory" },
 ];
 
 const specialsList = (val: unknown): string[] => {

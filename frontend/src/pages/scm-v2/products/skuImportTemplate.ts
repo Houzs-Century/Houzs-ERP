@@ -1,11 +1,11 @@
 import type { SheetData } from 'write-excel-file';
-import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../../vendor/shared/product-categories';
+import { loadedProductCategories } from '../../../vendor/scm/lib/product-categories-store';
 import type { BatchImportResult } from '../../../vendor/scm/lib/mfg-products-queries';
 
 type TemplateCol = { key: string; required: boolean; note: string; width: number };
 
 export function skuTemplateColumns(sofaSizes: string[]): TemplateCol[] {
-  const categories = MFG_PRODUCT_CATEGORIES.map((c) => MFG_CATEGORY_LABELS[c]).join(', ');
+  const categories = loadedProductCategories().filter((c) => c.isActive).map((c) => c.name).join(', ');
   return [
     { key: 'code', required: true, width: 22, note: 'Product code. A code not in SKU Master creates a new SKU; a code already there edits that SKU.' },
     { key: 'name', required: true, width: 30, note: 'Name shown on SO / PO. Required for a new SKU.' },

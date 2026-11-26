@@ -1,4 +1,5 @@
 
+import { useProductCategories, type MfgProductCategory } from "../../../vendor/scm/lib/product-categories-store";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
@@ -54,13 +55,10 @@ type StagedEdit = {
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 // ── Hook: models by category ────────────────────────────────────────────────
-// The model registry carries five categories (backend CATEGORIES enum,
-// product-models.ts) — the tab was SOFA-hardcoded for no backend reason
-// (owner 2026-08-07: "only 1 category can be choose?").
+// The model registry takes every product category (product-models.ts) — the
+// tab was SOFA-hardcoded for no backend reason (owner 2026-08-07).
 
-const VARIANT_CATEGORIES = ["SOFA", "BEDFRAME", "MATTRESS", "ACCESSORY", "SERVICE"] as const;
-type VariantCategory = (typeof VARIANT_CATEGORIES)[number];
-const catLabel = (c: string) => c.charAt(0) + c.slice(1).toLowerCase();
+type VariantCategory = MfgProductCategory;
 
 const useModelsByCategory = (category: VariantCategory) =>
   useQuery({
@@ -78,9 +76,7 @@ export function VariantsTab() {
   const [searchParams, setSearchParams] = useSearchParams();
   const modelId = searchParams.get("model") ?? "";
   const rawCat = searchParams.get("cat") ?? "SOFA";
-  const category: VariantCategory = (VARIANT_CATEGORIES as readonly string[]).includes(rawCat)
-    ? (rawCat as VariantCategory)
-    : "SOFA";
+  const category: VariantCategory = /^[A-Z][A-Z0-9_]{1,29}$/.test(rawCat) ? rawCat : "SOFA";
 
   const setModelId = (id: string) => {
     const sp = new URLSearchParams(searchParams);
@@ -370,7 +366,8 @@ function ModelPicker({
   selectedId: string;
   onPick: (id: string) => void;
   variantCount: number | null;
-}) {
+}) {  const categoryOptions = useProductCategories().active.map((c) => ({ value: c.code, label: c.name }));
+
   /* Owner, 2026-08-07 (twice): picking ONE required model from a long code
      list is a COMBOBOX job — this is the same SearchableSelect the rest of
      the system's long dropdowns use (owner 2026-07-27: "全部下拉的 option 都要
@@ -403,7 +400,7 @@ function ModelPicker({
             <SearchableSelect
               value={category}
               onChange={(c) => c && onCategory(c)}
-              options={VARIANT_CATEGORIES.map((c) => ({ value: c, label: catLabel(c) }))}
+              options={categoryOptions}
               className={inputCls}
               ariaLabel="Category"
             />

@@ -23,7 +23,7 @@ import {
 import type { FormSchema } from "./MobileModuleForm";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { warehouseLabel } from "../vendor/scm/lib/warehouse-label";
-import { mfgCategoryLabel } from "../vendor/shared/product-categories";
+import { mfgCategoryLabel } from "../vendor/scm/lib/product-categories-store";
 import { supplierEmailList } from "../vendor/shared/supplier-emails";
 import { byStr } from "./mobile-list-compare";
 import "./mobile.css";

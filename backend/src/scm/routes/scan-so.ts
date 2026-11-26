@@ -53,7 +53,7 @@ import {
 import { depositSenAfterReceiptPass, safeScanDepositSen } from '../lib/scan-header-deposit';
 import { applySlipTotalToUnpricedLines } from '../lib/scan-slip-total';
 import { scanTimer } from '../lib/scan-timing';
-import { scanCatalogSkus, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
+import { scanCatalogSkus, scanCatalogCategoryOrder, type CatalogSku, type ScanCatalogRow } from '../lib/scan-catalog-skus';
 import { buildScanLineVariants } from '../lib/scan-line-variants';
 import { resolveSlipAddress } from '../lib/scan-address-lookup';
 import { localityForPostcode } from '../lib/postcode-from-address';
@@ -445,7 +445,7 @@ function formatCatalog(c: Catalog): string {
     list.push(s);
     byCategory.set(s.category, list);
   }
-  for (const cat of ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE']) {
+  for (const cat of scanCatalogCategoryOrder(c.skus)) {
     const list = byCategory.get(cat);
     if (!list || list.length === 0) continue;
     lines.push(`=== ${cat} SKUS (code | name) ===`);

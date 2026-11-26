@@ -1,4 +1,4 @@
-import { mfgCategoryLabel } from "../../vendor/shared/product-categories";
+import { mfgCategoryLabel } from "../../vendor/scm/lib/product-categories-store";
 
 export type CategoryCount = { category: string; to_add: number; active: number; off: number; no_price: number };
 

@@ -4,6 +4,7 @@ import { hr_attendance, hr_attendance_settings, hr_pay_rule_versions, hr_punch_s
 import { resolvePayRulesAsOf, normalizePayRules, type PayRulesConfig } from "../../scm/shared/hr-pay-rules";
 import { AUTO_CLOSE_AFTER_HOURS, toAttendanceRules, type AttendanceRules, type PunchSite } from "../../scm/shared/hr-attendance";
 import { asDate, autoCloseAt } from "./hr-attendance-view";
+import { closeOpenSegment, normalizeSegments } from "./hr-attendance-segments";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -60,7 +61,7 @@ export async function loadAttendanceSettings(db: Db, companyId: number): Promise
 export async function closeForgottenPunches(db: Db, companyId: number, employeeId: number | null, now: Date): Promise<number[]> {
   const cutoff = new Date(now.getTime() - AUTO_CLOSE_AFTER_HOURS * 3600_000).toISOString();
   const open = await db
-    .select({ id: hr_attendance.id, work_date: hr_attendance.work_date, clock_in_at: hr_attendance.clock_in_at, notes: hr_attendance.notes })
+    .select({ id: hr_attendance.id, work_date: hr_attendance.work_date, clock_in_at: hr_attendance.clock_in_at, notes: hr_attendance.notes, segments: hr_attendance.segments })
     .from(hr_attendance)
     .where(
       and(
@@ -77,11 +78,16 @@ export async function closeForgottenPunches(db: Db, companyId: number, employeeI
   for (const r of open) {
     if (!r.clock_in_at) continue;
     const outAt = autoCloseAt(r.work_date, asDate(r.clock_in_at), rulesFor(r.work_date));
+    const norm = normalizeSegments(r.segments);
+    const segs = norm.length
+      ? closeOpenSegment(norm, { at: outAt.toISOString(), source: "AUTO", lat: null, lng: null, accuracyM: null, geo: null, siteId: null, distanceM: null, photoKey: null })
+      : null;
     const done = await db
       .update(hr_attendance)
       .set({
         clock_out_at: outAt.toISOString(),
         out_source: "AUTO",
+        segments: segs,
         notes: r.notes ? `${r.notes}\n${FORGOT_OUT_NOTE}` : FORGOT_OUT_NOTE,
         updated_at: now.toISOString(),
       })

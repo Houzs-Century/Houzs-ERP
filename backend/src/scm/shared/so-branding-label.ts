@@ -94,18 +94,6 @@
 
 const HOUZS = 'HOUZS';
 
-/**
- * Every category value the system can produce, with the source it was read
- * from. The test enumerates THIS — a hand-written list is exactly how a
- * category gets forgotten, and four of these nine were added after the rule
- * this module replaces was written.
- */
-export const CATEGORY_SOURCES = {
-  productEnum: ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE',
-                'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET', 'FABRIC_ACCESSORY'] as const,
-  normBuckets: ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS'] as const,
-} as const;
-
 const CATEGORY_NOUNS: ReadonlyArray<readonly [needle: string, noun: string]> = [
   ['BEDFRAME', 'Bedframe'],
   ['SOFA', 'Sofa'],
@@ -117,6 +105,18 @@ const CATEGORY_NOUNS: ReadonlyArray<readonly [needle: string, noun: string]> = [
   ['DINING', 'Dining'],
   ['CARPET', 'Carpet'],
 ];
+
+/**
+ * Every category word the system can produce, with the source it was read
+ * from. The test enumerates THIS. The product categories themselves live in
+ * the database (scm.acc_item_groups); what this pure rule knows is the noun it
+ * prints for each, so the nouns are the list: a category with no noun still
+ * prints in Title Case.
+ */
+export const CATEGORY_SOURCES = {
+  categoryNouns: CATEGORY_NOUNS.map(([, noun]) => noun.toUpperCase()),
+  normBuckets: ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS'] as const,
+} as const;
 
 type Bucket = 'SOFA' | 'BEDFRAME' | 'MATTRESS' | 'OTHER';
 

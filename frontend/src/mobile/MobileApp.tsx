@@ -460,6 +460,7 @@ function MobileAppInner() {
   const { user, can, pageAccess, logout } = useAuth();
   const notify = useNotify();
   const qc = useQueryClient();
+  useEffect(() => { void import("../vendor/scm/lib/product-categories-store").then((m) => m.ensureProductCategories()).catch((e: unknown) => console.warn("product categories not loaded; labels read the code", e)); }, []);
   const annUnread = useAnnouncementUnread();
   const itConnected = useItSupportConnected();
   const profileUnread = annUnread + useItSupportUnread();

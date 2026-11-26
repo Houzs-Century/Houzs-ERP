@@ -17,6 +17,7 @@ interface Props {
 }
 
 export function Layout({ children }: Props) {
+  useEffect(() => { void import("../vendor/scm/lib/product-categories-store").then((m) => m.ensureProductCategories()).catch((e: unknown) => console.warn("product categories not loaded; labels read the code", e)); }, []);
   const [collapsed, setCollapsed] = useState(false);
 
   useBranding();

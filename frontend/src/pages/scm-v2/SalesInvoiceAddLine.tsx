@@ -54,7 +54,7 @@ import { NumberInput } from '../../vendor/scm/components/NumberInput';
 import { ADD_LINE_LABEL } from '../../vendor/scm/lib/add-line-handoff';
 import { useAddSalesInvoiceItem } from '../../vendor/scm/lib/sales-invoice-queries';
 import { useMfgProducts } from '../../vendor/scm/lib/mfg-products-queries';
-import { mfgCategoryLabel } from '../../vendor/shared/product-categories';
+import { mfgCategoryLabel } from '../../vendor/scm/lib/product-categories-store';
 
 export type SalesInvoiceAddLine = {
   action: ReactNode;

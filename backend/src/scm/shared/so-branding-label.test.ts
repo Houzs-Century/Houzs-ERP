@@ -7,7 +7,8 @@ const CO_2990 = '2990';
 const CO_HOUZS = 'HOUZS';
 
 const CATEGORIES: Array<string | null | undefined> = [
-  ...CATEGORY_SOURCES.productEnum,
+  ...CATEGORY_SOURCES.categoryNouns,
+      'FABRIC_ACCESSORY', 'NEW_GROUP',
   ...CATEGORY_SOURCES.normBuckets,
   'BEDFRAME - DIVAN', 'sofa set', ' Mattress  ', 'ACCESSORIES', 'DELIVERY SERVICE',
   'PILLOW', 'BEDFRAME + MATTRESS SET', 'bedlines', 'Carpet', 'BATH_MAT',
@@ -179,9 +180,8 @@ describe('brandingCategoryNoun — the superset, refereed against normCategory',
   });
 
   test('the derived category list still matches the source it was read from', () => {
-    expect([...CATEGORY_SOURCES.productEnum]).toEqual([
-      'SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE',
-      'DINING', 'BEDLINES', 'DIFFUSER', 'CARPET', 'FABRIC_ACCESSORY',
+    expect(CATEGORY_SOURCES.categoryNouns).toEqual([
+      'BEDFRAME', 'SOFA', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'BEDLINES', 'DIFFUSER', 'DINING', 'CARPET',
     ]);
     expect([...CATEGORY_SOURCES.normBuckets]).toEqual([
       'SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'OTHERS',

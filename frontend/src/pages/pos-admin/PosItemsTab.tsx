@@ -9,7 +9,7 @@ import { fmtSen } from "../../vendor/shared/format";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { SearchInput } from "../../components/Button";
-import { mfgCategoryLabel } from "../../vendor/shared/product-categories";
+import { mfgCategoryLabel } from "../../vendor/scm/lib/product-categories-store";
 import { PosBoothCategoriesDrawer } from "./PosBoothCategoriesDrawer";
 import { POS_ADMIN, rm, toSen, useAdminItems, useAdminEvents, type PosItem, type SkuCandidate } from "./posAdminApi";
 import { Empty, Field, Pill, Table, Toggle, dangerBtn, errText, ghostBtn, inputCls, primaryBtn, td, th } from "./posAdminUi";

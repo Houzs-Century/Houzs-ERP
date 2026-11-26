@@ -24,7 +24,8 @@ import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
 import { checkPunchLocation, instantOnWorkDate } from "../scm/shared/hr-attendance";
-import { attendanceView, planPunch, punchGateRefusal, type AttendanceRow } from "./lib/hr-attendance-view";
+import { attendanceView, punchGateRefusal, rowSegments, segmentSummaryColumns, type AttendanceRow } from "./lib/hr-attendance-view";
+import { applyPunch, daySummary, MAX_PUNCH_PAIRS } from "./lib/hr-attendance-segments";
 import { loadSites, loadAttendanceSettings } from "./lib/hr-attendance-store";
 import { parseOtSegment } from "./lib/hr-ot";
 import { parsePunchFix } from "./lib/hr-punch";
@@ -146,85 +147,72 @@ attendance.post("/punch", async (c) => {
       .then((r) => r.at(0)),
     openPunch(db, co.companyId, emp.id),
   ]);
-  const plan = planPunch(action, todayRow ?? null, open ?? null);
-  if (plan.kind === "already-out") {
-    return c.json({ error: "already_out", message: `You already clocked out today at ${plan.clock}. Ask HR if that is wrong.` }, 409);
-  }
-  if (plan.kind === "no-open-punch") {
-    return c.json({ error: "not_clocked_in", message: "You have not clocked in today, so there is nothing to clock out." }, 409);
-  }
-
   const [sites, settings] = await Promise.all([loadSites(db, co.companyId), loadAttendanceSettings(db, co.companyId)]);
   const loc = checkPunchLocation(hasGps ? lat : null, hasGps ? lng : null, sites.active);
-  /* HC-0125 punch gates: when HR turns a gate on, a recording punch is REFUSED
-     (hard block) unless it carries a selfie / is within a site. */
-  const refusal = punchGateRefusal(settings, plan.kind, !!photo, loc);
+  const at = now.toISOString();
+  const markBase = {
+    at,
+    source: "PHONE" as const,
+    lat: hasGps ? lat : null,
+    lng: hasGps ? lng : null,
+    accuracyM: accuracy != null ? Math.round(accuracy) : null,
+    geo: loc.geo,
+    siteId: loc.siteId,
+    distanceM: loc.distanceM,
+  };
+
+  /* Actual clocking (HC-0125): the punch acts on the OPEN day's segments (a
+     clock-out closes it, even yesterday's — the driver back after midnight) or
+     on today's row (a clock-in opens the next of up to 4 segments). A row from
+     before this feature reads as its single clock_in/out pair. */
+  const actingRow = open ?? (action === "CLOCK_IN" ? todayRow ?? null : null);
+  const curSegments = actingRow ? rowSegments(actingRow as AttendanceRow) : [];
+  const decided = applyPunch(curSegments, action, { ...markBase, photoKey: null });
+  if (!decided.ok) {
+    if (decided.reason === "already-in") {
+      return c.json({ ok: true, action, already: true, location: { geo: loc.geo, siteName: loc.siteName, distanceM: loc.distanceM }, photoSaved: false });
+    }
+    if (decided.reason === "no-open-punch") {
+      return c.json({ error: "not_clocked_in", message: "You have not clocked in today, so there is nothing to clock out." }, 409);
+    }
+    return c.json({ error: "max_punches", message: `You have already clocked in and out ${MAX_PUNCH_PAIRS} times today. Ask HR if you need another.` }, 409);
+  }
+
+  /* HC-0125 punch gates: a recording punch (a new clock-in or a clock-out) is
+     REFUSED when HR has a gate on and it carries no selfie / is off site. */
+  const refusal = punchGateRefusal(settings, action === "CLOCK_IN" ? "stamp-in" : "stamp-out", !!photo, loc);
   if (refusal) return c.json(refusal, 422);
   let photoKey: string | null = null;
-  if (photo && plan.kind !== "already-in" && plan.kind !== "reopen") {
+  if (photo) {
     photoKey = `hr-punch/${co.companyId}/${emp.id}/${today}-${action === "CLOCK_IN" ? "in" : "out"}-${crypto.randomUUID().slice(0, 8)}.${PHOTO_TYPES[photo.type]}`;
     await c.env.POD_BUCKET.put(photoKey, await photo.arrayBuffer(), { httpMetadata: { contentType: photo.type } });
   }
-  const at = now.toISOString();
-  const evidence =
-    action === "CLOCK_IN"
-      ? { in_lat: hasGps ? lat : null, in_lng: hasGps ? lng : null, in_accuracy_m: accuracy != null ? Math.round(accuracy) : null, in_geo: loc.geo, in_site_id: loc.siteId, in_distance_m: loc.distanceM, in_photo_key: photoKey }
-      : { out_lat: hasGps ? lat : null, out_lng: hasGps ? lng : null, out_accuracy_m: accuracy != null ? Math.round(accuracy) : null, out_geo: loc.geo, out_site_id: loc.siteId, out_distance_m: loc.distanceM, out_photo_key: photoKey };
+  const applied = applyPunch(curSegments, action, { ...markBase, photoKey });
+  const segments = applied.ok ? applied.segments : curSegments;
+  const closed = !daySummary(segments).open;
 
-  if (plan.kind === "insert") {
+  if (actingRow) {
+    await db
+      .update(hr_attendance)
+      .set({ status: "PRESENT", ...segmentSummaryColumns(segments), updated_at: at, updated_by: userId })
+      .where(eq(hr_attendance.id, actingRow.id));
+    if (action === "CLOCK_OUT" && closed) await syncDayFromPunch(db, co.companyId, actingRow.id);
+  } else {
     try {
-      await db.insert(hr_attendance).values({
-        company_id: co.companyId,
-        employee_id: emp.id,
-        work_date: today,
-        status: "PRESENT",
-        clock_in_at: at,
-        in_source: "PHONE",
-        ...evidence,
-        updated_by: userId,
-      });
+      const inserted = await db
+        .insert(hr_attendance)
+        .values({ company_id: co.companyId, employee_id: emp.id, work_date: today, status: "PRESENT", ...segmentSummaryColumns(segments), updated_by: userId })
+        .returning({ id: hr_attendance.id });
+      if (action === "CLOCK_OUT" && closed && inserted[0]) await syncDayFromPunch(db, co.companyId, inserted[0].id);
     } catch (e) {
       if ((e as { code?: string } | null)?.code !== "23505" && !String((e as Error | null)?.message ?? "").includes("duplicate key")) throw e;
     }
-  } else if (plan.kind === "stamp-in") {
-    await db
-      .update(hr_attendance)
-      .set({ status: "PRESENT", clock_in_at: at, in_source: "PHONE", ...evidence, updated_at: at, updated_by: userId })
-      .where(and(eq(hr_attendance.id, plan.rowId), isNull(hr_attendance.clock_in_at)));
-  } else if (plan.kind === "stamp-out") {
-    await db
-      .update(hr_attendance)
-      .set({ clock_out_at: at, out_source: "PHONE", ...evidence, updated_at: at, updated_by: userId })
-      .where(and(eq(hr_attendance.id, plan.rowId), isNull(hr_attendance.clock_out_at)));
-    await syncDayFromPunch(db, co.companyId, plan.rowId);
-  } else if (plan.kind === "reopen") {
-    /* Back on duty after clocking out (HC-0125 multi-punch): drop the clock-out
-       so the day is open again and the next clock-out re-stamps the latest time.
-       The first clock-in and its location/lateness stay; the re-entry's selfie
-       is required by the gate but not stored (the clock-in evidence is the first
-       one). The day's auto hours/dock/OT are recomputed on the next clock-out. */
-    await db
-      .update(hr_attendance)
-      .set({
-        clock_out_at: null,
-        out_source: null,
-        out_lat: null,
-        out_lng: null,
-        out_accuracy_m: null,
-        out_geo: null,
-        out_site_id: null,
-        out_distance_m: null,
-        out_photo_key: null,
-        updated_at: at,
-        updated_by: userId,
-      })
-      .where(and(eq(hr_attendance.id, plan.rowId), isNotNull(hr_attendance.clock_out_at)));
   }
 
   return c.json({
     ok: true,
     action,
-    already: plan.kind === "already-in",
+    already: false,
     location: { geo: loc.geo, siteName: loc.siteName, distanceM: loc.distanceM },
     photoSaved: !!photoKey,
   });

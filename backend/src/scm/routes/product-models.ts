@@ -16,8 +16,8 @@ import { pgrestIn } from '../lib/pgrest-in-list';
 import { categorySwapAllowed } from '../shared/category-swap';
 import { invalidModelDefault } from '../shared/model-default-variants';
 import { moveModelCategory } from '../lib/model-category-move';
-import { MFG_PRODUCT_CATEGORIES } from './mfg-products';
-import { isSingleSkuCategory } from '../shared/product-categories';
+import { activeProductCategories, isMfgProductCategory, isSingleSkuCategory } from '../shared/product-categories';
+import { loadProductCategories } from '../lib/product-category-registry';
 import { newSkuPosActive } from '../lib/new-sku-pos-active';
 
 export const productModels = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -99,13 +99,13 @@ productModels.get('/:id/photo-gallery/:key', async (c) => {
 
 productModels.use('*', supabaseAuth);
 
-const CATEGORIES = MFG_PRODUCT_CATEGORIES;
+const CATEGORY = z.string().trim().regex(/^[A-Z][A-Z0-9_]{1,29}$/);
 
 const CreateBody = z.object({
   branding:       z.string().trim().max(80).optional().nullable(),
   modelCode:      z.string().trim().min(1).max(32),
   name:           z.string().trim().min(1).max(200),
-  category:       z.enum(CATEGORIES),
+  category:       CATEGORY,
   description:    z.string().trim().max(500).optional().nullable(),
   photoUrl:       z.string().trim().url().optional().nullable(),
   allowedOptions: z.record(z.unknown()).optional(),
@@ -124,7 +124,7 @@ const PatchBody = z.object({
   branding:       z.string().trim().max(80).nullable().optional(),
   modelCode:      z.string().trim().min(1).max(200).optional(),
   name:           z.string().trim().min(1).max(200).optional(),
-  category:       z.enum(CATEGORIES).optional(),
+  category:       CATEGORY.optional(),
   description:    z.string().trim().max(500).nullable().optional(),
   photoUrl:       z.string().trim().url().nullable().optional(),
   allowedOptions: z.record(z.unknown()).optional(),
@@ -148,7 +148,7 @@ export const listProductModelsHandler = async (c: Context<{ Bindings: Env; Varia
   const supabase = c.get('supabase');
   const category = c.req.query('category');
 
-  const inCategory = category && (CATEGORIES as readonly string[]).includes(category) ? category : null;
+  const inCategory = category && /^[A-Z][A-Z0-9_]{1,29}$/.test(category) ? category : null;
   const { data, error } = await paginateAll((from, to) => {
     let q = scopeToCompany(supabase.from('product_models').select(COLS), c).order('category').order('model_code').order('id');
     if (inCategory) q = q.eq('category', inCategory);
@@ -327,6 +327,10 @@ productModels.post('/', async (c) => {
   if (!parsed.success) return c.json({ error: 'invalid_request', issues: parsed.error.issues }, 400);
 
   const supabase = c.get('supabase');
+  const active = activeProductCategories(await loadProductCategories(supabase));
+  if (!isMfgProductCategory(active, parsed.data.category)) {
+    return c.json({ error: 'invalid_category', allowed: active.map((r) => r.code) }, 400);
+  }
   const insert = {
     company_id:      activeCompanyId(c),
     branding:        parsed.data.branding ?? null,
@@ -391,7 +395,8 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   }
   const beforeCategory = (before as { category?: string } | null)?.category ?? null;
   if (u.category !== undefined && u.category === beforeCategory) delete u.category;
-  if (u.category !== undefined && !categorySwapAllowed(beforeCategory, String(u.category))) {
+  const categories = await loadProductCategories(supabase);
+  if (u.category !== undefined && !categorySwapAllowed(categories, beforeCategory, String(u.category))) {
     return c.json({
       error: 'category_change_not_allowed',
       reason: `"${String(u.category)}" is not a product category.`,
@@ -453,7 +458,7 @@ export const patchProductModelHandler = async (c: Context<{ Bindings: Env; Varia
   }
 
   if (newCategory !== undefined) {
-    const moved = await moveModelCategory(supabase, co.companyId, String(id), newCategory);
+    const moved = await moveModelCategory(supabase, co.companyId, String(id), newCategory, categories);
     if (!moved.ok) {
       if (moved.error === 'model_not_found') return c.json(NOT_THIS_COMPANY, 404);
       if (moved.error === 'target_category_taken') {

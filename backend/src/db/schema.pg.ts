@@ -1101,6 +1101,11 @@ export const hr_attendance = pgTable(
     out_site_id: bigint("out_site_id", { mode: "number" }),
     out_distance_m: integer("out_distance_m"),
     out_photo_key: text("out_photo_key"),
+    // Actual clocking (HC-0125): every clock-in/out pair of the day, in order
+    // (clock 1-4), each with its evidence. clock_in_at / clock_out_at above stay
+    // the FIRST in and LAST out, so existing readers are unchanged; segments is
+    // the detail. NULL on old rows = the single clock_in/out pair.
+    segments: jsonb("segments"),
     notes: text("notes"),
     created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
     updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),

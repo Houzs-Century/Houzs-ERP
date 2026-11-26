@@ -15,7 +15,7 @@ import {
 } from '../../vendor/scm/lib/product-models-queries';
 import { DataTable } from '../../components/DataTable';
 import { useMaintenanceConfig, useUpdateMfgProductStatus, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
-import { isSingleSkuCategory } from '../../vendor/shared/product-categories';
+import { isSingleSkuCategory } from '../../vendor/scm/lib/product-categories-store';
 import { useFabricLibrary } from '../../vendor/scm/lib/queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import { useAuth } from '../../auth/AuthContext';

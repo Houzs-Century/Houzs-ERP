@@ -31,7 +31,7 @@ import {
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from "../vendor/scm/lib/product-request-queries";
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from "../vendor/scm/lib/mfg-products-queries";
-import { MFG_PRODUCT_CATEGORIES } from "../vendor/shared/product-categories";
+import { useProductCategories } from "../vendor/scm/lib/product-categories-store";
 import { useFabricTrackings, fabricOptionLabel } from "../vendor/scm/lib/fabric-queries";
 import { useWarehouses } from "../vendor/scm/lib/inventory-queries";
 import { sortByNumeric, sortByText } from "../vendor/scm/lib/sort-options";
@@ -311,6 +311,7 @@ const draftLine = (from: ProductRequestLineInput | null): DraftLine => ({
 });
 
 function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductRequest | null; onBack: () => void; onDone: (id: string) => void }) {
+  const categoryOptions = useProductCategories().active;
   const create = useCreateProductRequest();
   const update = useUpdateProductRequest();
   const upload = useUploadProductRequestFile();
@@ -432,7 +433,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
               : field("New Model name *", <input className="cal-sel" aria-label={`New Model name line ${n}`} value={l.proposedModelName ?? ""} placeholder="e.g. Aurora 2-seater" onChange={(e) => setLine(l.rid, { proposedModelName: e.target.value || null })} />)}
             {field("Category", (
               <select className="cal-sel" aria-label={`Category line ${n}`} value={l.category} disabled={existing && !!l.itemCode} onChange={(e) => setLine(l.rid, { category: e.target.value })}>
-                {MFG_PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{mfgCategoryLabel(c)}</option>)}
+                {categoryOptions.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
               </select>
             ))}
             {field("Fabric", <input className="cal-sel" list="mpr-fabrics" aria-label={`Fabric line ${n}`} value={l.fabricCode ?? ""} placeholder="Type or pick a fabric code…" onChange={(e) => setLine(l.rid, { fabricCode: e.target.value || null })} />)}

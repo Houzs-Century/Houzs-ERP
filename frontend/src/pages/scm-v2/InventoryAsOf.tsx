@@ -18,7 +18,7 @@ import { DateField } from '../../vendor/scm/components/DateField';
 import { StatCard } from '../../components/StatCard';
 import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Inventory.module.css';
-import { mfgCategoryLabel } from '../../vendor/shared/product-categories';
+import { mfgCategoryLabel } from '../../vendor/scm/lib/product-categories-store';
 
 const STAT_GRID = 'grid grid-cols-2 md:grid-cols-4 gap-3';
 const soft: React.CSSProperties = { fontSize: 'var(--fs-13)', color: 'var(--text-soft, #8a8578)' };

@@ -14,8 +14,8 @@ import {
   useUpdateProductModel, useUploadProductModelPhoto, useDeleteProductModelPhoto, useBrandingPool,
   type ProductModelRow, type AllowedOptions,
 } from '../../vendor/scm/lib/product-models-queries';
-import { useMaintenanceConfig, useMfgProducts, mfgCategoryLabel, MFG_PRODUCT_CATEGORIES, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
-import { isSingleSkuCategory } from '../../vendor/shared/product-categories';
+import { useMaintenanceConfig, useMfgProducts, mfgCategoryLabel, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { isSingleSkuCategory, useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import {
   useSuppliers, useCreateBindingsBatch,
@@ -38,8 +38,6 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const BANNER_ERR =
   'rounded-lg border border-err/40 bg-err/10 px-4 py-3 text-[13px] text-err';
 
-const CATEGORIES: readonly MfgCategory[] = MFG_PRODUCT_CATEGORIES;
-
 const PM_GRID_KEY = 'dg-product-models';
 if (typeof window !== 'undefined' && window.localStorage.getItem(PM_GRID_KEY) == null) {
   try {
@@ -48,6 +46,7 @@ if (typeof window !== 'undefined' && window.localStorage.getItem(PM_GRID_KEY) ==
 }
 
 export const ProductModels = () => {
+  const CATEGORIES = useProductCategories().active.map((c) => c.code);
   const [filter, setFilter] = useState<MfgCategory | 'all'>('all');
   const [search, setSearch] = useState('');
   const [openModelId, setOpenModelId] = useState<string | null>(null);
@@ -652,6 +651,7 @@ export function NewModelDialog({
   initialCategory?: MfgCategory;
   onCreated?: (modelId: string, category: MfgCategory) => void;
 }) {
+  const CATEGORIES = useProductCategories().active.map((c) => c.code);
   const [category, setCategory]   = useState<MfgCategory>(initialCategory ?? 'SOFA');
   const [rows, setRows]           = useState<ModelRow[]>(() => [emptyRow()]);
   const [pickedSizes, setPickedSizes] = useState<Set<string>>(new Set());

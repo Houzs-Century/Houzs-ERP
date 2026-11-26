@@ -1,4 +1,5 @@
 
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { readScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
@@ -43,14 +44,6 @@ const FILTER_INPUT: CSSProperties = {
   color: 'var(--c-ink)',
 };
 
-const CATEGORY_OPTIONS = [
-  { value: 'all',       label: 'All categories' },
-  { value: 'sofa',      label: 'Sofa' },
-  { value: 'bedframe',  label: 'Bedframe' },
-  { value: 'mattress',  label: 'Mattress' },
-  { value: 'accessory', label: 'Accessory' },
-  { value: 'service',   label: 'Service' },
-] as const;
 
 const DATE_FIELD_OPTIONS = [
   { value: 'poDate',   label: 'PO Date' },
@@ -67,6 +60,10 @@ export type GrnFromPoPick = OutstandingPoItem & { _pickQty: number };
 
 export const GrnFromPo = () => {
   const navigate = useNavigate();
+  const CATEGORY_OPTIONS = [
+    { value: 'all', label: 'All categories' },
+    ...useProductCategories().active.map((c) => ({ value: c.code.toLowerCase(), label: c.name })),
+  ];
 
   const [searchParams] = useSearchParams();
   const scope = useMemo(

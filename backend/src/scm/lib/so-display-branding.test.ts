@@ -46,7 +46,8 @@ describe('deriveBranding', () => {
 
   test('PROPERTY: no category the system can produce ever renders blank', () => {
     const categories: Array<string | null | undefined> = [
-      ...CATEGORY_SOURCES.productEnum,
+      ...CATEGORY_SOURCES.categoryNouns,
+      'FABRIC_ACCESSORY', 'NEW_GROUP',
       ...CATEGORY_SOURCES.normBuckets,
       'BEDFRAME - DIVAN', 'sofa set', ' Mattress  ', 'ACCESSORIES', 'DELIVERY SERVICE',
       'PILLOW', 'BEDFRAME + MATTRESS SET',

@@ -33,7 +33,7 @@ import {
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from '../../vendor/scm/lib/product-request-queries';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
-import { MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByNumeric, sortByText } from '../../vendor/scm/lib/sort-options';
@@ -467,6 +467,7 @@ const draftLine = (from: ProductRequestLineInput | null): DraftLine => ({
 });
 
 export function RequestForm({ initial, onDone, onCancel }: { initial: ProductRequest | null; onDone: (id: string) => void; onCancel: () => void }) {
+  const categoryOptions = useProductCategories().active;
   const notify = useNotify();
   const create = useCreateProductRequest();
   const update = useUpdateProductRequest();
@@ -605,7 +606,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
                     </td>
                     <td style={td}>
                       <select style={cell} value={l.category} onChange={(e) => setLine(l.rid, { category: e.target.value })} aria-label={`Category line ${n}`} disabled={existing && !!l.itemCode}>
-                        {MFG_PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{mfgCategoryLabel(c)}</option>)}
+                        {categoryOptions.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                       </select>
                     </td>
                     <td style={td}>

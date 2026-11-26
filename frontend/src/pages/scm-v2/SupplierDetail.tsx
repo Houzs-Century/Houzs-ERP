@@ -39,6 +39,7 @@ import {
   type BedframePriceMatrix,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 /* A refused write must SAY so. The five grid cells below fire-and-forget, and
    useUpdateBinding carries no onError (unlike useDeleteBinding and
@@ -2294,13 +2295,9 @@ const PhoneEditField = ({
 );
 
 
-const MODEL_CATEGORY_CHIPS: { value: 'all' | MfgCategory; label: string }[] = [
+const useCategoryChips = (): { value: 'all' | MfgCategory; label: string }[] => [
   { value: 'all', label: 'All' },
-  { value: 'BEDFRAME', label: 'Bedframe' },
-  { value: 'SOFA', label: 'Sofa' },
-  { value: 'MATTRESS', label: 'Mattress' },
-  { value: 'ACCESSORY', label: 'Accessory' },
-  { value: 'SERVICE', label: 'Service' },
+  ...useProductCategories().active.map((c) => ({ value: c.code, label: c.name })),
 ];
 
 type ModelDraft = {
@@ -2344,6 +2341,7 @@ const ModelSkuPickerDialog = ({
   const initialCategory: 'all' | MfgCategory =
     mfgCategoryFromSupplierCategory(supplierCategory) ?? 'all';
   const [category, setCategory] = useState<'all' | MfgCategory>(initialCategory);
+  const MODEL_CATEGORY_CHIPS = useCategoryChips();
   const [search, setSearch] = useState('');
   const [advanced, setAdvanced] = useState(false);
 
@@ -2856,14 +2854,6 @@ type MultiDraft = {
   isMainSupplier: boolean;
 };
 
-const CATEGORY_CHIPS: { value: 'all' | MfgCategory; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'BEDFRAME', label: 'Bedframe' },
-  { value: 'SOFA', label: 'Sofa' },
-  { value: 'MATTRESS', label: 'Mattress' },
-  { value: 'ACCESSORY', label: 'Accessory' },
-  { value: 'SERVICE', label: 'Service' },
-];
 
 const MULTI_PICKER_RENDER_CAP = 60;
 
@@ -2882,6 +2872,7 @@ const MultiSkuPickerDialog = ({
   const notify = useNotify();
   const [step, setStep] = useState<1 | 2>(1);
   const [category, setCategory] = useState<'all' | MfgCategory>('all');
+  const CATEGORY_CHIPS = useCategoryChips();
   const [search, setSearch] = useState(initialSearch);
   const debouncedSearch = useDebouncedValue(search, 250);
   /* Server-typeahead gate (owner #1 scaling pain, 2026-07-14) — the "All / no

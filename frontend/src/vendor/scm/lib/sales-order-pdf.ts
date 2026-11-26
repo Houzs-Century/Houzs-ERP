@@ -25,7 +25,7 @@ import { docPageLabel,
 } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
 import { orderAddressLines } from './order-address';
-import { mfgCategoryLabel } from '../../shared/product-categories';
+import { ensureProductCategories, mfgCategoryLabel } from './product-categories-store';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
 import { composeSoLineDescription } from './so-line-description';
 import { stripBookText } from './book-text';
@@ -288,6 +288,7 @@ export async function renderSalesOrderInto(
 
   const startPage = doc.getNumberOfPages();
 
+  await ensureProductCategories().catch((e: unknown) => console.warn("product categories not loaded; headings read the code", e));
   const fabricDescMap = await loadFabricDescriptionMap(collectFabricCodes(items));
   const fabricExtMap = await loadFabricSupplierMap(collectFabricCodes(items));
 

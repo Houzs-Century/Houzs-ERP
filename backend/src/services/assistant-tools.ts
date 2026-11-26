@@ -85,8 +85,8 @@ export const ESTIMATE_READY_DATE_TOOL: AgentToolDef = {
           properties: {
             category: {
               type: "string",
-              enum: ["sofa", "bedframe", "mattress", "accessory", "service"],
-              description: "The item's lead-time category.",
+              // No enum: the categories are the registry's (scm.acc_item_groups), so a typed list went stale (HC-0258).
+              description: "The item's product category code in lower case (sofa, bedframe, mattress, dining, fabric_accessory, ...), or others.",
             },
             supplierCode: {
               type: "string",
