@@ -292,7 +292,9 @@ export type DashboardPayload = {
 };
 
 export type VehicleDetailPayload = {
-  vehicle: VehicleRow & {
+  /* No `compliance` on the lorry here: the renewals travel beside it, in the
+     shape below. Use currentDocs() where a board-shaped row is needed. */
+  vehicle: Omit<VehicleRow, "compliance"> & {
     lastServiceWorkshop?: string | null;
     /* WS3 (mig 0209) has stored the box since it shipped; the drawer never
        showed it until 2026-08-01. capacity_m3 is derived from L x W x H. */
@@ -381,7 +383,7 @@ export function fmtPlanRemaining(p: { kmRemaining: number | null; daysRemaining:
 
 /** The board's "Next service" cell: the single most-urgent plan (per-component),
  *  falling back to the legacy next-service target when no plans exist yet. */
-export function NextServiceCell({ v }: { v: VehicleRow }) {
+export function NextServiceCell({ v }: { v: Omit<VehicleRow, "compliance"> }) {
   if (v.nextPlan) {
     const np = v.nextPlan;
     const toneText = np.tone === "crit" ? "text-err" : np.tone === "warn" ? "text-warning-text" : "text-ink-muted";
@@ -420,6 +422,18 @@ export function openProblem(v: VehicleRow): string | null {
   return null;
 }
 
+/** Each type's current renewal, the shape a board row carries, from the
+ *  per-type history GET /vehicles/:id sends. */
+export function currentDocs(compliance: VehicleDetailPayload["compliance"] | undefined): VehicleRow["compliance"] {
+  const out: VehicleRow["compliance"] = {};
+  for (const t of DOC_TYPES) {
+    const g = compliance?.[t];
+    const d = g?.history.find((x) => x.id === g.currentId);
+    if (d) out[t] = d;
+  }
+  return out;
+}
+
 export function statusLabel(status: string): string {
   const map: Record<string, string> = {
     AVAILABLE: "Available",
@@ -443,6 +457,7 @@ export function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; o
   );
   const v = detail.data?.vehicle;
   const compliance = detail.data?.compliance;
+  const problem = v ? openProblem({ ...v, compliance: currentDocs(compliance) }) : null;
   const refresh = () => {
     detail.reload();
     onChanged?.();
@@ -492,9 +507,9 @@ export function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; o
                 Out of service{v.outOfServiceReason ? ` — ${v.outOfServiceReason}` : ""}.
               </p>
             )}
-            {openProblem(v) && !v.outOfService && (
+            {problem && !v.outOfService && (
               <p className="rounded-md border border-warning-text/25 bg-warning-text/10 px-3 py-2 text-[12px] text-warning-text">
-                {openProblem(v)}
+                {problem}
               </p>
             )}
 
